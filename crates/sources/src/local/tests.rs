@@ -9,9 +9,11 @@ use library::{
 };
 use lofty::config::WriteOptions;
 use lofty::file::TaggedFileExt;
+use lofty::id3::v2::Id3v2Tag;
+use lofty::picture::{MimeType, Picture, PictureType};
 use lofty::prelude::*;
 use lofty::probe::Probe;
-use lofty::tag::{ItemKey, Tag, TagType};
+use lofty::tag::{ItemKey, ItemValue, Tag, TagItem, TagType};
 
 use super::*;
 use crate::source::{BatchEmitter, SourceReadProgress, SourceReadStage};
@@ -157,6 +159,88 @@ fn album_classification_combines_track_tags_in_stable_order() {
     assert_eq!(albums.len(), 1);
     assert_eq!(albums[0].release_types, ["ep", "live", "single"]);
     assert_eq!(albums[0].is_compilation, Some(true));
+}
+
+#[test]
+fn complete_scan_maps_lofty_metadata_and_embedded_artwork() {
+    let root = tempfile::tempdir().expect("Local root");
+    let path = root.path().join("Tagged.wav");
+    write_complete_tagged_wav(&path).expect("write complete tagged WAV");
+    let source =
+        LocalSource::from_roots(vec![root.path().to_path_buf()]).expect("open Local source");
+
+    let facts = complete_scan(&source);
+    let tracks = facts.tracks();
+    let [track] = tracks.as_slice() else {
+        panic!("expected one mapped Track");
+    };
+
+    assert_eq!(track.title, "Track Title");
+    assert_eq!(track.artist, "Track Artist One; Track Artist Two");
+    assert_eq!(track.album, "Album Title");
+    assert_eq!(track.year, 2024);
+    assert_eq!(track.duration_seconds, 1);
+    assert_eq!(track.disc_number, 2);
+    assert_eq!(track.track_number, 7);
+    assert_eq!(track.comment.as_deref(), Some("Track comment"));
+    assert_eq!(track.bpm, Some(123));
+    assert_eq!(
+        track.musicbrainz_recording_id.as_deref(),
+        Some("recording-id")
+    );
+    assert_eq!(
+        track
+            .relations
+            .artists
+            .iter()
+            .map(|artist| (
+                artist.name.as_str(),
+                artist.musicbrainz_artist_id.as_deref()
+            ))
+            .collect::<Vec<_>>(),
+        [
+            ("Track Artist One", Some("artist-one-id")),
+            ("Track Artist Two", Some("artist-two-id")),
+        ]
+    );
+    assert_eq!(
+        track
+            .relations
+            .album_artists
+            .iter()
+            .map(|artist| (
+                artist.name.as_str(),
+                artist.musicbrainz_artist_id.as_deref()
+            ))
+            .collect::<Vec<_>>(),
+        [("Album Artist", Some("album-artist-id"))]
+    );
+    assert_eq!(
+        track.genre_names().collect::<Vec<_>>(),
+        ["Electronic", "Ambient"]
+    );
+    assert_eq!(track.mood_names().collect::<Vec<_>>(), ["Focused", "Calm"]);
+
+    let artwork = track
+        .local_artwork
+        .as_ref()
+        .expect("embedded artwork reference");
+    let image = source.image_bytes(artwork).expect("read embedded artwork");
+    assert_eq!(image.bytes, TEST_PNG);
+    assert_eq!(image.content_type.as_deref(), Some("image/png"));
+
+    let albums = facts.albums();
+    let [album] = albums.as_slice() else {
+        panic!("expected one mapped Album");
+    };
+    assert_eq!(album.artist, "Album Artist");
+    assert_eq!(album.release_types, ["album", "live"]);
+    assert_eq!(album.is_compilation, Some(false));
+    assert_eq!(album.musicbrainz_album_id.as_deref(), Some("release-id"));
+    assert_eq!(
+        album.musicbrainz_release_group_id.as_deref(),
+        Some("release-group-id")
+    );
 }
 
 #[test]
@@ -1246,6 +1330,58 @@ fn write_tagged_release_wav(
     }
     tagged.insert_tag(tag);
     tagged.save_to_path(path, WriteOptions::default())?;
+    Ok(())
+}
+
+const TEST_PNG: &[u8] = &[
+    0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52,
+    0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x06, 0x00, 0x00, 0x00, 0x1f, 0x15, 0xc4,
+    0x89, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x44, 0x41, 0x54, 0x08, 0xd7, 0x63, 0xf8, 0xcf, 0xc0, 0xf0,
+    0x1f, 0x00, 0x05, 0x00, 0x01, 0xff, 0x89, 0x99, 0x3d, 0x1d, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45,
+    0x4e, 0x44, 0xae, 0x42, 0x60, 0x82,
+];
+
+fn write_complete_tagged_wav(path: &Path) -> Result<(), Box<dyn std::error::Error>> {
+    write_silent_wav(path, 1)?;
+    let mut tag = Tag::new(TagType::Id3v2);
+    tag.set_title("Track Title".to_string());
+    tag.set_artist("Track Artist One; Track Artist Two".to_string());
+    tag.set_album("Album Title".to_string());
+    tag.set_track(7);
+    tag.set_disk(2);
+    for (key, value) in [
+        (ItemKey::AlbumArtist, "Album Artist"),
+        (ItemKey::RecordingDate, "2024-03-14"),
+        (ItemKey::Genre, "Electronic; Ambient"),
+        (ItemKey::Mood, "Focused; Calm"),
+        (ItemKey::Comment, "Track comment"),
+        (ItemKey::IntegerBpm, "123"),
+        (ItemKey::MusicBrainzArtistId, "artist-one-id; artist-two-id"),
+        (ItemKey::MusicBrainzReleaseArtistId, "album-artist-id"),
+        (ItemKey::MusicBrainzReleaseType, "Album; Live"),
+        (ItemKey::FlagCompilation, "0"),
+    ] {
+        if !tag.insert_text(key, value.to_string()) {
+            return Err(format!("ID3 does not support {key:?}").into());
+        }
+    }
+    tag.insert_unchecked(TagItem::new(
+        ItemKey::MusicBrainzRecordingId,
+        ItemValue::Text("recording-id".to_string()),
+    ));
+    tag.push_picture(
+        Picture::unchecked(TEST_PNG.to_vec())
+            .pic_type(PictureType::CoverFront)
+            .mime_type(MimeType::Png)
+            .build(),
+    );
+    let mut tag = Id3v2Tag::from(tag);
+    tag.insert_user_text("MusicBrainz Album Id".to_string(), "release-id".to_string());
+    tag.insert_user_text(
+        "MusicBrainz Release Group Id".to_string(),
+        "release-group-id".to_string(),
+    );
+    tag.save_to_path(path, WriteOptions::default())?;
     Ok(())
 }
 

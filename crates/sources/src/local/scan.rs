@@ -19,8 +19,8 @@ use super::tags::{self, AudioRead, ScannedTrack};
 use crate::source::{BatchEmitter, SourceReadProgress, SourceReadStage};
 use crate::{SourceError, SourceResult};
 
-const LOCAL_LIBRARY_PARSER_VERSION: u32 = 2;
-const LOCAL_ACCESS_PARSER_VERSION: u32 = 1;
+const LOCAL_LIBRARY_PARSER_VERSION: u32 = 3;
+const LOCAL_ACCESS_PARSER_VERSION: u32 = 2;
 const LOCAL_CUE_MAX_BYTES: usize = 1024 * 1024;
 const LOCAL_BATCH_SIZE: usize = 1024;
 
