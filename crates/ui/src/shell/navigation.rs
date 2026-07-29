@@ -1,8 +1,8 @@
 use std::{cell::RefCell, rc::Rc};
 
 use crate::interactions::{
-    install_context_menu_openers, popdown_native_menu, popdown_on_anchor_unmap,
-    replace_native_menu_checkmarks, show_native_menu_icons,
+    install_context_menu_openers, keep_parent_grab_for_nested_native_menus, popdown_native_menu,
+    popdown_on_anchor_unmap, replace_native_menu_checkmarks, show_native_menu_icons,
 };
 use crate::preferences::source::selector::source_submenu;
 use crate::routes::collection_context::{
@@ -451,6 +451,7 @@ fn style_primary_menu(popover: &gtk::PopoverMenu) {
     popover.add_css_class(PRIMARY_MENU_CLASS);
     show_native_menu_icons(popover);
     replace_native_menu_checkmarks(popover);
+    keep_parent_grab_for_nested_native_menus(popover);
 }
 
 fn primary_menu_model(shell: &Rc<Shell>) -> gio::Menu {
