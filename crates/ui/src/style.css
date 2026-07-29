@@ -1750,7 +1750,8 @@ listview.queue-list row {
 }
 
 .lyrics-panel:hover .lyrics-controls,
-.lyrics-panel:focus-within .lyrics-controls {
+.lyrics-top-controls:focus-within,
+.lyrics-control-bar:focus-within {
   opacity: 1;
 }
 
