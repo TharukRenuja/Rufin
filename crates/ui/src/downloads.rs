@@ -409,18 +409,37 @@ impl Shell {
             collection,
             downloaded: Rc::new(downloaded),
         };
-        let visible = self
+        let downloaded = self
             .library
             .selected
             .borrow()
             .as_ref()
             .is_some_and(|selected| (binding.downloaded)(selected));
-        image.set_visible(visible);
+        self.set_download_badge_visible(&image, downloaded);
         self.downloads
             .badges
             .borrow_mut()
             .insert(image.as_ptr() as usize, binding);
         image
+    }
+
+    pub(crate) fn set_download_badge_visible(&self, image: &gtk::Image, downloaded: bool) {
+        image.set_visible(self.settings.current.borrow().show_downloaded_badges && downloaded);
+    }
+
+    pub(crate) fn set_downloaded_badges_visible(self: &Rc<Self>, visible: bool) {
+        if self
+            .update_app_settings("downloaded badge setting", |settings| {
+                if settings.show_downloaded_badges == visible {
+                    return false;
+                }
+                settings.show_downloaded_badges = visible;
+                true
+            })
+            .is_some()
+        {
+            self.refresh_download_badges(true);
+        }
     }
 
     fn refresh_download_badges(&self, include_collections: bool) {
@@ -430,7 +449,8 @@ impl Shell {
                 return false;
             };
             if include_collections || !binding.collection {
-                image.set_visible(
+                self.set_download_badge_visible(
+                    &image,
                     selected
                         .as_ref()
                         .is_some_and(|selected| (binding.downloaded)(selected)),

@@ -604,6 +604,7 @@ impl ReusableCollectionGridCell<Track> for TrackGridCell {
             )
         });
         self.body.set_downloaded(
+            &self.shell,
             self.shell
                 .library
                 .selected
@@ -797,15 +798,20 @@ impl ReusableCollectionGridCell<AlbumSummary> for AlbumGridCell {
             };
             (value, route)
         });
-        self.body
-            .set_downloaded(self.shell.library.selected.borrow().as_ref().is_some_and(
-                |selected| {
+        self.body.set_downloaded(
+            &self.shell,
+            self.shell
+                .library
+                .selected
+                .borrow()
+                .as_ref()
+                .is_some_and(|selected| {
                     selected
                         .loaded
                         .is_album_downloaded(&album.album.id, selected.music_folder_id.as_ref())
                         .unwrap_or(false)
-                },
-            ));
+                }),
+        );
         set_favorite_button_active(&self.favorite, album.album.favorite);
         *self.current_album.borrow_mut() = Some(album);
     }
@@ -986,15 +992,20 @@ impl ReusableCollectionGridCell<ArtistSummary> for ArtistGridCell {
         self.body.bind(&artist.artist.name, |field| {
             (artist_field(&artist, field), None)
         });
-        self.body
-            .set_downloaded(self.shell.library.selected.borrow().as_ref().is_some_and(
-                |selected| {
+        self.body.set_downloaded(
+            &self.shell,
+            self.shell
+                .library
+                .selected
+                .borrow()
+                .as_ref()
+                .is_some_and(|selected| {
                     selected
                         .loaded
                         .is_artist_downloaded(&artist.artist.id, selected.music_folder_id.as_ref())
                         .unwrap_or(false)
-                },
-            ));
+                }),
+        );
         set_favorite_button_active(&self.favorite, artist.artist.favorite);
         *self.current_artist.borrow_mut() = Some(artist);
     }
@@ -1151,15 +1162,20 @@ impl ReusableCollectionGridCell<PlaylistSummary> for PlaylistGridCell {
         self.body.bind(&playlist.playlist.name, |field| {
             (playlist_field(&playlist, field), None)
         });
-        self.body
-            .set_downloaded(self.shell.library.selected.borrow().as_ref().is_some_and(
-                |selected| {
+        self.body.set_downloaded(
+            &self.shell,
+            self.shell
+                .library
+                .selected
+                .borrow()
+                .as_ref()
+                .is_some_and(|selected| {
                     selected
                         .loaded
                         .is_playlist_downloaded(&playlist.playlist.id)
                         .unwrap_or(false)
-                },
-            ));
+                }),
+        );
         *self.current_playlist.borrow_mut() = Some(playlist);
     }
 
@@ -1320,9 +1336,14 @@ impl ReusableCollectionGridCell<SmartPlaylistSummary> for SmartPlaylistGridCell 
             &smart_playlist_display_name(&playlist.smart_playlist),
             |field| (smart_playlist_field(&playlist, field), None),
         );
-        self.body
-            .set_downloaded(self.shell.library.selected.borrow().as_ref().is_some_and(
-                |selected| {
+        self.body.set_downloaded(
+            &self.shell,
+            self.shell
+                .library
+                .selected
+                .borrow()
+                .as_ref()
+                .is_some_and(|selected| {
                     selected
                         .loaded
                         .is_smart_playlist_downloaded(
@@ -1330,8 +1351,8 @@ impl ReusableCollectionGridCell<SmartPlaylistSummary> for SmartPlaylistGridCell 
                             selected.music_folder_id.as_ref(),
                         )
                         .unwrap_or(false)
-                },
-            ));
+                }),
+        );
         *self.current_playlist.borrow_mut() = Some(playlist);
     }
 
@@ -1542,9 +1563,9 @@ impl CollectionGridCardCell {
         self.title_row.append(&badge);
     }
 
-    pub(super) fn set_downloaded(&self, downloaded: bool) {
+    pub(super) fn set_downloaded(&self, shell: &Shell, downloaded: bool) {
         if let Some(badge) = self.downloaded.borrow().as_ref() {
-            badge.set_visible(downloaded);
+            shell.set_download_badge_visible(badge, downloaded);
         }
     }
 

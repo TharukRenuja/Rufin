@@ -125,6 +125,27 @@ fn download_rules_are_saved_for_one_source() {
 }
 
 #[test]
+fn downloaded_badges_are_shown_by_default_and_can_be_hidden() {
+    let mut legacy = serde_json::to_value(Settings::default()).expect("serialize settings");
+    legacy
+        .as_object_mut()
+        .expect("settings object")
+        .remove("show_downloaded_badges");
+    let restored = serde_json::from_value::<Settings>(legacy).expect("restore older settings");
+    assert!(restored.show_downloaded_badges);
+
+    let hidden = Settings {
+        show_downloaded_badges: false,
+        ..Settings::default()
+    };
+    let restored = serde_json::from_value::<Settings>(
+        serde_json::to_value(hidden).expect("serialize downloaded badge setting"),
+    )
+    .expect("restore downloaded badge setting");
+    assert!(!restored.show_downloaded_badges);
+}
+
+#[test]
 fn download_rules_are_independent_addable_entries() {
     let mut rules = DownloadRules::default();
     rules.set(DownloadRule::AllPlaylists, true);

@@ -407,6 +407,8 @@ row:focus {
   background: color-mix(in srgb, currentColor 6%, transparent);
 }
 
+.track-list-title.track-row-playing,
+.playlist-entry-title.track-row-playing,
 .album-detail-track-row.album-detail-track-selected .track-list-title {
   color: var(--accent-color);
   text-shadow:
