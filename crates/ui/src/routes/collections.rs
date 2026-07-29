@@ -13,6 +13,7 @@ use gtk::{gio, glib};
 
 use crate::layout::{configure_fill_width_clip, width_allocation_owner};
 use crate::shell::Shell;
+use crate::shell::cover::GRID_COVER_SIZE;
 use crate::shell::route::{MountedRouteItemNavigation, item_navigation_entry_position};
 use crate::{LibraryColumnWidth, LibraryField, LibraryLayout, LibraryListKey};
 use localization::tr;
@@ -703,7 +704,7 @@ pub(crate) fn album_grid(
         model,
         minimum_card_width,
         &fields,
-        move |fields| AlbumGridCell::new(Rc::clone(&cell_shell), fields, minimum_card_width),
+        move |fields| AlbumGridCell::new(Rc::clone(&cell_shell), fields, GRID_COVER_SIZE as i32),
         move |_, album: AlbumSummary| {
             activate_shell.navigate(Route::AlbumDetail(album.album.id.clone()))
         },
@@ -795,7 +796,7 @@ pub(crate) fn track_grid(
                 Rc::clone(&cell_shell),
                 fields,
                 Rc::clone(&cell_play_from_collection),
-                COLLECTION_GRID_MIN_CARD_WIDTH,
+                GRID_COVER_SIZE as i32,
             )
         },
         move |position, _: Track| {

@@ -10,6 +10,7 @@ use gtk::{gio, glib};
 use crate::layout::width_allocation_owner;
 use crate::localization::{bind_search_placeholder, localized_label};
 use crate::shell::Shell;
+use crate::shell::cover::GRID_COVER_SIZE;
 use crate::{LibraryField, LibraryLayout, LibraryListKey, LibraryListSettings};
 use localization::msgid;
 
@@ -323,11 +324,7 @@ impl ArtistReleaseProjections {
         let cell_shell = Rc::clone(shell);
         let (list, apply_grid_fields) =
             artist_route_list(rows.clone(), Rc::clone(&grid_fields), move |fields| {
-                AlbumGridCell::new(
-                    Rc::clone(&cell_shell),
-                    fields,
-                    COLLECTION_GRID_MIN_CARD_WIDTH,
-                )
+                AlbumGridCell::new(Rc::clone(&cell_shell), fields, GRID_COVER_SIZE as i32)
             });
         list.set_margin_top(ROUTE_TOP_MARGIN);
         list.set_margin_bottom(ARTIST_ROUTE_BOTTOM_MARGIN);

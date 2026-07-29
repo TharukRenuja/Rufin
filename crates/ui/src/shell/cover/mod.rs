@@ -34,12 +34,15 @@ use texture_cache::TextureCache;
 pub(crate) use tile::{ArtworkTile, ArtworkTileWeak};
 pub(crate) use tiles::CoverGroupProjection;
 
-pub(crate) fn cover_decode_size(display_size: i32, fetch_size: u32, scale_factor: i32) -> u32 {
-    let display_size = u32::try_from(display_size.max(1)).unwrap_or(1);
-    let scale_factor = u32::try_from(scale_factor.max(1)).unwrap_or(1);
-    display_size
-        .saturating_mul(scale_factor)
-        .min(fetch_size.max(1))
+pub(crate) fn cover_decode_size(display_size: i32, fetch_size: u32, scale: f64) -> u32 {
+    let display_size = f64::from(display_size.max(1));
+    let scale = if scale.is_finite() {
+        scale.max(1.0)
+    } else {
+        1.0
+    };
+    let scaled = (display_size * scale).ceil().min(f64::from(u32::MAX)) as u32;
+    scaled.min(fetch_size.max(1))
 }
 
 pub(crate) fn cover_fetch_size_for_display(display_size: i32) -> u32 {
@@ -152,14 +155,30 @@ impl Drop for StartupArtworkLease {
 }
 
 impl Shell {
-    pub(crate) fn connect_artwork_scale_factor_refresh(self: &Rc<Self>) {
+    pub(crate) fn connect_artwork_scale_refresh(self: &Rc<Self>) {
         let shell = Rc::downgrade(self);
-        self.chrome.window.connect_scale_factor_notify(move |_| {
-            let Some(shell) = shell.upgrade() else {
+        self.chrome.window.connect_realize(move |window| {
+            let Some(surface) = window.surface() else {
                 return;
             };
-            shell.refresh_artwork_bindings();
+            let shell = shell.clone();
+            surface.connect_scale_notify(move |_| {
+                let Some(shell) = shell.upgrade() else {
+                    return;
+                };
+                shell.refresh_artwork_bindings();
+                if shell.startup.route_revealed.get() {
+                    shell.start_source_thumbnail_warm();
+                }
+            });
         });
+    }
+
+    fn artwork_scale(&self) -> f64 {
+        self.chrome.window.surface().map_or_else(
+            || f64::from(self.chrome.window.scale_factor()),
+            |surface| surface.scale(),
+        )
     }
 
     fn artwork_source(&self, source_id: Option<&::library::SourceId>) -> Option<SourceImages> {
@@ -245,8 +264,7 @@ impl Shell {
         let cache_only =
             binding.defer_during_route_scroll && self.artwork.route_interaction.active.get();
 
-        let render_size =
-            cover_decode_size(render_size, fetch_size, self.chrome.window.scale_factor());
+        let render_size = cover_decode_size(render_size, fetch_size, self.artwork_scale());
         let settings = self.settings.current.borrow().clone();
         let external = artwork_external_policy(&settings);
         let Some(source) = self.artwork_source(source_id.as_ref()) else {
@@ -410,6 +428,18 @@ impl Shell {
         self.artwork.textures.borrow_mut().texture(source_id, image)
     }
 
+    fn retain_source_warm_texture(
+        &self,
+        source_id: &::library::SourceId,
+        image: Arc<artwork::DecodedImage>,
+    ) {
+        let _ = self
+            .artwork
+            .textures
+            .borrow_mut()
+            .retain_source_warm_texture(source_id, image);
+    }
+
     pub(crate) fn release_artwork_textures(&self, source_id: &::library::SourceId) {
         self.artwork.textures.borrow_mut().release_source(source_id);
     }
@@ -569,36 +599,35 @@ impl Shell {
         let Some(selected) = self.library.selected.borrow().clone() else {
             return;
         };
+        self.artwork
+            .textures
+            .borrow_mut()
+            .release_source_warm_textures(&selected.source_id);
         let generation = self.artwork.thumbnail_warm.generation.get();
         let shell = Rc::downgrade(self);
         let loaded = Arc::clone(&selected.loaded);
         let music_folder_id = selected.music_folder_id.clone();
+        let prefer_server_playlist_covers =
+            self.settings.current.borrow().prefer_server_playlist_covers;
         let mut external = artwork_external_policy(&self.settings.current.borrow());
         external.allow_network = false;
         let task = glib::spawn_future_local(async move {
             let bindings = match gtk::gio::spawn_blocking(move || {
-                let tracks = loaded
-                    .track_list(music_folder_id.as_ref(), ::library::TrackSort::Title, false)?
-                    .materialize_owned()?;
-                let mut seen = HashSet::new();
-                Ok::<Arc<[ArtworkBinding]>, ::library::LoadedLibraryError>(
-                    tracks
-                        .iter()
-                        .map(ArtworkBinding::track)
-                        .filter(|binding| !binding.is_empty() && seen.insert(binding.clone()))
-                        .collect::<Vec<_>>()
-                        .into(),
+                source_thumbnail_bindings(
+                    &loaded,
+                    music_folder_id.as_ref(),
+                    prefer_server_playlist_covers,
                 )
             })
             .await
             {
                 Ok(Ok(bindings)) => bindings,
                 Ok(Err(error)) => {
-                    warn!(%error, "failed to read selected-source track artwork");
+                    warn!(%error, "failed to read selected-source artwork");
                     return;
                 }
                 Err(_) => {
-                    warn!("selected-source track artwork read panicked");
+                    warn!("selected-source artwork read panicked");
                     return;
                 }
             };
@@ -608,8 +637,7 @@ impl Shell {
             if shell.artwork.thumbnail_warm.generation.get() != generation {
                 return;
             }
-            let render_size =
-                cover_decode_size(48, GRID_COVER_SIZE, shell.chrome.window.scale_factor());
+            let render_size = cover_decode_size(48, GRID_COVER_SIZE, shell.artwork_scale());
             let mut bindings = bindings.iter();
             let mut pending = VecDeque::with_capacity(THUMBNAIL_WARM_WINDOW);
             loop {
@@ -626,7 +654,7 @@ impl Shell {
                         .prepare(selected.artwork.clone(), request);
                     match shell.products.artwork.warm_prepared(prepared) {
                         Ok(artwork::ArtworkLoad::Ready(image)) => {
-                            shell.texture_for_decoded(&selected.source_id, image);
+                            shell.retain_source_warm_texture(&selected.source_id, image);
                         }
                         Ok(artwork::ArtworkLoad::Pending(request)) => {
                             pending.push_back(request);
@@ -645,7 +673,7 @@ impl Shell {
                     return;
                 }
                 if let artwork::ArtworkOutcome::Ready(image) = outcome {
-                    shell.texture_for_decoded(&selected.source_id, image);
+                    shell.retain_source_warm_texture(&selected.source_id, image);
                 }
             }
         });
@@ -661,6 +689,70 @@ impl Shell {
             task.abort();
         }
     }
+}
+
+fn source_thumbnail_bindings(
+    loaded: &Arc<::library::LoadedLibrary>,
+    music_folder_id: Option<&::library::MusicFolderId>,
+    prefer_server_playlist_covers: bool,
+) -> Result<Arc<[ArtworkBinding]>, ::library::LoadedLibraryError> {
+    let mut bindings = Vec::new();
+    let mut seen = HashSet::new();
+    let mut push = |binding: ArtworkBinding| {
+        if !binding.is_empty() && seen.insert(binding.clone()) {
+            bindings.push(binding);
+        }
+    };
+
+    for album in loaded.albums(music_folder_id)?.iter() {
+        push(ArtworkBinding::album_artwork(&album.artwork));
+    }
+    for artist in loaded
+        .artists(music_folder_id)?
+        .iter()
+        .chain(loaded.album_artists(music_folder_id)?.iter())
+    {
+        push(ArtworkBinding::artist(
+            &artist.artist,
+            &artist.representative_albums,
+        ));
+    }
+    for genre in loaded.genres(music_folder_id)?.iter() {
+        for binding in ArtworkBinding::genre_slots(&genre.genre, &genre.representative_albums) {
+            push(binding);
+        }
+    }
+    for mood in loaded.moods(music_folder_id)?.iter() {
+        for binding in ArtworkBinding::mood_slots(&mood.mood, &mood.representative_albums) {
+            push(binding);
+        }
+    }
+    for playlist in loaded.playlists()?.iter() {
+        for binding in ArtworkBinding::playlist_slots(
+            &playlist.playlist,
+            &playlist.representative_albums,
+            prefer_server_playlist_covers,
+        ) {
+            push(binding);
+        }
+    }
+    for playlist in loaded.smart_playlists(music_folder_id)?.iter() {
+        for binding in ArtworkBinding::smart_playlist_slots(
+            &playlist.smart_playlist,
+            &playlist.representative_albums,
+        ) {
+            push(binding);
+        }
+    }
+    for track in loaded
+        .track_list(music_folder_id, ::library::TrackSort::Title, false)?
+        .materialize_owned()?
+        .iter()
+    {
+        push(ArtworkBinding::track(track));
+    }
+
+    Ok(bindings.into())
 }
 
 fn defer_route_artwork_settle(
@@ -767,20 +859,49 @@ mod tests {
 
     use gtk::gio;
     use gtk::gio::prelude::ActionExt;
+    use library::{ImageRef, SourceId, TrackId};
 
     use super::{
-        RouteArtworkInteraction, StartupArtworkPrime, cover_decode_size,
+        ArtworkBinding, RouteArtworkInteraction, StartupArtworkPrime, cover_decode_size,
         defer_route_artwork_settle, disconnect_route_artwork_adjustment_handler,
-        replace_route_artwork_signal_handler,
+        replace_route_artwork_signal_handler, source_thumbnail_bindings,
     };
+    use crate::test_support::{album, loaded_source, playlist, playlist_snapshot};
 
     #[test]
-    fn cover_decode_size_follows_the_display_without_exceeding_the_fetched_image() {
-        assert_eq!(cover_decode_size(48, 96, 1), 48);
-        assert_eq!(cover_decode_size(48, 96, 2), 96);
-        assert_eq!(cover_decode_size(160, 256, 1), 160);
-        assert_eq!(cover_decode_size(160, 256, 2), 256);
-        assert_eq!(cover_decode_size(512, 256, 1), 256);
+    fn cover_decode_size_uses_the_surface_scale_without_exceeding_the_fetch_size() {
+        assert_eq!(cover_decode_size(48, 96, 1.0), 48);
+        assert_eq!(cover_decode_size(48, 96, 1.25), 60);
+        assert_eq!(cover_decode_size(48, 96, 1.5), 72);
+        assert_eq!(cover_decode_size(48, 96, 1.75), 84);
+        assert_eq!(cover_decode_size(48, 96, 2.0), 96);
+        assert_eq!(cover_decode_size(160, 256, 2.0), 256);
+        assert_eq!(cover_decode_size(512, 256, 1.0), 256);
+    }
+
+    #[test]
+    fn source_thumbnail_warm_includes_album_and_collection_artwork() {
+        let mut album = album(1, "Album");
+        album.image_ref = Some(ImageRef::new("album-cover", None));
+        let expected_album = ArtworkBinding::album(&album);
+        let mut playlist = playlist(1, "Playlist");
+        playlist.image_ref = Some(ImageRef::new("playlist-cover", None));
+        let expected_playlist = ArtworkBinding::playlist(&playlist, &[], true);
+        let loaded = loaded_source(
+            SourceId::new("source-thumbnail-warm"),
+            vec![album],
+            Vec::new(),
+            vec![playlist_snapshot(
+                playlist,
+                std::iter::empty::<(String, TrackId)>(),
+            )],
+        );
+
+        let bindings =
+            source_thumbnail_bindings(&loaded, None, true).expect("source artwork projection");
+
+        assert!(bindings.contains(&expected_album));
+        assert!(bindings.contains(&expected_playlist));
     }
 
     #[test]
