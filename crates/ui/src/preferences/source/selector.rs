@@ -12,7 +12,7 @@ use crate::runtime::SelectedLibrary;
 use crate::runtime::source::{ConfiguredSources, LocalFolder, SourceSummary};
 use crate::shell::Shell;
 
-use super::{configured_source_display_name, folder_count_text};
+use super::{configured_source_display_name, configured_source_icon_name};
 
 const SOURCE_CHOICE_ACTION_PREFIX: &str = "source-choice-";
 const MUSIC_FOLDER_CHOICE_ACTION_PREFIX: &str = "music-folder-choice-";
@@ -23,6 +23,7 @@ const ADD_LIBRARY_DETAILED_ACTION: &str = "win.add-music-library";
 
 struct SourceMenuContent {
     name: String,
+    icon_name: &'static str,
     selected_source_id: Option<SourceId>,
     sources: Arc<[SourceSummary]>,
     local_folders: Arc<[LocalFolder]>,
@@ -46,7 +47,7 @@ pub(crate) fn install_source_menu_actions(shell: &Rc<Shell>) {
     shell.chrome.window.add_action(&add_library);
 }
 
-pub(crate) fn source_submenu(shell: &Rc<Shell>) -> (String, gio::Menu) {
+pub(crate) fn source_submenu(shell: &Rc<Shell>) -> (String, &'static str, gio::Menu) {
     let configured = shell.source.configured.borrow();
     let selected = shell.library.selected.borrow();
     let content = source_menu_content(&configured, selected.as_ref());
@@ -59,13 +60,24 @@ pub(crate) fn source_submenu(shell: &Rc<Shell>) -> (String, gio::Menu) {
     } else {
         for index in source_order(&content.sources, content.selected_source_id.as_ref()) {
             let source = &content.sources[index];
-            let label = source_menu_label(source, &content.local_folders);
-            sources.append(
-                Some(&label),
-                Some(&format!("win.{SOURCE_CHOICE_ACTION_PREFIX}{index}")),
-            );
+            let label = source_menu_label(source);
+            sources.append_item(&source_menu_item(
+                &label,
+                &format!("win.{SOURCE_CHOICE_ACTION_PREFIX}{index}"),
+                configured_source_icon_name(source),
+            ));
         }
     }
+    sources.append_item(&source_menu_item(
+        &tr("Manage"),
+        MANAGE_LIBRARIES_DETAILED_ACTION,
+        "document-edit-symbolic",
+    ));
+    sources.append_item(&source_menu_item(
+        &tr("Add a new source"),
+        ADD_LIBRARY_DETAILED_ACTION,
+        "list-add-symbolic",
+    ));
     menu.append_section(Some(&tr("Select Source")), &sources);
 
     if !content.music_folders.is_empty() {
@@ -86,15 +98,13 @@ pub(crate) fn source_submenu(shell: &Rc<Shell>) -> (String, gio::Menu) {
         menu.append_section(Some(&tr("Server Library")), &folders);
     }
 
-    let commands = gio::Menu::new();
-    commands.append(Some(&tr("Manage")), Some(MANAGE_LIBRARIES_DETAILED_ACTION));
-    commands.append(
-        Some(&tr("Add music library")),
-        Some(ADD_LIBRARY_DETAILED_ACTION),
-    );
-    menu.append_section(None, &commands);
+    (content.name, content.icon_name, menu)
+}
 
-    (content.name, menu)
+fn source_menu_item(label: &str, action: &str, icon_name: &str) -> gio::MenuItem {
+    let item = gio::MenuItem::new(Some(label), Some(action));
+    item.set_icon(&gio::ThemedIcon::new(icon_name));
+    item
 }
 
 fn source_menu_content(
@@ -112,6 +122,7 @@ fn source_menu_content(
     let Some(source) = active_source else {
         return SourceMenuContent {
             name: tr("No source"),
+            icon_name: "network-server-symbolic",
             selected_source_id,
             sources: Arc::clone(&configured.sources),
             local_folders: Arc::clone(&configured.local_folders),
@@ -120,6 +131,7 @@ fn source_menu_content(
         };
     };
 
+    let icon_name = configured_source_icon_name(&source);
     let music_folders = selected
         .filter(|selected| selected.source_id == source.id)
         .and_then(|selected| selected.loaded.music_folders().ok())
@@ -132,6 +144,7 @@ fn source_menu_content(
     let name = configured_source_display_name(&source);
     SourceMenuContent {
         name,
+        icon_name,
         selected_source_id,
         sources: Arc::clone(&configured.sources),
         local_folders: Arc::clone(&configured.local_folders),
@@ -219,16 +232,8 @@ fn select_music_folder(shell: &Shell, folder_id: Option<MusicFolderId>) {
     shell.products.source.set_music_folder(source_id, folder_id);
 }
 
-fn source_menu_label(source: &SourceSummary, local_folders: &[LocalFolder]) -> String {
-    let title = configured_source_display_name(source);
-    if source.kind == "local" {
-        format!(
-            "{title} · {}",
-            folder_count_text(local_folders.len() as u64)
-        )
-    } else {
-        title
-    }
+fn source_menu_label(source: &SourceSummary) -> String {
+    configured_source_display_name(source)
 }
 
 fn source_order(sources: &[SourceSummary], selected: Option<&SourceId>) -> Vec<usize> {
@@ -288,5 +293,27 @@ mod tests {
             action.state().and_then(|state| state.get::<bool>()),
             Some(true)
         );
+    }
+
+    #[test]
+    fn source_choices_store_their_provider_icon() {
+        let item = source_menu_item("Server", "win.source-choice-0", "network-server-symbolic");
+        let serialized = item
+            .attribute_value("icon", None)
+            .expect("source choice should have an icon");
+        let icon = gio::Icon::deserialize(&serialized).expect("source icon should deserialize");
+
+        assert!(icon.equal(Some(&gio::ThemedIcon::new("network-server-symbolic"))));
+    }
+
+    #[test]
+    fn local_source_menu_label_omits_the_folder_count() {
+        let local = SourceSummary {
+            id: SourceId::new("local"),
+            kind: "local".to_string(),
+            name: "Local".to_string(),
+        };
+
+        assert_eq!(source_menu_label(&local), "Local");
     }
 }

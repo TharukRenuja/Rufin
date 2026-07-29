@@ -1943,10 +1943,10 @@ popover.rufin-primary-menu label.title {
   padding-left: 12px;
 }
 
-popover.rufin-primary-menu modelbutton.source-menu-command label:dir(ltr) {
-  margin-left: -20px;
+modelbutton.rufin-menu-selected:dir(ltr) {
+  box-shadow: inset 2px 0 var(--accent-color);
 }
 
-popover.rufin-primary-menu modelbutton.source-menu-command label:dir(rtl) {
-  margin-right: -20px;
+modelbutton.rufin-menu-selected:dir(rtl) {
+  box-shadow: inset -2px 0 var(--accent-color);
 }

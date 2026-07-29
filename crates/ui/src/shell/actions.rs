@@ -488,6 +488,7 @@ fn show_about_dialog(shell: &Shell) {
             "Thank you for trying out Rufin! If you have problems or suggestions, please open an issue in Github.",
         ))
         .build();
+    dialog.add_link(&tr("Support"), "https://github.com/sponsors/screwys");
     present_light_dismiss_dialog(&dialog, &shell.chrome.window);
 }
 
