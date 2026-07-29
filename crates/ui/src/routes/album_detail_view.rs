@@ -255,10 +255,9 @@ impl Shell {
         let track_content = track_projection.mount_in_scroller(&table_scroller);
         table.append(&track_content);
         content.append(&table);
-        wrapper.append(&detail_route_scroller(
-            self,
-            library_route_inset(content.upcast()),
-        ));
+        wrapper.append(&detail_route_scroller(library_route_inset(
+            content.upcast(),
+        )));
         let route_stack = gtk::Stack::new();
         route_stack.set_hexpand(true);
         route_stack.set_vexpand(true);

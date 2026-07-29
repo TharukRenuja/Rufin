@@ -41,7 +41,6 @@ use super::library_fields::{
     smart_playlist_field, track_field,
 };
 use super::route::Route;
-use super::route_layout::{HOME_ALBUM_GAP, HOME_ALBUM_MIN_SIZE};
 use super::route_shell::restore_single_click_activation_on_primary_press;
 
 pub(super) trait ReusableCollectionGridCell<T>: 'static {
@@ -99,12 +98,20 @@ fn collection_grid_column_limit(
         .saturating_sub(margin_start)
         .saturating_sub(margin_end)
         .max(1);
+    collection_grid_column_count(available_width, minimum_card_width, maximum_columns) as u32
+}
+
+pub(super) fn collection_grid_column_count(
+    available_width: i32,
+    minimum_card_width: i32,
+    maximum_columns: u32,
+) -> usize {
     let minimum_slot_width = minimum_card_width
         .max(1)
         .saturating_add(COLLECTION_GRID_CARD_MARGIN.saturating_mul(2));
-    (available_width / minimum_slot_width)
+    (available_width.max(1) / minimum_slot_width)
         .max(1)
-        .min(maximum_columns.max(1) as i32) as u32
+        .min(maximum_columns.max(1) as i32) as usize
 }
 
 #[derive(Clone)]
@@ -242,7 +249,7 @@ where
     let row = gtk::FlowBox::new();
     row.add_css_class("album-grid");
     row.set_homogeneous(true);
-    row.set_column_spacing(HOME_ALBUM_GAP as u32);
+    row.set_column_spacing(0);
     row.set_min_children_per_line(maximum_columns);
     row.set_max_children_per_line(maximum_columns);
     row.set_selection_mode(gtk::SelectionMode::None);
@@ -261,17 +268,15 @@ where
         match item.borrow::<FixedPageSlot<T>>().clone() {
             FixedPageSlot::Item { position, value } => {
                 let widget = make_widget(position, value);
-                widget.set_width_request(HOME_ALBUM_MIN_SIZE);
-                widget
+                cards::collection_grid_card_inset(&widget, COLLECTION_GRID_MIN_CARD_WIDTH).upcast()
             }
             FixedPageSlot::Empty => {
                 let spacer = gtk::Box::new(gtk::Orientation::Vertical, 0);
-                spacer.set_width_request(HOME_ALBUM_MIN_SIZE);
                 spacer.set_can_target(false);
                 spacer.set_focusable(false);
                 spacer.set_sensitive(false);
                 spacer.set_accessible_role(gtk::AccessibleRole::Presentation);
-                spacer.upcast()
+                cards::collection_grid_card_inset(&spacer, COLLECTION_GRID_MIN_CARD_WIDTH).upcast()
             }
         }
     });
@@ -1774,7 +1779,40 @@ mod tests {
     }
 
     #[test]
-    fn collection_grid_column_limit_uses_the_card_minimum() {
+    fn ordinary_and_album_grids_use_their_card_minimums() {
+        let ordinary_slot = COLLECTION_GRID_MIN_CARD_WIDTH + COLLECTION_GRID_CARD_MARGIN * 2;
+        assert_eq!(
+            collection_grid_column_count(
+                496,
+                COLLECTION_GRID_MIN_CARD_WIDTH,
+                COLLECTION_GRID_MAX_COLUMNS,
+            ),
+            3
+        );
+        assert_eq!(
+            collection_grid_column_count(
+                496,
+                ALBUM_COLLECTION_GRID_MIN_CARD_WIDTH,
+                COLLECTION_GRID_MAX_COLUMNS,
+            ),
+            2
+        );
+        assert_eq!(
+            collection_grid_column_count(
+                ordinary_slot * 3 - 1,
+                COLLECTION_GRID_MIN_CARD_WIDTH,
+                COLLECTION_GRID_MAX_COLUMNS,
+            ),
+            2
+        );
+        assert_eq!(
+            collection_grid_column_count(
+                ordinary_slot * 3,
+                COLLECTION_GRID_MIN_CARD_WIDTH,
+                COLLECTION_GRID_MAX_COLUMNS,
+            ),
+            3
+        );
         assert_eq!(
             collection_grid_column_limit(
                 600,

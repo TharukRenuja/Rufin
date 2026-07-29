@@ -1,5 +1,3 @@
-use std::rc::Rc;
-
 use adw::prelude::*;
 
 use crate::layout::configure_fill_width_clip;
@@ -10,49 +8,17 @@ use crate::shell::layout::route_content_width;
 use super::collections::configure_library_route_scroller;
 
 const ROUTE_SCROLL_OWNER_CLASS: &str = "route-scroll-owner";
-pub(crate) const HOME_ALBUM_GAP: i32 = 14;
 pub(crate) const ROUTE_CONTENT_SIDE_INSET: i32 = 6;
 pub(crate) const ROUTE_SCROLLBAR_LANE_WIDTH: i32 = 9;
-pub(crate) const HOME_ALBUM_MIN_SIZE: i32 = 150;
-const HOME_ALBUM_TARGET_SIZE: i32 = 180;
-const HOME_ALBUM_MAX_SIZE: i32 = 210;
+const DETAIL_SHOWCASE_MIN_COVER_SIZE: i32 = 150;
 const DETAIL_SHOWCASE_TEXT_MIN_WIDTH: i32 = 420;
 const DETAIL_SHOWCASE_COMPACT_WIDTH: i32 = 760;
 const DETAIL_SHOWCASE_MAX_COVER_SIZE: i32 = 224;
-const HOME_ALBUM_MIN_COLUMNS: usize = 1;
-const HOME_ALBUM_MAX_COLUMNS: usize = 12;
 pub(crate) const PRIMARY_ROUTE_MARGIN_START: i32 = ROUTE_CONTENT_SIDE_INSET;
 pub(crate) const PRIMARY_ROUTE_MARGIN_END: i32 = ROUTE_SCROLLBAR_LANE_WIDTH;
 pub(crate) const PRIMARY_ROUTE_HORIZONTAL_INSET: i32 =
     PRIMARY_ROUTE_MARGIN_START + PRIMARY_ROUTE_MARGIN_END;
 pub(crate) const ROUTE_TOP_MARGIN: i32 = 10;
-const HOME_ALBUM_HORIZONTAL_MARGINS: i32 = PRIMARY_ROUTE_HORIZONTAL_INSET;
-
-pub(crate) fn home_album_page_size(width: i32, current_page_size: Option<usize>) -> usize {
-    let width = width.max(1);
-    let mut page_size = current_page_size
-        .unwrap_or_else(|| {
-            let item_width = HOME_ALBUM_TARGET_SIZE + HOME_ALBUM_GAP;
-            ((width + HOME_ALBUM_GAP) / item_width)
-                .clamp(HOME_ALBUM_MIN_COLUMNS as i32, HOME_ALBUM_MAX_COLUMNS as i32)
-                as usize
-        })
-        .clamp(HOME_ALBUM_MIN_COLUMNS, HOME_ALBUM_MAX_COLUMNS);
-
-    while page_size > HOME_ALBUM_MIN_COLUMNS
-        && home_album_raw_card_size(width, page_size) < HOME_ALBUM_MIN_SIZE
-    {
-        page_size -= 1;
-    }
-    while page_size < HOME_ALBUM_MAX_COLUMNS
-        && home_album_raw_card_size(width, page_size) > HOME_ALBUM_MAX_SIZE
-        && home_album_raw_card_size(width, page_size + 1) >= HOME_ALBUM_MIN_SIZE
-    {
-        page_size += 1;
-    }
-
-    page_size
-}
 
 pub(crate) fn home_album_content_width(shell: &Shell) -> i32 {
     home_album_content_width_for(route_content_width(shell))
@@ -74,11 +40,11 @@ pub(crate) fn detail_route_inner_width_for_viewport(
 
 pub(crate) fn detail_showcase_cover_size(width: i32) -> i32 {
     if width < DETAIL_SHOWCASE_TEXT_MIN_WIDTH {
-        width.clamp(72, HOME_ALBUM_MIN_SIZE)
+        width.clamp(72, DETAIL_SHOWCASE_MIN_COVER_SIZE)
     } else if width < DETAIL_SHOWCASE_COMPACT_WIDTH {
-        HOME_ALBUM_MIN_SIZE
+        DETAIL_SHOWCASE_MIN_COVER_SIZE
             + ((width - DETAIL_SHOWCASE_TEXT_MIN_WIDTH)
-                * (DETAIL_SHOWCASE_MAX_COVER_SIZE - HOME_ALBUM_MIN_SIZE)
+                * (DETAIL_SHOWCASE_MAX_COVER_SIZE - DETAIL_SHOWCASE_MIN_COVER_SIZE)
                 / (DETAIL_SHOWCASE_COMPACT_WIDTH - DETAIL_SHOWCASE_TEXT_MIN_WIDTH))
     } else {
         DETAIL_SHOWCASE_MAX_COVER_SIZE
@@ -90,13 +56,7 @@ pub(crate) fn detail_showcase_cover_only(width: i32) -> bool {
 }
 
 pub(crate) fn home_album_content_width_for(width: i32) -> i32 {
-    (width.max(1) - HOME_ALBUM_HORIZONTAL_MARGINS).max(1)
-}
-
-fn home_album_raw_card_size(width: i32, page_size: usize) -> i32 {
-    let page_size = page_size.max(1) as i32;
-    let gaps = HOME_ALBUM_GAP * (page_size - 1);
-    ((width - gaps).max(page_size)) / page_size
+    (width.max(1) - PRIMARY_ROUTE_HORIZONTAL_INSET).max(1)
 }
 
 pub(crate) fn mark_route_scroll_owner(scroller: &gtk::ScrolledWindow) {
@@ -142,11 +102,11 @@ pub(crate) fn route_boundary(view: gtk::Widget) -> gtk::Widget {
     scroller.upcast::<gtk::Widget>()
 }
 
-pub(crate) fn detail_route_scroller(_shell: &Rc<Shell>, content: gtk::Widget) -> gtk::Widget {
+pub(crate) fn detail_route_scroller(content: gtk::Widget) -> gtk::ScrolledWindow {
     let scroller = gtk::ScrolledWindow::new();
     configure_library_route_scroller(&scroller);
     scroller.set_child(Some(&content));
-    route_scroller_widget(scroller)
+    scroller
 }
 
 pub(crate) fn detail_route_wrapper(spacing: i32) -> gtk::Box {
@@ -199,18 +159,6 @@ impl Shell {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn home_grid_page_count_uses_card_size_hysteresis() {
-        let three_min = HOME_ALBUM_MIN_SIZE * 3 + HOME_ALBUM_GAP * 2;
-        let three_max = HOME_ALBUM_MAX_SIZE * 3 + HOME_ALBUM_GAP * 2;
-
-        assert_eq!(home_album_page_size(three_min, Some(3)), 3);
-        assert_eq!(home_album_page_size(three_min - 1, Some(3)), 2);
-        assert_eq!(home_album_page_size(496, Some(3)), 3);
-        assert_eq!(home_album_page_size(three_max, Some(3)), 3);
-        assert_eq!(home_album_page_size(three_max + 3, Some(3)), 4);
-    }
 
     #[test]
     fn detail_inner_width_comes_from_the_route_viewport() {
