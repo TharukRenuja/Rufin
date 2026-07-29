@@ -13,10 +13,7 @@ use std::sync::Arc;
 use crate::{
     AcceptedLibraryChange, AlbumArtwork, MusicFolderId, SmartPlaylistId, Track, TrackActivity,
     TrackId, TrackSort,
-    browse::{
-        COLLECTION_ARTWORK_LIMIT, TrackList, album_artwork, compare_tracks, track_in_scope,
-        track_slots_downloaded,
-    },
+    browse::{COLLECTION_ARTWORK_LIMIT, TrackList, album_artwork, compare_tracks, track_in_scope},
     loaded::{LoadedItems, LoadedState, TrackSlot},
     msgid,
 };
@@ -720,6 +717,19 @@ fn evaluate_playlist(
     }
 }
 
+pub(crate) fn download_track_slots(
+    state: &LoadedState,
+    id: &SmartPlaylistId,
+    music_folder_id: Option<&MusicFolderId>,
+) -> Vec<TrackSlot> {
+    state
+        .smart_playlists
+        .get(id)
+        .map_or_else(Vec::new, |playlist| {
+            evaluate_playlist(Arc::clone(playlist), state, music_folder_id).track_slots
+        })
+}
+
 impl EvaluatedSmartPlaylist {
     fn browse(
         &self,
@@ -1381,13 +1391,7 @@ impl crate::LoadedLibrary {
         music_folder_id: Option<&MusicFolderId>,
     ) -> crate::LoadedLibraryResult<bool> {
         let state = self.read_state()?;
-        let slots = state
-            .smart_playlists
-            .get(id)
-            .map_or_else(Vec::new, |playlist| {
-                evaluate_playlist(Arc::clone(playlist), &state, music_folder_id).track_slots
-            });
-        Ok(track_slots_downloaded(&state, slots, music_folder_id))
+        Ok(state.download_coverage.smart_playlist(id, music_folder_id))
     }
 
     pub(crate) fn replace_smart_playlist(
@@ -1399,6 +1403,7 @@ impl crate::LoadedLibrary {
         state
             .smart_playlists
             .insert(id, playlist_from_record(record));
+        crate::download_coverage::rebuild_smart_playlist_download_coverage(&mut state);
         Ok(())
     }
 
@@ -1451,7 +1456,11 @@ impl crate::LoadedLibrary {
         id: &SmartPlaylistId,
     ) -> crate::LoadedLibraryResult<bool> {
         let mut state = self.write_state()?;
-        Ok(state.smart_playlists.remove(id).is_some())
+        let removed = state.smart_playlists.remove(id).is_some();
+        if removed {
+            crate::download_coverage::rebuild_smart_playlist_download_coverage(&mut state);
+        }
+        Ok(removed)
     }
 }
 

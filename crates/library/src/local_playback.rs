@@ -140,6 +140,12 @@ impl LoadedLibrary {
             .collect::<Vec<_>>();
         files.retain(|track_id, _| state.tracks.get(track_id).is_some());
         state.downloaded_files = files;
+        let downloaded = state
+            .downloaded_files
+            .keys()
+            .cloned()
+            .collect::<HashSet<_>>();
+        state.download_coverage.replace_downloaded(&downloaded);
         Ok(removed)
     }
 
@@ -155,7 +161,13 @@ impl LoadedLibrary {
                 id: track_id.to_string(),
             });
         }
-        state.downloaded_files.insert(track_id, path);
+        let first_download = state
+            .downloaded_files
+            .insert(track_id.clone(), path)
+            .is_none();
+        if first_download {
+            state.download_coverage.set_downloaded(&track_id, true);
+        }
         Ok(())
     }
 
@@ -163,7 +175,12 @@ impl LoadedLibrary {
         &self,
         track_id: &TrackId,
     ) -> crate::LoadedLibraryResult<Option<PathBuf>> {
-        Ok(self.write_state()?.downloaded_files.remove(track_id))
+        let mut state = self.write_state()?;
+        let removed = state.downloaded_files.remove(track_id);
+        if removed.is_some() {
+            state.download_coverage.set_downloaded(track_id, false);
+        }
+        Ok(removed)
     }
 
     pub fn is_downloaded(&self, track_id: &TrackId) -> crate::LoadedLibraryResult<bool> {

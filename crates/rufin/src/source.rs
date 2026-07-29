@@ -1368,11 +1368,11 @@ impl Actor {
             }
         };
         for (rule, tracks) in queued {
-            self.shared.downloads.download(
+            self.shared.downloads.reconcile_rule(
                 selected.source.clone(),
                 Arc::clone(&selected.loaded),
                 settings.directory.clone(),
-                downloads::DownloadSubject::Rule(rule),
+                rule,
                 settings.quality,
                 tracks,
             );
@@ -2189,14 +2189,13 @@ impl Actor {
             .load()
             .ui
             .download_directory(&configuration.source_id);
-        blocking(move || {
-            downloads.attach(
+        downloads
+            .attach(
                 source_for_downloads,
                 &loaded_for_downloads,
                 download_directory,
             )
-        })
-        .await?;
+            .await?;
         let library = self.shared.library.clone();
         let loaded = Arc::clone(&commit.loaded);
         let home_folder = folder.clone();
@@ -3234,14 +3233,13 @@ impl Actor {
             .load()
             .ui
             .download_directory(&configuration.source_id);
-        blocking(move || {
-            downloads.attach(
+        downloads
+            .attach(
                 source_for_downloads,
                 &loaded_for_downloads,
                 download_directory,
             )
-        })
-        .await?;
+            .await?;
         let library = self.shared.library.clone();
         let loaded_for_home = Arc::clone(&loaded);
         let folder_for_home = music_folder_id.clone();

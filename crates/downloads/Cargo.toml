@@ -21,6 +21,7 @@ tokio = { workspace = true, features = ["fs", "rt", "time"] }
 tracing.workspace = true
 
 [dev-dependencies]
+proptest = "1.6.0"
 tempfile.workspace = true
 tokio = { workspace = true, features = ["macros", "rt"] }
 
