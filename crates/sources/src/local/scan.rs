@@ -14,6 +14,7 @@ use walkdir::WalkDir;
 
 use super::artwork;
 use super::cue::{CueFile, CueSheet, CueTrack, parse_cue_sheet};
+use super::format::{AudioFormat, audio_format};
 use super::tags::{self, AudioRead, ScannedTrack};
 use crate::source::{BatchEmitter, SourceReadProgress, SourceReadStage};
 use crate::{SourceError, SourceResult};
@@ -46,6 +47,7 @@ struct Inventory {
 struct InventoryEntry {
     path: PathBuf,
     file: LocalFile,
+    audio_format: Option<&'static AudioFormat>,
 }
 
 #[derive(Clone)]
@@ -173,7 +175,12 @@ pub(super) fn acquire_local_access(
             Some(previous) if local_access_file_matches(&entry.file, previous) => {
                 accepted.insert(path.clone(), (*previous).clone());
             }
-            _ => changed.push(entry.path.clone()),
+            _ => changed.push((
+                entry.path.clone(),
+                entry
+                    .audio_format
+                    .expect("a Local-access audio entry has one format"),
+            )),
         }
     }
     if changed.is_empty() {
@@ -188,8 +195,8 @@ pub(super) fn acquire_local_access(
     let mut completed = 0;
     run_ordered_jobs(
         changed,
-        |path| {
-            let metadata = tags::read_basic_audio(path.clone());
+        |(path, format)| {
+            let metadata = tags::read_basic_audio(path.clone(), format);
             (path, metadata)
         },
         |(path, metadata)| {
@@ -479,7 +486,7 @@ fn inventory_for_file_seeds(
                 ))
             })?;
             let path = entry.path();
-            let Some(kind) = recognized_kind(
+            let Some((kind, audio_format)) = recognized_file(
                 path,
                 entry.file_type().is_dir(),
                 entry.file_type().is_file(),
@@ -494,6 +501,7 @@ fn inventory_for_file_seeds(
             entries.entry(path_text).or_insert_with(|| InventoryEntry {
                 file: local_file(root, &path, kind, &metadata),
                 path,
+                audio_format,
             });
         }
     }
@@ -570,12 +578,12 @@ fn inventory_entries(
                 ))
             })?;
             let path = entry.path();
-            let kind = recognized_kind(
+            let recognized = recognized_file(
                 path,
                 entry.file_type().is_dir(),
                 entry.file_type().is_file(),
             );
-            let Some(kind) = kind.filter(|kind| include(*kind)) else {
+            let Some((kind, audio_format)) = recognized.filter(|(kind, _)| include(*kind)) else {
                 continue;
             };
             let metadata = entry.metadata().map_err(|error| {
@@ -584,9 +592,11 @@ fn inventory_entries(
             let path = path.to_path_buf();
             let path_text = path.to_string_lossy().into_owned();
             let file = local_file(root, &path, kind, &metadata);
-            entries
-                .entry(path_text)
-                .or_insert_with(|| InventoryEntry { path, file });
+            entries.entry(path_text).or_insert_with(|| InventoryEntry {
+                path,
+                file,
+                audio_format,
+            });
             visited += 1;
             if visited % LOCAL_BATCH_SIZE == 0 {
                 progress(SourceReadProgress {
@@ -651,7 +661,9 @@ fn observe_accepted_files(
                 )));
             }
         };
-        let Some(kind) = recognized_kind(&path, metadata.is_dir(), metadata.is_file()) else {
+        let Some((kind, audio_format)) =
+            recognized_file(&path, metadata.is_dir(), metadata.is_file())
+        else {
             continue;
         };
         let current = local_file(Path::new(&accepted.root), &path, kind, &metadata);
@@ -660,9 +672,14 @@ fn observe_accepted_files(
         } else {
             current
         };
-        inventory
-            .entries
-            .insert(accepted.path.clone(), InventoryEntry { path, file });
+        inventory.entries.insert(
+            accepted.path.clone(),
+            InventoryEntry {
+                path,
+                file,
+                audio_format,
+            },
+        );
     }
     let entries = std::mem::take(&mut inventory.entries);
     let accepted_audio_counts = std::mem::take(&mut inventory.audio_counts_by_directory);
@@ -1625,7 +1642,14 @@ fn read_audio(inventory: &Inventory, path: &Path) -> AudioRead {
         .parent()
         .and_then(|directory| inventory.artwork_by_directory.get(directory))
         .cloned();
-    tags::read_audio(path.to_path_buf(), sidecar, file_revision(&entry.file))
+    tags::read_audio(
+        path.to_path_buf(),
+        entry
+            .audio_format
+            .expect("a queued Local audio path has one format"),
+        sidecar,
+        file_revision(&entry.file),
+    )
 }
 
 fn file_revision(file: &LocalFile) -> String {
@@ -2100,28 +2124,22 @@ fn require_root(root: &Path) -> SourceResult<()> {
     Ok(())
 }
 
-fn recognized_kind(path: &Path, is_directory: bool, is_file: bool) -> Option<LocalFileKind> {
+fn recognized_file(
+    path: &Path,
+    is_directory: bool,
+    is_file: bool,
+) -> Option<(LocalFileKind, Option<&'static AudioFormat>)> {
     if is_directory {
-        Some(LocalFileKind::Directory)
-    } else if is_file && is_audio(path) {
-        Some(LocalFileKind::Audio)
+        Some((LocalFileKind::Directory, None))
+    } else if is_file && let Some(format) = audio_format(path) {
+        Some((LocalFileKind::Audio, Some(format)))
     } else if is_file && is_cue(path) {
-        Some(LocalFileKind::Cue)
+        Some((LocalFileKind::Cue, None))
     } else if is_file && artwork::supported_image(path) {
-        Some(LocalFileKind::Image)
+        Some((LocalFileKind::Image, None))
     } else {
         None
     }
-}
-
-fn is_audio(path: &Path) -> bool {
-    path.extension()
-        .and_then(|extension| extension.to_str())
-        .is_some_and(|extension| {
-            ["mp3", "flac", "m4a", "wav", "ogg", "opus", "mp4", "mka"]
-                .iter()
-                .any(|candidate| extension.eq_ignore_ascii_case(candidate))
-        })
 }
 
 fn is_cue(path: &Path) -> bool {

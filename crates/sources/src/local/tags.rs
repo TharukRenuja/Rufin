@@ -12,6 +12,7 @@ use lofty::probe::Probe;
 use lofty::tag::{ItemKey, Tag};
 
 use super::artwork;
+use super::format::{ArtworkReader, AudioFormat, MetadataReader};
 
 #[derive(Clone, Debug)]
 pub(super) struct ScannedTrack {
@@ -39,20 +40,41 @@ pub(super) struct BasicAudioMetadata {
     pub(super) duration_seconds: u32,
 }
 
+struct MetadataArtist {
+    name: String,
+    musicbrainz_id: Option<String>,
+}
+
+struct AudioMetadata {
+    basic: BasicAudioMetadata,
+    album_artist: String,
+    artists: Vec<MetadataArtist>,
+    album_artists: Vec<MetadataArtist>,
+    genres: Vec<String>,
+    moods: Vec<String>,
+    year: u16,
+    comment: Option<String>,
+    bpm: Option<u16>,
+    musicbrainz_album_id: Option<String>,
+    musicbrainz_release_group_id: Option<String>,
+    musicbrainz_recording_id: Option<String>,
+    musicbrainz_release_track_id: Option<String>,
+    release_types: Vec<String>,
+    is_compilation: Option<bool>,
+    local_artwork: Option<LocalArtworkRef>,
+}
+
 /// Reads only the fields used to match a remote track to a local file.
 ///
 /// Local-access discovery deliberately skips pictures, MusicBrainz fields,
 /// relationships, and Rufin identities. A readable file with invalid metadata
 /// still has a useful filename-based match candidate.
-pub(super) fn read_basic_audio(path: PathBuf) -> Option<BasicAudioMetadata> {
+pub(super) fn read_basic_audio(path: PathBuf, format: &AudioFormat) -> Option<BasicAudioMetadata> {
     fs::File::open(&path).ok()?;
-    let tagged_file = Probe::open(&path)
-        .and_then(|probe| {
-            probe
-                .options(ParseOptions::new().read_cover_art(false))
-                .read()
-        })
-        .ok();
+    let tagged_file = match format.metadata_reader() {
+        Some(MetadataReader::Lofty) => read_lofty(&path, false),
+        None => None,
+    };
     let tag = tagged_file
         .as_ref()
         .and_then(|file| file.primary_tag().or_else(|| file.first_tag()));
@@ -70,6 +92,7 @@ pub(super) fn read_basic_audio(path: PathBuf) -> Option<BasicAudioMetadata> {
 
 pub(super) fn read_audio(
     path: PathBuf,
+    format: &AudioFormat,
     sidecar: Option<LocalArtworkRef>,
     revision: String,
 ) -> AudioRead {
@@ -80,26 +103,133 @@ pub(super) fn read_audio(
         };
     }
 
-    let tagged_file = Probe::open(&path)
-        .and_then(|probe| {
-            probe
-                .options(ParseOptions::new().read_cover_art(sidecar.is_none()))
-                .read()
-        })
-        .ok();
+    let tagged_file = match format.metadata_reader() {
+        Some(MetadataReader::Lofty) => read_lofty(
+            &path,
+            sidecar.is_none() && format.artwork_reader() == Some(ArtworkReader::Lofty),
+        ),
+        None => None,
+    };
     let state = if tagged_file.is_some() {
         LocalReadState::Parsed
     } else {
         LocalReadState::MetadataFallback
     };
-    let tag = tagged_file
-        .as_ref()
-        .and_then(|file| file.primary_tag().or_else(|| file.first_tag()));
-    let properties = tagged_file.as_ref().map(|file| file.properties());
-    let duration_seconds = properties
-        .map(|properties| properties.duration().as_secs().min(u64::from(u32::MAX)) as u32)
+    let metadata = audio_metadata_from_lofty(&path, tagged_file.as_ref(), sidecar, revision);
+    AudioRead {
+        scanned: Some(scanned_track(&path, metadata)),
+        state,
+    }
+}
+
+fn audio_metadata_from_lofty(
+    path: &Path,
+    tagged_file: Option<&lofty::file::TaggedFile>,
+    sidecar: Option<LocalArtworkRef>,
+    revision: String,
+) -> AudioMetadata {
+    let tag = tagged_file.and_then(|file| file.primary_tag().or_else(|| file.first_tag()));
+    let duration_seconds = tagged_file
+        .map(|file| {
+            file.properties()
+                .duration()
+                .as_secs()
+                .min(u64::from(u32::MAX)) as u32
+        })
         .unwrap_or_default();
-    let basic = basic_audio_metadata(&path, tag, duration_seconds);
+    let basic = basic_audio_metadata(path, tag, duration_seconds);
+    let artist = &basic.artist;
+    let album_artist = tag
+        .and_then(|tag| tag.get_string(ItemKey::AlbumArtist))
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToString::to_string)
+        .unwrap_or_else(|| artist.clone());
+    let artist_names = artist_names(tag, artist);
+    let artist_mbids = aligned_mbids(&artist_names, tag_mbids(tag, ItemKey::MusicBrainzArtistId));
+    let artists = artist_names
+        .into_iter()
+        .zip(artist_mbids)
+        .map(|(name, musicbrainz_id)| MetadataArtist {
+            name,
+            musicbrainz_id,
+        })
+        .collect();
+    let album_artist_names = split_names(&album_artist);
+    let album_artist_mbids = aligned_mbids(
+        &album_artist_names,
+        tag_mbids(tag, ItemKey::MusicBrainzReleaseArtistId),
+    );
+    let album_artists = album_artist_names
+        .into_iter()
+        .zip(album_artist_mbids)
+        .map(|(name, musicbrainz_id)| MetadataArtist {
+            name,
+            musicbrainz_id,
+        })
+        .collect();
+    let genres = tag
+        .and_then(|tag| tag.genre().map(|value| split_names(&value)))
+        .unwrap_or_default();
+    let moods = tag_values_optional(tag, ItemKey::Mood)
+        .into_iter()
+        .flat_map(|value| split_names(&value))
+        .collect();
+    let musicbrainz_album_id = tag.and_then(|tag| tag_mbid(tag, ItemKey::MusicBrainzReleaseId));
+    let musicbrainz_release_group_id =
+        tag.and_then(|tag| tag_mbid(tag, ItemKey::MusicBrainzReleaseGroupId));
+    let release_types = album_release_types(tag);
+    let is_compilation = album_compilation(tag, &release_types);
+    let local_artwork = sidecar
+        .or_else(|| tagged_file.and_then(|file| embedded_artwork(file, tag, path, revision)));
+    AudioMetadata {
+        basic,
+        album_artist,
+        artists,
+        album_artists,
+        genres,
+        moods,
+        year: tag
+            .and_then(|tag| tag.date())
+            .map(|date| date.year)
+            .unwrap_or_default(),
+        comment: tag
+            .and_then(|tag| tag.get_string(ItemKey::Comment))
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(ToString::to_string),
+        bpm: tag_bpm(tag),
+        musicbrainz_album_id,
+        musicbrainz_release_group_id,
+        musicbrainz_recording_id: tag
+            .and_then(|tag| tag_mbid(tag, ItemKey::MusicBrainzRecordingId)),
+        musicbrainz_release_track_id: tag
+            .and_then(|tag| tag_mbid(tag, ItemKey::MusicBrainzTrackId)),
+        release_types,
+        is_compilation,
+        local_artwork,
+    }
+}
+
+fn scanned_track(path: &Path, metadata: AudioMetadata) -> ScannedTrack {
+    let AudioMetadata {
+        basic,
+        album_artist,
+        artists,
+        album_artists,
+        genres,
+        moods,
+        year,
+        comment,
+        bpm,
+        musicbrainz_album_id,
+        musicbrainz_release_group_id,
+        musicbrainz_recording_id,
+        musicbrainz_release_track_id,
+        release_types,
+        is_compilation,
+        local_artwork,
+    } = metadata;
     let BasicAudioMetadata {
         title,
         album,
@@ -108,54 +238,28 @@ pub(super) fn read_audio(
         track_number,
         duration_seconds,
     } = basic;
-    let album_artist = tag
-        .and_then(|tag| tag.get_string(ItemKey::AlbumArtist))
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(ToString::to_string)
-        .unwrap_or_else(|| artist.clone());
-
-    let artist_names = artist_names(tag, &artist);
-    let artist_mbids = aligned_mbids(&artist_names, tag_mbids(tag, ItemKey::MusicBrainzArtistId));
-    let artists = artist_names
-        .iter()
-        .zip(artist_mbids.iter())
-        .map(|(name, mbid)| artist_credit(name, mbid.as_deref()))
+    let artists = artists
+        .into_iter()
+        .map(|artist| artist_credit(&artist.name, artist.musicbrainz_id.as_deref()))
+        .collect();
+    let album_artists = album_artists
+        .into_iter()
+        .map(|artist| artist_credit(&artist.name, artist.musicbrainz_id.as_deref()))
         .collect::<Vec<_>>();
-    let album_artist_names = split_names(&album_artist);
-    let album_artist_mbids = aligned_mbids(
-        &album_artist_names,
-        tag_mbids(tag, ItemKey::MusicBrainzReleaseArtistId),
-    );
-    let album_artists = album_artist_names
-        .iter()
-        .zip(album_artist_mbids.iter())
-        .map(|(name, mbid)| artist_credit(name, mbid.as_deref()))
-        .collect::<Vec<_>>();
-
-    let genres = tag
-        .and_then(|tag| tag.genre().map(|value| split_names(&value)))
-        .unwrap_or_default()
+    let genres = genres
         .into_iter()
         .map(|name| GenreCredit {
             id: local_id("genre", name.trim()),
             name,
         })
         .collect::<Vec<_>>();
-    let moods = tag_values_optional(tag, ItemKey::Mood)
+    let moods = moods
         .into_iter()
-        .flat_map(|value| split_names(&value))
         .map(|name| MoodCredit {
             id: library::MoodId::new(name.trim().to_string()),
             name,
         })
         .collect::<Vec<_>>();
-
-    let musicbrainz_album_id = tag.and_then(|tag| tag_mbid(tag, ItemKey::MusicBrainzReleaseId));
-    let musicbrainz_release_group_id =
-        tag.and_then(|tag| tag_mbid(tag, ItemKey::MusicBrainzReleaseGroupId));
-    let release_types = album_release_types(tag);
-    let is_compilation = album_compilation(tag, &release_types);
     let path_text = path.to_string_lossy().into_owned();
     let album_id = album_id(
         &album_artists,
@@ -163,71 +267,63 @@ pub(super) fn read_audio(
         musicbrainz_album_id.as_deref(),
         None,
     );
-    let local_artwork = sidecar.or_else(|| {
-        tagged_file
-            .as_ref()
-            .and_then(|file| embedded_artwork(file, tag, &path, revision))
-    });
-    let year = tag
-        .and_then(|tag| tag.date())
-        .map(|date| date.year)
-        .unwrap_or_default();
-    AudioRead {
-        scanned: Some(ScannedTrack {
-            track: Track::new(TrackData {
-                id: track_id(&path),
-                album_id: Some(album_id),
-                title,
-                artist,
-                album,
-                album_artwork: None,
-                year,
-                release_date: None,
-                date_added: None,
-                last_played: None,
-                play_count: None,
-                user_rating: None,
-                duration_seconds,
-                favorite: false,
-                disc_number,
-                track_number,
-                image_ref: None,
-                local_artwork,
-                musicbrainz_recording_id: tag
-                    .and_then(|tag| tag_mbid(tag, ItemKey::MusicBrainzRecordingId)),
-                musicbrainz_release_track_id: tag
-                    .and_then(|tag| tag_mbid(tag, ItemKey::MusicBrainzTrackId)),
-                source_path: Some(path_text),
-                cue: None,
-                source_format: path
-                    .extension()
-                    .and_then(|extension| extension.to_str())
-                    .map(str::trim)
-                    .filter(|value| !value.is_empty())
-                    .map(ToString::to_string),
-                comment: tag
-                    .and_then(|tag| tag.get_string(ItemKey::Comment))
-                    .map(str::trim)
-                    .filter(|value| !value.is_empty())
-                    .map(ToString::to_string),
-                skip_count: None,
-                bpm: tag_bpm(tag),
-                relations: TrackRelations {
-                    artists,
-                    album_artists,
-                    genres,
-                    moods,
-                    music_folders: Vec::new(),
-                },
-            }),
-            album_artist,
-            release_types,
-            is_compilation,
-            musicbrainz_album_id,
-            musicbrainz_release_group_id,
+    ScannedTrack {
+        track: Track::new(TrackData {
+            id: track_id(path),
+            album_id: Some(album_id),
+            title,
+            artist,
+            album,
+            album_artwork: None,
+            year,
+            release_date: None,
+            date_added: None,
+            last_played: None,
+            play_count: None,
+            user_rating: None,
+            duration_seconds,
+            favorite: false,
+            disc_number,
+            track_number,
+            image_ref: None,
+            local_artwork,
+            musicbrainz_recording_id,
+            musicbrainz_release_track_id,
+            source_path: Some(path_text),
+            cue: None,
+            source_format: path
+                .extension()
+                .and_then(|extension| extension.to_str())
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(ToString::to_string),
+            comment,
+            skip_count: None,
+            bpm,
+            relations: TrackRelations {
+                artists,
+                album_artists,
+                genres,
+                moods,
+                music_folders: Vec::new(),
+            },
         }),
-        state,
+        album_artist,
+        release_types,
+        is_compilation,
+        musicbrainz_album_id,
+        musicbrainz_release_group_id,
     }
+}
+
+fn read_lofty(path: &Path, read_cover_art: bool) -> Option<lofty::file::TaggedFile> {
+    Probe::open(path)
+        .and_then(|probe| {
+            probe
+                .options(ParseOptions::new().read_cover_art(read_cover_art))
+                .read()
+        })
+        .ok()
 }
 
 fn basic_audio_metadata(
