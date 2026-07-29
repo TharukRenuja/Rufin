@@ -19,12 +19,11 @@ use library::{
     PlaybackOccurrenceId, PlaybackProgressUpdate, PlaybackStateUpdate, SourceId, Track, TrackId,
 };
 use playback::{
-    LoadedPlayRequest, OccurrenceId, Playback, PlaybackProjection, PlaybackUpdate,
+    LoadedPlayRequest, OccurrenceId, Playback, PlaybackBackend, PlaybackProjection, PlaybackUpdate,
     QueueCommandPort, QueuePage, QueuePageQuery, QueueReorderRequest, RadioCommandPort,
     RadioPlayRequest, RandomPlayRequest, RepeatMode, RunId, SessionCommand, SessionEffect,
     SourceReportFact, SourceReportPhase, SourceSessionEpoch, TransportCommandPort,
 };
-use playback_gstreamer::GStreamerPlaybackBackend;
 use scrobbling::Scrobbler;
 use sources::{NativeSourceResult, PlaybackReport, PlaybackReportKind, Source, StreamDescriptor};
 use tracing::{debug, warn};
@@ -677,10 +676,11 @@ pub(crate) struct PlaybackOwner {
     monotonic_origin: Instant,
     play_id_prefix: String,
     next_instance: AtomicU64,
+    start_backend: Box<dyn Fn() -> Result<Box<dyn PlaybackBackend>, String> + Send + Sync>,
 }
 
 impl PlaybackOwner {
-    pub(crate) fn new(
+    pub(crate) fn new<StartBackend>(
         library: Library,
         settings: SettingsFile,
         runtime: tokio::runtime::Handle,
@@ -690,7 +690,11 @@ impl PlaybackOwner {
         lyrics: Arc<LyricsService>,
         discord: Arc<desktop_integration::Discord>,
         scrobbler: Arc<Scrobbler>,
-    ) -> Arc<Self> {
+        start_backend: StartBackend,
+    ) -> Arc<Self>
+    where
+        StartBackend: Fn() -> Result<Box<dyn PlaybackBackend>, String> + Send + Sync + 'static,
+    {
         let persistence = PlaybackPersistence::new(PersistenceTarget {
             library: library.clone(),
             settings: settings.clone(),
@@ -714,6 +718,7 @@ impl PlaybackOwner {
             monotonic_origin: Instant::now(),
             play_id_prefix: random_identity(),
             next_instance: AtomicU64::new(1),
+            start_backend: Box::new(start_backend),
         });
         owner.update_discord_settings();
         owner
@@ -761,7 +766,7 @@ impl PlaybackOwner {
             stored.ui.playback,
             stored.ui.auto_dj_enabled,
             usize::from(stored.ui.auto_dj_refill_threshold),
-            Box::new(GStreamerPlaybackBackend::new().map_err(string_error)?),
+            (self.start_backend)()?,
             Arc::new(move || {
                 clock_owner
                     .upgrade()
