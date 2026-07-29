@@ -167,6 +167,14 @@ impl PreferencesPageKind {
     }
 }
 
+struct PreferencesSearchItem {
+    page: PreferencesPageKind,
+    title: String,
+    context: String,
+    searchable_text: String,
+    target: gtk::glib::WeakRef<gtk::Widget>,
+}
+
 #[derive(Clone)]
 pub(crate) struct PreferencesNavigationControls {
     back: gtk::Button,
@@ -219,6 +227,14 @@ impl PreferencesNavigationControls {
     fn update_visibility(&self) {
         self.back
             .set_visible(self.page_allows_back.get() && self.nested_page_visible.get());
+    }
+
+    fn return_to_root(&self) {
+        if let Some(navigation) = self.navigation.borrow().as_ref() {
+            while navigation.pop() {}
+        }
+        self.nested_page_visible.set(false);
+        self.update_visibility();
     }
 }
 
@@ -274,9 +290,6 @@ fn rebuild_preferences_dialog(
     dialog.set_title(&tr("Preferences"));
 
     let toolbar = adw::ToolbarView::new();
-    let header = adw::HeaderBar::new();
-    header.set_title_widget(Some(&adw::WindowTitle::new(&tr("Preferences"), "")));
-    toolbar.add_top_bar(&header);
 
     let stack = adw::ViewStack::builder()
         .hexpand(true)
@@ -287,13 +300,56 @@ fn rebuild_preferences_dialog(
         .stack(&stack)
         .build();
     let navigation_controls = PreferencesNavigationControls::new();
+    let search_button = gtk::ToggleButton::builder()
+        .icon_name("system-search-symbolic")
+        .tooltip_text(tr("Search"))
+        .build();
+    search_button.add_css_class("flat");
+    search_button.add_css_class("preferences-search-button");
+    search_button.update_property(&[gtk::accessible::Property::Label(&tr("Search"))]);
+    let start_controls = gtk::Box::new(gtk::Orientation::Horizontal, 4);
+    start_controls.append(&search_button);
+    start_controls.append(&navigation_controls.back);
+    let close_button = gtk::Button::from_icon_name("window-close-symbolic");
+    close_button.add_css_class("flat");
+    close_button.add_css_class("preferences-dialog-close");
+    close_button.set_tooltip_text(Some(&tr("Close")));
+    close_button.update_property(&[gtk::accessible::Property::Label(&tr("Close"))]);
+    let dialog_for_close = dialog.downgrade();
+    close_button.connect_clicked(move |_| {
+        if let Some(dialog) = dialog_for_close.upgrade() {
+            dialog.close();
+        }
+    });
     let switcher_bar = gtk::CenterBox::new();
     switcher_bar.add_css_class("preferences-tab-bar");
     switcher_bar.set_hexpand(true);
-    switcher_bar.set_start_widget(Some(&navigation_controls.back));
+    switcher_bar.set_start_widget(Some(&start_controls));
     switcher_bar.set_center_widget(Some(&switcher));
+    switcher_bar.set_end_widget(Some(&close_button));
     toolbar.add_top_bar(&switcher_bar);
-    toolbar.set_content(Some(&stack));
+
+    let search_entry = gtk::SearchEntry::builder()
+        .placeholder_text(tr("Search preferences"))
+        .hexpand(true)
+        .build();
+    let search_bar = gtk::SearchBar::new();
+    search_bar.connect_entry(&search_entry);
+    search_bar.set_child(Some(&search_entry));
+    toolbar.add_top_bar(&search_bar);
+
+    let search_results = adw::PreferencesPage::new();
+    let search_results_group = adw::PreferencesGroup::new();
+    search_results.add(&search_results_group);
+    let content_stack = gtk::Stack::builder()
+        .hexpand(true)
+        .vexpand(true)
+        .transition_type(gtk::StackTransitionType::Crossfade)
+        .build();
+    content_stack.add_named(&stack, Some("pages"));
+    content_stack.add_named(&search_results, Some("search"));
+    content_stack.set_visible_child_name("pages");
+    toolbar.set_content(Some(&content_stack));
 
     let page_slots = Rc::new(
         PreferencesPageKind::ALL
@@ -345,8 +401,189 @@ fn rebuild_preferences_dialog(
         );
     });
 
+    let search_items = Rc::new(RefCell::new(Vec::<PreferencesSearchItem>::new()));
+    let rendered_search_rows = Rc::new(RefCell::new(Vec::<gtk::Widget>::new()));
+    let search_shell = Rc::clone(shell);
+    let search_dialog = dialog.downgrade();
+    let search_slots = Rc::clone(&page_slots);
+    let search_navigation = navigation_controls.clone();
+    let search_items_for_button = Rc::clone(&search_items);
+    let search_entry_for_button = search_entry.clone();
+    let search_bar_for_button = search_bar.clone();
+    search_button.connect_toggled(move |button| {
+        let enabled = button.is_active();
+        search_bar_for_button.set_search_mode(enabled);
+        if !enabled {
+            search_entry_for_button.set_text("");
+            return;
+        }
+        let Some(search_dialog) = search_dialog.upgrade() else {
+            return;
+        };
+        for kind in PreferencesPageKind::ALL {
+            ensure_preferences_page(
+                &search_shell,
+                &search_dialog,
+                &search_slots,
+                &search_navigation,
+                kind,
+                false,
+                false,
+            );
+        }
+        if search_items_for_button.borrow().is_empty() {
+            let mut items = search_items_for_button.borrow_mut();
+            for (kind, slot) in search_slots.iter() {
+                collect_preferences_search_items(slot.upcast_ref(), *kind, "", &mut items);
+            }
+        }
+        search_entry_for_button.grab_focus();
+    });
+
+    let search_button_for_bar = search_button.clone();
+    let content_stack_for_bar = content_stack.clone();
+    search_bar.connect_search_mode_enabled_notify(move |bar| {
+        search_button_for_bar.set_active(bar.is_search_mode());
+        if !bar.is_search_mode() {
+            content_stack_for_bar.set_visible_child_name("pages");
+        }
+    });
+
+    let search_items_for_entry = Rc::clone(&search_items);
+    let rendered_rows_for_entry = Rc::clone(&rendered_search_rows);
+    let results_group_for_entry = search_results_group.clone();
+    let page_stack_for_entry = stack.clone();
+    let content_stack_for_entry = content_stack.clone();
+    let search_bar_for_entry = search_bar.clone();
+    let navigation_for_entry = navigation_controls.clone();
+    search_entry.connect_search_changed(move |entry| {
+        for row in rendered_rows_for_entry.borrow_mut().drain(..) {
+            results_group_for_entry.remove(&row);
+        }
+        let query = entry.text();
+        if query.trim().is_empty() {
+            content_stack_for_entry.set_visible_child_name("pages");
+            return;
+        }
+        content_stack_for_entry.set_visible_child_name("search");
+        let mut matched = false;
+        for item in search_items_for_entry
+            .borrow()
+            .iter()
+            .filter(|item| preferences_search_matches(&item.searchable_text, query.as_str()))
+        {
+            matched = true;
+            let row = adw::ActionRow::builder()
+                .title(&item.title)
+                .subtitle(&item.context)
+                .activatable(true)
+                .build();
+            row.add_prefix(&gtk::Image::from_icon_name(item.page.icon_name()));
+            row.add_suffix(&gtk::Image::from_icon_name("go-next-symbolic"));
+            let page = item.page;
+            let target = item.target.clone();
+            let page_stack = page_stack_for_entry.clone();
+            let content_stack = content_stack_for_entry.clone();
+            let search_bar = search_bar_for_entry.clone();
+            let navigation = navigation_for_entry.clone();
+            row.connect_activated(move |_| {
+                navigation.return_to_root();
+                page_stack.set_visible_child_name(page.name());
+                content_stack.set_visible_child_name("pages");
+                search_bar.set_search_mode(false);
+                let target = target.clone();
+                gtk::glib::idle_add_local_once(move || {
+                    if let Some(target) = target.upgrade() {
+                        target.grab_focus();
+                    }
+                });
+            });
+            results_group_for_entry.add(&row);
+            rendered_rows_for_entry
+                .borrow_mut()
+                .push(row.upcast::<gtk::Widget>());
+        }
+        if !matched {
+            let row = adw::ActionRow::builder()
+                .title(tr(r"No results ¯\_(°╭╮°)_/¯"))
+                .build();
+            results_group_for_entry.add(&row);
+            rendered_rows_for_entry
+                .borrow_mut()
+                .push(row.upcast::<gtk::Widget>());
+        }
+    });
+
     dialog.set_child(Some(&toolbar));
 }
+
+fn collect_preferences_search_items(
+    widget: &gtk::Widget,
+    page: PreferencesPageKind,
+    group_title: &str,
+    items: &mut Vec<PreferencesSearchItem>,
+) {
+    let group_title = widget
+        .clone()
+        .downcast::<adw::PreferencesGroup>()
+        .ok()
+        .map(|group| group.title().to_string())
+        .filter(|title| !title.is_empty())
+        .unwrap_or_else(|| group_title.to_owned());
+
+    if let Ok(row) = widget.clone().downcast::<adw::PreferencesRow>() {
+        let title = row.title().to_string();
+        if !title.is_empty() {
+            let page_title = page.title();
+            let context = if group_title.is_empty() {
+                page_title.clone()
+            } else {
+                format!("{page_title} · {group_title}")
+            };
+            let subtitle = row
+                .clone()
+                .downcast::<adw::ActionRow>()
+                .ok()
+                .and_then(|row| row.subtitle())
+                .unwrap_or_default();
+            items.push(PreferencesSearchItem {
+                page,
+                searchable_text: format!("{title} {subtitle} {context}").to_lowercase(),
+                title,
+                context,
+                target: widget.downgrade(),
+            });
+        }
+    }
+
+    let mut child = widget.first_child();
+    while let Some(current) = child {
+        child = current.next_sibling();
+        collect_preferences_search_items(&current, page, &group_title, items);
+    }
+}
+
+fn preferences_search_matches(searchable_text: &str, query: &str) -> bool {
+    query
+        .split_whitespace()
+        .map(str::to_lowercase)
+        .all(|term| searchable_text.contains(&term))
+}
+
+#[cfg(test)]
+mod search_tests {
+    use super::preferences_search_matches;
+
+    #[test]
+    fn preference_search_matches_terms_across_row_context() {
+        let searchable = "show tray icon app window general";
+
+        assert!(preferences_search_matches(searchable, "tray general"));
+        assert!(preferences_search_matches(searchable, "GENERAL ICON"));
+        assert!(!preferences_search_matches(searchable, "tray playback"));
+    }
+}
+
 fn ensure_preferences_page(
     shell: &Rc<Shell>,
     dialog: &adw::Dialog,

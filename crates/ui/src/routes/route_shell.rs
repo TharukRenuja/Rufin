@@ -49,6 +49,7 @@ pub(crate) struct LibraryPageShellOptions {
     pub(crate) empty: bool,
     pub(crate) empty_body: &'static str,
     pub(crate) search: gtk::SearchEntry,
+    pub(crate) has_visible_results: Rc<dyn Fn() -> bool>,
     pub(crate) content: gtk::Widget,
 }
 
@@ -57,6 +58,9 @@ pub(crate) struct LibraryPageShell {
     widget: gtk::Widget,
     contents: gtk::Stack,
     toolbar: LibraryToolbarProjection,
+    search: gtk::SearchEntry,
+    has_visible_results: Rc<dyn Fn() -> bool>,
+    source_empty: Rc<Cell<bool>>,
 }
 
 impl LibraryPageShell {
@@ -81,8 +85,16 @@ impl LibraryPageShell {
     }
 
     pub(crate) fn set_empty(&self, empty: bool) {
-        self.contents
-            .set_visible_child_name(if empty { "empty" } else { "content" });
+        self.source_empty.set(empty);
+        self.sync_content_state();
+    }
+
+    fn sync_content_state(&self) {
+        self.contents.set_visible_child_name(library_page_child(
+            self.source_empty.get(),
+            self.search.text().as_str(),
+            (self.has_visible_results)(),
+        ));
     }
 }
 
@@ -135,6 +147,7 @@ impl Shell {
             empty,
             empty_body,
             search,
+            has_visible_results,
             content,
         } = options;
         let wrapper = gtk::Box::new(gtk::Orientation::Vertical, 14);
@@ -154,15 +167,32 @@ impl Shell {
             &library_route_inset(self.route_empty_view(empty_body)),
             Some("empty"),
         );
+        stack.add_named(
+            &library_route_inset(self.route_empty_view(msgid(r"No results ¯\_(°╭╮°)_/¯"))),
+            Some("search-empty"),
+        );
         stack.add_named(&content, Some("content"));
-        stack.set_visible_child_name(if empty { "empty" } else { "content" });
+        stack.set_visible_child_name(library_page_child(
+            empty,
+            search.text().as_str(),
+            has_visible_results(),
+        ));
         wrapper.append(&stack);
 
-        LibraryPageShell {
+        let source_empty = Rc::new(Cell::new(empty));
+        let page_shell = LibraryPageShell {
             widget: wrapper.upcast(),
             contents: stack,
             toolbar,
-        }
+            search: search.clone(),
+            has_visible_results,
+            source_empty,
+        };
+        let search_shell = page_shell.clone();
+        search.connect_search_changed(move |_| {
+            search_shell.sync_content_state();
+        });
+        page_shell
     }
 
     pub(crate) fn set_route_search(&self, search: Option<gtk::SearchEntry>) {
@@ -558,6 +588,29 @@ impl Shell {
             .child(&toolbar)
             .build();
         present_light_dismiss_dialog(&dialog, &self.chrome.window);
+    }
+}
+
+fn library_page_child(source_empty: bool, query: &str, has_visible_results: bool) -> &'static str {
+    if source_empty {
+        "empty"
+    } else if !query.trim().is_empty() && !has_visible_results {
+        "search-empty"
+    } else {
+        "content"
+    }
+}
+
+#[cfg(test)]
+mod search_empty_tests {
+    use super::library_page_child;
+
+    #[test]
+    fn library_page_only_shows_search_empty_for_an_unmatched_query() {
+        assert_eq!(library_page_child(false, "missing", false), "search-empty");
+        assert_eq!(library_page_child(false, "", false), "content");
+        assert_eq!(library_page_child(false, "found", true), "content");
+        assert_eq!(library_page_child(true, "missing", false), "empty");
     }
 }
 

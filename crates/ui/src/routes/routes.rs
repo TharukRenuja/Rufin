@@ -122,6 +122,10 @@ impl TrackListProjection {
         self.model.source_is_empty()
     }
 
+    fn has_visible_results(&self) -> bool {
+        self.model.visible_count() != 0
+    }
+
     pub(crate) fn source_play_request(
         &self,
         placement: playback::QueuePlacement,
@@ -251,11 +255,13 @@ impl Shell {
         models.clear_inactive(settings.layout);
         let content_ms = content_started.elapsed().as_millis() as u64;
         let shell_started = Instant::now();
+        let visible_results = Rc::clone(&visible);
         let page_shell = self.library_page_shell(LibraryPageShellOptions {
             key,
             empty: source_albums.borrow().is_empty(),
             empty_body: msgid("Cached entries will appear here after sync finishes"),
             search: search.clone(),
+            has_visible_results: Rc::new(move || !visible_results.borrow().is_empty()),
             content: content.scrolling_widget(),
         });
         let shell_ms = shell_started.elapsed().as_millis() as u64;
@@ -597,11 +603,13 @@ impl Shell {
         let content = artist_collection_projection(self, model.clone(), key);
         let content_ms = content_started.elapsed().as_millis() as u64;
         let shell_started = Instant::now();
+        let visible_results = Rc::clone(&visible);
         let page_shell = self.library_page_shell(LibraryPageShellOptions {
             key,
             empty: source_artists.borrow().is_empty(),
             empty_body: msgid("Cached entries will appear here after sync finishes"),
             search: search.clone(),
+            has_visible_results: Rc::new(move || !visible_results.borrow().is_empty()),
             content: content.scrolling_widget(),
         });
         let shell_ms = shell_started.elapsed().as_millis() as u64;
@@ -757,11 +765,13 @@ impl Shell {
             });
         }
         let content = playlist_collection_projection(self, model.clone());
+        let visible_results = Rc::clone(&visible);
         let page_shell = self.library_page_shell(LibraryPageShellOptions {
             key,
             empty: source_playlists.borrow().is_empty(),
             empty_body: msgid("Cached entries will appear here after sync finishes"),
             search: search.clone(),
+            has_visible_results: Rc::new(move || !visible_results.borrow().is_empty()),
             content: content.scrolling_widget(),
         });
         let identity = self.mounted_route_read_identity(Route::Playlists, &loaded, None);
@@ -901,11 +911,13 @@ impl Shell {
             });
         }
         let content = smart_playlist_collection_projection(self, model.clone());
+        let visible_results = Rc::clone(&visible);
         let page_shell = self.library_page_shell(LibraryPageShellOptions {
             key,
             empty: source_playlists.borrow().is_empty(),
             empty_body: msgid("Smart playlists will appear here after the default set is seeded."),
             search: search.clone(),
+            has_visible_results: Rc::new(move || !visible_results.borrow().is_empty()),
             content: content.scrolling_widget(),
         });
 
@@ -1070,11 +1082,13 @@ impl Shell {
         membership: TrackRouteMembership,
         reload_on_activity: bool,
     ) -> MountedRoute {
+        let visible_projection = projection.clone();
         let page_shell = self.library_page_shell(LibraryPageShellOptions {
             key,
             empty: projection.source_is_empty(),
             empty_body,
             search: projection.search(),
+            has_visible_results: Rc::new(move || visible_projection.has_visible_results()),
             content: projection.scrolling_widget(),
         });
         let apply = {
