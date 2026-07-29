@@ -10,6 +10,8 @@ use lofty::probe::Probe;
 
 use crate::{ImageBytes, SourceError, SourceResult};
 
+use super::format::{ArtworkReader, audio_format};
+
 const LOCAL_IMAGE_MAX_BYTES: usize = 32 * 1024 * 1024;
 
 #[derive(Clone, Debug)]
@@ -118,6 +120,10 @@ pub(super) fn read_image(reference: &ArtworkReference) -> SourceResult<ImageByte
             path,
             picture_index,
         } => {
+            let format = audio_format(path).ok_or(SourceError::NotFound)?;
+            let Some(ArtworkReader::Lofty) = format.artwork_reader() else {
+                return Err(SourceError::NotFound);
+            };
             let file = Probe::open(path)
                 .and_then(|probe| probe.read())
                 .map_err(|error| SourceError::Other(error.to_string()))?;

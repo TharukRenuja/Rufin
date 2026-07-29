@@ -18,6 +18,7 @@ use crate::{
 
 mod artwork;
 mod cue;
+mod format;
 mod scan;
 mod tags;
 mod watch;
