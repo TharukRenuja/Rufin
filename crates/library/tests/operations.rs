@@ -5,8 +5,8 @@ use library::{
     CandidateBatch, CandidateChange, CandidateFinish, CandidateHeader, CueSegment,
     FavoriteAcceptance, FavoriteItemId, FolderId, Genre, GenreCredit, GenreId, HomeFacts,
     HomeItemId, HomeSectionKind, ImageRef, Library, LoadedHomeItem, LocalArtworkRef,
-    LocalComponentReplacement, LocalComponentSeed, LocalFile, LocalFileKind, LocalReadState,
-    MoodCredit, MoodId, MusicFolder, MusicFolderId, NativeRadioResult, NewScrobble,
+    LocalComponentReplacement, LocalComponentSeed, LocalFile, LocalFileKind, LocalFileSeed,
+    LocalReadState, MoodCredit, MoodId, MusicFolder, MusicFolderId, NativeRadioResult, NewScrobble,
     PendingScrobbleId, Playlist, PlaylistAcceptance, PlaylistEdit, PlaylistEntry, PlaylistId,
     PlaylistSnapshot, RadioComposition, RadioSeed, RandomComposition, RandomPlayedFilter,
     ScrobbleService, SearchRequest, SmartPlaylistDefinition, SmartPlaylistId, SmartPlaylistRule,
@@ -1809,6 +1809,82 @@ fn local_favorite_and_playlist_transactions_reopen_without_parallel_truth() {
             .expect("read Album")
             .expect("Album")
             .favorite
+    );
+}
+
+#[test]
+fn local_files_preserve_full_filesystem_identities() {
+    let directory = tempfile::tempdir().expect("temporary Store directory");
+    let path = directory.path().join("library.db");
+    let source_id = SourceId::new("local:server:filesystem-identities");
+    let identity_values = [0, i64::MAX as u64, (i64::MAX as u64) + 1, u64::MAX];
+    let files = identity_values
+        .into_iter()
+        .enumerate()
+        .map(|(index, value)| {
+            let mut file = local_audio_file(
+                &format!("/music/Track-{index}.flac"),
+                &format!("Track-{index}.flac"),
+            );
+            file.device_id = Some(value);
+            file.inode = Some(value);
+            file
+        })
+        .collect::<Vec<_>>();
+    let seeds = files
+        .iter()
+        .map(|file| LocalFileSeed::Path(file.path.clone()))
+        .collect::<Vec<_>>();
+    let library = Library::open(&path).expect("open Library");
+    let accepted = accept_local_tracks(&library, source_id.clone(), Vec::new(), files.clone(), 101);
+
+    assert_eq!(
+        accepted
+            .loaded
+            .local_file_baseline(&seeds)
+            .expect("read accepted filesystem identities")
+            .files,
+        files
+    );
+
+    let mut replaced = files[2].clone();
+    replaced.mtime_ns = 2;
+    replaced.device_id = Some(u64::MAX);
+    replaced.inode = Some((i64::MAX as u64) + 1);
+    library
+        .accept_local_component(
+            &accepted.loaded,
+            LocalComponentReplacement {
+                observed_at: 2,
+                files: vec![replaced.clone()],
+                ..LocalComponentReplacement::default()
+            },
+        )
+        .expect("replace a high-bit filesystem identity");
+    let mut expected = files;
+    expected[2] = replaced;
+    assert_eq!(
+        accepted
+            .loaded
+            .local_file_baseline(&seeds)
+            .expect("read replaced filesystem identities")
+            .files,
+        expected
+    );
+
+    drop(accepted);
+    drop(library);
+    let reopened = Library::open(path)
+        .expect("reopen Library")
+        .load_source(&source_id)
+        .expect("load source")
+        .expect("source");
+    assert_eq!(
+        reopened
+            .local_file_baseline(&seeds)
+            .expect("read reopened filesystem identities")
+            .files,
+        expected
     );
 }
 

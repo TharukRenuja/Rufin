@@ -7,6 +7,60 @@ use library::{
 };
 
 #[test]
+fn local_access_preserves_full_filesystem_identities() {
+    let directory = tempfile::tempdir().expect("temporary Store directory");
+    let root = tempfile::tempdir().expect("local access root");
+    let store_path = directory.path().join("library.db");
+    let source_id = SourceId::new("opensubsonic:server:filesystem-identities");
+    let library = Library::open(&store_path).expect("open Library");
+    let loaded = accept_tracks(&library, source_id.clone(), Vec::new());
+    let identity_values = [0, i64::MAX as u64, (i64::MAX as u64) + 1, u64::MAX];
+    let files = identity_values
+        .into_iter()
+        .enumerate()
+        .map(|(index, value)| {
+            let path = root.path().join(format!("Track-{index}.flac"));
+            std::fs::write(&path, []).expect("write local access file");
+            let mut file = access_file(root.path(), &path, "Track", "Album", "Artist");
+            file.device_id = Some(value);
+            file.inode = Some(value);
+            file
+        })
+        .collect::<Vec<_>>();
+    library
+        .replace_local_access(
+            &loaded,
+            LocalAccessMapping {
+                root_path: root.path().to_path_buf(),
+                server_prefix: None,
+                local_prefix: None,
+            },
+            files.clone(),
+        )
+        .expect("accept full-range filesystem identities");
+    assert_eq!(
+        loaded
+            .local_access_files()
+            .expect("read local access files"),
+        files
+    );
+
+    drop(loaded);
+    drop(library);
+    let reopened = Library::open(store_path)
+        .expect("reopen Library")
+        .load_source(&source_id)
+        .expect("load source")
+        .expect("source");
+    assert_eq!(
+        reopened
+            .local_access_files()
+            .expect("read reopened local access files"),
+        files
+    );
+}
+
+#[test]
 fn accepted_local_access_maps_tracks_and_reopens() {
     let directory = tempfile::tempdir().expect("temporary Store directory");
     let root = tempfile::tempdir().expect("local access root");

@@ -2657,8 +2657,8 @@ fn write_local_file(
             file.kind.as_str(),
             optional_sqlite_u64(file.size_bytes)?,
             file.mtime_ns,
-            optional_sqlite_u64(file.device_id)?,
-            optional_sqlite_u64(file.inode)?,
+            file.device_id.map(sqlite_filesystem_identity),
+            file.inode.map(sqlite_filesystem_identity),
             file.parse_version.map(i64::from),
             file.read_state.as_str(),
             dependencies_json,
@@ -2687,8 +2687,8 @@ fn write_local_access_file(
             file.relative_path,
             i64::try_from(file.size_bytes).map_err(|_| StoreError::IntegerRange)?,
             file.mtime_ns,
-            optional_sqlite_u64(file.device_id)?,
-            optional_sqlite_u64(file.inode)?,
+            file.device_id.map(sqlite_filesystem_identity),
+            file.inode.map(sqlite_filesystem_identity),
             i64::from(file.parser_version),
             file.title,
             file.album,
@@ -3688,8 +3688,12 @@ fn load_local_files(connection: &Connection, library_id: i64) -> StoreResult<Vec
             })?,
             size_bytes: row.get::<_, Option<i64>>(4)?.map(checked_u64).transpose()?,
             mtime_ns: row.get(5)?,
-            device_id: row.get::<_, Option<i64>>(6)?.map(checked_u64).transpose()?,
-            inode: row.get::<_, Option<i64>>(7)?.map(checked_u64).transpose()?,
+            device_id: row
+                .get::<_, Option<i64>>(6)?
+                .map(filesystem_identity_from_sqlite),
+            inode: row
+                .get::<_, Option<i64>>(7)?
+                .map(filesystem_identity_from_sqlite),
             parse_version: row.get::<_, Option<i64>>(8)?.map(checked_u32).transpose()?,
             read_state: LocalReadState::from_stored(&read_state).ok_or_else(|| {
                 StoreError::InvalidValue {
@@ -3758,8 +3762,8 @@ fn load_local_access_files(
                 relative_path,
                 size_bytes: checked_u64(size_bytes)?,
                 mtime_ns,
-                device_id: device_id.map(checked_u64).transpose()?,
-                inode: inode.map(checked_u64).transpose()?,
+                device_id: device_id.map(filesystem_identity_from_sqlite),
+                inode: inode.map(filesystem_identity_from_sqlite),
                 parser_version: checked_u32(parser_version)?,
                 title,
                 album,
@@ -4298,6 +4302,14 @@ fn optional_sqlite_u64(value: Option<u64>) -> StoreResult<Option<i64>> {
     value
         .map(|value| i64::try_from(value).map_err(|_| StoreError::IntegerRange))
         .transpose()
+}
+
+fn sqlite_filesystem_identity(value: u64) -> i64 {
+    i64::from_ne_bytes(value.to_ne_bytes())
+}
+
+fn filesystem_identity_from_sqlite(value: i64) -> u64 {
+    u64::from_ne_bytes(value.to_ne_bytes())
 }
 
 fn checked_u64(value: i64) -> StoreResult<u64> {

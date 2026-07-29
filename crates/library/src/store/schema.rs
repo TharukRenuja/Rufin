@@ -9,10 +9,11 @@ use rusqlite::{Connection, OptionalExtension};
 use super::{StoreError, StoreResult};
 
 pub(crate) const APPLICATION_ID: i64 = 1_381_320_270;
-pub(crate) const SCHEMA_VERSION: i64 = 33;
-const PREVIOUS_SCHEMA_VERSION: i64 = 32;
+pub(crate) const SCHEMA_VERSION: i64 = 34;
+const RELEASED_SCHEMA_VERSION: i64 = 32;
+const PREVIOUS_SCHEMA_VERSION: i64 = 33;
 
-const CREATE_SCHEMA: &str = r###"-- Rufin Store schema 33.
+const CREATE_SCHEMA: &str = r###"-- Rufin Store schema 34.
 --
 -- Product routes hydrate LoadedLibrary and do not query these tables for
 -- sorting or filtering.
@@ -22,7 +23,7 @@ PRAGMA foreign_keys = ON;
 BEGIN IMMEDIATE;
 
 PRAGMA application_id = 1381320270; -- "RUFN"
-PRAGMA user_version = 33;
+PRAGMA user_version = 34;
 
 -- One row is one complete or in-progress source-library candidate. The newest
 -- accepted library_id is current; there is no mutable head row.
@@ -386,8 +387,8 @@ CREATE TABLE local_files (
     ),
     size_bytes INTEGER CHECK (size_bytes IS NULL OR size_bytes >= 0),
     mtime_ns INTEGER NOT NULL,
-    device_id INTEGER CHECK (device_id IS NULL OR device_id >= 0),
-    inode INTEGER CHECK (inode IS NULL OR inode >= 0),
+    device_id INTEGER,
+    inode INTEGER,
     -- The current audio/CUE parser writes version 1. Images and directories are
     -- observed without parsing and therefore keep this null.
     parse_version INTEGER CHECK (
@@ -443,8 +444,8 @@ CREATE TABLE local_access_files (
     relative_path TEXT NOT NULL,
     size_bytes INTEGER NOT NULL CHECK (size_bytes >= 0),
     mtime_ns INTEGER NOT NULL,
-    device_id INTEGER CHECK (device_id IS NULL OR device_id >= 0),
-    inode INTEGER CHECK (inode IS NULL OR inode >= 0),
+    device_id INTEGER,
+    inode INTEGER,
     parser_version INTEGER NOT NULL CHECK (parser_version >= 1),
     title TEXT NOT NULL,
     album TEXT NOT NULL,
@@ -734,6 +735,123 @@ PRAGMA user_version = 33;
 COMMIT;
 "###;
 
+const MIGRATE_SCHEMA_33: &str = r###"
+BEGIN IMMEDIATE;
+
+ALTER TABLE local_files RENAME TO schema_33_local_files;
+
+CREATE TABLE local_files (
+    library_id INTEGER NOT NULL
+        REFERENCES source_libraries(library_id) ON DELETE NO ACTION,
+    path TEXT NOT NULL CHECK (path <> ''),
+    root TEXT NOT NULL CHECK (root <> ''),
+    relative_path TEXT NOT NULL,
+    kind TEXT NOT NULL CHECK (
+        kind IN ('audio', 'cue', 'image', 'directory')
+    ),
+    size_bytes INTEGER CHECK (size_bytes IS NULL OR size_bytes >= 0),
+    mtime_ns INTEGER NOT NULL,
+    device_id INTEGER,
+    inode INTEGER,
+    -- The current audio/CUE parser writes version 1. Images and directories are
+    -- observed without parsing and therefore keep this null.
+    parse_version INTEGER CHECK (
+        parse_version IS NULL OR parse_version >= 1
+    ),
+    read_state TEXT NOT NULL CHECK (
+        read_state IN (
+            'parsed',
+            'metadata-fallback',
+            'unreadable',
+            'invalid',
+            'observed'
+        )
+    ),
+    dependencies_json TEXT NOT NULL CHECK (
+        length(CAST(dependencies_json AS BLOB)) <= 2097152
+        AND CASE
+            WHEN json_valid(dependencies_json)
+            THEN json_type(dependencies_json) = 'array'
+            ELSE 0
+        END
+    ),
+    PRIMARY KEY (library_id, path),
+    CHECK (
+        (kind = 'directory' AND size_bytes IS NULL)
+        OR (kind <> 'directory' AND size_bytes IS NOT NULL)
+    ),
+    CHECK (
+        (
+            kind = 'audio'
+            AND parse_version IS NOT NULL
+            AND read_state IN ('parsed', 'metadata-fallback', 'unreadable')
+        )
+        OR (
+            kind = 'cue'
+            AND parse_version IS NOT NULL
+            AND read_state IN ('parsed', 'invalid')
+        )
+        OR (
+            kind IN ('image', 'directory')
+            AND parse_version IS NULL
+            AND read_state = 'observed'
+        )
+    ),
+    CHECK (kind = 'cue' OR dependencies_json = '[]')
+) STRICT;
+
+INSERT INTO local_files(
+    library_id, path, root, relative_path, kind, size_bytes, mtime_ns,
+    device_id, inode, parse_version, read_state, dependencies_json
+)
+SELECT
+    library_id, path, root, relative_path, kind, size_bytes, mtime_ns,
+    device_id, inode, parse_version, read_state, dependencies_json
+FROM schema_33_local_files;
+
+DROP TABLE schema_33_local_files;
+
+ALTER TABLE local_access_files RENAME TO schema_33_local_access_files;
+
+CREATE TABLE local_access_files (
+    source_id TEXT NOT NULL CHECK (source_id <> ''),
+    path TEXT NOT NULL CHECK (path <> ''),
+    root TEXT NOT NULL CHECK (root <> ''),
+    relative_path TEXT NOT NULL,
+    size_bytes INTEGER NOT NULL CHECK (size_bytes >= 0),
+    mtime_ns INTEGER NOT NULL,
+    device_id INTEGER,
+    inode INTEGER,
+    parser_version INTEGER NOT NULL CHECK (parser_version >= 1),
+    title TEXT NOT NULL,
+    album TEXT NOT NULL,
+    artist TEXT NOT NULL,
+    disc_number INTEGER NOT NULL CHECK (disc_number BETWEEN 0 AND 65535),
+    track_number INTEGER NOT NULL CHECK (track_number BETWEEN 0 AND 65535),
+    duration_seconds INTEGER NOT NULL CHECK (
+        duration_seconds BETWEEN 0 AND 4294967295
+    ),
+    PRIMARY KEY (source_id, path)
+) STRICT;
+
+INSERT INTO local_access_files(
+    source_id, path, root, relative_path, size_bytes, mtime_ns,
+    device_id, inode, parser_version, title, album, artist,
+    disc_number, track_number, duration_seconds
+)
+SELECT
+    source_id, path, root, relative_path, size_bytes, mtime_ns,
+    device_id, inode, parser_version, title, album, artist,
+    disc_number, track_number, duration_seconds
+FROM schema_33_local_access_files;
+
+DROP TABLE schema_33_local_access_files;
+
+PRAGMA user_version = 34;
+
+COMMIT;
+"###;
+
 pub(crate) fn initialize(connection: &Connection) -> StoreResult<()> {
     connection.pragma_update(None, "foreign_keys", true)?;
     let application_id = pragma_i64(connection, "application_id")?;
@@ -749,8 +867,12 @@ pub(crate) fn initialize(connection: &Connection) -> StoreResult<()> {
 
     match (application_id, user_version, has_schema) {
         (0, 0, false) => connection.execute_batch(CREATE_SCHEMA)?,
+        (APPLICATION_ID, RELEASED_SCHEMA_VERSION, true) => {
+            connection.execute_batch(MIGRATE_SCHEMA_32)?;
+            connection.execute_batch(MIGRATE_SCHEMA_33)?;
+        }
         (APPLICATION_ID, PREVIOUS_SCHEMA_VERSION, true) => {
-            connection.execute_batch(MIGRATE_SCHEMA_32)?
+            connection.execute_batch(MIGRATE_SCHEMA_33)?
         }
         (APPLICATION_ID, SCHEMA_VERSION, true) => {}
         (application_id, user_version, _) => {
@@ -840,6 +962,66 @@ fn pragma_i64(connection: &Connection, name: &str) -> rusqlite::Result<i64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn schema_33_filesystem_identities_are_preserved_when_the_range_checks_are_removed() {
+        let connection = Connection::open_in_memory().expect("open Store");
+        initialize(&connection).expect("initialize current Store");
+        connection
+            .execute(
+                "INSERT INTO source_libraries(
+                    source_id, input_version, input_digest, accepted_at
+                 ) VALUES (?1, 1, ?2, 1)",
+                rusqlite::params!["local:test", vec![1_u8; 32]],
+            )
+            .expect("write source library");
+        connection
+            .execute(
+                "INSERT INTO local_files(
+                    library_id, path, root, relative_path, kind, size_bytes,
+                    mtime_ns, device_id, inode, parse_version, read_state,
+                    dependencies_json
+                 ) VALUES (
+                    1, '/music/Track.flac', '/music', 'Track.flac', 'audio',
+                    1024, 1, 7, 11, 1, 'parsed', '[]'
+                 )",
+                [],
+            )
+            .expect("write Local file");
+        connection
+            .execute(
+                "INSERT INTO local_access_files(
+                    source_id, path, root, relative_path, size_bytes, mtime_ns,
+                    device_id, inode, parser_version, title, album, artist,
+                    disc_number, track_number, duration_seconds
+                 ) VALUES (
+                    'local:test', '/music/Access.flac', '/music', 'Access.flac',
+                    2048, 2, 13, 17, 1, 'Track', 'Album', 'Artist', 1, 2, 180
+                 )",
+                [],
+            )
+            .expect("write Local access file");
+        connection
+            .pragma_update(None, "user_version", PREVIOUS_SCHEMA_VERSION)
+            .expect("prepare schema 33 Store");
+
+        initialize(&connection).expect("migrate schema 33 Store");
+
+        let local_identity = connection
+            .query_row("SELECT device_id, inode FROM local_files", [], |row| {
+                Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?))
+            })
+            .expect("read migrated Local identity");
+        let access_identity = connection
+            .query_row(
+                "SELECT device_id, inode FROM local_access_files",
+                [],
+                |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)),
+            )
+            .expect("read migrated Local access identity");
+        assert_eq!(local_identity, (7, 11));
+        assert_eq!(access_identity, (13, 17));
+    }
 
     #[test]
     fn schema_32_music_folders_are_preserved_when_cover_columns_are_added() {
