@@ -422,21 +422,6 @@ pub(crate) fn install_context_menu_openers(target: &impl IsA<gtk::Widget>, open:
         }
     });
     target.add_controller(press);
-
-    let target_weak = target.downgrade();
-    let key = gtk::EventControllerKey::new();
-    key.connect_key_pressed(move |_, key, _, state| {
-        let opens_menu = key == gtk::gdk::Key::Menu
-            || (key == gtk::gdk::Key::F10 && state.contains(gtk::gdk::ModifierType::SHIFT_MASK));
-        if !opens_menu {
-            return glib::Propagation::Proceed;
-        }
-        if let Some(target) = target_weak.upgrade() {
-            open(&target, None);
-        }
-        glib::Propagation::Stop
-    });
-    target.add_controller(key);
 }
 
 pub(crate) fn add_link_hover(target: &gtk::Widget, label: &gtk::Label, text: &str) {

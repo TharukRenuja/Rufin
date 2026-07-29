@@ -27,7 +27,6 @@ use localization::{msgid, tr};
 use playback::{LoadedPlayRequest, QueuePlacement, SourceSessionEpoch};
 use tracing::warn;
 
-use super::collection_context::present_track_context_menu;
 use super::collections::library_route_inset;
 use super::library_fields::sort_tracks;
 use super::models::track_matches_query;
@@ -133,6 +132,8 @@ impl FolderRouteProjection {
         wrapper.set_margin_top(ROUTE_TOP_MARGIN);
         wrapper.set_margin_bottom(28);
         wrapper.set_hexpand(true);
+        wrapper.set_halign(gtk::Align::Fill);
+        wrapper.set_width_request(1);
         wrapper.set_vexpand(true);
 
         if !path.is_empty() {
@@ -455,6 +456,8 @@ fn folder_breadcrumbs(shell: &Rc<Shell>, path: &[FolderPathItem]) -> gtk::Box {
     let breadcrumbs = gtk::Box::new(gtk::Orientation::Horizontal, 6);
     breadcrumbs.add_css_class("folder-breadcrumbs");
     breadcrumbs.set_hexpand(true);
+    breadcrumbs.set_halign(gtk::Align::Fill);
+    breadcrumbs.set_width_request(1);
 
     breadcrumbs.append(&breadcrumb_button(
         shell,
@@ -484,10 +487,18 @@ fn breadcrumb_button(
     current: bool,
     translate: bool,
 ) -> gtk::Button {
-    let button = gtk::Button::with_label(&display_label(label, translate));
+    let text = display_label(label, translate);
+    let button = gtk::Button::new();
     button.add_css_class("flat");
     button.add_css_class("folder-breadcrumb");
+    button.set_width_request(1);
     button.set_sensitive(!current);
+    let label = gtk::Label::new(Some(&text));
+    label.set_xalign(0.0);
+    label.set_ellipsize(gtk::pango::EllipsizeMode::End);
+    label.set_single_line_mode(true);
+    button.set_child(Some(&label));
+    button.set_tooltip_text(Some(&text));
     let shell = Rc::clone(shell);
     button.connect_clicked(move |_| {
         shell.navigate(Route::Folders { path: path.clone() });
@@ -720,28 +731,6 @@ fn folder_table(
         activate_folder_table_row(&activate_shell, &activate_model, &row);
     });
 
-    let menu_shell = Rc::clone(shell);
-    let menu_model = model.rows.clone();
-    let menu_table = table.downgrade();
-    let menu_key = gtk::EventControllerKey::new();
-    menu_key.connect_key_pressed(move |_, key, _, state| {
-        let opens_menu = key == gtk::gdk::Key::Menu
-            || (key == gtk::gdk::Key::F10 && state.contains(gtk::gdk::ModifierType::SHIFT_MASK));
-        if !opens_menu {
-            return glib::Propagation::Proceed;
-        }
-        let Some(FolderTableRow::Track { track, .. }) =
-            folder_table_row_at(&menu_model, selection.selected())
-        else {
-            return glib::Propagation::Proceed;
-        };
-        let Some(table) = menu_table.upgrade() else {
-            return glib::Propagation::Proceed;
-        };
-        present_track_context_menu(&table.upcast(), &menu_shell, track, None);
-        glib::Propagation::Stop
-    });
-    table.add_controller(menu_key);
     (table, width_fit)
 }
 
