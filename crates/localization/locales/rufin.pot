@@ -126,9 +126,6 @@ msgstr ""
 msgid "Add Rule"
 msgstr ""
 
-msgid "Add a new download rule"
-msgstr ""
-
 msgid "Add a new source"
 msgstr ""
 
@@ -905,6 +902,9 @@ msgid "New Playlist"
 msgstr ""
 
 msgid "New Smart Playlist"
+msgstr ""
+
+msgid "New download rule"
 msgstr ""
 
 msgid "New downloads will appear here."
