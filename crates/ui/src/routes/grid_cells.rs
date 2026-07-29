@@ -986,7 +986,7 @@ impl ReusableCollectionGridCell<ArtistSummary> for ArtistGridCell {
             &self.cover_tile,
             ArtworkBinding::artist(&artist.artist, &artist.representative_albums),
             stable_seed(artist.artist.id.as_str()),
-            COLLECTION_GRID_MIN_CARD_WIDTH,
+            GRID_COVER_SIZE as i32,
             GRID_COVER_SIZE,
         );
         self.body.bind(&artist.artist.name, |field| {

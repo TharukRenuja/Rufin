@@ -39,9 +39,7 @@ use super::detail_links::track_artist_route;
 use super::grid_cells::{
     CollectionGridCardCell, CollectionGridProjection, ReusableCollectionGridCell, collection_grid,
 };
-use super::library_fields::{
-    COLLECTION_GRID_MIN_CARD_WIDTH, item_at_from_item, play_count_column_width, track_field,
-};
+use super::library_fields::{item_at_from_item, play_count_column_width, track_field};
 use super::route::Route;
 use super::route_layout::PRIMARY_ROUTE_HORIZONTAL_INSET;
 use super::route_shell::LibraryToolbarProjection;
@@ -612,7 +610,7 @@ impl ReusableCollectionGridCell<PlaylistEntryRow> for PlaylistEntryGridCell {
             &self.cover,
             ArtworkBinding::track(&entry.track),
             stable_seed(entry.track.id.as_str()),
-            COLLECTION_GRID_MIN_CARD_WIDTH,
+            GRID_COVER_SIZE as i32,
             GRID_COVER_SIZE,
         );
         self.body.bind(&entry.track.title, |field| {

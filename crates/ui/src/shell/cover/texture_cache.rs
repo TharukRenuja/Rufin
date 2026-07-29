@@ -8,11 +8,12 @@ use gtk::glib;
 use gtk::prelude::{Cast, ObjectExt};
 use library::SourceId;
 
-const MAX_TEXTURES: usize = 4_096;
-const MAX_TEXTURE_BYTES: usize = 128 * 1024 * 1024;
+const MAX_RECENT_TEXTURES: usize = 4_096;
+const MAX_RECENT_TEXTURE_BYTES: usize = 128 * 1024 * 1024;
 
 pub(in crate::shell) struct TextureCache<K = DecodedImageIdentity> {
     entries: HashMap<K, TextureEntry>,
+    source_warm: HashMap<K, TextureEntry>,
     live_textures: HashMap<K, LiveTexture>,
     eviction_order: BTreeSet<TextureAccess<K>>,
     bytes: usize,
@@ -29,6 +30,7 @@ struct LiveTexture {
 }
 
 struct TextureEntry {
+    source_id: SourceId,
     texture: gdk::Texture,
     bytes: usize,
     last_used: u64,
@@ -55,6 +57,7 @@ where
     fn with_limits(max_textures: usize, max_bytes: usize) -> Self {
         Self {
             entries: HashMap::new(),
+            source_warm: HashMap::new(),
             live_textures: HashMap::new(),
             eviction_order: BTreeSet::new(),
             bytes: 0,
@@ -65,6 +68,9 @@ where
     }
 
     fn get(&mut self, key: &K) -> Option<gdk::Texture> {
+        if let Some(entry) = self.source_warm.get(key) {
+            return Some(entry.texture.clone());
+        }
         let last_used = self.next_access();
         let (previous_access, texture) = {
             let entry = self.entries.get_mut(key)?;
@@ -85,6 +91,7 @@ where
 
     fn insert(&mut self, key: K, source_id: SourceId, texture: gdk::Texture, bytes: usize) {
         self.remove(&key);
+        self.source_warm.remove(&key);
         self.live_textures.insert(
             key.clone(),
             LiveTexture {
@@ -98,6 +105,7 @@ where
         self.entries.insert(
             key.clone(),
             TextureEntry {
+                source_id,
                 texture,
                 bytes,
                 last_used,
@@ -105,10 +113,44 @@ where
         );
         self.eviction_order.insert(TextureAccess { last_used, key });
         self.evict_to_limits();
-        if self.live_textures.len() > self.max_textures.saturating_mul(2) {
+        if self.live_textures.len()
+            > self
+                .entries
+                .len()
+                .saturating_add(self.source_warm.len())
+                .saturating_add(self.max_textures)
+        {
             self.live_textures
                 .retain(|_, entry| entry.texture.upgrade().is_some());
         }
+    }
+
+    fn insert_source_warm(
+        &mut self,
+        key: K,
+        source_id: SourceId,
+        texture: gdk::Texture,
+        bytes: usize,
+    ) {
+        self.remove(&key);
+        self.source_warm.remove(&key);
+        self.live_textures.insert(
+            key.clone(),
+            LiveTexture {
+                source_id: source_id.clone(),
+                texture: texture.downgrade(),
+                bytes,
+            },
+        );
+        self.source_warm.insert(
+            key,
+            TextureEntry {
+                source_id,
+                texture,
+                bytes,
+                last_used: 0,
+            },
+        );
     }
 
     fn get_or_revive(&mut self, key: &K) -> Option<gdk::Texture> {
@@ -124,6 +166,24 @@ where
         Some(texture)
     }
 
+    fn get_or_retain_source_warm(&mut self, key: &K) -> Option<gdk::Texture> {
+        if let Some(entry) = self.source_warm.get(key) {
+            return Some(entry.texture.clone());
+        }
+        if let Some(entry) = self.remove(key) {
+            let texture = entry.texture.clone();
+            self.source_warm.insert(key.clone(), entry);
+            return Some(texture);
+        }
+        let live = self.live_textures.get(key)?.clone();
+        let Some(texture) = live.texture.upgrade() else {
+            self.live_textures.remove(key);
+            return None;
+        };
+        self.insert_source_warm(key.clone(), live.source_id, texture.clone(), live.bytes);
+        Some(texture)
+    }
+
     fn invalidate_source(&mut self, source_id: &SourceId) {
         let stale = self
             .live_textures
@@ -133,8 +193,23 @@ where
             .collect::<Vec<_>>();
         for key in stale {
             self.remove(&key);
+            self.source_warm.remove(&key);
             self.live_textures.remove(&key);
         }
+    }
+
+    fn release_source_warm(&mut self, source_id: &SourceId) {
+        let stale = self
+            .source_warm
+            .iter()
+            .filter(|(_, entry)| &entry.source_id == source_id)
+            .map(|(key, _)| key.clone())
+            .collect::<Vec<_>>();
+        for key in stale {
+            self.source_warm.remove(&key);
+        }
+        self.live_textures
+            .retain(|_, entry| &entry.source_id != source_id || entry.texture.upgrade().is_some());
     }
 
     fn remove(&mut self, key: &K) -> Option<TextureEntry> {
@@ -164,7 +239,7 @@ where
 
 impl Default for TextureCache {
     fn default() -> Self {
-        Self::with_limits(MAX_TEXTURES, MAX_TEXTURE_BYTES)
+        Self::with_limits(MAX_RECENT_TEXTURES, MAX_RECENT_TEXTURE_BYTES)
     }
 }
 
@@ -182,6 +257,25 @@ impl TextureCache {
         let texture = texture_from_decoded(image)?;
         self.insert(identity, source_id.clone(), texture.clone(), bytes);
         Some(texture)
+    }
+
+    pub(super) fn retain_source_warm_texture(
+        &mut self,
+        source_id: &SourceId,
+        image: Arc<DecodedImage>,
+    ) -> Option<gdk::Texture> {
+        let identity = image.identity();
+        if let Some(texture) = self.get_or_retain_source_warm(&identity) {
+            return Some(texture);
+        }
+        let bytes = image.rgba().len();
+        let texture = texture_from_decoded(image)?;
+        self.insert_source_warm(identity, source_id.clone(), texture.clone(), bytes);
+        Some(texture)
+    }
+
+    pub(super) fn release_source_warm_textures(&mut self, source_id: &SourceId) {
+        self.release_source_warm(source_id);
     }
 
     pub(super) fn release_source(&mut self, source_id: &SourceId) {
@@ -238,6 +332,49 @@ mod tests {
             .expect("a mounted texture remains interned after LRU eviction");
         assert_eq!(revived.as_ptr(), second.as_ptr());
         assert_eq!(cache.bytes, 8);
+    }
+
+    #[test]
+    fn source_warm_textures_do_not_compete_with_recent_textures() {
+        let source = SourceId::new("warm-texture-source");
+        let mut cache = TextureCache::<u8>::with_limits(1, 4);
+        let warm = texture(1);
+        cache.insert(1, source.clone(), warm.clone(), 4);
+        let retained = cache
+            .get_or_retain_source_warm(&1)
+            .expect("the recent texture becomes source-wide warmth");
+        assert_eq!(retained.as_ptr(), warm.as_ptr());
+        cache.insert(2, source.clone(), texture(2), 4);
+        cache.insert(3, source, texture(3), 4);
+
+        assert_eq!(cache.entries.len(), 1);
+        assert_eq!(cache.bytes, 4);
+        assert_eq!(
+            cache
+                .get(&1)
+                .expect("the source-wide small texture remains retained")
+                .as_ptr(),
+            warm.as_ptr()
+        );
+        assert!(cache.get(&2).is_none());
+        assert!(cache.get(&3).is_some());
+    }
+
+    #[test]
+    fn releasing_source_warm_keeps_a_mounted_texture_revivable() {
+        let source = SourceId::new("released-warm-texture-source");
+        let mut cache = TextureCache::<u8>::with_limits(1, 4);
+        let mounted = texture(1);
+        cache.insert_source_warm(1, source.clone(), mounted.clone(), 4);
+
+        cache.release_source_warm(&source);
+
+        assert!(cache.source_warm.is_empty());
+        let revived = cache
+            .get_or_revive(&1)
+            .expect("GTK still owns the mounted texture");
+        assert_eq!(revived.as_ptr(), mounted.as_ptr());
+        assert_eq!(cache.bytes, 4);
     }
 
     #[test]

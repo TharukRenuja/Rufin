@@ -6,6 +6,14 @@ use artwork::ArtworkBinding;
 use super::{ArtworkTile, GRID_COVER_SIZE, cover_fetch_size_for_display};
 use crate::shell::Shell;
 
+fn elastic_cover_fetch_size(artwork_count: usize, mosaic_fetch_size: u32) -> u32 {
+    if artwork_count == 1 {
+        GRID_COVER_SIZE
+    } else {
+        mosaic_fetch_size
+    }
+}
+
 #[derive(Clone)]
 pub(crate) struct CoverGroupProjection {
     root: gtk::Stack,
@@ -163,8 +171,9 @@ impl Shell {
         self: &Rc<Self>,
         artwork: &[ArtworkBinding],
         seed: u32,
-        fetch_size: u32,
+        mosaic_fetch_size: u32,
     ) -> gtk::Widget {
+        let fetch_size = elastic_cover_fetch_size(artwork.len(), mosaic_fetch_size);
         match artwork.len() {
             0 => {
                 self.elastic_cover_tile_for_candidates(ArtworkBinding::new(), seed, fetch_size)
@@ -199,5 +208,23 @@ impl Shell {
                 grid.upcast()
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::elastic_cover_fetch_size;
+    use crate::shell::cover::{GRID_COVER_SIZE, THUMB_COVER_SIZE};
+
+    #[test]
+    fn a_single_elastic_cover_uses_the_full_grid_fetch_size() {
+        assert_eq!(
+            elastic_cover_fetch_size(1, THUMB_COVER_SIZE),
+            GRID_COVER_SIZE
+        );
+        assert_eq!(
+            elastic_cover_fetch_size(4, THUMB_COVER_SIZE),
+            THUMB_COVER_SIZE
+        );
     }
 }

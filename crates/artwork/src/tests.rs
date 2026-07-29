@@ -646,6 +646,54 @@ fn larger_decoded_cover_satisfies_a_smaller_request_without_another_fetch() {
 }
 
 #[test]
+fn smaller_decoded_cover_does_not_satisfy_a_larger_request() {
+    let temporary = TempDir::new().expect("temporary artwork directory");
+    let images = Arc::new(StaticImages {
+        calls: AtomicUsize::new(0),
+        bytes: png_bytes_at(800, 800),
+    });
+    let source = SourceImages::testing(SourceId::new("source-size-upgrade"), images.clone());
+    let candidates = ArtworkBinding::from_native(Some(&ImageRef::new("shared-cover", None)));
+    let small = ArtworkRequest::new(candidates.clone(), 256, 48);
+    let large = ArtworkRequest::new(candidates, 256, 256);
+    let artwork = Artwork::new(temporary.path(), runtime()).expect("artwork service starts");
+
+    let small = match finish(
+        artwork
+            .request_prepared(artwork.prepare(source.clone(), small))
+            .expect("small artwork request"),
+    ) {
+        ArtworkOutcome::Ready(image) => image,
+        _ => panic!("small artwork was not ready"),
+    };
+    assert_eq!(small.width(), 48);
+    assert!(
+        artwork
+            .prepare(source.clone(), large.clone())
+            .ready
+            .is_none(),
+        "the small decode must not be presented as a large cover"
+    );
+
+    let large = match finish(
+        artwork
+            .request_prepared(artwork.prepare(source, large))
+            .expect("large artwork request"),
+    ) {
+        ArtworkOutcome::Ready(image) => image,
+        _ => panic!("large artwork was not ready"),
+    };
+    assert!(!Arc::ptr_eq(&small, &large));
+    assert_eq!(large.width(), 256);
+    assert_eq!(large.height(), 256);
+    assert_eq!(
+        images.calls.load(Ordering::Relaxed),
+        1,
+        "the normalized disk entry should satisfy the size upgrade"
+    );
+}
+
+#[test]
 fn dropping_a_pending_lease_cancels_its_pipeline_subscription() {
     let temporary = TempDir::new().expect("temporary artwork directory");
     let images = Arc::new(BlockingImages::default());

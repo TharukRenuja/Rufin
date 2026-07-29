@@ -478,7 +478,7 @@ pub fn build(app: &adw::Application, inputs: RuntimeInputs) {
     });
 
     shell.connect_operation_feedback();
-    shell.connect_artwork_scale_factor_refresh();
+    shell.connect_artwork_scale_refresh();
     {
         let source = Arc::clone(&shell.products.source);
         let was_active = Cell::new(shell.chrome.window.is_active());

@@ -115,7 +115,11 @@ pub fn decode_rgba(bytes: &[u8], render_size: u32) -> Result<RgbaImage, ArtworkE
             .with_guessed_format()
             .map_err(decode_error)?,
     )?;
-    rgba_image(scale_to_fit(image, render_size.max(1))?)
+    rgba_image(scale_to_fit(
+        image,
+        render_size.max(1),
+        FilterType::Lanczos3,
+    )?)
 }
 
 pub fn square_thumbnail_png(bytes: &[u8], size: u32) -> Result<Vec<u8>, ArtworkError> {
@@ -172,7 +176,11 @@ fn decoded_image(
     Ok(DecodedImage {
         key,
         cache_path: Arc::new(path),
-        pixels: rgba_image(scale_to_fit(image, render_size.max(1))?)?,
+        pixels: rgba_image(scale_to_fit(
+            image,
+            render_size.max(1),
+            FilterType::Lanczos3,
+        )?)?,
     })
 }
 
@@ -185,7 +193,7 @@ pub(crate) fn normalize_for_cache(
             .with_guessed_format()
             .map_err(decode_error)?,
     )?;
-    let image = scale_to_fit(image, size.max(1))?;
+    let image = scale_to_fit(image, size.max(1), FilterType::Triangle)?;
     let bytes = encode_png(&image)?;
     Ok(NormalizedImage { image, bytes })
 }
@@ -205,7 +213,11 @@ where
     }
 }
 
-fn scale_to_fit(image: DynamicImage, target: u32) -> Result<DynamicImage, ArtworkError> {
+fn scale_to_fit(
+    image: DynamicImage,
+    target: u32,
+    filter: FilterType,
+) -> Result<DynamicImage, ArtworkError> {
     let width = image.width();
     let height = image.height();
     if width == 0 || height == 0 {
@@ -223,7 +235,7 @@ fn scale_to_fit(image: DynamicImage, target: u32) -> Result<DynamicImage, Artwor
         .map_err(|_| ArtworkError::Decode("scaled artwork width was invalid".to_string()))?;
     let scaled_height = u32::try_from(scaled_height)
         .map_err(|_| ArtworkError::Decode("scaled artwork height was invalid".to_string()))?;
-    Ok(image.resize_exact(scaled_width, scaled_height, FilterType::Triangle))
+    Ok(image.resize_exact(scaled_width, scaled_height, filter))
 }
 
 fn rgba_image(image: DynamicImage) -> Result<RgbaImage, ArtworkError> {
