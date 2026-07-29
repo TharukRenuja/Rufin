@@ -8,18 +8,22 @@ use gtk::glib;
 use gtk::prelude::{Cast, ObjectExt};
 use library::SourceId;
 
-const MAX_RECENT_TEXTURES: usize = 4_096;
-const MAX_RECENT_TEXTURE_BYTES: usize = 128 * 1024 * 1024;
+const MAX_TEXTURES: usize = 20_480;
+const MAX_TEXTURE_BYTES: usize = 256 * 1024 * 1024;
+const THUMBNAIL_RESERVE_BYTES: usize = 128 * 1024 * 1024;
+const MAX_THUMBNAIL_TEXTURE_SIZE: u32 = 96;
 
 pub(in crate::shell) struct TextureCache<K = DecodedImageIdentity> {
     entries: HashMap<K, TextureEntry>,
-    source_warm: HashMap<K, TextureEntry>,
     live_textures: HashMap<K, LiveTexture>,
-    eviction_order: BTreeSet<TextureAccess<K>>,
+    thumbnail_order: BTreeSet<TextureAccess<K>>,
+    large_order: BTreeSet<TextureAccess<K>>,
     bytes: usize,
+    thumbnail_bytes: usize,
     next_access: u64,
     max_textures: usize,
     max_bytes: usize,
+    thumbnail_reserve_bytes: usize,
 }
 
 #[derive(Clone)]
@@ -27,6 +31,7 @@ struct LiveTexture {
     source_id: SourceId,
     texture: glib::WeakRef<gdk::Texture>,
     bytes: usize,
+    class: TextureClass,
 }
 
 struct TextureEntry {
@@ -34,6 +39,21 @@ struct TextureEntry {
     texture: gdk::Texture,
     bytes: usize,
     last_used: u64,
+    class: TextureClass,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum TextureClass {
+    Thumbnail,
+    Large,
+}
+
+fn texture_class(width: u32, height: u32) -> TextureClass {
+    if width.max(height) <= MAX_THUMBNAIL_TEXTURE_SIZE {
+        TextureClass::Thumbnail
+    } else {
+        TextureClass::Large
+    }
 }
 
 #[derive(Clone, Eq, Ord, PartialEq, PartialOrd)]
@@ -54,54 +74,72 @@ impl<K> TextureCache<K>
 where
     K: Clone + Eq + Hash + Ord,
 {
+    #[cfg(test)]
     fn with_limits(max_textures: usize, max_bytes: usize) -> Self {
+        Self::with_limits_and_thumbnail_reserve(max_textures, max_bytes, max_bytes / 2)
+    }
+
+    fn with_limits_and_thumbnail_reserve(
+        max_textures: usize,
+        max_bytes: usize,
+        thumbnail_reserve_bytes: usize,
+    ) -> Self {
         Self {
             entries: HashMap::new(),
-            source_warm: HashMap::new(),
             live_textures: HashMap::new(),
-            eviction_order: BTreeSet::new(),
+            thumbnail_order: BTreeSet::new(),
+            large_order: BTreeSet::new(),
             bytes: 0,
+            thumbnail_bytes: 0,
             next_access: 0,
             max_textures,
             max_bytes,
+            thumbnail_reserve_bytes: thumbnail_reserve_bytes.min(max_bytes),
         }
     }
 
     fn get(&mut self, key: &K) -> Option<gdk::Texture> {
-        if let Some(entry) = self.source_warm.get(key) {
-            return Some(entry.texture.clone());
-        }
         let last_used = self.next_access();
-        let (previous_access, texture) = {
+        let (previous_access, class, texture) = {
             let entry = self.entries.get_mut(key)?;
             let previous_access = TextureAccess {
                 last_used: entry.last_used,
                 key: key.clone(),
             };
             entry.last_used = last_used;
-            (previous_access, entry.texture.clone())
+            (previous_access, entry.class, entry.texture.clone())
         };
-        self.eviction_order.remove(&previous_access);
-        self.eviction_order.insert(TextureAccess {
+        self.order_mut(class).remove(&previous_access);
+        self.order_mut(class).insert(TextureAccess {
             last_used,
             key: key.clone(),
         });
         Some(texture)
     }
 
-    fn insert(&mut self, key: K, source_id: SourceId, texture: gdk::Texture, bytes: usize) {
+    fn insert_with_class(
+        &mut self,
+        key: K,
+        source_id: SourceId,
+        texture: gdk::Texture,
+        bytes: usize,
+        class: TextureClass,
+    ) {
         self.remove(&key);
-        self.source_warm.remove(&key);
         self.live_textures.insert(
             key.clone(),
             LiveTexture {
                 source_id: source_id.clone(),
                 texture: texture.downgrade(),
                 bytes,
+                class,
             },
         );
         let last_used = self.next_access();
         self.bytes = self.bytes.saturating_add(bytes);
+        if class == TextureClass::Thumbnail {
+            self.thumbnail_bytes = self.thumbnail_bytes.saturating_add(bytes);
+        }
         self.entries.insert(
             key.clone(),
             TextureEntry {
@@ -109,17 +147,13 @@ where
                 texture,
                 bytes,
                 last_used,
+                class,
             },
         );
-        self.eviction_order.insert(TextureAccess { last_used, key });
+        self.order_mut(class)
+            .insert(TextureAccess { last_used, key });
         self.evict_to_limits();
-        if self.live_textures.len()
-            > self
-                .entries
-                .len()
-                .saturating_add(self.source_warm.len())
-                .saturating_add(self.max_textures)
-        {
+        if self.live_textures.len() > self.entries.len().saturating_add(self.max_textures) {
             self.live_textures
                 .retain(|_, entry| entry.texture.upgrade().is_some());
         }
@@ -132,25 +166,7 @@ where
         texture: gdk::Texture,
         bytes: usize,
     ) {
-        self.remove(&key);
-        self.source_warm.remove(&key);
-        self.live_textures.insert(
-            key.clone(),
-            LiveTexture {
-                source_id: source_id.clone(),
-                texture: texture.downgrade(),
-                bytes,
-            },
-        );
-        self.source_warm.insert(
-            key,
-            TextureEntry {
-                source_id,
-                texture,
-                bytes,
-                last_used: 0,
-            },
-        );
+        self.insert_with_class(key, source_id, texture, bytes, TextureClass::Thumbnail);
     }
 
     fn get_or_revive(&mut self, key: &K) -> Option<gdk::Texture> {
@@ -162,25 +178,13 @@ where
             self.live_textures.remove(key);
             return None;
         };
-        self.insert(key.clone(), live.source_id, texture.clone(), live.bytes);
-        Some(texture)
-    }
-
-    fn get_or_retain_source_warm(&mut self, key: &K) -> Option<gdk::Texture> {
-        if let Some(entry) = self.source_warm.get(key) {
-            return Some(entry.texture.clone());
-        }
-        if let Some(entry) = self.remove(key) {
-            let texture = entry.texture.clone();
-            self.source_warm.insert(key.clone(), entry);
-            return Some(texture);
-        }
-        let live = self.live_textures.get(key)?.clone();
-        let Some(texture) = live.texture.upgrade() else {
-            self.live_textures.remove(key);
-            return None;
-        };
-        self.insert_source_warm(key.clone(), live.source_id, texture.clone(), live.bytes);
+        self.insert_with_class(
+            key.clone(),
+            live.source_id,
+            texture.clone(),
+            live.bytes,
+            live.class,
+        );
         Some(texture)
     }
 
@@ -193,20 +197,21 @@ where
             .collect::<Vec<_>>();
         for key in stale {
             self.remove(&key);
-            self.source_warm.remove(&key);
             self.live_textures.remove(&key);
         }
     }
 
     fn release_source_warm(&mut self, source_id: &SourceId) {
         let stale = self
-            .source_warm
+            .entries
             .iter()
-            .filter(|(_, entry)| &entry.source_id == source_id)
+            .filter(|(_, entry)| {
+                &entry.source_id == source_id && entry.class == TextureClass::Thumbnail
+            })
             .map(|(key, _)| key.clone())
             .collect::<Vec<_>>();
         for key in stale {
-            self.source_warm.remove(&key);
+            self.remove(&key);
         }
         self.live_textures
             .retain(|_, entry| &entry.source_id != source_id || entry.texture.upgrade().is_some());
@@ -214,11 +219,14 @@ where
 
     fn remove(&mut self, key: &K) -> Option<TextureEntry> {
         let entry = self.entries.remove(key)?;
-        self.eviction_order.remove(&TextureAccess {
+        self.order_mut(entry.class).remove(&TextureAccess {
             last_used: entry.last_used,
             key: key.clone(),
         });
         self.bytes = self.bytes.saturating_sub(entry.bytes);
+        if entry.class == TextureClass::Thumbnail {
+            self.thumbnail_bytes = self.thumbnail_bytes.saturating_sub(entry.bytes);
+        }
         Some(entry)
     }
 
@@ -227,23 +235,147 @@ where
         self.next_access
     }
 
+    fn order_mut(&mut self, class: TextureClass) -> &mut BTreeSet<TextureAccess<K>> {
+        match class {
+            TextureClass::Thumbnail => &mut self.thumbnail_order,
+            TextureClass::Large => &mut self.large_order,
+        }
+    }
+
+    fn oldest_class(&self) -> Option<TextureClass> {
+        match (self.thumbnail_order.first(), self.large_order.first()) {
+            (Some(thumbnail), Some(large)) => Some(if thumbnail <= large {
+                TextureClass::Thumbnail
+            } else {
+                TextureClass::Large
+            }),
+            (Some(_), None) => Some(TextureClass::Thumbnail),
+            (None, Some(_)) => Some(TextureClass::Large),
+            (None, None) => None,
+        }
+    }
+
+    fn byte_pressure_class(&self) -> Option<TextureClass> {
+        let large_bytes = self.bytes.saturating_sub(self.thumbnail_bytes);
+        let large_reserve_bytes = self.max_bytes.saturating_sub(self.thumbnail_reserve_bytes);
+        match (
+            self.thumbnail_bytes > self.thumbnail_reserve_bytes,
+            large_bytes > large_reserve_bytes,
+        ) {
+            (true, false) => Some(TextureClass::Thumbnail),
+            (false, true) => Some(TextureClass::Large),
+            _ => self.oldest_class(),
+        }
+    }
+
+    fn oldest_key(&self, class: TextureClass) -> Option<K> {
+        match class {
+            TextureClass::Thumbnail => self.thumbnail_order.first(),
+            TextureClass::Large => self.large_order.first(),
+        }
+        .map(|access| access.key.clone())
+    }
+
     fn evict_to_limits(&mut self) {
         while self.entries.len() > self.max_textures || self.bytes > self.max_bytes {
-            let Some(access) = self.eviction_order.first().cloned() else {
+            let class = if self.bytes > self.max_bytes {
+                self.byte_pressure_class()
+            } else {
+                self.oldest_class()
+            };
+            let Some(key) = class.and_then(|class| self.oldest_key(class)) else {
                 break;
             };
-            self.remove(&access.key);
+            self.remove(&key);
+        }
+    }
+
+    fn thumbnail_warm_limit(&self, render_size: u32) -> usize {
+        let Ok(render_size) = usize::try_from(render_size) else {
+            return 0;
+        };
+        let bytes = render_size.saturating_mul(render_size).saturating_mul(4);
+        if bytes == 0 {
+            return 0;
+        }
+        let available_bytes = self
+            .thumbnail_reserve_bytes
+            .saturating_sub(self.thumbnail_bytes);
+        let available_entries = self.max_textures.saturating_sub(self.entries.len());
+        (available_bytes / bytes).min(available_entries)
+    }
+
+    #[cfg(test)]
+    fn assert_consistent(&self) {
+        let bytes = self
+            .entries
+            .values()
+            .map(|entry| entry.bytes)
+            .sum::<usize>();
+        let thumbnail_bytes = self
+            .entries
+            .values()
+            .filter(|entry| entry.class == TextureClass::Thumbnail)
+            .map(|entry| entry.bytes)
+            .sum::<usize>();
+        assert_eq!(self.bytes, bytes);
+        assert_eq!(self.thumbnail_bytes, thumbnail_bytes);
+        assert!(self.bytes <= self.max_bytes);
+        assert!(self.entries.len() <= self.max_textures);
+        assert_eq!(
+            self.thumbnail_order.len(),
+            self.entries
+                .values()
+                .filter(|entry| entry.class == TextureClass::Thumbnail)
+                .count()
+        );
+        assert_eq!(
+            self.large_order.len(),
+            self.entries
+                .values()
+                .filter(|entry| entry.class == TextureClass::Large)
+                .count()
+        );
+        for access in &self.thumbnail_order {
+            assert_eq!(
+                self.entries.get(&access.key).map(|entry| entry.class),
+                Some(TextureClass::Thumbnail)
+            );
+        }
+        for access in &self.large_order {
+            assert_eq!(
+                self.entries.get(&access.key).map(|entry| entry.class),
+                Some(TextureClass::Large)
+            );
+        }
+        for (key, entry) in &self.entries {
+            let access = TextureAccess {
+                last_used: entry.last_used,
+                key: key.clone(),
+            };
+            assert!(match entry.class {
+                TextureClass::Thumbnail => self.thumbnail_order.contains(&access),
+                TextureClass::Large => self.large_order.contains(&access),
+            });
         }
     }
 }
 
 impl Default for TextureCache {
     fn default() -> Self {
-        Self::with_limits(MAX_RECENT_TEXTURES, MAX_RECENT_TEXTURE_BYTES)
+        Self::with_limits_and_thumbnail_reserve(
+            MAX_TEXTURES,
+            MAX_TEXTURE_BYTES,
+            THUMBNAIL_RESERVE_BYTES,
+        )
     }
 }
 
 impl TextureCache {
+    pub(super) fn source_thumbnail_warm_limit(&self, render_size: u32) -> usize {
+        self.thumbnail_warm_limit(render_size)
+    }
+
     pub(super) fn texture(
         &mut self,
         source_id: &SourceId,
@@ -254,24 +386,47 @@ impl TextureCache {
             return Some(texture);
         }
         let bytes = image.rgba().len();
+        let class = texture_class(image.width(), image.height());
         let texture = texture_from_decoded(image)?;
-        self.insert(identity, source_id.clone(), texture.clone(), bytes);
+        self.insert_with_class(identity, source_id.clone(), texture.clone(), bytes, class);
         Some(texture)
     }
 
-    pub(super) fn retain_source_warm_texture(
+    pub(super) fn try_retain_source_warm_texture(
         &mut self,
         source_id: &SourceId,
         image: Arc<DecodedImage>,
-    ) -> Option<gdk::Texture> {
+    ) -> bool {
         let identity = image.identity();
-        if let Some(texture) = self.get_or_retain_source_warm(&identity) {
-            return Some(texture);
+        if self.get(&identity).is_some() {
+            return true;
         }
         let bytes = image.rgba().len();
-        let texture = texture_from_decoded(image)?;
-        self.insert_source_warm(identity, source_id.clone(), texture.clone(), bytes);
-        Some(texture)
+        if self.thumbnail_bytes.saturating_add(bytes) > self.thumbnail_reserve_bytes
+            || self.entries.len() >= self.max_textures
+        {
+            return false;
+        }
+        let texture = match self.live_textures.get(&identity).cloned() {
+            Some(live) => match live.texture.upgrade() {
+                Some(texture) => texture,
+                None => {
+                    self.live_textures.remove(&identity);
+                    let Some(texture) = texture_from_decoded(image) else {
+                        return false;
+                    };
+                    texture
+                }
+            },
+            None => {
+                let Some(texture) = texture_from_decoded(image) else {
+                    return false;
+                };
+                texture
+            }
+        };
+        self.insert_source_warm(identity, source_id.clone(), texture, bytes);
+        true
     }
 
     pub(super) fn release_source_warm_textures(&mut self, source_id: &SourceId) {
@@ -303,6 +458,7 @@ fn texture_from_decoded(image: Arc<DecodedImage>) -> Option<gdk::Texture> {
 #[cfg(test)]
 mod tests {
     use gtk::prelude::ObjectType;
+    use proptest::prelude::*;
 
     use super::*;
 
@@ -312,17 +468,23 @@ mod tests {
     }
 
     #[test]
-    fn final_texture_cache_reuses_one_texture_and_evicts_by_owned_bytes() {
+    fn texture_class_uses_the_longest_decoded_edge() {
+        assert_eq!(texture_class(96, 96), TextureClass::Thumbnail);
+        assert_eq!(texture_class(192, 48), TextureClass::Large);
+    }
+
+    #[test]
+    fn shared_texture_cache_reuses_one_texture_and_evicts_by_owned_bytes() {
         let source = SourceId::new("texture-cache-source");
         let mut cache = TextureCache::<u8>::with_limits(3, 8);
         let first = texture(1);
         let second = texture(2);
-        cache.insert(1, source.clone(), first.clone(), 4);
-        cache.insert(2, source.clone(), second.clone(), 4);
+        cache.insert_with_class(1, source.clone(), first.clone(), 4, TextureClass::Large);
+        cache.insert_with_class(2, source.clone(), second.clone(), 4, TextureClass::Large);
         let reused = cache.get(&1).expect("the first texture remains cached");
         assert_eq!(reused.as_ptr(), first.as_ptr());
 
-        cache.insert(3, source, texture(3), 4);
+        cache.insert_with_class(3, source, texture(3), 4, TextureClass::Large);
 
         assert_eq!(cache.bytes, 8);
         assert!(cache.get(&1).is_some(), "the recent texture stays cached");
@@ -335,29 +497,71 @@ mod tests {
     }
 
     #[test]
-    fn source_warm_textures_do_not_compete_with_recent_textures() {
-        let source = SourceId::new("warm-texture-source");
-        let mut cache = TextureCache::<u8>::with_limits(1, 4);
-        let warm = texture(1);
-        cache.insert(1, source.clone(), warm.clone(), 4);
-        let retained = cache
-            .get_or_retain_source_warm(&1)
-            .expect("the recent texture becomes source-wide warmth");
-        assert_eq!(retained.as_ptr(), warm.as_ptr());
-        cache.insert(2, source.clone(), texture(2), 4);
-        cache.insert(3, source, texture(3), 4);
+    fn thumbnail_and_large_textures_borrow_one_shared_budget() {
+        let source = SourceId::new("shared-texture-budget-source");
+        let mut cache = TextureCache::<u8>::with_limits(8, 16);
+        cache.insert_source_warm(1, source.clone(), texture(1), 4);
+        for key in 2..=4 {
+            cache.insert_with_class(key, source.clone(), texture(key), 4, TextureClass::Large);
+        }
+        assert_eq!(cache.thumbnail_bytes, 4);
+        assert_eq!(cache.bytes, 16);
 
-        assert_eq!(cache.entries.len(), 1);
-        assert_eq!(cache.bytes, 4);
-        assert_eq!(
-            cache
-                .get(&1)
-                .expect("the source-wide small texture remains retained")
-                .as_ptr(),
-            warm.as_ptr()
+        cache.insert_source_warm(5, source, texture(5), 4);
+
+        assert_eq!(cache.bytes, 16);
+        assert_eq!(cache.thumbnail_bytes, 8);
+        assert!(cache.get(&1).is_some());
+        assert!(
+            cache.get(&2).is_none(),
+            "borrowed large-cover space is returned"
         );
-        assert!(cache.get(&2).is_none());
         assert!(cache.get(&3).is_some());
+        assert!(cache.get(&4).is_some());
+        assert!(cache.get(&5).is_some());
+    }
+
+    #[test]
+    fn each_texture_class_keeps_its_soft_share_under_pressure() {
+        let source = SourceId::new("texture-priority-source");
+        let mut cache = TextureCache::<u8>::with_limits(8, 16);
+        for key in 1..=2 {
+            cache.insert_with_class(
+                key,
+                source.clone(),
+                texture(key),
+                4,
+                TextureClass::Thumbnail,
+            );
+        }
+        for key in 3..=4 {
+            cache.insert_with_class(key, source.clone(), texture(key), 4, TextureClass::Large);
+        }
+
+        cache.insert_with_class(5, source.clone(), texture(5), 4, TextureClass::Large);
+        assert!(cache.get(&1).is_some());
+        assert!(cache.get(&2).is_some());
+        assert!(cache.get(&3).is_none());
+
+        cache.insert_with_class(6, source, texture(6), 4, TextureClass::Thumbnail);
+        assert!(cache.get(&1).is_none());
+        assert!(cache.get(&2).is_some());
+        assert!(cache.get(&4).is_some());
+        assert!(cache.get(&5).is_some());
+        assert!(cache.get(&6).is_some());
+        assert_eq!(cache.bytes, 16);
+    }
+
+    #[test]
+    fn thumbnail_warm_limit_follows_the_available_soft_share() {
+        let source = SourceId::new("thumbnail-admission-source");
+        let mut cache = TextureCache::<u8>::with_limits(8, 16);
+        assert_eq!(cache.thumbnail_warm_limit(1), 2);
+        assert_eq!(cache.thumbnail_warm_limit(2), 0);
+
+        cache.insert_source_warm(1, source, texture(1), 4);
+
+        assert_eq!(cache.thumbnail_warm_limit(1), 1);
     }
 
     #[test]
@@ -369,7 +573,7 @@ mod tests {
 
         cache.release_source_warm(&source);
 
-        assert!(cache.source_warm.is_empty());
+        assert!(cache.entries.is_empty());
         let revived = cache
             .get_or_revive(&1)
             .expect("GTK still owns the mounted texture");
@@ -382,13 +586,57 @@ mod tests {
         let first_source = SourceId::new("first-texture-source");
         let second_source = SourceId::new("second-texture-source");
         let mut cache = TextureCache::<u8>::with_limits(3, 12);
-        cache.insert(1, first_source.clone(), texture(1), 4);
-        cache.insert(2, second_source, texture(2), 4);
+        cache.insert_with_class(1, first_source.clone(), texture(1), 4, TextureClass::Large);
+        cache.insert_with_class(2, second_source, texture(2), 4, TextureClass::Large);
 
         cache.invalidate_source(&first_source);
 
         assert!(cache.get_or_revive(&1).is_none());
         assert!(cache.get_or_revive(&2).is_some());
         assert_eq!(cache.bytes, 4);
+    }
+
+    proptest! {
+        #[test]
+        fn arbitrary_cache_operations_preserve_the_shared_bounds(
+            operations in prop::collection::vec(
+                (0u8..6, 0u8..24, 1usize..=24, any::<bool>(), any::<bool>()),
+                1..=96,
+            ),
+        ) {
+            let first_source = SourceId::new("property-source-one");
+            let second_source = SourceId::new("property-source-two");
+            let mut cache = TextureCache::<u8>::with_limits(16, 64);
+
+            for (operation, key, bytes, thumbnail, second) in operations {
+                let source = if second {
+                    second_source.clone()
+                } else {
+                    first_source.clone()
+                };
+                match operation {
+                    0 | 1 => cache.insert_with_class(
+                        key,
+                        source,
+                        texture(key),
+                        bytes,
+                        if thumbnail {
+                            TextureClass::Thumbnail
+                        } else {
+                            TextureClass::Large
+                        },
+                    ),
+                    2 => {
+                        cache.get(&key);
+                    }
+                    3 => cache.release_source_warm(&source),
+                    4 => cache.invalidate_source(&source),
+                    _ => {
+                        cache.get_or_revive(&key);
+                    }
+                }
+                cache.assert_consistent();
+            }
+        }
     }
 }

@@ -428,16 +428,15 @@ impl Shell {
         self.artwork.textures.borrow_mut().texture(source_id, image)
     }
 
-    fn retain_source_warm_texture(
+    fn try_retain_source_warm_texture(
         &self,
         source_id: &::library::SourceId,
         image: Arc<artwork::DecodedImage>,
-    ) {
-        let _ = self
-            .artwork
+    ) -> bool {
+        self.artwork
             .textures
             .borrow_mut()
-            .retain_source_warm_texture(source_id, image);
+            .try_retain_source_warm_texture(source_id, image)
     }
 
     pub(crate) fn release_artwork_textures(&self, source_id: &::library::SourceId) {
@@ -603,6 +602,15 @@ impl Shell {
             .textures
             .borrow_mut()
             .release_source_warm_textures(&selected.source_id);
+        let render_size = cover_decode_size(48, GRID_COVER_SIZE, self.artwork_scale());
+        let binding_limit = self
+            .artwork
+            .textures
+            .borrow()
+            .source_thumbnail_warm_limit(render_size);
+        if binding_limit == 0 {
+            return;
+        }
         let generation = self.artwork.thumbnail_warm.generation.get();
         let shell = Rc::downgrade(self);
         let loaded = Arc::clone(&selected.loaded);
@@ -617,6 +625,7 @@ impl Shell {
                     &loaded,
                     music_folder_id.as_ref(),
                     prefer_server_playlist_covers,
+                    binding_limit,
                 )
             })
             .await
@@ -637,7 +646,6 @@ impl Shell {
             if shell.artwork.thumbnail_warm.generation.get() != generation {
                 return;
             }
-            let render_size = cover_decode_size(48, GRID_COVER_SIZE, shell.artwork_scale());
             let mut bindings = bindings.iter();
             let mut pending = VecDeque::with_capacity(THUMBNAIL_WARM_WINDOW);
             loop {
@@ -654,7 +662,9 @@ impl Shell {
                         .prepare(selected.artwork.clone(), request);
                     match shell.products.artwork.warm_prepared(prepared) {
                         Ok(artwork::ArtworkLoad::Ready(image)) => {
-                            shell.retain_source_warm_texture(&selected.source_id, image);
+                            if !shell.try_retain_source_warm_texture(&selected.source_id, image) {
+                                return;
+                            }
                         }
                         Ok(artwork::ArtworkLoad::Pending(request)) => {
                             pending.push_back(request);
@@ -673,7 +683,9 @@ impl Shell {
                     return;
                 }
                 if let artwork::ArtworkOutcome::Ready(image) = outcome {
-                    shell.retain_source_warm_texture(&selected.source_id, image);
+                    if !shell.try_retain_source_warm_texture(&selected.source_id, image) {
+                        return;
+                    }
                 }
             }
         });
@@ -695,64 +707,102 @@ fn source_thumbnail_bindings(
     loaded: &Arc<::library::LoadedLibrary>,
     music_folder_id: Option<&::library::MusicFolderId>,
     prefer_server_playlist_covers: bool,
+    limit: usize,
 ) -> Result<Arc<[ArtworkBinding]>, ::library::LoadedLibraryError> {
+    if limit == 0 {
+        return Ok(Arc::default());
+    }
     let mut bindings = Vec::new();
     let mut seen = HashSet::new();
-    let mut push = |binding: ArtworkBinding| {
-        if !binding.is_empty() && seen.insert(binding.clone()) {
-            bindings.push(binding);
-        }
-    };
 
-    for album in loaded.albums(music_folder_id)?.iter() {
-        push(ArtworkBinding::album_artwork(&album.artwork));
+    for album in loaded.albums(music_folder_id)?.iter().take(limit) {
+        if !push_source_thumbnail_binding(
+            &mut bindings,
+            &mut seen,
+            ArtworkBinding::album_artwork(&album.artwork),
+            limit,
+        ) {
+            return Ok(bindings.into());
+        }
     }
     for artist in loaded
         .artists(music_folder_id)?
         .iter()
         .chain(loaded.album_artists(music_folder_id)?.iter())
+        .take(limit)
     {
-        push(ArtworkBinding::artist(
-            &artist.artist,
-            &artist.representative_albums,
-        ));
+        if !push_source_thumbnail_binding(
+            &mut bindings,
+            &mut seen,
+            ArtworkBinding::artist(&artist.artist, &artist.representative_albums),
+            limit,
+        ) {
+            return Ok(bindings.into());
+        }
     }
-    for genre in loaded.genres(music_folder_id)?.iter() {
+    for genre in loaded.genres(music_folder_id)?.iter().take(limit) {
         for binding in ArtworkBinding::genre_slots(&genre.genre, &genre.representative_albums) {
-            push(binding);
+            if !push_source_thumbnail_binding(&mut bindings, &mut seen, binding, limit) {
+                return Ok(bindings.into());
+            }
         }
     }
-    for mood in loaded.moods(music_folder_id)?.iter() {
+    for mood in loaded.moods(music_folder_id)?.iter().take(limit) {
         for binding in ArtworkBinding::mood_slots(&mood.mood, &mood.representative_albums) {
-            push(binding);
+            if !push_source_thumbnail_binding(&mut bindings, &mut seen, binding, limit) {
+                return Ok(bindings.into());
+            }
         }
     }
-    for playlist in loaded.playlists()?.iter() {
+    for playlist in loaded.playlists()?.iter().take(limit) {
         for binding in ArtworkBinding::playlist_slots(
             &playlist.playlist,
             &playlist.representative_albums,
             prefer_server_playlist_covers,
         ) {
-            push(binding);
+            if !push_source_thumbnail_binding(&mut bindings, &mut seen, binding, limit) {
+                return Ok(bindings.into());
+            }
         }
     }
-    for playlist in loaded.smart_playlists(music_folder_id)?.iter() {
+    for playlist in loaded.smart_playlists(music_folder_id)?.iter().take(limit) {
         for binding in ArtworkBinding::smart_playlist_slots(
             &playlist.smart_playlist,
             &playlist.representative_albums,
         ) {
-            push(binding);
+            if !push_source_thumbnail_binding(&mut bindings, &mut seen, binding, limit) {
+                return Ok(bindings.into());
+            }
         }
     }
-    for track in loaded
-        .track_list(music_folder_id, ::library::TrackSort::Title, false)?
-        .materialize_owned()?
-        .iter()
-    {
-        push(ArtworkBinding::track(track));
+    let tracks = loaded.track_list(music_folder_id, ::library::TrackSort::Title, false)?;
+    for position in 0..tracks.len().min(limit) {
+        let Some(track) = tracks.track(position)? else {
+            return Err(::library::LoadedLibraryError::StaleTrackSelection);
+        };
+        if !push_source_thumbnail_binding(
+            &mut bindings,
+            &mut seen,
+            ArtworkBinding::track(&track),
+            limit,
+        ) {
+            return Ok(bindings.into());
+        }
     }
 
     Ok(bindings.into())
+}
+
+fn push_source_thumbnail_binding(
+    bindings: &mut Vec<ArtworkBinding>,
+    seen: &mut HashSet<ArtworkBinding>,
+    binding: ArtworkBinding,
+    limit: usize,
+) -> bool {
+    if !binding.is_empty() && seen.insert(binding.clone()) {
+        bindings.push(binding);
+    }
+    bindings.len() < limit
 }
 
 fn defer_route_artwork_settle(
@@ -897,11 +947,33 @@ mod tests {
             )],
         );
 
-        let bindings =
-            source_thumbnail_bindings(&loaded, None, true).expect("source artwork projection");
+        let bindings = source_thumbnail_bindings(&loaded, None, true, usize::MAX)
+            .expect("source artwork projection");
 
         assert!(bindings.contains(&expected_album));
         assert!(bindings.contains(&expected_playlist));
+    }
+
+    #[test]
+    fn source_thumbnail_warm_projection_stops_at_its_budget() {
+        let albums = (0..50_000)
+            .map(|index| {
+                let mut album = album(index, format!("Album {index}"));
+                album.image_ref = Some(ImageRef::new(format!("cover-{index}"), None));
+                album
+            })
+            .collect();
+        let loaded = loaded_source(
+            SourceId::new("bounded-thumbnail-warm"),
+            albums,
+            Vec::new(),
+            Vec::new(),
+        );
+
+        let bindings =
+            source_thumbnail_bindings(&loaded, None, true, 32).expect("bounded artwork projection");
+
+        assert_eq!(bindings.len(), 32);
     }
 
     #[test]
