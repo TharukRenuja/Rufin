@@ -4,7 +4,8 @@ use std::sync::Arc;
 
 use ::scrobbling::Scrobbler;
 use async_channel::unbounded;
-use playback::PlaybackHandles;
+use playback::{PlaybackBackend, PlaybackHandles};
+use playback_gstreamer::GStreamerPlaybackBackend;
 use secrets::SwitchableSecretStore;
 use tracing::warn;
 use ui::runtime::{DiagnosticsHandle, ProductHandles, ProductReceivers, RuntimeInputs};
@@ -114,6 +115,11 @@ pub(crate) fn runtime_inputs(diagnostics: DiagnosticsHandle) -> Result<RuntimeIn
         Arc::clone(&lyrics),
         Arc::clone(&discord),
         Arc::clone(&scrobbler),
+        || {
+            GStreamerPlaybackBackend::new()
+                .map(|backend| Box::new(backend) as Box<dyn PlaybackBackend>)
+                .map_err(|error| error.to_string())
+        },
     );
     let scrobbling = ScrobblingOwner::new(
         settings.clone(),

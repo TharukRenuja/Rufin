@@ -425,6 +425,7 @@ pub struct ArtistSummary {
     pub representative_albums: Arc<[AlbumArtwork]>,
     pub album_count: u32,
     pub track_count: u32,
+    pub duration_seconds: u32,
 }
 
 #[derive(Clone, Debug)]
@@ -1076,6 +1077,18 @@ impl LoadedLibrary {
         Ok(albums.into())
     }
 
+    pub fn album_summary(
+        &self,
+        album_id: &AlbumId,
+        music_folder_id: Option<&MusicFolderId>,
+    ) -> LoadedLibraryResult<Option<AlbumSummary>> {
+        let state = self.read_state()?;
+        Ok(state
+            .albums
+            .get(album_id)
+            .and_then(|album| album_summary(&state, album, music_folder_id)))
+    }
+
     pub fn artists(
         &self,
         music_folder_id: Option<&MusicFolderId>,
@@ -1095,6 +1108,18 @@ impl LoadedLibrary {
                 .then(left.artist.id.cmp(&right.artist.id))
         });
         Ok(artists.into())
+    }
+
+    pub fn artist_summary(
+        &self,
+        artist_id: &ArtistId,
+        music_folder_id: Option<&MusicFolderId>,
+    ) -> LoadedLibraryResult<Option<ArtistSummary>> {
+        let state = self.read_state()?;
+        Ok(state
+            .artists
+            .get(artist_id)
+            .and_then(|artist| artist_summary(&state, artist, music_folder_id)))
     }
 
     pub fn album_artists(
@@ -1129,12 +1154,14 @@ impl LoadedLibrary {
             .genres
             .iter()
             .filter_map(|(_, genre)| {
+                seen_tracks.fill(false);
+                seen_albums.fill(false);
                 genre_summary_with_seen(
                     &state,
                     genre,
                     music_folder_id,
-                    &mut seen_tracks,
-                    &mut seen_albums,
+                    |slot| !std::mem::replace(&mut seen_tracks[slot.index()], true),
+                    |slot| !std::mem::replace(&mut seen_albums[slot.index()], true),
                 )
             })
             .collect::<Vec<_>>();
@@ -1142,6 +1169,18 @@ impl LoadedLibrary {
             text_cmp(&left.genre.name, &right.genre.name).then(left.genre.id.cmp(&right.genre.id))
         });
         Ok(genres.into())
+    }
+
+    pub fn genre_summary(
+        &self,
+        genre_id: &GenreId,
+        music_folder_id: Option<&MusicFolderId>,
+    ) -> LoadedLibraryResult<Option<GenreSummary>> {
+        let state = self.read_state()?;
+        Ok(state
+            .genres
+            .get(genre_id)
+            .and_then(|genre| genre_summary(&state, genre, music_folder_id)))
     }
 
     pub fn moods(
@@ -1172,6 +1211,17 @@ impl LoadedLibrary {
                 .then(left.playlist.id.cmp(&right.playlist.id))
         });
         Ok(playlists.into())
+    }
+
+    pub fn playlist_summary(
+        &self,
+        playlist_id: &PlaylistId,
+    ) -> LoadedLibraryResult<Option<PlaylistSummary>> {
+        let state = self.read_state()?;
+        Ok(state
+            .playlists
+            .get(playlist_id)
+            .map(|playlist| playlist_summary(&state, playlist)))
     }
 
     pub fn music_folders(&self) -> LoadedLibraryResult<Arc<[Arc<MusicFolder>]>> {
@@ -1723,6 +1773,7 @@ fn artist_summary_and_credits(
     music_folder_id: Option<&MusicFolderId>,
 ) -> Option<(ArtistSummary, bool, bool)> {
     let mut track_count = 0u32;
+    let mut duration_seconds = 0u32;
     let mut found_scoped_track = false;
     let mut has_artist_credit = false;
     let mut has_album_artist_credit = false;
@@ -1735,6 +1786,7 @@ fn artist_summary_and_credits(
         }
         found_scoped_track = true;
         track_count = track_count.saturating_add(1);
+        duration_seconds = duration_seconds.saturating_add(track.duration_seconds);
         has_artist_credit |= track
             .relations
             .artists
@@ -1785,6 +1837,7 @@ fn artist_summary_and_credits(
             representative_albums,
             album_count,
             track_count,
+            duration_seconds,
         },
         has_artist_credit,
         has_album_artist_credit,
@@ -1889,33 +1942,36 @@ pub(crate) fn genre_summary(
     genre: &LoadedGenre,
     music_folder_id: Option<&MusicFolderId>,
 ) -> Option<GenreSummary> {
-    let mut seen_tracks = vec![false; state.tracks.slot_capacity()];
-    let mut seen_albums = vec![false; state.albums.slot_capacity()];
+    let mut seen_tracks = HashSet::new();
+    let mut seen_albums = HashSet::new();
     genre_summary_with_seen(
         state,
         genre,
         music_folder_id,
-        &mut seen_tracks,
-        &mut seen_albums,
+        |slot| seen_tracks.insert(slot),
+        |slot| seen_albums.insert(slot),
     )
 }
 
-fn genre_summary_with_seen(
+fn genre_summary_with_seen<TrackSeen, AlbumSeen>(
     state: &LoadedState,
     genre: &LoadedGenre,
     music_folder_id: Option<&MusicFolderId>,
-    seen_tracks: &mut [bool],
-    seen_albums: &mut [bool],
-) -> Option<GenreSummary> {
+    mut track_not_seen: TrackSeen,
+    mut album_not_seen: AlbumSeen,
+) -> Option<GenreSummary>
+where
+    TrackSeen: FnMut(TrackSlot) -> bool,
+    AlbumSeen: FnMut(ItemSlot<AlbumId>) -> bool,
+{
     if music_folder_id.is_none() && genre.tracks.is_empty() && genre.albums.is_empty() {
         return None;
     }
-    seen_tracks.fill(false);
     let mut track_count = 0u32;
     let mut duration_seconds = 0u32;
     let mut found_scoped_track = false;
     for slot in genre_relationship_tracks(state, genre) {
-        if std::mem::replace(&mut seen_tracks[slot.index()], true) {
+        if !track_not_seen(slot) {
             continue;
         }
         let Some(track) = state.tracks.get_slot(slot) else {
@@ -1932,9 +1988,8 @@ fn genre_summary_with_seen(
         return None;
     }
 
-    seen_albums.fill(false);
     let mut albums = genre_relationship_albums(state, genre)
-        .filter(|slot| !std::mem::replace(&mut seen_albums[slot.index()], true))
+        .filter(|slot| album_not_seen(*slot))
         .filter_map(|slot| state.albums.get_slot(slot))
         .filter_map(|album| {
             if !album_in_scope(state, album, music_folder_id) {

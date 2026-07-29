@@ -537,8 +537,75 @@ row:focus {
 }
 
 .nav-button:not(.selected):hover,
+.sidebar-pin-row.selected:hover,
 .album-button:hover {
   background: color-mix(in srgb, currentColor 8%, transparent);
+}
+
+.sidebar-pins-heading {
+  margin: 12px 18px 2px;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.sidebar-pin-row {
+  min-width: 0;
+  padding: 0;
+}
+
+.nav-button.sidebar-pin-row:hover {
+  background: transparent;
+}
+
+.sidebar-pin-activate {
+  min-width: 0;
+  padding: 4px;
+  border-radius: 9px;
+  background: transparent;
+  box-shadow: none;
+}
+
+.sidebar-pin-activate:hover,
+.sidebar-pin-activate:active {
+  background: transparent;
+  box-shadow: none;
+}
+
+.sidebar-pin-title {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.sidebar-pin-metadata {
+  min-width: 0;
+}
+
+.sidebar-pin-metadata-icon,
+.sidebar-pin-metadata-label {
+  font-size: 10px;
+  opacity: 0.68;
+}
+
+.sidebar-pin-row.selected .sidebar-pin-title {
+  color: var(--accent-color);
+}
+
+.sidebar-pin-controls {
+  min-height: 40px;
+  padding-left: 4px;
+  border-radius: 7px;
+  background: var(--sidebar-bg-color);
+}
+
+.icon-button.sidebar-pin-control {
+  min-width: 32px;
+  min-height: 32px;
+  padding: 0;
+  border-radius: 7px;
+}
+
+.sidebar-pin-control:hover {
+  background: color-mix(in srgb, currentColor 3%, transparent);
 }
 
 button:disabled,

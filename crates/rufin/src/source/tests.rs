@@ -1980,6 +1980,19 @@ fn test_downloads(root: PathBuf, runtime: tokio::runtime::Handle) -> downloads::
     downloads::Downloads::new(root, runtime, events)
 }
 
+#[derive(Default)]
+struct AcceptingPlaybackBackend;
+
+impl playback::PlaybackBackend for AcceptingPlaybackBackend {
+    fn send(&mut self, _command: playback::BackendCommand) -> Result<(), playback::BackendError> {
+        Ok(())
+    }
+
+    fn drain_events(&mut self) -> Vec<playback::BackendEvent> {
+        Vec::new()
+    }
+}
+
 fn attach_test_playback(
     bootstrap: &SourceBootstrap,
     library: Library,
@@ -2017,6 +2030,7 @@ fn attach_test_playback(
         lyrics,
         Arc::new(desktop_integration::Discord::new()),
         scrobbler,
+        || Ok(Box::<AcceptingPlaybackBackend>::default() as Box<dyn playback::PlaybackBackend>),
     );
     bootstrap.owner.attach_playback(&playback);
     playback

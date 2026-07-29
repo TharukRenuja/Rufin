@@ -28,8 +28,8 @@ pub use settings::{
     MAX_LEFT_SIDEBAR_WIDTH, MAX_NARROW_LAYOUT_THRESHOLD, MAX_RIGHT_SIDEBAR_WIDTH,
     MAX_TABLE_COLUMN_WIDTH, MIN_LEFT_SIDEBAR_WIDTH, MIN_NARROW_LAYOUT_THRESHOLD,
     MIN_RIGHT_SIDEBAR_WIDTH, MIN_TABLE_COLUMN_WIDTH, RightSidebarMode, Settings, SettingsHandle,
-    SettingsPort, SidebarRouteItem, SidebarRouteItemSettings, SidebarSettings, ThemePreference,
-    available_detail_track_fields, available_grid_fields, available_row_fields,
+    SettingsPort, SidebarPin, SidebarRouteItem, SidebarRouteItemSettings, SidebarSettings,
+    ThemePreference, available_detail_track_fields, available_grid_fields, available_row_fields,
     available_sort_fields, sanitized_window_size,
 };
 
