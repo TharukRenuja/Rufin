@@ -123,6 +123,7 @@ impl ContextMenuSurface {
         self.target
             .insert_action_group(self.group_name, Some(&self.actions));
         show_native_menu_icons(&self.popover);
+        keep_parent_grab_for_nested_native_menus(&self.popover);
         let unmap_handler = Rc::new(RefCell::new(Some(popdown_on_anchor_unmap(
             &self.target,
             &self.popover,
@@ -210,6 +211,10 @@ pub(crate) fn replace_native_menu_checkmarks(popover: &gtk::PopoverMenu) {
     replace_native_menu_checkmarks_from(popover.upcast_ref());
 }
 
+pub(crate) fn keep_parent_grab_for_nested_native_menus(popover: &gtk::PopoverMenu) {
+    keep_parent_grab_for_nested_native_menus_from(popover.upcast_ref());
+}
+
 pub(crate) fn popdown_native_menu(popover: &gtk::PopoverMenu) {
     popdown_nested_native_menus_from(popover.upcast_ref());
     popover.popdown();
@@ -248,6 +253,29 @@ fn popdown_nested_native_menus_from(container: &gtk::Widget) {
             popdown_native_menu(&nested_popover);
         }
         popdown_nested_native_menus_from(&widget);
+    }
+}
+
+fn keep_parent_grab_for_nested_native_menus_from(container: &gtk::Widget) {
+    let mut child = container.first_child();
+    while let Some(widget) = child {
+        child = widget.next_sibling();
+
+        if widget.type_().name() == "GtkModelButton"
+            && let Some(nested_popover) = widget
+                .property::<Option<gtk::Popover>>("popover")
+                .and_then(|popover| popover.downcast::<gtk::PopoverMenu>().ok())
+        {
+            // GTK can lose the parent's input grab when an autohide child closes.
+            nested_popover.set_autohide(false);
+            let nested_popover = nested_popover.downgrade();
+            widget.connect_unmap(move |_| {
+                if let Some(nested_popover) = nested_popover.upgrade() {
+                    popdown_native_menu(&nested_popover);
+                }
+            });
+        }
+        keep_parent_grab_for_nested_native_menus_from(&widget);
     }
 }
 
