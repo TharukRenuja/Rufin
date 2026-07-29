@@ -6,6 +6,7 @@
 
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::sync::mpsc::{self, Receiver, SyncSender};
 use std::thread;
 use std::time::Duration;
@@ -131,7 +132,21 @@ type StoreJob = Box<dyn FnOnce(&mut Worker) + Send>;
 
 #[derive(Clone)]
 pub(crate) struct StoreLane {
-    sender: SyncSender<StoreJob>,
+    inner: Arc<StoreLaneInner>,
+}
+
+struct StoreLaneInner {
+    sender: Option<SyncSender<StoreJob>>,
+    worker: Option<thread::JoinHandle<()>>,
+}
+
+impl Drop for StoreLaneInner {
+    fn drop(&mut self) {
+        drop(self.sender.take());
+        if let Some(worker) = self.worker.take() {
+            let _ = worker.join();
+        }
+    }
 }
 
 impl StoreLane {
@@ -142,7 +157,7 @@ impl StoreLane {
     fn spawn(location: StoreLocation) -> StoreResult<Self> {
         let (sender, receiver) = mpsc::sync_channel(64);
         let (opened_sender, opened_receiver) = mpsc::sync_channel(1);
-        thread::Builder::new()
+        let worker = thread::Builder::new()
             .name("rufin-store".to_string())
             .spawn(move || {
                 let opened = Worker::open(location);
@@ -158,10 +173,24 @@ impl StoreLane {
                 }
             })
             .map_err(StoreError::Io)?;
-        opened_receiver
-            .recv()
-            .map_err(|_| StoreError::WorkerPanicked)??;
-        Ok(Self { sender })
+        match opened_receiver.recv() {
+            Ok(Ok(())) => Ok(Self {
+                inner: Arc::new(StoreLaneInner {
+                    sender: Some(sender),
+                    worker: Some(worker),
+                }),
+            }),
+            Ok(Err(error)) => {
+                drop(sender);
+                let _ = worker.join();
+                Err(error)
+            }
+            Err(_) => {
+                drop(sender);
+                let _ = worker.join();
+                Err(StoreError::WorkerPanicked)
+            }
+        }
     }
 
     pub(crate) fn begin_candidate(&self, header: CandidateHeader) -> StoreResult<i64> {
@@ -476,11 +505,18 @@ impl StoreLane {
     }
 
     fn schedule(&self, operation: impl FnOnce(&mut Worker) + Send + 'static) {
-        let _ = self.sender.try_send(Box::new(operation));
+        if let Some(sender) = self.inner.sender.as_ref() {
+            let _ = sender.try_send(Box::new(operation));
+        }
     }
 
     fn send(&self, job: StoreJob) -> StoreResult<()> {
-        self.sender.send(job).map_err(|_| StoreError::WorkerStopped)
+        self.inner
+            .sender
+            .as_ref()
+            .ok_or(StoreError::WorkerStopped)?
+            .send(job)
+            .map_err(|_| StoreError::WorkerStopped)
     }
 }
 
