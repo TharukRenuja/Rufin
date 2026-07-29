@@ -1,5 +1,6 @@
 use std::collections::HashSet;
 
+use library::{AlbumId, ArtistId, GenreId, PlaylistId, SmartPlaylistId, SourceId};
 use localization::msgid;
 use serde::{Deserialize, Deserializer, Serialize};
 
@@ -332,10 +333,48 @@ pub struct SidebarRouteItemSettings {
     pub item: SidebarRouteItem,
     pub visible: bool,
 }
+#[derive(Clone, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
+pub enum SidebarPin {
+    Album {
+        source_id: SourceId,
+        album_id: AlbumId,
+    },
+    Artist {
+        source_id: SourceId,
+        artist_id: ArtistId,
+    },
+    Genre {
+        source_id: SourceId,
+        genre_id: GenreId,
+    },
+    Playlist {
+        source_id: SourceId,
+        playlist_id: PlaylistId,
+    },
+    SmartPlaylist {
+        source_id: SourceId,
+        playlist_id: SmartPlaylistId,
+    },
+}
+impl SidebarPin {
+    pub fn source_id(&self) -> &SourceId {
+        match self {
+            Self::Album { source_id, .. }
+            | Self::Artist { source_id, .. }
+            | Self::Genre { source_id, .. }
+            | Self::Playlist { source_id, .. }
+            | Self::SmartPlaylist { source_id, .. } => source_id,
+        }
+    }
+}
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct SidebarSettings {
     #[serde(default = "default_sidebar_route_items")]
     pub route_items: Vec<SidebarRouteItemSettings>,
+    #[serde(default = "default_true")]
+    pub pins_visible: bool,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub pins: Vec<SidebarPin>,
     #[serde(default = "default_true")]
     pub server_visible: bool,
 }
@@ -343,6 +382,8 @@ impl Default for SidebarSettings {
     fn default() -> Self {
         Self {
             route_items: default_sidebar_route_items(),
+            pins_visible: true,
+            pins: Vec::new(),
             server_visible: true,
         }
     }
@@ -379,6 +420,25 @@ impl SidebarSettings {
             home.visible = true;
         }
         self.route_items = sanitized;
+        let mut seen = HashSet::new();
+        self.pins.retain(|pin| seen.insert(pin.clone()));
+    }
+
+    pub fn is_pinned(&self, pin: &SidebarPin) -> bool {
+        self.pins.contains(pin)
+    }
+
+    pub fn set_pinned(&mut self, pin: SidebarPin, pinned: bool) -> bool {
+        if pinned {
+            if self.pins.contains(&pin) {
+                return false;
+            }
+            self.pins.push(pin);
+            return true;
+        }
+        let previous_len = self.pins.len();
+        self.pins.retain(|stored| stored != &pin);
+        self.pins.len() != previous_len
     }
 }
 fn insert_sidebar_route_item_in_default_order(

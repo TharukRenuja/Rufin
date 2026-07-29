@@ -10,6 +10,7 @@ use downloads::DownloadSubject;
 use gtk::glib;
 use playback::{QueuePlacement, RadioPlayRequest};
 
+use crate::SidebarPin;
 use crate::favorites::{FAVORITE_ADD_ICON, FAVORITE_REMOVE_ICON};
 use crate::interactions::{
     ADD_TO_PLAYLIST_ICON, ALBUM_ICON, ARTIST_ICON, ContextMenuSurface, DOWNLOAD_ICON, RADIO_ICON,
@@ -18,7 +19,7 @@ use crate::interactions::{
 use crate::player::state::current_playback_track;
 use crate::preferences::dialogs::popup::present_light_dismiss_dialog;
 use crate::shell::Shell;
-use crate::shell::actions::{PLAY_ICON, PLAY_LATER_ICON, PLAY_NEXT_ICON, REMOVE_ICON};
+use crate::shell::actions::{ADD_ICON, PLAY_ICON, PLAY_LATER_ICON, PLAY_NEXT_ICON, REMOVE_ICON};
 use localization::{msgid, tr};
 
 use super::collections::PlaybackTarget;
@@ -351,6 +352,19 @@ fn present_album_context_menu_inner(
             FAVORITE_ADD_ICON
         },
     );
+    install_sidebar_pin_action(
+        &surface,
+        shell,
+        shell
+            .library
+            .selected
+            .borrow()
+            .as_ref()
+            .map(|selected| SidebarPin::Album {
+                source_id: selected.source_id.clone(),
+                album_id: album.album.id.clone(),
+            }),
+    );
     let artist_route = album_artist_route(&album.album);
     if artist_route.is_some() {
         surface.append_action(msgid("Go to Artist"), "go-artist", ARTIST_ICON);
@@ -435,6 +449,19 @@ pub(crate) fn present_artist_context_menu(
             FAVORITE_ADD_ICON
         },
     );
+    install_sidebar_pin_action(
+        &surface,
+        shell,
+        shell
+            .library
+            .selected
+            .borrow()
+            .as_ref()
+            .map(|selected| SidebarPin::Artist {
+                source_id: selected.source_id.clone(),
+                artist_id: artist.artist.id.clone(),
+            }),
+    );
     surface.append_action(msgid("Go to Artist"), "go-artist", ARTIST_ICON);
 
     install_loaded_actions(&surface, shell, playback_target, true);
@@ -488,6 +515,19 @@ pub(crate) fn present_genre_context_menu(
             ADD_TO_PLAYLIST_ICON,
         );
     }
+    install_sidebar_pin_action(
+        &surface,
+        shell,
+        shell
+            .library
+            .selected
+            .borrow()
+            .as_ref()
+            .map(|selected| SidebarPin::Genre {
+                source_id: selected.source_id.clone(),
+                genre_id: genre.genre.id.clone(),
+            }),
+    );
     install_loaded_actions(&surface, shell, playback_target, true);
     install_radio_actions(
         &surface,
@@ -518,6 +558,19 @@ pub(crate) fn present_playlist_context_menu(
         msgid("Playlist radio"),
         &radio_context_submenu("playlist"),
         RADIO_ICON,
+    );
+    install_sidebar_pin_action(
+        &surface,
+        shell,
+        shell
+            .library
+            .selected
+            .borrow()
+            .as_ref()
+            .map(|selected| SidebarPin::Playlist {
+                source_id: selected.source_id.clone(),
+                playlist_id: playlist.playlist.id.clone(),
+            }),
     );
     surface.append_action(msgid("Delete"), "delete", REMOVE_ICON);
     install_loaded_actions(&surface, shell, playback_target, true);
@@ -563,6 +616,19 @@ pub(crate) fn present_smart_playlist_context_menu(
     let playback_target = PlaybackTarget::SmartPlaylist(playlist.smart_playlist.id.clone());
     let surface = ContextMenuSurface::new(target, "smart-playlist", position);
     surface.append_action(msgid("Play"), "play", PLAY_ICON);
+    install_sidebar_pin_action(
+        &surface,
+        shell,
+        shell
+            .library
+            .selected
+            .borrow()
+            .as_ref()
+            .map(|selected| SidebarPin::SmartPlaylist {
+                source_id: selected.source_id.clone(),
+                playlist_id: playlist.smart_playlist.id.clone(),
+            }),
+    );
     surface.append_action(msgid("Delete"), "delete", REMOVE_ICON);
     install_loaded_actions(&surface, shell, playback_target, true);
     surface.add_action("delete", {
@@ -571,6 +637,30 @@ pub(crate) fn present_smart_playlist_context_menu(
         move || smart_playlists.delete(playlist_id.clone())
     });
     surface.popup();
+}
+
+fn install_sidebar_pin_action(
+    surface: &ContextMenuSurface,
+    shell: &Rc<Shell>,
+    pin: Option<SidebarPin>,
+) {
+    let Some(pin) = pin else {
+        return;
+    };
+    let pinned = shell.settings.current.borrow().sidebar.is_pinned(&pin);
+    surface.append_action(
+        if pinned {
+            msgid("Remove from Pins")
+        } else {
+            msgid("Add to Pins")
+        },
+        "pin",
+        if pinned { REMOVE_ICON } else { ADD_ICON },
+    );
+    let shell = Rc::clone(shell);
+    surface.add_action("pin", move || {
+        shell.set_sidebar_pin(pin.clone(), !pinned);
+    });
 }
 
 fn install_loaded_actions(

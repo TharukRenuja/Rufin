@@ -149,6 +149,9 @@ msgstr ""
 msgid "Add to Favorites"
 msgstr ""
 
+msgid "Add to Pins"
+msgstr ""
+
 msgid "Add to Playlist"
 msgstr ""
 
@@ -568,6 +571,9 @@ msgid "Files need Mood/BPM tags written on them. Not supported for Jellyfin"
 msgstr ""
 
 msgid "Find your ListenBrainz user token"
+msgstr ""
+
+msgid "Fixed position"
 msgstr ""
 
 msgid "Flat"
@@ -1047,6 +1053,9 @@ msgstr ""
 msgid "Pause"
 msgstr ""
 
+msgid "Pins"
+msgstr ""
+
 msgid "PipeWire"
 msgstr ""
 
@@ -1249,6 +1258,9 @@ msgid "Remove folder"
 msgstr ""
 
 msgid "Remove from Favorites"
+msgstr ""
+
+msgid "Remove from Pins"
 msgstr ""
 
 msgid "Remove from Playlist"

@@ -3682,6 +3682,7 @@ fn source_item_replacement_survives_removal_and_reattaches_dormant_consumers() {
     assert_eq!(scoped_artists.len(), 1);
     assert_eq!(scoped_artists[0].album_count, 1);
     assert_eq!(scoped_artists[0].track_count, 1);
+    assert_eq!(scoped_artists[0].duration_seconds, 240);
     assert_eq!(
         scoped_artists[0].representative_albums[0].album.id,
         new_album_id
@@ -4656,7 +4657,14 @@ fn full_and_point_relationships_match_after_reopen() {
                 .artists(None)
                 .expect("read Artists")
                 .iter()
-                .map(|item| (item.artist.id.clone(), item.album_count, item.track_count))
+                .map(|item| {
+                    (
+                        item.artist.id.clone(),
+                        item.album_count,
+                        item.track_count,
+                        item.duration_seconds,
+                    )
+                })
                 .collect::<Vec<_>>(),
             loaded
                 .genres(None)

@@ -1,9 +1,9 @@
 use super::{
     DownloadRule, DownloadRules, LibraryField, LibraryLayout, LibraryListKey,
-    MAX_RESTORED_WINDOW_HEIGHT, MAX_RESTORED_WINDOW_WIDTH, Settings, SidebarRouteItem,
+    MAX_RESTORED_WINDOW_HEIGHT, MAX_RESTORED_WINDOW_WIDTH, Settings, SidebarPin, SidebarRouteItem,
     available_detail_track_fields, available_sort_fields, sanitized_window_size,
 };
-use library::SourceId;
+use library::{AlbumId, GenreId, PlaylistId, SourceId};
 
 #[test]
 fn private_mode_blocks_automatic_external_activity_but_keeps_passive_links() {
@@ -37,6 +37,69 @@ fn playback_modes_are_one_app_wide_settings_value() {
     assert!(restored.auto_dj_enabled);
     assert!(restored.shuffle_enabled);
     assert_eq!(restored.repeat_mode, playback::RepeatMode::All);
+}
+
+#[test]
+fn sidebar_pins_restore_in_order_and_migrate_from_older_settings() {
+    let mut legacy = serde_json::to_value(Settings::default()).expect("serialize settings");
+    let sidebar = legacy["sidebar"]
+        .as_object_mut()
+        .expect("sidebar settings object");
+    sidebar.remove("pins_visible");
+    sidebar.remove("pins");
+    let restored = serde_json::from_value::<Settings>(legacy).expect("restore older settings");
+    assert!(restored.sidebar.pins_visible);
+    assert!(restored.sidebar.pins.is_empty());
+
+    let source_id = SourceId::new("jellyfin:main");
+    let album = SidebarPin::Album {
+        source_id: source_id.clone(),
+        album_id: AlbumId::new("album"),
+    };
+    let genre = SidebarPin::Genre {
+        source_id: source_id.clone(),
+        genre_id: GenreId::new("genre"),
+    };
+    let playlist = SidebarPin::Playlist {
+        source_id,
+        playlist_id: PlaylistId::new("playlist"),
+    };
+    let mut settings = Settings::default();
+    assert!(settings.sidebar.set_pinned(album.clone(), true));
+    assert!(!settings.sidebar.set_pinned(album.clone(), true));
+    assert!(settings.sidebar.set_pinned(genre.clone(), true));
+    assert!(settings.sidebar.set_pinned(playlist.clone(), true));
+    settings.sidebar.pins.push(album.clone());
+    settings.sanitize();
+    assert_eq!(
+        settings.sidebar.pins,
+        [album.clone(), genre.clone(), playlist.clone()]
+    );
+
+    let mut restored = serde_json::from_value::<Settings>(
+        serde_json::to_value(settings).expect("serialize pinned settings"),
+    )
+    .expect("restore pinned settings");
+    assert_eq!(restored.sidebar.pins, [album.clone(), genre, playlist]);
+    assert!(restored.sidebar.set_pinned(album.clone(), false));
+    assert!(!restored.sidebar.is_pinned(&album));
+}
+
+#[test]
+fn sidebar_pin_identity_includes_the_source() {
+    let first = SidebarPin::Album {
+        source_id: SourceId::new("jellyfin:first"),
+        album_id: AlbumId::new("album"),
+    };
+    let second = SidebarPin::Album {
+        source_id: SourceId::new("jellyfin:second"),
+        album_id: AlbumId::new("album"),
+    };
+    let mut settings = Settings::default();
+
+    assert!(settings.sidebar.set_pinned(first.clone(), true));
+    assert!(settings.sidebar.set_pinned(second.clone(), true));
+    assert_eq!(settings.sidebar.pins, [first, second]);
 }
 
 #[test]

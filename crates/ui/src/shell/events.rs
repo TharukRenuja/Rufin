@@ -165,6 +165,7 @@ fn release_selected_source(shell: &Rc<Shell>) {
 
     shell.favorites.clear_all();
     shell.sync_bottom_player_favorite();
+    shell.rebuild_sidebar_navigation();
     shell.update_bottom_player();
     shell.render_queue_panel();
     shell.render_lyrics_panel();
@@ -263,8 +264,12 @@ fn finish_source_assignment(
 
     refresh_context_playlist_picker(shell);
     shell.sync_bottom_player_favorite();
+    let rebuild_sidebar = source_changed || session_changed || scope_changed || library_changed;
 
     if next.selected.is_none() {
+        if rebuild_sidebar {
+            shell.rebuild_sidebar_navigation();
+        }
         shell.clear_mounted_routes();
         shell.update_layout();
         shell.render_current_route();
@@ -292,6 +297,9 @@ fn finish_source_assignment(
 
     if session_changed && !source_changed {
         shell.refresh_artwork_bindings();
+    }
+    if rebuild_sidebar {
+        shell.rebuild_sidebar_navigation();
     }
 
     if !shell.startup.route_revealed.get()
@@ -401,6 +409,9 @@ fn apply_selected_library_update(shell: &Rc<Shell>, update: SelectedLibraryUpdat
     }
     shell.apply_queue_track_replacements(&update.change.tracks);
 
+    if shell.sidebar_pins_changed(&update.change) {
+        shell.rebuild_sidebar_navigation();
+    }
     if !update.change.playlists.is_empty() {
         refresh_context_playlist_picker(shell);
     }

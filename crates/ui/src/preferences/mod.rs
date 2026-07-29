@@ -948,16 +948,38 @@ fn sidebar_items_group(shell: &Rc<Shell>) -> adw::PreferencesGroup {
     let group = adw::PreferencesGroup::builder()
         .title(tr("Sidebar Items"))
         .build();
+    let pins = adw::SwitchRow::builder()
+        .title(tr("Pins"))
+        .subtitle(tr("Fixed position"))
+        .active(shell.settings.current.borrow().sidebar.pins_visible)
+        .build();
+    let pins_shell = Rc::clone(shell);
+    pins.connect_active_notify(move |row| {
+        let visible = row.is_active();
+        if pins_shell
+            .update_app_settings("Pins visibility setting", |settings| {
+                if settings.sidebar.pins_visible == visible {
+                    return false;
+                }
+                settings.sidebar.pins_visible = visible;
+                true
+            })
+            .is_some()
+        {
+            pins_shell.rebuild_sidebar_navigation();
+        }
+    });
     let rows = Rc::new(RefCell::new(
         Vec::<gtk::glib::WeakRef<adw::ActionRow>>::new(),
     ));
-    populate_sidebar_item_rows(shell, &group, &rows);
+    populate_sidebar_item_rows(shell, &group, &rows, &pins);
     group
 }
 fn populate_sidebar_item_rows(
     shell: &Rc<Shell>,
     group: &adw::PreferencesGroup,
     rows: &Rc<RefCell<Vec<gtk::glib::WeakRef<adw::ActionRow>>>>,
+    pins: &adw::SwitchRow,
 ) {
     for row in rows.borrow_mut().drain(..) {
         if let Some(row) = row.upgrade() {
@@ -967,15 +989,20 @@ fn populate_sidebar_item_rows(
 
     let items = shell.settings.current.borrow().sidebar.route_items.clone();
     for (position, entry) in items.into_iter().enumerate() {
-        let row = sidebar_item_row(shell, group, rows, entry, position);
+        let row = sidebar_item_row(shell, group, rows, pins, entry, position);
         group.add(&row);
         rows.borrow_mut().push(row.downgrade());
     }
+    if pins.parent().is_some() {
+        group.remove(pins);
+    }
+    group.add(pins);
 }
 fn sidebar_item_row(
     shell: &Rc<Shell>,
     group: &adw::PreferencesGroup,
     rows: &Rc<RefCell<Vec<gtk::glib::WeakRef<adw::ActionRow>>>>,
+    pins: &adw::SwitchRow,
     entry: SidebarRouteItemSettings,
     position: usize,
 ) -> adw::ActionRow {
@@ -1012,6 +1039,7 @@ fn sidebar_item_row(
         let shell = Rc::clone(shell);
         let group = group.downgrade();
         let rows = Rc::clone(rows);
+        let pins = pins.clone();
         visible.connect_active_notify(move |switch| {
             let item = entry.item;
             let is_visible = switch.is_active();
@@ -1034,31 +1062,33 @@ fn sidebar_item_row(
             let Some(group) = group.upgrade() else {
                 return;
             };
-            populate_sidebar_item_rows(&shell, &group, &rows);
+            populate_sidebar_item_rows(&shell, &group, &rows, &pins);
         });
     }
     {
         let shell = Rc::clone(shell);
         let group = group.downgrade();
         let rows = Rc::clone(rows);
+        let pins = pins.clone();
         up.connect_clicked(move |_| {
             move_sidebar_item(&shell, entry.item, -1);
             let Some(group) = group.upgrade() else {
                 return;
             };
-            populate_sidebar_item_rows(&shell, &group, &rows);
+            populate_sidebar_item_rows(&shell, &group, &rows, &pins);
         });
     }
     {
         let shell = Rc::clone(shell);
         let group = group.downgrade();
         let rows = Rc::clone(rows);
+        let pins = pins.clone();
         down.connect_clicked(move |_| {
             move_sidebar_item(&shell, entry.item, 1);
             let Some(group) = group.upgrade() else {
                 return;
             };
-            populate_sidebar_item_rows(&shell, &group, &rows);
+            populate_sidebar_item_rows(&shell, &group, &rows, &pins);
         });
     }
 
@@ -1075,6 +1105,7 @@ fn sidebar_item_row(
     let shell = Rc::clone(shell);
     let group = group.downgrade();
     let rows = Rc::downgrade(rows);
+    let pins = pins.clone();
     let row_for_drop = row.downgrade();
     drop_target.connect_drop(move |_, value, _, y| {
         let Ok(source_id) = value.get::<String>() else {
@@ -1108,7 +1139,7 @@ fn sidebar_item_row(
             .is_some();
         if changed {
             shell.rebuild_sidebar_navigation();
-            populate_sidebar_item_rows(&shell, &group, &rows);
+            populate_sidebar_item_rows(&shell, &group, &rows, &pins);
         }
         changed
     });

@@ -15,9 +15,9 @@ pub use layout::{
     LibraryListSettingsEntry, MAX_LEFT_SIDEBAR_WIDTH, MAX_NARROW_LAYOUT_THRESHOLD,
     MAX_RESTORED_WINDOW_HEIGHT, MAX_RESTORED_WINDOW_WIDTH, MAX_RIGHT_SIDEBAR_WIDTH,
     MAX_TABLE_COLUMN_WIDTH, MIN_LEFT_SIDEBAR_WIDTH, MIN_NARROW_LAYOUT_THRESHOLD,
-    MIN_RIGHT_SIDEBAR_WIDTH, MIN_TABLE_COLUMN_WIDTH, RightSidebarMode, SidebarRouteItem,
-    SidebarRouteItemSettings, SidebarSettings, ThemePreference, available_grid_fields,
-    available_row_fields, default_library_list_settings,
+    MIN_RIGHT_SIDEBAR_WIDTH, MIN_TABLE_COLUMN_WIDTH, RightSidebarMode, SidebarPin,
+    SidebarRouteItem, SidebarRouteItemSettings, SidebarSettings, ThemePreference,
+    available_grid_fields, available_row_fields, default_library_list_settings,
 };
 pub(crate) use persistence::SettingsState;
 pub use sidebar::{
