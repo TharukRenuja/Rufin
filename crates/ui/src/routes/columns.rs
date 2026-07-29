@@ -151,14 +151,20 @@ where
             return;
         };
         label.set_text(&(value)(&playlist));
-        downloaded.set_visible(bind_shell.library.selected.borrow().as_ref().is_some_and(
-            |selected| {
-                selected
-                    .loaded
-                    .is_playlist_downloaded(&playlist.playlist.id)
-                    .unwrap_or(false)
-            },
-        ));
+        bind_shell.set_download_badge_visible(
+            &downloaded,
+            bind_shell
+                .library
+                .selected
+                .borrow()
+                .as_ref()
+                .is_some_and(|selected| {
+                    selected
+                        .loaded
+                        .is_playlist_downloaded(&playlist.playlist.id)
+                        .unwrap_or(false)
+                }),
+        );
     });
     factory.connect_unbind(|_, item| {
         let Some(item) = item.downcast_ref::<gtk::ListItem>() else {
@@ -260,17 +266,23 @@ where
             return;
         };
         label.set_text(&(value)(&playlist));
-        downloaded.set_visible(bind_shell.library.selected.borrow().as_ref().is_some_and(
-            |selected| {
-                selected
-                    .loaded
-                    .is_smart_playlist_downloaded(
-                        &playlist.smart_playlist.id,
-                        selected.music_folder_id.as_ref(),
-                    )
-                    .unwrap_or(false)
-            },
-        ));
+        bind_shell.set_download_badge_visible(
+            &downloaded,
+            bind_shell
+                .library
+                .selected
+                .borrow()
+                .as_ref()
+                .is_some_and(|selected| {
+                    selected
+                        .loaded
+                        .is_smart_playlist_downloaded(
+                            &playlist.smart_playlist.id,
+                            selected.music_folder_id.as_ref(),
+                        )
+                        .unwrap_or(false)
+                }),
+        );
     });
     factory.connect_unbind(|_, item| {
         let Some(item) = item.downcast_ref::<gtk::ListItem>() else {
@@ -300,6 +312,7 @@ pub(crate) fn track_column_for_key(
             shell,
             "Title",
             width,
+            playing.clone(),
             TrackMergedColumnValues {
                 title: |track: &Track| track.title.clone(),
                 subtitle: |track: &Track| track.artist.clone(),
@@ -307,7 +320,9 @@ pub(crate) fn track_column_for_key(
             },
         ),
         LibraryField::Title => {
-            track_text_column(shell, "Title", width, 0.0, |track| track.title.clone())
+            track_text_column(shell, "Title", width, 0.0, Some(playing.clone()), |track| {
+                track.title.clone()
+            })
         }
         LibraryField::Favorite => track_favorite_column(shell),
         LibraryField::Artist => track_link_column(shell, "Artist", width, |track| {
@@ -327,10 +342,10 @@ pub(crate) fn track_column_for_key(
                 track.album_id.clone().map(Route::AlbumDetail),
             )
         }),
-        LibraryField::Duration => track_text_column(shell, "◷", width, 0.0, |track| {
+        LibraryField::Duration => track_text_column(shell, "◷", width, 0.0, None, |track| {
             track_field(track, LibraryField::Duration)
         }),
-        _ => track_text_column(shell, field.title(), width, 0.0, move |track| {
+        _ => track_text_column(shell, field.title(), width, 0.0, None, move |track| {
             track_field(track, field)
         }),
     }
@@ -517,7 +532,7 @@ fn track_row_index_column_with_width(
             return;
         };
         set_track_row_index_text(&cell, &(item.position() + 1).to_string());
-        bind_playing.bind(&cell, item.position());
+        bind_playing.bind(cell.upcast_ref(), item.position());
     });
     factory.connect_unbind(move |_, item| {
         let Some(item) = item.downcast_ref::<gtk::ListItem>() else {
@@ -529,7 +544,7 @@ fn track_row_index_column_with_width(
         else {
             return;
         };
-        playing.unbind(&cell);
+        playing.unbind(cell.upcast_ref());
         set_track_row_index_text(&cell, "");
     });
     let column = gtk::ColumnViewColumn::new(Some(ROW_INDEX_COLUMN_TITLE), Some(factory));
@@ -544,7 +559,7 @@ pub(crate) struct TrackRowPlayingIndicator {
 
 struct TrackRowPlayingIndicatorInner {
     position: std::cell::Cell<u32>,
-    cells: RefCell<HashMap<usize, (glib::WeakRef<gtk::Overlay>, u32)>>,
+    cells: RefCell<HashMap<usize, (glib::WeakRef<gtk::Widget>, u32)>>,
 }
 
 impl TrackRowPlayingIndicator {
@@ -557,20 +572,20 @@ impl TrackRowPlayingIndicator {
         }
     }
 
-    pub(crate) fn bind(&self, cell: &gtk::Overlay, position: u32) {
-        apply_track_row_playing(cell, position == self.inner.position.get());
+    pub(crate) fn bind(&self, widget: &gtk::Widget, position: u32) {
+        apply_track_row_playing(widget, position == self.inner.position.get());
         self.inner
             .cells
             .borrow_mut()
-            .insert(cell.as_ptr() as usize, (cell.downgrade(), position));
+            .insert(widget.as_ptr() as usize, (widget.downgrade(), position));
     }
 
-    pub(crate) fn unbind(&self, cell: &gtk::Overlay) {
-        cell.remove_css_class("track-row-playing");
+    pub(crate) fn unbind(&self, widget: &gtk::Widget) {
+        widget.remove_css_class("track-row-playing");
         self.inner
             .cells
             .borrow_mut()
-            .remove(&(cell.as_ptr() as usize));
+            .remove(&(widget.as_ptr() as usize));
     }
 
     pub(crate) fn set_position(&self, position: u32) {
@@ -578,17 +593,17 @@ impl TrackRowPlayingIndicator {
         self.inner
             .cells
             .borrow_mut()
-            .retain(|_, (cell, bound_position)| {
-                let Some(cell) = cell.upgrade() else {
+            .retain(|_, (widget, bound_position)| {
+                let Some(widget) = widget.upgrade() else {
                     return false;
                 };
-                apply_track_row_playing(&cell, *bound_position == position);
+                apply_track_row_playing(&widget, *bound_position == position);
                 true
             });
     }
 }
 
-fn apply_track_row_playing(cell: &gtk::Overlay, playing: bool) {
+fn apply_track_row_playing(cell: &gtk::Widget, playing: bool) {
     if playing {
         cell.add_css_class("track-row-playing");
     } else {
@@ -827,8 +842,8 @@ where
             return;
         };
         cell.label.set_text(&(value)(&album));
-        cell.downloaded
-            .set_visible(album_is_downloaded(&bind_shell, &album));
+        bind_shell
+            .set_download_badge_visible(&cell.downloaded, album_is_downloaded(&bind_shell, &album));
         *cell.current_album.borrow_mut() = Some(album);
     });
 
@@ -961,8 +976,8 @@ pub(crate) fn album_merged_column(
         *cell.subtitle_route.borrow_mut() = route;
         cell.subtitle
             .set_visible(!album.album.artist.trim().is_empty());
-        cell.downloaded
-            .set_visible(album_is_downloaded(&bind_shell, &album));
+        bind_shell
+            .set_download_badge_visible(&cell.downloaded, album_is_downloaded(&bind_shell, &album));
         *cell.current_album.borrow_mut() = Some(album);
     });
 
@@ -1218,14 +1233,20 @@ where
             return;
         };
         label.set_text(&(value)(&artist));
-        downloaded.set_visible(bind_shell.library.selected.borrow().as_ref().is_some_and(
-            |selected| {
-                selected
-                    .loaded
-                    .is_artist_downloaded(&artist.artist.id, selected.music_folder_id.as_ref())
-                    .unwrap_or(false)
-            },
-        ));
+        bind_shell.set_download_badge_visible(
+            &downloaded,
+            bind_shell
+                .library
+                .selected
+                .borrow()
+                .as_ref()
+                .is_some_and(|selected| {
+                    selected
+                        .loaded
+                        .is_artist_downloaded(&artist.artist.id, selected.music_folder_id.as_ref())
+                        .unwrap_or(false)
+                }),
+        );
     });
     factory.connect_unbind(|_, item| {
         let Some(item) = item.downcast_ref::<gtk::ListItem>() else {
@@ -1257,7 +1278,7 @@ pub(crate) struct LibraryTrackImageCell {
 #[derive(Clone)]
 pub(crate) struct LibraryTrackTextCell {
     pub(crate) label: gtk::Label,
-    downloaded: gtk::Image,
+    downloaded: Option<gtk::Image>,
     pub(crate) current_track: Rc<RefCell<Option<Track>>>,
 }
 
@@ -1398,6 +1419,7 @@ pub(crate) fn track_text_column<F>(
     title: &'static str,
     width: i32,
     xalign: f32,
+    playing: Option<TrackRowPlayingIndicator>,
     value: F,
 ) -> gtk::ColumnViewColumn
 where
@@ -1408,13 +1430,14 @@ where
     let value = Rc::new(value);
 
     let setup_shell = Rc::clone(&shell);
+    let setup_playing = playing.clone();
     factory.connect_setup(move |_, item| {
         let Some(item) = item.downcast_ref::<gtk::ListItem>() else {
             return;
         };
         let current_track = Rc::new(RefCell::new(None::<Track>));
         let label = gtk::Label::new(None);
-        if title == "Title" {
+        if setup_playing.is_some() {
             label.add_css_class("track-list-title");
         }
         label.set_xalign(xalign);
@@ -1426,14 +1449,17 @@ where
         let row = gtk::Box::new(gtk::Orientation::Horizontal, 5);
         row.set_hexpand(true);
         row.append(&label);
-        let downloaded_track = Rc::clone(&current_track);
-        let downloaded = setup_shell.download_badge(false, move |selected| {
-            downloaded_track
-                .borrow()
-                .as_ref()
-                .is_some_and(|track| selected.loaded.is_downloaded(&track.id).unwrap_or(false))
+        let downloaded = setup_playing.as_ref().map(|_| {
+            let downloaded_track = Rc::clone(&current_track);
+            let downloaded = setup_shell.download_badge(false, move |selected| {
+                downloaded_track
+                    .borrow()
+                    .as_ref()
+                    .is_some_and(|track| selected.loaded.is_downloaded(&track.id).unwrap_or(false))
+            });
+            row.append(&downloaded);
+            downloaded
         });
-        row.append(&downloaded);
         install_track_cell_context_menu(&row, &setup_shell, Rc::clone(&current_track));
         item.set_child(Some(&row));
         let key = library_list_item_storage_key(item);
@@ -1450,6 +1476,7 @@ where
     });
 
     let bind_shell = Rc::clone(&shell);
+    let bind_playing = playing.clone();
     factory.connect_bind(move |_, item| {
         let Some(item) = item.downcast_ref::<gtk::ListItem>() else {
             return;
@@ -1461,17 +1488,27 @@ where
             return;
         };
         cell.label.set_text(&(value)(&track));
-        cell.downloaded
-            .set_visible(track_is_downloaded(&bind_shell, &track));
+        if let Some(downloaded) = cell.downloaded.as_ref() {
+            bind_shell
+                .set_download_badge_visible(downloaded, track_is_downloaded(&bind_shell, &track));
+        }
+        if let Some(playing) = bind_playing.as_ref() {
+            playing.bind(cell.label.upcast_ref(), item.position());
+        }
         *cell.current_track.borrow_mut() = Some(track);
     });
 
-    factory.connect_unbind(|_, item| {
+    factory.connect_unbind(move |_, item| {
         if let Some(item) = item.downcast_ref::<gtk::ListItem>()
             && let Some(cell) = track_text_cell(item)
         {
             cell.label.set_text("");
-            cell.downloaded.set_visible(false);
+            if let Some(downloaded) = cell.downloaded.as_ref() {
+                downloaded.set_visible(false);
+            }
+            if let Some(playing) = playing.as_ref() {
+                playing.unbind(cell.label.upcast_ref());
+            }
             *cell.current_track.borrow_mut() = None;
         }
     });
@@ -1500,6 +1537,7 @@ pub(crate) fn track_merged_column<Title, Subtitle, Seed>(
     shell: &Rc<Shell>,
     title: &'static str,
     width: i32,
+    playing: TrackRowPlayingIndicator,
     values: TrackMergedColumnValues<Title, Subtitle, Seed>,
 ) -> gtk::ColumnViewColumn
 where
@@ -1595,6 +1633,7 @@ where
     });
 
     let bind_shell = Rc::clone(&shell);
+    let bind_playing = playing.clone();
     factory.connect_bind(move |_, item| {
         let Some(item) = item.downcast_ref::<gtk::ListItem>() else {
             return;
@@ -1612,8 +1651,9 @@ where
         cell.title.set_text(&title_value(&track));
         let subtitle = subtitle_value(&track);
         let subtitle_route = track_artist_route(&track);
-        cell.downloaded
-            .set_visible(track_is_downloaded(&bind_shell, &track));
+        bind_shell
+            .set_download_badge_visible(&cell.downloaded, track_is_downloaded(&bind_shell, &track));
+        bind_playing.bind(cell.title.upcast_ref(), item.position());
         *cell.current_track.borrow_mut() = Some(track);
         if subtitle.trim().is_empty() {
             *cell.subtitle_route.borrow_mut() = None;
@@ -1636,6 +1676,7 @@ where
         {
             cell.title.set_text("");
             cell.downloaded.set_visible(false);
+            playing.unbind(cell.title.upcast_ref());
             cell.subtitle.set_text("");
             cell.subtitle.set_visible(false);
             *cell.subtitle_route.borrow_mut() = None;

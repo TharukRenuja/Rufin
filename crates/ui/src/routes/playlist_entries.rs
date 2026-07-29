@@ -524,7 +524,9 @@ fn playlist_entry_column_for_field(
             playlist_entry_number_column(shell, model, playlist_id, playing_indicator)
         }
         LibraryField::Image => playlist_entry_image_column(shell, model, playlist_id),
-        LibraryField::TitleMerged => playlist_entry_title_column(shell, model, playlist_id),
+        LibraryField::TitleMerged => {
+            playlist_entry_title_column(shell, model, playlist_id, playing_indicator)
+        }
         LibraryField::Favorite => playlist_entry_favorite_column(shell, model, playlist_id),
         LibraryField::Album => playlist_entry_album_column(shell, model, playlist_id),
         LibraryField::PlayCount => playlist_entry_play_count_column(shell, model, playlist_id),
@@ -850,7 +852,7 @@ fn playlist_entry_number_column(
             return;
         };
         set_track_row_index_text(&cell, &(row.display_index + 1).to_string());
-        bind_playing_indicator.bind(&cell, item.position());
+        bind_playing_indicator.bind(cell.upcast_ref(), item.position());
         bind_playlist_entry_cell_state(&state, row, &entry, &playlist_id);
     });
     factory.connect_unbind(move |_, item| {
@@ -859,7 +861,7 @@ fn playlist_entry_number_column(
                 .child()
                 .and_then(|child| child.downcast::<gtk::Overlay>().ok())
             {
-                playing_indicator.unbind(&cell);
+                playing_indicator.unbind(cell.upcast_ref());
                 set_track_row_index_text(&cell, "");
             }
             if let Some(state) = playlist_entry_cell_state_for_item(item) {
@@ -1197,6 +1199,7 @@ fn playlist_entry_title_column(
     shell: &Rc<Shell>,
     entries: PlaylistEntryModel,
     playlist_id: PlaylistId,
+    playing_indicator: TrackRowPlayingIndicator,
 ) -> gtk::ColumnViewColumn {
     let factory = gtk::SignalListItemFactory::new();
     let setup_shell = Rc::clone(shell);
@@ -1242,6 +1245,7 @@ fn playlist_entry_title_column(
     });
     let bind_shell = Rc::clone(shell);
     let unbind_shell = Rc::clone(shell);
+    let bind_playing_indicator = playing_indicator.clone();
     factory.connect_bind(move |_, item| {
         let Some(item) = item.downcast_ref::<gtk::ListItem>() else {
             return;
@@ -1265,6 +1269,7 @@ fn playlist_entry_title_column(
             THUMB_COVER_SIZE,
         );
         cell.title.set_text(&entry.track.title);
+        bind_playing_indicator.bind(cell.title.upcast_ref(), item.position());
         cell.artist.set_text(&entry.track.artist);
         let Some(state) = playlist_entry_cell_state_for_item(item) else {
             return;
@@ -1280,6 +1285,7 @@ fn playlist_entry_title_column(
             {
                 unbind_shell.clear_artwork_tile(&cell.cover);
                 cell.title.set_text("");
+                playing_indicator.unbind(cell.title.upcast_ref());
                 cell.artist.set_text("");
             }
             if let Some(state) = playlist_entry_cell_state_for_item(item) {

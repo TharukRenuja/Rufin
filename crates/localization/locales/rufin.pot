@@ -1477,6 +1477,9 @@ msgstr ""
 msgid "Show Rufin"
 msgstr ""
 
+msgid "Show downloaded badge"
+msgstr ""
+
 msgid "Show external service icons on album and artist pages"
 msgstr ""
 

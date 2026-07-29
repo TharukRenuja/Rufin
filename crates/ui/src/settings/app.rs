@@ -46,6 +46,8 @@ pub struct Settings {
     pub external_site_links: ExternalSiteLinkSettings,
     #[serde(default)]
     pub prefer_server_playlist_covers: bool,
+    #[serde(default = "default_true")]
+    pub show_downloaded_badges: bool,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub downloads: Vec<SourceDownloadSettings>,
     #[serde(default)]
@@ -105,6 +107,7 @@ impl Default for Settings {
             external_album_lookup_enabled: true,
             external_site_links: ExternalSiteLinkSettings::default(),
             prefer_server_playlist_covers: false,
+            show_downloaded_badges: true,
             downloads: Vec::new(),
             seekbar_waveform_enabled: true,
             tray_enabled: false,

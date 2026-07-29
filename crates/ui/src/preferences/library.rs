@@ -292,6 +292,15 @@ fn library_sources_page(
             },
         );
         downloads_group.add(&quality);
+        let downloaded_badge = adw::SwitchRow::builder()
+            .title(tr("Show downloaded badge"))
+            .active(shell.settings.current.borrow().show_downloaded_badges)
+            .build();
+        let downloaded_badge_shell = Rc::clone(shell);
+        downloaded_badge.connect_active_notify(move |row| {
+            downloaded_badge_shell.set_downloaded_badges_visible(row.is_active());
+        });
+        downloads_group.add(&downloaded_badge);
         let add_rule = add_download_rules(
             &downloads_group,
             shell,

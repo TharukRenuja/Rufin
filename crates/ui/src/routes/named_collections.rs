@@ -420,7 +420,8 @@ fn named_collection_title_column(
             return;
         };
         label.set_text(collection.name());
-        downloaded.set_visible(
+        bind_shell.set_download_badge_visible(
+            &downloaded,
             bind_shell
                 .library
                 .selected
@@ -584,6 +585,7 @@ impl ReusableCollectionGridCell<NamedCollectionItem> for NamedCollectionGridCell
         self.body
             .bind(item.name(), |field| (item.field(field), None));
         self.body.set_downloaded(
+            &self.shell,
             self.shell
                 .library
                 .selected
