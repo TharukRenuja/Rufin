@@ -7,17 +7,18 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use library::{HomeFacts, LocalComponentBaseline, LocalComponentReplacement};
+use library::{HomeFacts, LocalComponentBaseline, LocalComponentReplacement, Track};
 use serde::Deserialize;
 
 use crate::source::{BatchEmitter, SourceReadProgress};
 use crate::{
     ConnectedSource, ImageBytes, LocalFolderHostInput, SourceConfiguration, SourceEditResult,
-    SourceError, SourceResult,
+    SourceError, SourceResult, TrackMetadataEditing,
 };
 
 mod artwork;
 mod cue;
+mod discoverer;
 mod format;
 mod scan;
 mod tags;
@@ -129,6 +130,17 @@ impl LocalSource {
 
     pub fn roots(&self) -> &[PathBuf] {
         &self.roots
+    }
+
+    pub(crate) fn track_metadata_editing(&self, track: &Track) -> Option<TrackMetadataEditing> {
+        if track.cue.is_some() {
+            return None;
+        }
+        let path = Path::new(track.source_path.as_deref()?);
+        if !self.roots.iter().any(|root| path.starts_with(root)) {
+            return None;
+        }
+        format::audio_format(path)?.metadata_editing()
     }
 
     pub(super) fn read_facts(
@@ -262,6 +274,37 @@ pub fn read_local_access(
     cancelled: &(dyn Fn() -> bool + Send + Sync),
 ) -> SourceResult<Vec<library::LocalAccessFile>> {
     scan::acquire_local_access(root, baseline, progress, cancelled)
+}
+
+pub fn verify_local_media_file(path: &Path) -> SourceResult<()> {
+    let path = fs::canonicalize(path).map_err(|error| {
+        SourceError::Other(format!("Could not read {}: {error}", path.display()))
+    })?;
+    let format = format::audio_format(&path).ok_or(SourceError::InvalidRequest(
+        "the verification path is not a supported Local audio file",
+    ))?;
+    let mut worker = tags::Worker::default();
+    let read = tags::read_audio(
+        &mut worker,
+        path.clone(),
+        format,
+        None,
+        "verification".to_string(),
+    );
+    if read.state != library::LocalReadState::Parsed {
+        return Err(SourceError::Other(format!(
+            "Local metadata reader could not parse {}",
+            path.display()
+        )));
+    }
+    let scanned = read
+        .scanned
+        .ok_or_else(|| SourceError::Other(format!("Could not read {}", path.display())))?;
+    if let Some(reference) = &scanned.track.local_artwork {
+        let root = path.parent().ok_or(SourceError::NotFound)?.to_path_buf();
+        LocalSource { roots: vec![root] }.image_bytes(reference)?;
+    }
+    Ok(())
 }
 
 pub(crate) fn configured_roots(roots: Vec<PathBuf>) -> SourceResult<Vec<PathBuf>> {

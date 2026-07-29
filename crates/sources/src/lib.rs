@@ -22,12 +22,15 @@ pub use operations::{
     GeneratedTracksRequest, ImageBytes, LyricsSearch, NativeLyricAgent, NativeLyricAgentRole,
     NativeLyricCue, NativeLyricCueLine, NativeLyricLine, NativeLyrics, NativeLyricsDocument,
     NativeLyricsOrigin, NativeLyricsRole, PlaybackReport, PlaybackReportKind, PlayedFilter,
-    RandomTrackRequest, StreamDescriptor, StreamQuality, StreamRequest,
+    RandomTrackRequest, StreamDescriptor, StreamQuality, StreamRequest, TrackMetadataEditing,
+    TrackMetadataField,
 };
 pub use source::*;
 
 pub use jellyfin::{DiscoveredJellyfinServer, discover_jellyfin_servers};
-pub use local::{LOCAL_LIBRARY_SOURCE_ID, LOCAL_SOURCE_ID, read_local_access};
+pub use local::{
+    LOCAL_LIBRARY_SOURCE_ID, LOCAL_SOURCE_ID, read_local_access, verify_local_media_file,
+};
 pub use subsonic::SubsonicFlavor;
 
 use thiserror::Error;

@@ -4,6 +4,7 @@ use gstreamer as gst;
 use playback::*;
 use std::collections::VecDeque;
 use std::f64::consts::FRAC_PI_2;
+use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::sync::{Arc, Mutex, OnceLock};
@@ -19,6 +20,12 @@ mod waveform;
 pub use audio::available_audio_outputs;
 pub use engine::GStreamerPlaybackBackend;
 pub use waveform::generate_waveform_peaks_cancellable;
+
+pub fn verify_audio_file(path: &Path) -> Result<(), String> {
+    let uri = glib::filename_to_uri(path, None).map_err(|error| error.to_string())?;
+    let stream = PreparedStream::new(uri.as_str());
+    generate_waveform_peaks_cancellable(&stream, || false).map(|_| ())
+}
 
 const SEEK_SETTLE_WINDOW: Duration = Duration::from_millis(1_000);
 const TRACK_START_SETTLE_WINDOW: Duration = Duration::from_millis(10_000);

@@ -10,6 +10,7 @@ use lofty::prelude::*;
 use lofty::tag::{ItemKey, Tag};
 
 use super::artwork;
+use super::discoverer;
 use super::format::{ArtworkReader, AudioFormat, MetadataReader, read_lofty};
 
 #[derive(Clone, Debug)]
@@ -62,18 +63,31 @@ struct AudioMetadata {
     local_artwork: Option<LocalArtworkRef>,
 }
 
+#[derive(Default)]
+pub(super) struct Worker {
+    discoverer: discoverer::Reader,
+}
+
 /// Reads only the fields used to match a remote track to a local file.
 ///
 /// Local-access discovery deliberately skips pictures, MusicBrainz fields,
 /// relationships, and Rufin identities. A readable file with invalid metadata
 /// still has a useful filename-based match candidate.
-pub(super) fn read_basic_audio(path: PathBuf, format: &AudioFormat) -> Option<BasicAudioMetadata> {
+pub(super) fn read_basic_audio(
+    worker: &mut Worker,
+    path: PathBuf,
+    format: &AudioFormat,
+) -> Option<BasicAudioMetadata> {
     fs::File::open(&path).ok()?;
     let tagged_file = match format.metadata_reader() {
-        Some(MetadataReader::Lofty(file_types)) => {
-            read_lofty(&path, file_types, false).ok().flatten()
+        MetadataReader::Lofty(file_types) => read_lofty(&path, file_types, false).ok().flatten(),
+        MetadataReader::Discoverer(format) => {
+            let metadata = worker.discoverer.read(&path, format);
+            return Some(basic_audio_metadata_from_discoverer(
+                &path,
+                metadata.as_ref(),
+            ));
         }
-        None => None,
     };
     let tag = tagged_file
         .as_ref()
@@ -91,6 +105,7 @@ pub(super) fn read_basic_audio(path: PathBuf, format: &AudioFormat) -> Option<Ba
 }
 
 pub(super) fn read_audio(
+    worker: &mut Worker,
     path: PathBuf,
     format: &AudioFormat,
     sidecar: Option<LocalArtworkRef>,
@@ -104,10 +119,11 @@ pub(super) fn read_audio(
     }
 
     let tagged_file = match format.metadata_reader() {
-        Some(MetadataReader::Lofty(file_types)) => {
-            read_lofty(&path, file_types, false).ok().flatten()
+        MetadataReader::Lofty(file_types) => read_lofty(&path, file_types, false).ok().flatten(),
+        MetadataReader::Discoverer(format) => {
+            let metadata = worker.discoverer.read(&path, format);
+            return discoverer_audio_read(&path, metadata, sidecar, revision);
         }
-        None => None,
     };
     let state = if tagged_file.is_some() {
         LocalReadState::Parsed
@@ -122,6 +138,30 @@ pub(super) fn read_audio(
     let metadata = audio_metadata_from_lofty(&path, tagged_file.as_ref(), local_artwork);
     AudioRead {
         scanned: Some(scanned_track(&path, metadata)),
+        state,
+    }
+}
+
+fn discoverer_audio_read(
+    path: &Path,
+    metadata: Option<discoverer::Metadata>,
+    sidecar: Option<LocalArtworkRef>,
+    revision: String,
+) -> AudioRead {
+    let state = if metadata.is_some() {
+        LocalReadState::Parsed
+    } else {
+        LocalReadState::MetadataFallback
+    };
+    let local_artwork = sidecar.or_else(|| {
+        metadata
+            .as_ref()
+            .and_then(|metadata| metadata.artwork_index)
+            .map(|picture_index| artwork::embedded_reference(path, picture_index, revision))
+    });
+    let metadata = audio_metadata_from_discoverer(path, metadata.as_ref(), local_artwork);
+    AudioRead {
+        scanned: Some(scanned_track(path, metadata)),
         state,
     }
 }
@@ -208,6 +248,90 @@ fn audio_metadata_from_lofty(
             .and_then(|tag| tag_mbid(tag, ItemKey::MusicBrainzTrackId)),
         release_types,
         is_compilation,
+        local_artwork,
+    }
+}
+
+fn audio_metadata_from_discoverer(
+    path: &Path,
+    metadata: Option<&discoverer::Metadata>,
+    local_artwork: Option<LocalArtworkRef>,
+) -> AudioMetadata {
+    let basic = basic_audio_metadata_from_discoverer(path, metadata);
+    let artist = &basic.artist;
+    let album_artist = metadata
+        .and_then(|metadata| metadata.album_artist.clone())
+        .unwrap_or_else(|| artist.clone());
+    let artist_names = split_names(artist);
+    let artist_mbids = aligned_mbids(
+        &artist_names,
+        metadata
+            .map(|metadata| metadata.artist_mbids.clone())
+            .unwrap_or_default()
+            .into_iter()
+            .filter_map(|value| clean_mbid(&value))
+            .collect(),
+    );
+    let artists = artist_names
+        .into_iter()
+        .zip(artist_mbids)
+        .map(|(name, musicbrainz_id)| MetadataArtist {
+            name,
+            musicbrainz_id,
+        })
+        .collect();
+    let album_artist_names = split_names(&album_artist);
+    let album_artist_mbids = aligned_mbids(
+        &album_artist_names,
+        metadata
+            .map(|metadata| metadata.album_artist_mbids.clone())
+            .unwrap_or_default()
+            .into_iter()
+            .filter_map(|value| clean_mbid(&value))
+            .collect(),
+    );
+    let album_artists = album_artist_names
+        .into_iter()
+        .zip(album_artist_mbids)
+        .map(|(name, musicbrainz_id)| MetadataArtist {
+            name,
+            musicbrainz_id,
+        })
+        .collect();
+    AudioMetadata {
+        basic,
+        album_artist,
+        artists,
+        album_artists,
+        genres: metadata
+            .map(|metadata| metadata.genres.clone())
+            .unwrap_or_default(),
+        moods: metadata
+            .map(|metadata| metadata.moods.clone())
+            .unwrap_or_default(),
+        year: metadata
+            .and_then(|metadata| metadata.year)
+            .unwrap_or_default(),
+        comment: metadata.and_then(|metadata| metadata.comment.clone()),
+        bpm: metadata.and_then(|metadata| metadata.bpm),
+        musicbrainz_album_id: metadata
+            .and_then(|metadata| metadata.musicbrainz_album_id.as_deref())
+            .and_then(clean_mbid),
+        musicbrainz_release_group_id: metadata
+            .and_then(|metadata| metadata.musicbrainz_release_group_id.as_deref())
+            .and_then(clean_mbid),
+        musicbrainz_recording_id: metadata
+            .and_then(|metadata| metadata.musicbrainz_recording_id.as_deref())
+            .and_then(clean_mbid),
+        musicbrainz_release_track_id: metadata
+            .and_then(|metadata| metadata.musicbrainz_release_track_id.as_deref())
+            .and_then(clean_mbid),
+        release_types: library::normalize_release_types(
+            metadata
+                .map(|metadata| metadata.release_types.clone())
+                .unwrap_or_default(),
+        ),
+        is_compilation: metadata.and_then(|metadata| metadata.is_compilation),
         local_artwork,
     }
 }
@@ -352,12 +476,51 @@ fn basic_audio_metadata(
     }
 }
 
+fn basic_audio_metadata_from_discoverer(
+    path: &Path,
+    metadata: Option<&discoverer::Metadata>,
+) -> BasicAudioMetadata {
+    let fallback_title = path
+        .file_stem()
+        .and_then(|name| name.to_str())
+        .unwrap_or("Unknown Title")
+        .to_string();
+    let fallback_album = path
+        .parent()
+        .and_then(Path::file_name)
+        .and_then(|name| name.to_str())
+        .unwrap_or("Unknown Album")
+        .to_string();
+    BasicAudioMetadata {
+        title: metadata
+            .and_then(|metadata| metadata.title.clone())
+            .unwrap_or(fallback_title),
+        album: metadata
+            .and_then(|metadata| metadata.album.clone())
+            .unwrap_or(fallback_album),
+        artist: metadata
+            .and_then(|metadata| metadata.artist.clone())
+            .unwrap_or_else(|| "Unknown Artist".to_string()),
+        disc_number: metadata
+            .and_then(|metadata| metadata.disc_number)
+            .unwrap_or(1),
+        track_number: metadata
+            .and_then(|metadata| metadata.track_number)
+            .unwrap_or_default(),
+        duration_seconds: metadata
+            .map(|metadata| metadata.duration_seconds)
+            .unwrap_or_default(),
+    }
+}
+
 fn embedded_artwork(
     path: &Path,
-    reader: Option<ArtworkReader>,
+    reader: ArtworkReader,
     revision: String,
 ) -> Option<LocalArtworkRef> {
-    let ArtworkReader::Lofty(file_types) = reader?;
+    let ArtworkReader::Lofty(file_types) = reader else {
+        return None;
+    };
     let file = read_lofty(path, file_types, true).ok().flatten()?;
     let tag = file.primary_tag().or_else(|| file.first_tag());
     let picture_index = artwork::best_picture_index(&file, tag)?;
@@ -560,4 +723,51 @@ fn clean_mbid(value: &str) -> Option<String> {
             .bytes()
             .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-'))
     .then(|| value.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn discoverer_failure_keeps_a_filename_metadata_fallback() {
+        let read = discoverer_audio_read(
+            Path::new("/Music/Album/Fallback.mka"),
+            None,
+            None,
+            "revision".to_string(),
+        );
+
+        assert_eq!(read.state, LocalReadState::MetadataFallback);
+        let scanned = read.scanned.expect("fallback track");
+        assert_eq!(scanned.track.title, "Fallback");
+        assert_eq!(scanned.track.album, "Album");
+        assert_eq!(scanned.track.artist, "Unknown Artist");
+    }
+
+    #[test]
+    fn discoverer_metadata_preserves_its_embedded_artwork_locator() {
+        let metadata = discoverer::Metadata {
+            title: Some("Track".to_string()),
+            artist: Some("Artist".to_string()),
+            artwork_index: Some(2),
+            ..discoverer::Metadata::default()
+        };
+        let read = discoverer_audio_read(
+            Path::new("/Music/Album/Track.wma"),
+            Some(metadata),
+            None,
+            "file-revision".to_string(),
+        );
+
+        assert_eq!(read.state, LocalReadState::Parsed);
+        assert_eq!(
+            read.scanned.expect("parsed track").track.local_artwork,
+            Some(LocalArtworkRef::Embedded {
+                path: "/Music/Album/Track.wma".to_string(),
+                picture_index: 2,
+                revision: "file-revision".to_string(),
+            })
+        );
+    }
 }

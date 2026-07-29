@@ -119,6 +119,7 @@ jobs:
             --chroot fedora-44-aarch64 \
             "$COPR_BUILD_ID"
           mkdir -p dist/release
+          x86_rpm_path=
           for arch in x86_64 aarch64; do
             mapfile -t rpm_paths < <(
               find "dist/copr/fedora-44-${arch}" \
@@ -134,6 +135,15 @@ jobs:
             cargo run --locked -p xtask -- verify package-layout "$install_root" /usr
             rpmlint "$rpm_path"
             cp "$rpm_path" dist/release/
+            if [[ "$arch" == x86_64 ]]; then
+              x86_rpm_path="$rpm_path"
+            fi
+          done
+          test -n "$x86_rpm_path"
+          dnf -y install "$x86_rpm_path"
+          bash scripts/create-media-verification-files /tmp/rufin-package-media
+          for media in /tmp/rufin-package-media/*; do
+            /usr/bin/rufin --verify-media "$media"
           done
 
       - name: Upload RPM artifacts

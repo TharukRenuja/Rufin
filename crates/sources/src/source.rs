@@ -10,7 +10,7 @@ use library::{
     FolderId, GenreId, HomeFacts, HomeSectionKind, ImageRef, LocalArtworkRef,
     LocalComponentBaseline, LocalComponentReplacement, MusicFolderId, PlaylistAcceptance,
     PlaylistEdit, PlaylistId, PlaylistSnapshot, ProviderFreshness, SearchRequest, SearchResults,
-    SourceHomeSection, SourceHomeSectionKind, SourceId, TrackId,
+    SourceHomeSection, SourceHomeSectionKind, SourceId, Track, TrackId,
 };
 
 use crate::{
@@ -489,6 +489,13 @@ impl Source {
 
     pub fn source_id(&self) -> &SourceId {
         &self.source_id
+    }
+
+    pub fn track_metadata_editing(&self, track: &Track) -> Option<crate::TrackMetadataEditing> {
+        match &self.implementation {
+            Implementation::Local(source) => source.track_metadata_editing(track),
+            Implementation::Jellyfin(_) | Implementation::OpenSubsonic(_) => None,
+        }
     }
 
     pub async fn listen_selected_changes(

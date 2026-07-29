@@ -19,8 +19,8 @@ use super::tags::{self, AudioRead, ScannedTrack};
 use crate::source::{BatchEmitter, SourceReadProgress, SourceReadStage};
 use crate::{SourceError, SourceResult};
 
-const LOCAL_LIBRARY_PARSER_VERSION: u32 = 3;
-const LOCAL_ACCESS_PARSER_VERSION: u32 = 2;
+const LOCAL_LIBRARY_PARSER_VERSION: u32 = 4;
+const LOCAL_ACCESS_PARSER_VERSION: u32 = 3;
 const LOCAL_CUE_MAX_BYTES: usize = 1024 * 1024;
 const LOCAL_BATCH_SIZE: usize = 1024;
 
@@ -195,9 +195,10 @@ pub(super) fn acquire_local_access(
     let mut completed = 0;
     run_ordered_jobs(
         changed,
-        |(path, format)| {
-            let metadata = tags::read_basic_audio(path.clone(), format);
-            (path, metadata)
+        tags::Worker::default,
+        |worker, (path, format)| {
+            let metadata = tags::read_basic_audio(worker, path.clone(), format);
+            Ok((path, metadata))
         },
         |(path, metadata)| {
             completed += 1;
@@ -1432,9 +1433,10 @@ fn read_cue(path: &Path) -> Option<CueSheet> {
     parse_cue_sheet(path, &String::from_utf8_lossy(&bytes))
 }
 
-fn run_ordered_jobs<J, R>(
+fn run_ordered_jobs<J, R, W>(
     jobs: impl IntoIterator<Item = J>,
-    read: impl Fn(J) -> R + Sync,
+    create_worker: impl Fn() -> W + Sync,
+    read: impl Fn(&mut W, J) -> SourceResult<R> + Sync,
     mut accept: impl FnMut(R) -> SourceResult<()>,
     cancelled: &(dyn Fn() -> bool + Send + Sync),
 ) -> SourceResult<()>
@@ -1442,20 +1444,24 @@ where
     J: Send,
     R: Send,
 {
-    let worker_count = std::thread::available_parallelism()
-        .map(usize::from)
-        .unwrap_or(1)
-        .clamp(1, 4);
+    let worker_count = local_worker_count(
+        std::thread::available_parallelism()
+            .map(usize::from)
+            .unwrap_or(1),
+    );
     std::thread::scope(|scope| {
         let (job_send, job_receive) = mpsc::sync_channel::<(usize, J)>(worker_count * 2);
-        let (result_send, result_receive) = mpsc::sync_channel::<(usize, R)>(worker_count * 2);
+        let (result_send, result_receive) =
+            mpsc::sync_channel::<(usize, SourceResult<R>)>(worker_count * 2);
         let job_receive = Arc::new(Mutex::new(job_receive));
 
         for _ in 0..worker_count {
             let job_receive = Arc::clone(&job_receive);
             let result_send = result_send.clone();
+            let create_worker = &create_worker;
             let read = &read;
             scope.spawn(move || {
+                let mut worker = create_worker();
                 loop {
                     let job = {
                         let receive = job_receive
@@ -1466,7 +1472,8 @@ where
                     let Ok((order, job)) = job else {
                         break;
                     };
-                    if result_send.send((order, read(job))).is_err() {
+                    let result = check_cancelled(cancelled).and_then(|()| read(&mut worker, job));
+                    if result_send.send((order, result)).is_err() {
                         break;
                     }
                 }
@@ -1501,12 +1508,16 @@ where
             check_cancelled(cancelled)?;
             wave.sort_by_key(|(order, _)| *order);
             for (_, result) in wave {
-                accept(result)?;
+                accept(result?)?;
             }
         }
         drop(job_send);
         Ok(())
     })
+}
+
+fn local_worker_count(available_parallelism: usize) -> usize {
+    available_parallelism.clamp(1, 4)
 }
 
 fn stream_audio(
@@ -1535,16 +1546,17 @@ fn stream_audio(
     let jobs = cue_jobs.into_iter().chain(ordinary_jobs);
     run_ordered_jobs(
         jobs,
-        |job| {
-            let reads = job
-                .paths
-                .iter()
-                .map(|path| (path.clone(), read_audio(inventory, path)))
-                .collect();
-            AudioJobResult {
+        tags::Worker::default,
+        |worker, job| {
+            let mut reads = Vec::with_capacity(job.paths.len());
+            for path in &job.paths {
+                check_cancelled(cancelled)?;
+                reads.push((path.clone(), read_audio(worker, inventory, path)));
+            }
+            Ok(AudioJobResult {
                 reads,
                 cues: job.cues,
-            }
+            })
         },
         |result| {
             completed += result.reads.len();
@@ -1632,7 +1644,7 @@ fn cue_jobs(plans: Vec<CuePlan>) -> (Vec<AudioJob>, HashSet<String>) {
     (jobs, all_audio)
 }
 
-fn read_audio(inventory: &Inventory, path: &Path) -> AudioRead {
+fn read_audio(worker: &mut tags::Worker, inventory: &Inventory, path: &Path) -> AudioRead {
     let path_text = path.to_string_lossy();
     let entry = inventory
         .entries
@@ -1643,6 +1655,7 @@ fn read_audio(inventory: &Inventory, path: &Path) -> AudioRead {
         .and_then(|directory| inventory.artwork_by_directory.get(directory))
         .cloned();
     tags::read_audio(
+        worker,
         path.to_path_buf(),
         entry
             .audio_format
@@ -2189,5 +2202,70 @@ fn check_cancelled(cancelled: &(dyn Fn() -> bool + Send + Sync)) -> SourceResult
         Err(SourceError::Cancelled)
     } else {
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod ordered_job_tests {
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+
+    use super::*;
+
+    #[test]
+    fn local_reader_parallelism_is_capped_at_four() {
+        assert_eq!(local_worker_count(1), 1);
+        assert_eq!(local_worker_count(4), 4);
+        assert_eq!(local_worker_count(usize::MAX), 4);
+    }
+
+    #[test]
+    fn cancellation_stops_bounded_work_between_files() {
+        let worker_count = AtomicUsize::new(0);
+        let read_count = AtomicUsize::new(0);
+        let cancelled = AtomicBool::new(false);
+        let result = run_ordered_jobs(
+            0..32,
+            || {
+                worker_count.fetch_add(1, Ordering::SeqCst);
+            },
+            |(), job| {
+                read_count.fetch_add(1, Ordering::SeqCst);
+                if job == 0 {
+                    cancelled.store(true, Ordering::SeqCst);
+                }
+                Ok(job)
+            },
+            |_| Ok(()),
+            &|| cancelled.load(Ordering::SeqCst),
+        );
+
+        assert!(matches!(result, Err(SourceError::Cancelled)));
+        assert!(worker_count.load(Ordering::SeqCst) <= 4);
+        assert!(read_count.load(Ordering::SeqCst) <= 4);
+    }
+
+    #[test]
+    fn cancellation_is_checked_inside_a_connected_cue_job() {
+        let read_count = AtomicUsize::new(0);
+        let cancelled = AtomicBool::new(false);
+        let result = run_ordered_jobs(
+            [vec![0, 1, 2]],
+            || (),
+            |(), paths| {
+                for path in paths {
+                    check_cancelled(&|| cancelled.load(Ordering::SeqCst))?;
+                    read_count.fetch_add(1, Ordering::SeqCst);
+                    if path == 0 {
+                        cancelled.store(true, Ordering::SeqCst);
+                    }
+                }
+                Ok(())
+            },
+            |()| Ok(()),
+            &|| cancelled.load(Ordering::SeqCst),
+        );
+
+        assert!(matches!(result, Err(SourceError::Cancelled)));
+        assert_eq!(read_count.load(Ordering::SeqCst), 1);
     }
 }

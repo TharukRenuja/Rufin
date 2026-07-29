@@ -4,6 +4,45 @@ use library::{GenreId, RadioSeed, TrackId};
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum TrackMetadataField {
+    Title,
+    Artist,
+    Album,
+    AlbumArtist,
+    TrackNumber,
+    DiscNumber,
+    Year,
+    Genre,
+    Comment,
+    Bpm,
+    Artwork,
+}
+
+/// Metadata fields an opened source can write for one exact track.
+///
+/// The source owns this decision because a Local file format and a remote
+/// server may expose different write paths. A missing value means the track
+/// menu must not offer metadata editing.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TrackMetadataEditing {
+    fields: Vec<TrackMetadataField>,
+}
+
+impl TrackMetadataEditing {
+    pub fn fields(&self) -> &[TrackMetadataField] {
+        &self.fields
+    }
+
+    pub fn includes(&self, field: TrackMetadataField) -> bool {
+        self.fields.contains(&field)
+    }
+
+    pub(crate) fn new(fields: Vec<TrackMetadataField>) -> Self {
+        Self { fields }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum LyricsSearch {
     ServerOnly,
     ServerThenRemote,
