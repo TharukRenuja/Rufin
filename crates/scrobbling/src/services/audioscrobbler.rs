@@ -176,7 +176,7 @@ pub(crate) fn submit(
     debug!(
         service = service.name(),
         method = "POST",
-        url = service.api_url(),
+        public_url = service.api_url(),
         operation,
         "sending remote request"
     );
@@ -268,7 +268,7 @@ fn post_form(api_url: &str, form: Vec<(String, String)>) -> Result<Value, String
     debug!(
         service = "audioscrobbler",
         method = "POST",
-        url = api_url,
+        public_url = api_url,
         operation,
         "sending remote request"
     );

@@ -21,7 +21,7 @@ pub(crate) fn submit(
     debug!(
         service = "ListenBrainz",
         method = "POST",
-        url = API_URL,
+        public_url = API_URL,
         operation,
         "sending remote request"
     );
