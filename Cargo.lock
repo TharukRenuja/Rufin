@@ -4153,6 +4153,7 @@ dependencies = [
  "localization",
  "lyrics",
  "playback",
+ "proptest",
  "secrets",
  "serde",
  "serde_json",
