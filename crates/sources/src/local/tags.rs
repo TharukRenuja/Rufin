@@ -5,14 +5,12 @@ use library::{
     AlbumId, ArtistCredit, ArtistId, GenreCredit, LocalArtworkRef, LocalReadState, MoodCredit,
     Track, TrackData, TrackId, TrackRelations,
 };
-use lofty::config::ParseOptions;
 use lofty::file::TaggedFileExt;
 use lofty::prelude::*;
-use lofty::probe::Probe;
 use lofty::tag::{ItemKey, Tag};
 
 use super::artwork;
-use super::format::{ArtworkReader, AudioFormat, MetadataReader};
+use super::format::{ArtworkReader, AudioFormat, MetadataReader, read_lofty};
 
 #[derive(Clone, Debug)]
 pub(super) struct ScannedTrack {
@@ -72,7 +70,9 @@ struct AudioMetadata {
 pub(super) fn read_basic_audio(path: PathBuf, format: &AudioFormat) -> Option<BasicAudioMetadata> {
     fs::File::open(&path).ok()?;
     let tagged_file = match format.metadata_reader() {
-        Some(MetadataReader::Lofty) => read_lofty(&path, false),
+        Some(MetadataReader::Lofty(file_types)) => {
+            read_lofty(&path, file_types, false).ok().flatten()
+        }
         None => None,
     };
     let tag = tagged_file
@@ -104,10 +104,9 @@ pub(super) fn read_audio(
     }
 
     let tagged_file = match format.metadata_reader() {
-        Some(MetadataReader::Lofty) => read_lofty(
-            &path,
-            sidecar.is_none() && format.artwork_reader() == Some(ArtworkReader::Lofty),
-        ),
+        Some(MetadataReader::Lofty(file_types)) => {
+            read_lofty(&path, file_types, false).ok().flatten()
+        }
         None => None,
     };
     let state = if tagged_file.is_some() {
@@ -115,7 +114,12 @@ pub(super) fn read_audio(
     } else {
         LocalReadState::MetadataFallback
     };
-    let metadata = audio_metadata_from_lofty(&path, tagged_file.as_ref(), sidecar, revision);
+    let local_artwork = sidecar.or_else(|| {
+        tagged_file
+            .as_ref()
+            .and_then(|_| embedded_artwork(&path, format.artwork_reader(), revision))
+    });
+    let metadata = audio_metadata_from_lofty(&path, tagged_file.as_ref(), local_artwork);
     AudioRead {
         scanned: Some(scanned_track(&path, metadata)),
         state,
@@ -125,8 +129,7 @@ pub(super) fn read_audio(
 fn audio_metadata_from_lofty(
     path: &Path,
     tagged_file: Option<&lofty::file::TaggedFile>,
-    sidecar: Option<LocalArtworkRef>,
-    revision: String,
+    local_artwork: Option<LocalArtworkRef>,
 ) -> AudioMetadata {
     let tag = tagged_file.and_then(|file| file.primary_tag().or_else(|| file.first_tag()));
     let duration_seconds = tagged_file
@@ -180,8 +183,6 @@ fn audio_metadata_from_lofty(
         tag.and_then(|tag| tag_mbid(tag, ItemKey::MusicBrainzReleaseGroupId));
     let release_types = album_release_types(tag);
     let is_compilation = album_compilation(tag, &release_types);
-    let local_artwork = sidecar
-        .or_else(|| tagged_file.and_then(|file| embedded_artwork(file, tag, path, revision)));
     AudioMetadata {
         basic,
         album_artist,
@@ -316,16 +317,6 @@ fn scanned_track(path: &Path, metadata: AudioMetadata) -> ScannedTrack {
     }
 }
 
-fn read_lofty(path: &Path, read_cover_art: bool) -> Option<lofty::file::TaggedFile> {
-    Probe::open(path)
-        .and_then(|probe| {
-            probe
-                .options(ParseOptions::new().read_cover_art(read_cover_art))
-                .read()
-        })
-        .ok()
-}
-
 fn basic_audio_metadata(
     path: &Path,
     tag: Option<&Tag>,
@@ -362,12 +353,14 @@ fn basic_audio_metadata(
 }
 
 fn embedded_artwork(
-    file: &lofty::file::TaggedFile,
-    tag: Option<&Tag>,
     path: &Path,
+    reader: Option<ArtworkReader>,
     revision: String,
 ) -> Option<LocalArtworkRef> {
-    let picture_index = artwork::best_picture_index(file, tag)?;
+    let ArtworkReader::Lofty(file_types) = reader?;
+    let file = read_lofty(path, file_types, true).ok().flatten()?;
+    let tag = file.primary_tag().or_else(|| file.first_tag());
+    let picture_index = artwork::best_picture_index(&file, tag)?;
     Some(artwork::embedded_reference(path, picture_index, revision))
 }
 

@@ -6,11 +6,10 @@ use library::LocalArtworkRef;
 use lofty::file::TaggedFile;
 use lofty::file::TaggedFileExt;
 use lofty::picture::{Picture, PictureType};
-use lofty::probe::Probe;
 
 use crate::{ImageBytes, SourceError, SourceResult};
 
-use super::format::{ArtworkReader, audio_format};
+use super::format::{ArtworkReader, audio_format, read_lofty};
 
 const LOCAL_IMAGE_MAX_BYTES: usize = 32 * 1024 * 1024;
 
@@ -121,12 +120,12 @@ pub(super) fn read_image(reference: &ArtworkReference) -> SourceResult<ImageByte
             picture_index,
         } => {
             let format = audio_format(path).ok_or(SourceError::NotFound)?;
-            let Some(ArtworkReader::Lofty) = format.artwork_reader() else {
+            let Some(ArtworkReader::Lofty(file_types)) = format.artwork_reader() else {
                 return Err(SourceError::NotFound);
             };
-            let file = Probe::open(path)
-                .and_then(|probe| probe.read())
-                .map_err(|error| SourceError::Other(error.to_string()))?;
+            let file = read_lofty(path, file_types, true)
+                .map_err(|error| SourceError::Other(error.to_string()))?
+                .ok_or(SourceError::NotFound)?;
             let picture = file
                 .tags()
                 .iter()
