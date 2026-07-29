@@ -13,7 +13,7 @@
 <br clear="left">
 
 
-![Rufin](data/Rufin.png)
+![Rufin](data/screenshots/Rufin.png)
 
 # Features
 
@@ -44,16 +44,16 @@
 
 # Screenshots
 
-![Tracks page](data/tracks_page.png)
-![Album page](data/album_page.png)
-![Artist page](data/artist_page.png)
-![Fullscreen player](data/player_visualizer.png)
-![Smart playlists](data/smart_playlists.png)
-![Library settings](data/library_settings.png)
-![Playback settings](data/playback_settings.png)
-![Layout settings](data/layout_settings.png)
-![Lyrics search](data/lyrics_search.png)
 
+![Tracks page](data/screenshots/tracks_page.png)
+![Albums page](data/screenshots/albums_page.png)
+![Artist details](data/screenshots/artist_detail.png)
+![Album details](data/screenshots/album_detail.png)
+![Fullscreen player](data/screenshots/visualizer.png)
+![Customize display](data/screenshots/customize_display.png)
+![Download settings](data/screenshots/download_settings.png)
+![Playback settings](data/screenshots/playback_settings.png)
+![Layout settings](data/screenshots/layout_settings.png)
 
 # Installation
 
