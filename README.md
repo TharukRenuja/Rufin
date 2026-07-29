@@ -9,7 +9,7 @@
     <a href="https://search.nixos.org/packages?channel=unstable&query=rufin"><img alt="Nixpkgs version" src="https://repology.org/badge/version-for-repo/nix_unstable/rufin.svg?header=Nixpkgs"></a>
 </p>
 
-<img align="left" alt="Rufin" src="data/icons/hicolor/512x512/apps/io.github.screwys.Rufin.png" width="72"> Rufin is a native, fast and easy to use GTK4/libadwaita music client written in Rust. It supports playback from your music server(s) or your local folder(s), with built-in playback reporting to Last.fm and alike.
+<img align="left" alt="Rufin" src="data/icons/hicolor/512x512/apps/io.github.screwys.Rufin.png" width="96"> Rufin is a powerful, fast and easy to use GTK4/libadwaita music client written in Rust. It can play music from your Jellyfin, Navidrome/OpenSubsonic flavor servers and local folders; can download tracks from these servers and let you play from downloaded songs while still keeping you in the same remote session. It also has broad set of features and optimizations around these features for the ideal user experience.
 <br clear="left">
 
 
@@ -185,8 +185,6 @@ just debug
 # Scope
 
 - **Integrations** Rufin will not integrate any sources that are hostile against 3rd pary clients, which include most live music listening services. That is a never ending battle with their API that they constantly break intentionally. This is not maintainable for an app in official repositories as even an immediate hotfix could take days or weeks to deploy. I also don't want enable anti-user services like this. On the other hand, I am very eager to integrate any feature that would improve the user experience; this can range from some server API support to self-hosted scrobbling/sync servers, as Rufin aims to be your own client truly. If you go visit past issues, you will see that all feature requests have a follow-up PR so far, and I intend this to continue as long as it is feasible.
-
-- **No performance regressions** Rufin is meant to be a fast, fully-featured and visual client. Visual here refers to overall aesthethic; and fully-featured means full or close to full-feature parity with leading music clients (which are usually Electron). So far, it usually remains less than 350 MiB (without romanization/furigana lyrics enabled) on a library with few thousand tracks, and it should not meaningfully go so much beyond on larger libraries.  This is similar to other GTK music clients, and significantly less than Electron-based clients that can easily use 1-1.5 GB. Therefore it is `lightweight` in the sense that it tries to offer what these heavier apps do natively, but it is not meant to be `lightweight` in the sense that it only focuses on playing music, like plenty of QT-based clients with <100~ MiB memory usage do.
 
 - **More packaging alternatives**: Since this is a native client, we want to offer distribution specific packaging formats. As long as there is an active tester, these can be maintained officially from this repository.
   
