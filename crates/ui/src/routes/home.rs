@@ -24,14 +24,14 @@ use super::cards::{album_cover_overlay, track_cover_overlay};
 use super::collections::{home_item_row, library_route_inset};
 use super::detail_links::{album_artist_route, track_artist_route};
 use super::detail_showcase::{DetailSummaryProjection, detail_radio_button};
+use super::grid_cells::{COLLECTION_GRID_MAX_COLUMNS, collection_grid_column_count};
 use super::home_layout::{
     HomeShowcaseMode, home_section_header, home_showcase_cover_size, home_showcase_is_compact,
     home_showcase_mode, home_showcase_spacing,
 };
+use super::library_fields::COLLECTION_GRID_MIN_CARD_WIDTH;
 use super::route::Route;
-use super::route_layout::{
-    ROUTE_TOP_MARGIN, home_album_content_width, home_album_page_size, route_scroller_widget,
-};
+use super::route_layout::{ROUTE_TOP_MARGIN, home_album_content_width, route_scroller_widget};
 
 fn add_card_label_link(
     shell: &Rc<Shell>,
@@ -170,7 +170,11 @@ impl MountedHomeSectionPresentation {
         if width <= 1 {
             return;
         }
-        let page_size = home_album_page_size(width, Some(self.page_size.get()));
+        let page_size = collection_grid_column_count(
+            width,
+            COLLECTION_GRID_MIN_CARD_WIDTH,
+            COLLECTION_GRID_MAX_COLUMNS,
+        );
         if self.page_size.replace(page_size) == page_size {
             return;
         }
@@ -580,7 +584,11 @@ impl Shell {
         section.append(&header.root);
 
         let content_width = home_album_content_width(self);
-        let page_size = home_album_page_size(content_width, None);
+        let page_size = collection_grid_column_count(
+            content_width,
+            COLLECTION_GRID_MIN_CARD_WIDTH,
+            COLLECTION_GRID_MAX_COLUMNS,
+        );
         let model = gio::ListStore::new::<glib::BoxedAnyObject>();
         let row = home_item_row(self, model.clone(), page_size);
         let presentation = MountedHomeSectionPresentation {

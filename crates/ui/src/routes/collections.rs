@@ -38,9 +38,7 @@ use super::library_fields::{
 };
 use super::playlist_picker::PlaylistTrackSource;
 use super::route::Route;
-use super::route_layout::{
-    HOME_ALBUM_MIN_SIZE, PRIMARY_ROUTE_MARGIN_END, PRIMARY_ROUTE_MARGIN_START,
-};
+use super::route_layout::{PRIMARY_ROUTE_MARGIN_END, PRIMARY_ROUTE_MARGIN_START};
 use super::route_shell::restore_single_click_activation_on_primary_press;
 use super::table_sizing::{
     ColumnViewWidthFit, column_view_initial_width, connect_column_width_save,
@@ -819,7 +817,7 @@ pub(crate) fn home_item_row(
                 let cell = AlbumGridCell::new(
                     Rc::clone(&widget_shell),
                     &HOME_ALBUM_GRID_FIELDS,
-                    HOME_ALBUM_MIN_SIZE,
+                    COLLECTION_GRID_MIN_CARD_WIDTH,
                 );
                 cell.bind(position, album);
                 cell.widget()
@@ -834,7 +832,7 @@ pub(crate) fn home_item_row(
                     Rc::clone(&widget_shell),
                     &HOME_TRACK_GRID_FIELDS,
                     play,
-                    HOME_ALBUM_MIN_SIZE,
+                    COLLECTION_GRID_MIN_CARD_WIDTH,
                 );
                 cell.bind(position, track);
                 cell.widget()

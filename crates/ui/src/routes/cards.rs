@@ -414,9 +414,9 @@ mod collection_grid_card_inset_tests {
 
     #[test]
     fn grid_slot_width_uses_the_configured_card_width() {
-        let expected = 160 + COLLECTION_GRID_CARD_MARGIN * 2;
+        let expected = COLLECTION_GRID_MIN_CARD_WIDTH + COLLECTION_GRID_CARD_MARGIN * 2;
         assert_eq!(
-            collection_grid_card_horizontal_measure(160),
+            collection_grid_card_horizontal_measure(COLLECTION_GRID_MIN_CARD_WIDTH),
             (expected, expected, -1, -1)
         );
     }

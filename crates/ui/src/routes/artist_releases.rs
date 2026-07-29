@@ -16,13 +16,16 @@ use localization::msgid;
 
 use super::cards;
 use super::collections::{CollectionTableProjection, album_table};
-use super::grid_cells::{AlbumGridCell, COLLECTION_GRID_MAX_COLUMNS, ReusableCollectionGridCell};
-use super::library_fields::{
-    COLLECTION_GRID_CARD_MARGIN, COLLECTION_GRID_MIN_CARD_WIDTH, album_matches_query,
+use super::grid_cells::{
+    AlbumGridCell, COLLECTION_GRID_MAX_COLUMNS, ReusableCollectionGridCell,
+    collection_grid_column_count,
 };
+use super::library_fields::{COLLECTION_GRID_MIN_CARD_WIDTH, album_matches_query};
 use super::models::{replace_albums_in_model, sort_albums};
 use super::release_kind::{AlbumReleaseKind, album_release_kind};
-use super::route_layout::{ROUTE_TOP_MARGIN, detail_route_scroller};
+use super::route_layout::{
+    PRIMARY_ROUTE_HORIZONTAL_INSET, ROUTE_TOP_MARGIN, detail_route_scroller,
+};
 use super::route_shell::{LibraryToolbarProjection, non_propagating_width_scroller};
 
 const ARTIST_RELEASE_SECTION_GAP: i32 = 18;
@@ -419,19 +422,23 @@ impl ArtistReleaseProjections {
         let resize_columns = Rc::clone(&columns);
         let resize_layout = Rc::clone(&layout);
         let resize_rebuild = Rc::clone(&rebuild);
-        let owner = width_allocation_owner(&list, move |width| {
+        let scroller = detail_route_scroller(super::collections::library_route_inset(
+            list.clone().upcast(),
+        ));
+        let owner = width_allocation_owner(&scroller, move |width| {
             if resize_layout.get() == LibraryLayout::Row {
                 return;
             }
-            let next = artist_release_column_count(width);
+            let next = collection_grid_column_count(
+                width.saturating_sub(PRIMARY_ROUTE_HORIZONTAL_INSET),
+                COLLECTION_GRID_MIN_CARD_WIDTH,
+                COLLECTION_GRID_MAX_COLUMNS,
+            );
             if resize_columns.replace(next) != next {
                 resize_rebuild();
             }
         });
-        let surface = detail_route_scroller(
-            shell,
-            super::collections::library_route_inset(owner.upcast()),
-        );
+        let surface = owner.upcast();
 
         let mut search_targets = HashMap::new();
         if let Some((_, favorite_search)) = preamble.favorite {
@@ -556,11 +563,6 @@ fn partition_artist_releases(
     }
     sections[5].extend(appears_on.iter().cloned());
     sections
-}
-
-fn artist_release_column_count(width: i32) -> usize {
-    let slot_width = COLLECTION_GRID_MIN_CARD_WIDTH + COLLECTION_GRID_CARD_MARGIN * 2;
-    (width.max(1) / slot_width.max(1)).clamp(1, COLLECTION_GRID_MAX_COLUMNS as i32) as usize
 }
 
 fn append_grid_rows(
@@ -869,16 +871,5 @@ mod tests {
                     .collect::<Vec<_>>()
             );
         }
-    }
-
-    #[test]
-    fn column_count_changes_only_at_complete_card_thresholds() {
-        let slot = COLLECTION_GRID_MIN_CARD_WIDTH + COLLECTION_GRID_CARD_MARGIN * 2;
-        assert_eq!(artist_release_column_count(slot - 1), 1);
-        assert_eq!(artist_release_column_count(slot), 1);
-        assert_eq!(artist_release_column_count(slot * 3 - 1), 2);
-        assert_eq!(artist_release_column_count(slot * 3), 3);
-        assert_eq!(artist_release_column_count(slot * 4 - 1), 3);
-        assert_eq!(artist_release_column_count(slot * 4), 4);
     }
 }
