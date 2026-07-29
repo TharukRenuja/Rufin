@@ -443,6 +443,7 @@ fn primary_menu_popover(shell: &Rc<Shell>) -> gtk::PopoverMenu {
     );
     popover.set_autohide(true);
     popover.set_position(gtk::PositionType::Bottom);
+    popover.set_halign(gtk::Align::Start);
     style_primary_menu(&popover);
     popover
 }
