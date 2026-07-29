@@ -14,6 +14,7 @@ use crate::favorites::{
     album_favorite_key, favorite_button_is_active, favorite_icon_button,
     set_favorite_button_active, track_favorite_key,
 };
+use crate::interactions::install_context_menu_openers;
 use crate::shell::Shell;
 use crate::shell::actions::{
     ActionButtonVariant, MORE_ICON, PLAY_ICON, PLAY_LATER_ICON, PLAY_NEXT_ICON,
@@ -78,17 +79,20 @@ pub(crate) fn album_cover_overlay(
 
     let mut controls = cover_hover_controls(0, "Play album", album_value.favorite);
     let menu = controls.add_context_button();
-    let menu_target = overlay.downgrade();
     let menu_shell = Rc::clone(shell);
     let menu_album = album.clone();
+    let open_menu: Rc<dyn Fn(&gtk::Widget, Option<(f64, f64)>)> =
+        Rc::new(move |target, position| {
+            present_album_context_menu(target, &menu_shell, menu_album.clone(), position);
+        });
+    install_context_menu_openers(&overlay, Rc::clone(&open_menu));
+    let menu_target = overlay.downgrade();
     menu.connect_clicked(move |_| {
         let Some(menu_target) = menu_target.upgrade() else {
             return;
         };
-        present_album_context_menu(
+        open_menu(
             menu_target.upcast_ref(),
-            &menu_shell,
-            menu_album.clone(),
             elastic_cover_context_point(&menu_target),
         );
     });
@@ -168,15 +172,18 @@ pub(crate) fn track_cover_overlay(
     let menu = controls.add_context_button();
     let menu_shell = Rc::clone(shell);
     let menu_track = track.clone();
+    let open_menu: Rc<dyn Fn(&gtk::Widget, Option<(f64, f64)>)> =
+        Rc::new(move |target, position| {
+            present_track_context_menu(target, &menu_shell, menu_track.clone(), position);
+        });
+    install_context_menu_openers(&overlay, Rc::clone(&open_menu));
     let menu_target = overlay.downgrade();
     menu.connect_clicked(move |_| {
         let Some(menu_target) = menu_target.upgrade() else {
             return;
         };
-        present_track_context_menu(
+        open_menu(
             menu_target.upcast_ref(),
-            &menu_shell,
-            menu_track.clone(),
             elastic_cover_context_point(&menu_target),
         );
     });

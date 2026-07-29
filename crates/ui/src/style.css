@@ -1973,10 +1973,6 @@ scale.fullscreen-player-equalizer-scale trough {
   min-height: 0;
 }
 
-.folders-route {
-  min-width: 360px;
-}
-
 .folder-breadcrumbs {
   min-height: 34px;
 }
