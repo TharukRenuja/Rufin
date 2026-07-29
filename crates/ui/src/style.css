@@ -681,6 +681,8 @@ row.entry.password:focus-within {
   padding: 6px 12px 8px;
 }
 
+.preferences-search-button,
+.preferences-dialog-close,
 .preferences-nested-back {
   min-width: 28px;
   min-height: 28px;

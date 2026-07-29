@@ -92,7 +92,7 @@ impl SearchRouteProjection {
         );
         status.add_named(&search_loading(), Some("loading"));
         status.add_named(
-            &shell.route_empty_view(msgid("Search Again")),
+            &shell.route_empty_view(msgid(r"No results ¯\_(°╭╮°)_/¯")),
             Some("empty"),
         );
         let error = gtk::Label::new(None);

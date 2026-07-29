@@ -789,7 +789,7 @@ fn queue_panel_render_state(
     }
     let empty_text = (row_count == 0).then(|| {
         if has_filter && queue_has_entries {
-            tr("No queue items match the search.")
+            tr(r"No results ¯\_(°╭╮°)_/¯")
         } else {
             tr("Add music to start a queue.")
         }

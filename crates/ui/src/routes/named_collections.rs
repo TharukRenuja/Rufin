@@ -663,11 +663,13 @@ impl Shell {
         }
 
         let content = named_collection_projection(self, model.clone(), kind);
+        let visible_results = Rc::clone(&visible);
         let page_shell = self.library_page_shell(LibraryPageShellOptions {
             key,
             empty: source_items.borrow().is_empty(),
             empty_body: kind.fallback_warning(),
             search: search.clone(),
+            has_visible_results: Rc::new(move || !visible_results.borrow().is_empty()),
             content: content.scrolling_widget(),
         });
         let route = match kind {

@@ -36,6 +36,10 @@ msgid ""
 "to review the logs before sharing them"
 msgstr ""
 
+msgid ""
+"No results \302\257\\_(\302\260\342\225\255\342\225\256\302\260)_/\302\257"
+msgstr ""
+
 #, rust-format
 msgid ""
 "Saved mapping. {direct} direct, {prefix} prefix, {metadata} metadata, "
@@ -954,9 +958,6 @@ msgstr ""
 msgid "No lyrics"
 msgstr ""
 
-msgid "No queue items match the search."
-msgstr ""
-
 msgid "No remote sources configured"
 msgstr ""
 
@@ -1381,6 +1382,9 @@ msgid "Search failed."
 msgstr ""
 
 msgid "Search lyrics"
+msgstr ""
+
+msgid "Search preferences"
 msgstr ""
 
 msgid "Search queue"
