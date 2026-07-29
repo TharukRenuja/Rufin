@@ -2,7 +2,7 @@
 <component type="desktop-application">
   <id>io.github.screwys.Rufin</id>
   <name>Rufin</name>
-  <summary>Feel at home with your music library</summary>
+  <summary>Feel at home with your music</summary>
   <developer id="io.github.screwys">
     <name>screwy</name>
   </developer>
@@ -18,13 +18,14 @@
     <color type="primary" scheme_preference="dark">#28596b</color>
   </branding>
   <description>
-    <p>Bring music from your servers and local folders into one library, with built-in Discord and Last.fm integration</p>
+    <p>Enjoy your music library, either a server or local folders; with a powerful all-in-one music player.</p>
     <ul>
       <li>First-class Jellyfin, Navidrome/OpenSubsonic integration; you can download tracks, or set up rules to automatically download tracks, fully usable offline</li>
       <li>First-class local music library integration; you can combine multiple folders for a single listening session, fully enjoy built-in music server benefits like activity/history with your local library</li>
       <li>Built-in Last.fm, Libre.fm, and ListenBrainz scrobbling</li>
       <li>Discord Rich Presence</li>
       <li>Automatic lyrics/cover art lookup</li>
+      <li>Advanced lyrics settings such as multiple Japanese reading formats</li>
       <li>Smart playlists that support multiple combinations</li>
       <li>Broad set of features you would expect from a music player</li>
     </ul>
