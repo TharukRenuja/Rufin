@@ -14,9 +14,9 @@ use secrets::SecretStorageMode;
 use serde::{Deserialize, Serialize};
 
 use super::{
-    ExternalSiteLinkSettings, FolderViewSettings, LayoutSettings, LibraryListKey,
-    LibraryListSettings, LibraryListSettingsEntry, SidebarSettings, ThemePreference,
-    default_library_list_settings, sanitized_window_size,
+    ContextMenuSettings, ExternalSiteLinkSettings, FolderViewSettings, LayoutSettings,
+    LibraryListKey, LibraryListSettings, LibraryListSettingsEntry, SidebarSettings,
+    ThemePreference, default_library_list_settings, sanitized_window_size,
 };
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -25,6 +25,8 @@ pub struct Settings {
     pub layout: LayoutSettings,
     #[serde(default)]
     pub sidebar: SidebarSettings,
+    #[serde(default)]
+    pub context_menu: ContextMenuSettings,
     pub theme_preference: ThemePreference,
     #[serde(default = "default_language_preference")]
     pub language: String,
@@ -95,6 +97,7 @@ impl Default for Settings {
         Self {
             layout: LayoutSettings::default(),
             sidebar: SidebarSettings::default(),
+            context_menu: ContextMenuSettings::default(),
             theme_preference: ThemePreference::System,
             language: default_language_preference(),
             private_mode: false,
@@ -162,6 +165,7 @@ impl Settings {
             .map(str::to_string);
         self.layout.sanitize();
         self.sidebar.sanitize();
+        self.context_menu.sanitize();
         if !self.tray_enabled {
             self.exit_to_tray = false;
             self.start_minimized = false;

@@ -6,6 +6,7 @@ use gtk::{gio, glib};
 
 use localization::tr;
 
+use crate::settings::{ContextMenuItem, ContextMenuSettings};
 use crate::shell::Shell;
 use crate::shell::actions::{PLAY_ICON, PLAY_LATER_ICON, PLAY_NEXT_ICON};
 
@@ -71,6 +72,13 @@ pub(crate) struct ContextMenuSurface {
     menu: gio::Menu,
     popover: gtk::PopoverMenu,
     actions: gio::SimpleActionGroup,
+    entries: RefCell<Vec<ContextMenuEntry<gio::MenuItem>>>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum ContextMenuEntry<T> {
+    Configurable(ContextMenuItem, T),
+    Fixed(T),
 }
 
 impl ContextMenuSurface {
@@ -86,6 +94,7 @@ impl ContextMenuSurface {
             popover: context_popover(target, position, &menu),
             menu,
             actions: gio::SimpleActionGroup::new(),
+            entries: RefCell::new(Vec::new()),
         }
     }
 
@@ -93,18 +102,47 @@ impl ContextMenuSurface {
         &self.popover
     }
 
-    pub(crate) fn append_action(&self, label: &str, action: &str, icon_name: &str) {
-        self.menu.append_item(&menu_action_item(
-            &tr(label),
-            &format!("{}.{}", self.group_name, action),
-            icon_name,
-        ));
+    pub(crate) fn append_fixed_action(&self, label: &str, action: &str, icon_name: &str) {
+        self.entries
+            .borrow_mut()
+            .push(ContextMenuEntry::Fixed(menu_action_item(
+                &tr(label),
+                &format!("{}.{}", self.group_name, action),
+                icon_name,
+            )));
     }
 
-    pub(crate) fn append_submenu(&self, label: &str, submenu: &gio::Menu, icon_name: &str) {
+    pub(crate) fn append_configurable_action(
+        &self,
+        item: ContextMenuItem,
+        label: &str,
+        action: &str,
+        icon_name: &str,
+    ) {
+        self.entries
+            .borrow_mut()
+            .push(ContextMenuEntry::Configurable(
+                item,
+                menu_action_item(
+                    &tr(label),
+                    &format!("{}.{}", self.group_name, action),
+                    icon_name,
+                ),
+            ));
+    }
+
+    pub(crate) fn append_configurable_submenu(
+        &self,
+        setting: ContextMenuItem,
+        label: &str,
+        submenu: &gio::Menu,
+        icon_name: &str,
+    ) {
         let item = gio::MenuItem::new_submenu(Some(&tr(label)), submenu);
         item.set_icon(&gio::ThemedIcon::new(icon_name));
-        self.menu.append_item(&item);
+        self.entries
+            .borrow_mut()
+            .push(ContextMenuEntry::Configurable(setting, item));
     }
 
     pub(crate) fn add_action(&self, name: &str, run: impl Fn() + 'static) {
@@ -119,7 +157,14 @@ impl ContextMenuSurface {
         self.actions.add_action(&action);
     }
 
-    pub(crate) fn popup(self) {
+    pub(crate) fn popup(self, settings: &ContextMenuSettings) {
+        for item in resolve_context_menu_entries(self.entries.into_inner(), settings) {
+            self.menu.append_item(&item);
+        }
+        if self.menu.n_items() == 0 {
+            self.popover.unparent();
+            return;
+        }
         self.target
             .insert_action_group(self.group_name, Some(&self.actions));
         show_native_menu_icons(&self.popover);
@@ -144,6 +189,103 @@ impl ContextMenuSurface {
             });
         });
         self.popover.popup();
+    }
+}
+
+fn resolve_context_menu_entries<T>(
+    entries: Vec<ContextMenuEntry<T>>,
+    settings: &ContextMenuSettings,
+) -> Vec<T> {
+    fn append_segment<T>(
+        resolved: &mut Vec<T>,
+        segment: &mut Vec<(ContextMenuItem, T)>,
+        settings: &ContextMenuSettings,
+    ) {
+        segment.retain(|(item, _)| settings.is_visible(*item));
+        segment.sort_by_key(|(item, _)| settings.position(*item));
+        resolved.extend(segment.drain(..).map(|(_, value)| value));
+    }
+
+    let mut resolved = Vec::with_capacity(entries.len());
+    let mut segment = Vec::new();
+    for entry in entries {
+        match entry {
+            ContextMenuEntry::Configurable(item, value) => segment.push((item, value)),
+            ContextMenuEntry::Fixed(value) => {
+                append_segment(&mut resolved, &mut segment, settings);
+                resolved.push(value);
+            }
+        }
+    }
+    append_segment(&mut resolved, &mut segment, settings);
+    resolved
+}
+
+#[cfg(test)]
+mod context_menu_tests {
+    use super::{ContextMenuEntry, resolve_context_menu_entries};
+    use crate::settings::{ContextMenuItem, ContextMenuItemSettings, ContextMenuSettings};
+
+    fn settings(order: &[(ContextMenuItem, bool)]) -> ContextMenuSettings {
+        ContextMenuSettings {
+            items: order
+                .iter()
+                .map(|(item, visible)| ContextMenuItemSettings {
+                    item: *item,
+                    visible: *visible,
+                })
+                .collect(),
+        }
+    }
+
+    #[test]
+    fn configurable_items_follow_saved_order_and_visibility() {
+        let settings = settings(&[
+            (ContextMenuItem::Download, true),
+            (ContextMenuItem::Play, false),
+            (ContextMenuItem::Favorites, true),
+        ]);
+        let entries = vec![
+            ContextMenuEntry::Configurable(ContextMenuItem::Play, "play"),
+            ContextMenuEntry::Configurable(ContextMenuItem::Favorites, "favorite"),
+            ContextMenuEntry::Configurable(ContextMenuItem::Download, "download"),
+        ];
+
+        assert_eq!(
+            resolve_context_menu_entries(entries, &settings),
+            ["download", "favorite"]
+        );
+    }
+
+    #[test]
+    fn fixed_items_anchor_configurable_segments() {
+        let settings = settings(&[
+            (ContextMenuItem::Download, true),
+            (ContextMenuItem::Play, true),
+            (ContextMenuItem::Favorites, true),
+        ]);
+        let entries = vec![
+            ContextMenuEntry::Configurable(ContextMenuItem::Play, "play"),
+            ContextMenuEntry::Configurable(ContextMenuItem::Favorites, "favorite"),
+            ContextMenuEntry::Fixed("remove"),
+            ContextMenuEntry::Configurable(ContextMenuItem::Download, "download"),
+        ];
+
+        assert_eq!(
+            resolve_context_menu_entries(entries, &settings),
+            ["play", "favorite", "remove", "download"]
+        );
+    }
+
+    #[test]
+    fn hidden_configurable_items_can_resolve_to_an_empty_menu() {
+        let settings = settings(&[(ContextMenuItem::Play, false)]);
+        let entries = vec![ContextMenuEntry::Configurable(
+            ContextMenuItem::Play,
+            "play",
+        )];
+
+        assert!(resolve_context_menu_entries(entries, &settings).is_empty());
     }
 }
 

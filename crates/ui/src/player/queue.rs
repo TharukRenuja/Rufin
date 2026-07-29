@@ -24,6 +24,7 @@ use crate::interactions::{
 };
 use crate::layout::width_allocation_owner;
 use crate::routes::playlist_picker::{PlaylistTrackSource, install_context_menu_picker_action};
+use crate::settings::ContextMenuItem;
 use crate::shell::Shell;
 use crate::shell::actions::{PLAY_ICON, PLAY_LATER_ICON, PLAY_NEXT_ICON, REMOVE_ICON};
 use crate::shell::cover::{ArtworkTile, THUMB_COVER_SIZE};
@@ -1629,11 +1630,22 @@ fn show_queue_row_context_menu(
 ) {
     let track = entry.track.clone();
     let surface = ContextMenuSurface::new(row, "queue", None);
-    surface.append_action(msgid("Remove from Queue"), "remove", REMOVE_ICON);
-    surface.append_action(msgid("Play"), "play-now", PLAY_ICON);
-    surface.append_action(msgid("Play Next"), "play-next", PLAY_NEXT_ICON);
-    surface.append_action(msgid("Play Later"), "play-last", PLAY_LATER_ICON);
-    surface.append_submenu(
+    surface.append_fixed_action(msgid("Remove from Queue"), "remove", REMOVE_ICON);
+    surface.append_configurable_action(ContextMenuItem::Play, msgid("Play"), "play-now", PLAY_ICON);
+    surface.append_configurable_action(
+        ContextMenuItem::PlayNext,
+        msgid("Play Next"),
+        "play-next",
+        PLAY_NEXT_ICON,
+    );
+    surface.append_configurable_action(
+        ContextMenuItem::PlayLater,
+        msgid("Play Later"),
+        "play-last",
+        PLAY_LATER_ICON,
+    );
+    surface.append_configurable_submenu(
+        ContextMenuItem::PlayRadio,
         msgid("Track radio"),
         &radio_context_submenu("queue"),
         RADIO_ICON,
@@ -1646,7 +1658,8 @@ fn show_queue_row_context_menu(
         )
     });
     if playlist_source.is_some() {
-        surface.append_action(
+        surface.append_configurable_action(
+            ContextMenuItem::AddToPlaylist,
             msgid("Add to Playlist"),
             "add-to-playlist",
             ADD_TO_PLAYLIST_ICON,
@@ -1654,21 +1667,37 @@ fn show_queue_row_context_menu(
     }
 
     if entry.track.favorite {
-        surface.append_action(
+        surface.append_configurable_action(
+            ContextMenuItem::Favorites,
             msgid("Remove from Favorites"),
             "favorite",
             FAVORITE_REMOVE_ICON,
         );
     } else {
-        surface.append_action(msgid("Add to Favorites"), "favorite", FAVORITE_ADD_ICON);
+        surface.append_configurable_action(
+            ContextMenuItem::Favorites,
+            msgid("Add to Favorites"),
+            "favorite",
+            FAVORITE_ADD_ICON,
+        );
     }
     let artist_route = queue_artist_route(entry);
     if artist_route.is_some() {
-        surface.append_action(msgid("Go to Artist"), "go-artist", ARTIST_ICON);
+        surface.append_configurable_action(
+            ContextMenuItem::GoToArtist,
+            msgid("Go to Artist"),
+            "go-artist",
+            ARTIST_ICON,
+        );
     }
     let album_route = entry.track.album_id.clone().map(Route::AlbumDetail);
     if album_route.is_some() {
-        surface.append_action(msgid("Go to Album"), "go-album", ALBUM_ICON);
+        surface.append_configurable_action(
+            ContextMenuItem::GoToAlbum,
+            msgid("Go to Album"),
+            "go-album",
+            ALBUM_ICON,
+        );
     }
 
     surface.popover().set_pointing_to(pointing_to.as_ref());
@@ -1773,7 +1802,7 @@ fn show_queue_row_context_menu(
         });
     }
 
-    surface.popup();
+    surface.popup(&shell.settings.current.borrow().context_menu);
 }
 
 fn queue_artist_route(entry: &SequenceEntry) -> Option<Route> {

@@ -13,6 +13,7 @@ use std::{
     rc::Rc,
 };
 
+mod context_menu;
 pub(crate) mod dialogs;
 mod general;
 mod layout;
@@ -173,6 +174,7 @@ struct PreferencesSearchItem {
     context: String,
     searchable_text: String,
     target: gtk::glib::WeakRef<gtk::Widget>,
+    expander: Option<gtk::glib::WeakRef<adw::ExpanderRow>>,
 }
 
 #[derive(Clone)]
@@ -431,11 +433,10 @@ fn rebuild_preferences_dialog(
                 false,
             );
         }
-        if search_items_for_button.borrow().is_empty() {
-            let mut items = search_items_for_button.borrow_mut();
-            for (kind, slot) in search_slots.iter() {
-                collect_preferences_search_items(slot.upcast_ref(), *kind, "", &mut items);
-            }
+        let mut items = search_items_for_button.borrow_mut();
+        items.clear();
+        for (kind, slot) in search_slots.iter() {
+            collect_preferences_search_items(slot.upcast_ref(), *kind, "", None, &mut items);
         }
         search_entry_for_button.grab_focus();
     });
@@ -482,11 +483,15 @@ fn rebuild_preferences_dialog(
             row.add_suffix(&gtk::Image::from_icon_name("go-next-symbolic"));
             let page = item.page;
             let target = item.target.clone();
+            let expander = item.expander.clone();
             let page_stack = page_stack_for_entry.clone();
             let content_stack = content_stack_for_entry.clone();
             let search_bar = search_bar_for_entry.clone();
             let navigation = navigation_for_entry.clone();
             row.connect_activated(move |_| {
+                if let Some(expander) = expander.as_ref().and_then(gtk::glib::WeakRef::upgrade) {
+                    expander.set_expanded(true);
+                }
                 navigation.return_to_root();
                 page_stack.set_visible_child_name(page.name());
                 content_stack.set_visible_child_name("pages");
@@ -521,6 +526,7 @@ fn collect_preferences_search_items(
     widget: &gtk::Widget,
     page: PreferencesPageKind,
     group_title: &str,
+    expander: Option<gtk::glib::WeakRef<adw::ExpanderRow>>,
     items: &mut Vec<PreferencesSearchItem>,
 ) {
     let group_title = widget
@@ -530,6 +536,20 @@ fn collect_preferences_search_items(
         .map(|group| group.title().to_string())
         .filter(|title| !title.is_empty())
         .unwrap_or_else(|| group_title.to_owned());
+    let (group_title, expander) = widget
+        .clone()
+        .downcast::<adw::ExpanderRow>()
+        .ok()
+        .map(|row| {
+            let title = row.title().to_string();
+            let title = if title.is_empty() {
+                group_title.clone()
+            } else {
+                title
+            };
+            (title, Some(row.downgrade()))
+        })
+        .unwrap_or((group_title, expander));
 
     if let Ok(row) = widget.clone().downcast::<adw::PreferencesRow>() {
         let title = row.title().to_string();
@@ -552,6 +572,7 @@ fn collect_preferences_search_items(
                 title,
                 context,
                 target: widget.downgrade(),
+                expander: expander.clone(),
             });
         }
     }
@@ -559,7 +580,7 @@ fn collect_preferences_search_items(
     let mut child = widget.first_child();
     while let Some(current) = child {
         child = current.next_sibling();
-        collect_preferences_search_items(&current, page, &group_title, items);
+        collect_preferences_search_items(&current, page, &group_title, expander.clone(), items);
     }
 }
 
@@ -1181,9 +1202,10 @@ fn interface_group(shell: &Rc<Shell>) -> adw::PreferencesGroup {
 
     group
 }
-fn sidebar_items_group(shell: &Rc<Shell>) -> adw::PreferencesGroup {
-    let group = adw::PreferencesGroup::builder()
+fn sidebar_items_expander(shell: &Rc<Shell>) -> adw::ExpanderRow {
+    let expander = adw::ExpanderRow::builder()
         .title(tr("Sidebar Items"))
+        .expanded(false)
         .build();
     let pins = adw::SwitchRow::builder()
         .title(tr("Pins"))
@@ -1209,35 +1231,35 @@ fn sidebar_items_group(shell: &Rc<Shell>) -> adw::PreferencesGroup {
     let rows = Rc::new(RefCell::new(
         Vec::<gtk::glib::WeakRef<adw::ActionRow>>::new(),
     ));
-    populate_sidebar_item_rows(shell, &group, &rows, &pins);
-    group
+    populate_sidebar_item_rows(shell, &expander, &rows, &pins);
+    expander
 }
 fn populate_sidebar_item_rows(
     shell: &Rc<Shell>,
-    group: &adw::PreferencesGroup,
+    expander: &adw::ExpanderRow,
     rows: &Rc<RefCell<Vec<gtk::glib::WeakRef<adw::ActionRow>>>>,
     pins: &adw::SwitchRow,
 ) {
     for row in rows.borrow_mut().drain(..) {
         if let Some(row) = row.upgrade() {
-            group.remove(&row);
+            expander.remove(&row);
         }
     }
 
     let items = shell.settings.current.borrow().sidebar.route_items.clone();
     for (position, entry) in items.into_iter().enumerate() {
-        let row = sidebar_item_row(shell, group, rows, pins, entry, position);
-        group.add(&row);
+        let row = sidebar_item_row(shell, expander, rows, pins, entry, position);
+        expander.add_row(&row);
         rows.borrow_mut().push(row.downgrade());
     }
     if pins.parent().is_some() {
-        group.remove(pins);
+        expander.remove(pins);
     }
-    group.add(pins);
+    expander.add_row(pins);
 }
 fn sidebar_item_row(
     shell: &Rc<Shell>,
-    group: &adw::PreferencesGroup,
+    expander: &adw::ExpanderRow,
     rows: &Rc<RefCell<Vec<gtk::glib::WeakRef<adw::ActionRow>>>>,
     pins: &adw::SwitchRow,
     entry: SidebarRouteItemSettings,
@@ -1274,7 +1296,7 @@ fn sidebar_item_row(
 
     {
         let shell = Rc::clone(shell);
-        let group = group.downgrade();
+        let expander = expander.downgrade();
         let rows = Rc::clone(rows);
         let pins = pins.clone();
         visible.connect_active_notify(move |switch| {
@@ -1296,36 +1318,36 @@ fn sidebar_item_row(
                 true
             });
             shell.rebuild_sidebar_navigation();
-            let Some(group) = group.upgrade() else {
+            let Some(expander) = expander.upgrade() else {
                 return;
             };
-            populate_sidebar_item_rows(&shell, &group, &rows, &pins);
+            populate_sidebar_item_rows(&shell, &expander, &rows, &pins);
         });
     }
     {
         let shell = Rc::clone(shell);
-        let group = group.downgrade();
+        let expander = expander.downgrade();
         let rows = Rc::clone(rows);
         let pins = pins.clone();
         up.connect_clicked(move |_| {
             move_sidebar_item(&shell, entry.item, -1);
-            let Some(group) = group.upgrade() else {
+            let Some(expander) = expander.upgrade() else {
                 return;
             };
-            populate_sidebar_item_rows(&shell, &group, &rows, &pins);
+            populate_sidebar_item_rows(&shell, &expander, &rows, &pins);
         });
     }
     {
         let shell = Rc::clone(shell);
-        let group = group.downgrade();
+        let expander = expander.downgrade();
         let rows = Rc::clone(rows);
         let pins = pins.clone();
         down.connect_clicked(move |_| {
             move_sidebar_item(&shell, entry.item, 1);
-            let Some(group) = group.upgrade() else {
+            let Some(expander) = expander.upgrade() else {
                 return;
             };
-            populate_sidebar_item_rows(&shell, &group, &rows, &pins);
+            populate_sidebar_item_rows(&shell, &expander, &rows, &pins);
         });
     }
 
@@ -1340,7 +1362,7 @@ fn sidebar_item_row(
 
     let drop_target = gtk::DropTarget::new(String::static_type(), gtk::gdk::DragAction::MOVE);
     let shell = Rc::clone(shell);
-    let group = group.downgrade();
+    let expander = expander.downgrade();
     let rows = Rc::downgrade(rows);
     let pins = pins.clone();
     let row_for_drop = row.downgrade();
@@ -1354,8 +1376,8 @@ fn sidebar_item_row(
         if source_item == entry.item {
             return false;
         }
-        let (Some(row), Some(group), Some(rows)) =
-            (row_for_drop.upgrade(), group.upgrade(), rows.upgrade())
+        let (Some(row), Some(expander), Some(rows)) =
+            (row_for_drop.upgrade(), expander.upgrade(), rows.upgrade())
         else {
             return false;
         };
@@ -1376,7 +1398,7 @@ fn sidebar_item_row(
             .is_some();
         if changed {
             shell.rebuild_sidebar_navigation();
-            populate_sidebar_item_rows(&shell, &group, &rows, &pins);
+            populate_sidebar_item_rows(&shell, &expander, &rows, &pins);
         }
         changed
     });
