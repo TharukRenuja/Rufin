@@ -125,6 +125,9 @@ msgstr ""
 msgid "Add a new download rule"
 msgstr ""
 
+msgid "Add a new source"
+msgstr ""
+
 msgid "Add a server to use Jellyfin, Navidrome, or OpenSubsonic."
 msgstr ""
 
@@ -135,9 +138,6 @@ msgid "Add folder"
 msgstr ""
 
 msgid "Add folders to use the Local source."
-msgstr ""
-
-msgid "Add music library"
 msgstr ""
 
 msgid "Add music to start a queue."
@@ -1567,6 +1567,9 @@ msgstr ""
 msgid "Stream quality"
 msgstr ""
 
+msgid "Support"
+msgstr ""
+
 msgid "Switching library..."
 msgstr ""
 
@@ -1765,12 +1768,6 @@ msgstr[1] ""
 #, rust-format
 msgid "{count} folder selected"
 msgid_plural "{count} folders selected"
-msgstr[0] ""
-msgstr[1] ""
-
-#, rust-format
-msgid "{count} folder"
-msgid_plural "{count} folders"
 msgstr[0] ""
 msgstr[1] ""
 

@@ -46,16 +46,6 @@ pub(crate) fn configured_source_icon_name(source: &SourceSummary) -> &'static st
     login::source_kind_icon_name(&source.kind).unwrap_or("network-server-symbolic")
 }
 
-pub(crate) fn folder_count_text(count: u64) -> String {
-    let label = count.to_string();
-    trn_with(
-        "{count} folder",
-        "{count} folders",
-        count,
-        &[("count", label.as_str())],
-    )
-}
-
 pub(crate) fn folder_selected_text(count: u64) -> String {
     let label = count.to_string();
     trn_with(

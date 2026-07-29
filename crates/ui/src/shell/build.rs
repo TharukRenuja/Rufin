@@ -422,11 +422,13 @@ pub fn build(app: &adw::Application, inputs: RuntimeInputs) {
             button: normal_main_menu,
             popover: RefCell::new(None),
             click_handler: RefCell::new(None),
+            unmap_handler: RefCell::new(None),
         },
         compact_main_menu: PrimaryMenuWidgets {
             button: compact_main_menu,
             popover: RefCell::new(None),
             click_handler: RefCell::new(None),
+            unmap_handler: RefCell::new(None),
         },
     };
     let route_viewport = RouteViewport::new(route_host);

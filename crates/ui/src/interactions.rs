@@ -7,9 +7,18 @@ use gtk::{gio, glib};
 use localization::tr;
 
 use crate::shell::Shell;
+use crate::shell::actions::{PLAY_ICON, PLAY_LATER_ICON, PLAY_NEXT_ICON};
 
 const CONTEXT_MENU_PLAYLIST_MAX_HEIGHT: i32 = 320;
 const CONTEXT_MENU_PLAYLIST_MIN_WIDTH: i32 = 380;
+const NATIVE_MENU_SELECTION_CLASS: &str = "rufin-menu-selection";
+const NATIVE_MENU_SELECTED_CLASS: &str = "rufin-menu-selected";
+
+pub(crate) const ADD_TO_PLAYLIST_ICON: &str = "rufin-route-playlists-symbolic";
+pub(crate) const ALBUM_ICON: &str = "rufin-route-albums-symbolic";
+pub(crate) const ARTIST_ICON: &str = "rufin-route-artists-symbolic";
+pub(crate) const DOWNLOAD_ICON: &str = "folder-download-symbolic";
+pub(crate) const RADIO_ICON: &str = "rufin-audio-radio-symbolic";
 
 type ContextMenuOpen = Rc<dyn Fn(&gtk::Widget, Option<(f64, f64)>)>;
 
@@ -84,15 +93,18 @@ impl ContextMenuSurface {
         &self.popover
     }
 
-    pub(crate) fn append_action(&self, label: &str, action: &str) {
-        self.menu.append(
-            Some(&tr(label)),
-            Some(&format!("{}.{}", self.group_name, action)),
-        );
+    pub(crate) fn append_action(&self, label: &str, action: &str, icon_name: &str) {
+        self.menu.append_item(&menu_action_item(
+            &tr(label),
+            &format!("{}.{}", self.group_name, action),
+            icon_name,
+        ));
     }
 
-    pub(crate) fn append_submenu(&self, label: &str, submenu: &gio::Menu) {
-        self.menu.append_submenu(Some(&tr(label)), submenu);
+    pub(crate) fn append_submenu(&self, label: &str, submenu: &gio::Menu, icon_name: &str) {
+        let item = gio::MenuItem::new_submenu(Some(&tr(label)), submenu);
+        item.set_icon(&gio::ThemedIcon::new(icon_name));
+        self.menu.append_item(&item);
     }
 
     pub(crate) fn add_action(&self, name: &str, run: impl Fn() + 'static) {
@@ -110,14 +122,37 @@ impl ContextMenuSurface {
     pub(crate) fn popup(self) {
         self.target
             .insert_action_group(self.group_name, Some(&self.actions));
+        show_native_menu_icons(&self.popover);
+        let unmap_handler = Rc::new(RefCell::new(Some(popdown_on_anchor_unmap(
+            &self.target,
+            &self.popover,
+        ))));
+        let target = self.target.downgrade();
         self.popover.connect_closed(move |popover| {
             let popover = popover.clone();
+            let target = target.clone();
+            let unmap_handler = Rc::clone(&unmap_handler);
             glib::idle_add_local_once(move || {
+                if let (Some(target), Some(handler)) =
+                    (target.upgrade(), unmap_handler.borrow_mut().take())
+                {
+                    target.disconnect(handler);
+                }
                 popover.unparent();
             });
         });
         self.popover.popup();
     }
+}
+
+fn menu_action_item(label: &str, action: &str, icon_name: &str) -> gio::MenuItem {
+    let item = gio::MenuItem::new(Some(label), Some(action));
+    item.set_icon(&gio::ThemedIcon::new(icon_name));
+    item
+}
+
+fn append_menu_action(menu: &gio::Menu, label: &str, action: &str, icon_name: &str) {
+    menu.append_item(&menu_action_item(&tr(label), action, icon_name));
 }
 
 pub(crate) fn context_menu_scroll_page(child: &impl IsA<gtk::Widget>) -> gtk::ScrolledWindow {
@@ -150,17 +185,143 @@ pub(crate) fn close_context_surface(widget: &impl IsA<gtk::Widget>) {
 }
 pub(crate) fn radio_context_submenu(group: &str) -> gio::Menu {
     let menu = gio::Menu::new();
-    menu.append(Some(&tr("Play")), Some(&format!("{group}.play-radio")));
-    menu.append(
-        Some(&tr("Play Next")),
-        Some(&format!("{group}.play-radio-next")),
+    append_menu_action(&menu, "Play", &format!("{group}.play-radio"), PLAY_ICON);
+    append_menu_action(
+        &menu,
+        "Play Next",
+        &format!("{group}.play-radio-next"),
+        PLAY_NEXT_ICON,
     );
-    menu.append(
-        Some(&tr("Play Later")),
-        Some(&format!("{group}.play-radio-last")),
+    append_menu_action(
+        &menu,
+        "Play Later",
+        &format!("{group}.play-radio-last"),
+        PLAY_LATER_ICON,
     );
     menu
 }
+
+pub(crate) fn show_native_menu_icons(popover: &gtk::PopoverMenu) {
+    show_native_menu_icons_from(popover.upcast_ref());
+}
+
+pub(crate) fn replace_native_menu_checkmarks(popover: &gtk::PopoverMenu) {
+    replace_native_menu_checkmarks_from(popover.upcast_ref());
+}
+
+pub(crate) fn popdown_on_anchor_unmap(
+    anchor: &impl IsA<gtk::Widget>,
+    popover: &impl IsA<gtk::Popover>,
+) -> glib::SignalHandlerId {
+    let popover = popover.as_ref().downgrade();
+    anchor.as_ref().connect_unmap(move |_| {
+        if let Some(popover) = popover.upgrade() {
+            popover.popdown();
+        }
+    })
+}
+
+fn replace_native_menu_checkmarks_from(container: &gtk::Widget) {
+    let mut child = container.first_child();
+    while let Some(widget) = child {
+        child = widget.next_sibling();
+
+        if widget.type_().name() == "GtkModelButton" {
+            if generated_menu_button_has_starting_space(&widget) {
+                hide_native_menu_indicator_box(&widget);
+            }
+            if generated_menu_button_is_selection(&widget) {
+                style_native_menu_selection(&widget);
+            }
+            if let Some(nested_popover) = widget
+                .property::<Option<gtk::Popover>>("popover")
+                .and_then(|popover| popover.downcast::<gtk::PopoverMenu>().ok())
+            {
+                replace_native_menu_checkmarks(&nested_popover);
+            }
+        }
+        replace_native_menu_checkmarks_from(&widget);
+    }
+}
+
+fn generated_menu_button_has_starting_space(widget: &gtk::Widget) -> bool {
+    let role = widget.property_value("role");
+    glib::EnumValue::from_value(&role).is_some_and(|(_, role)| role.nick() != "title")
+}
+
+fn generated_menu_button_is_selection(widget: &gtk::Widget) -> bool {
+    if widget.type_().name() != "GtkModelButton" {
+        return false;
+    }
+
+    let role = widget.property_value("role");
+    glib::EnumValue::from_value(&role)
+        .is_some_and(|(_, role)| matches!(role.nick(), "check" | "radio"))
+}
+
+fn style_native_menu_selection(button: &gtk::Widget) {
+    if button.has_css_class(NATIVE_MENU_SELECTION_CLASS) {
+        return;
+    }
+    button.add_css_class(NATIVE_MENU_SELECTION_CLASS);
+
+    update_native_menu_selection(button);
+    button.connect_notify_local(Some("active"), |button, _| {
+        update_native_menu_selection(button);
+    });
+}
+
+fn hide_native_menu_indicator_box(button: &gtk::Widget) {
+    let mut child = button.first_child();
+    while let Some(widget) = child {
+        child = widget.next_sibling();
+        if widget.type_().name() == "GtkBox" {
+            widget.set_visible(false);
+            break;
+        }
+    }
+}
+
+fn update_native_menu_selection(button: &gtk::Widget) {
+    if button.property::<bool>("active") {
+        button.add_css_class(NATIVE_MENU_SELECTED_CLASS);
+    } else {
+        button.remove_css_class(NATIVE_MENU_SELECTED_CLASS);
+    }
+}
+
+fn show_native_menu_icons_from(container: &gtk::Widget) {
+    let mut child = container.first_child();
+    while let Some(widget) = child {
+        child = widget.next_sibling();
+
+        if widget.type_().name() == "GtkModelButton" {
+            show_native_menu_button_icon(&widget);
+            if let Some(nested_popover) = widget
+                .property::<Option<gtk::Popover>>("popover")
+                .and_then(|popover| popover.downcast::<gtk::PopoverMenu>().ok())
+            {
+                show_native_menu_icons(&nested_popover);
+            }
+        }
+        show_native_menu_icons_from(&widget);
+    }
+}
+
+fn show_native_menu_button_icon(button: &gtk::Widget) {
+    let mut child = button.first_child();
+    while let Some(widget) = child {
+        child = widget.next_sibling();
+
+        if let Ok(image) = widget.clone().downcast::<gtk::Image>() {
+            image.set_visible(true);
+            image.set_margin_end(8);
+        } else if let Ok(label) = widget.downcast::<gtk::Label>() {
+            label.set_hexpand(true);
+        }
+    }
+}
+
 fn context_popover(
     target: &gtk::Widget,
     position: Option<(f64, f64)>,
@@ -304,4 +465,20 @@ pub(crate) fn add_widget_click(target: &gtk::Widget, callback: impl Fn() + 'stat
         }
     });
     target.add_controller(click);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn native_menu_actions_store_their_icon() {
+        let item = menu_action_item("Play", "track.play", PLAY_ICON);
+        let serialized = item
+            .attribute_value("icon", None)
+            .expect("menu item should have an icon");
+        let icon = gio::Icon::deserialize(&serialized).expect("menu icon should deserialize");
+
+        assert!(icon.equal(Some(&gio::ThemedIcon::new(PLAY_ICON))));
+    }
 }
