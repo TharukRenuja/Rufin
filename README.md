@@ -17,10 +17,9 @@
 
 # Features
 
-- Fast, native and modern GTK/libadwaita client
-- Built for Jellyfin, Subsonic, Navidrome servers and local folders
-- Supports downloads and offline usage, with automatic download rules and a download queue
-- Smart session handling; downloaded songs are played locally, others are played remotely, that lets you seamlessly browse the source as usual
+- Fast, powerful and modern user interface in GTK/libadwaita 
+- First-class Jellyfin, Navidrome/OpenSubsonic integration; you can download tracks, or set up rules to automatically download tracks, use your remote server offline with downloaded tracks and edit metadata
+- First-class local music library integration; you can combine multiple folders for a single listening session, fully enjoy built-in music server benefits like activity/history with your local library and edit metadata for supported formats
 - Supports server-owned recommendation API for artists/tracks/albums/playlists/genres radios, so your plugins work
 - Optimized for quick startup and navigation, smooth full library browsing
 - Automatic metadata, artwork and lyrics caching
@@ -184,7 +183,9 @@ just debug
 
 # Scope
 
-- **Integrations** Rufin will not integrate any sources that are hostile against 3rd pary clients, which include most live music listening services. That is a never ending battle with their API that they constantly break intentionally. This is not maintainable for an app in official repositories as even an immediate hotfix could take days or weeks to deploy. I also don't want enable anti-user services like this. On the other hand, I am very eager to integrate any feature that would improve the user experience; this can range from some server API support to self-hosted scrobbling/sync servers, as Rufin aims to be your own client truly. If you go visit past issues, you will see that all feature requests have a follow-up PR so far, and I intend this to continue as long as it is feasible.
+- **Integrations**: Rufin will not integrate any sources that are hostile against 3rd pary clients, which include most live music listening services. That is a never ending battle with their API that they constantly break intentionally. This is not maintainable for an app in official repositories as even an immediate hotfix could take days or weeks to deploy. I also don't want enable anti-user services like this.
+
+  On the other hand, I am very eager to integrate any feature that would improve the user experience; this can range from some server API support to self-hosted scrobbling/sync servers, as Rufin aims to be your own client truly. If you go visit past issues, you will see that all feature requests have a follow-up PR so far, and I intend this to continue as long as it is feasible.
 
 - **More packaging alternatives**: Since this is a native client, we want to offer distribution specific packaging formats. As long as there is an active tester, these can be maintained officially from this repository.
   
