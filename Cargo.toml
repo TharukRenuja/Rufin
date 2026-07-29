@@ -21,6 +21,7 @@ artwork = { path = "crates/artwork" }
 album-lookup = { path = "crates/album-lookup" }
 base64 = "0.22.1"
 blake3 = "1.8.2"
+csv = "1.4.0"
 directories = "6.0.0"
 desktop-integration = { path = "crates/desktop-integration" }
 downloads = { path = "crates/downloads" }
@@ -33,7 +34,6 @@ gstreamer-audio = "0.25.2"
 gtk = { package = "gtk4", version = "0.11.3" }
 glib = "0.22.7"
 image = { version = "0.25.10", default-features = false, features = ["bmp", "gif", "jpeg", "png", "tiff", "webp"] }
-ja-furigana = "=0.2.0"
 if-addrs = "0.15.0"
 ksni = "0.3.4"
 library = { path = "crates/library" }
@@ -64,7 +64,9 @@ tracing = "0.1.41"
 tracing-subscriber = "0.3.23"
 ui = { path = "crates/ui" }
 url = "2.5.7"
+vibrato-rkyv = { version = "=0.7.13", default-features = false }
 walkdir = "2.5.0"
+wana_kana = { version = "=5.0.0", default-features = false }
 wiremock = "0.6.5"
 
 [workspace.lints.rust]

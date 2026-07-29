@@ -1,6 +1,9 @@
 use serde::{Deserialize, Serialize};
 use std::cell::RefCell;
 use std::collections::HashMap;
+use std::path::{Path, PathBuf};
+use vibrato_rkyv::{Dictionary, LoadMode, Tokenizer};
+use wana_kana::ConvertJapanese;
 
 mod current;
 mod events;
@@ -287,6 +290,22 @@ impl LyricsDocument {
             .flat_map(|line| &line.cue_lines)
             .any(|line| !line.cues.is_empty())
     }
+
+    pub fn is_japanese_for_readings(&self) -> bool {
+        match self.language.as_deref().and_then(normalize_language_tag) {
+            Some(language) => language == "ja",
+            None => self.lines.iter().any(|line| {
+                contains_japanese_kana(&line.text)
+                    || line.cue_lines.iter().any(|cue_line| {
+                        contains_japanese_kana(&cue_line.text)
+                            || cue_line
+                                .cues
+                                .iter()
+                                .any(|cue| contains_japanese_kana(&cue.text))
+                    })
+            }),
+        }
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -382,8 +401,13 @@ pub struct JapaneseReading {
     pub romanization: String,
 }
 
+enum JapaneseReaderState {
+    Ready(Tokenizer),
+    Unavailable,
+}
+
 thread_local! {
-    static JAPANESE_READER: RefCell<Option<furigana::Furigana>> = const { RefCell::new(None) };
+    static JAPANESE_READER: RefCell<Option<JapaneseReaderState>> = const { RefCell::new(None) };
 }
 
 pub fn japanese_reading(text: &str) -> Option<JapaneseReading> {
@@ -394,44 +418,66 @@ pub fn japanese_reading_for_language(
     text: &str,
     language: Option<&str>,
 ) -> Option<JapaneseReading> {
-    if !contains_japanese_kana(text)
-        && language.and_then(normalize_language_tag).as_deref() != Some("ja")
-    {
+    japanese_reading_for_language_options(text, language, true, true)
+}
+
+pub fn japanese_reading_for_language_options(
+    text: &str,
+    language: Option<&str>,
+    show_furigana: bool,
+    show_romanization: bool,
+) -> Option<JapaneseReading> {
+    if !japanese_reader_needed(text, language, show_furigana, show_romanization) {
         return None;
     }
     JAPANESE_READER.with(|reader| {
         let mut reader = reader.borrow_mut();
-        if reader.is_none() {
-            *reader = furigana::Furigana::minimal().ok();
-        }
-        let reader = reader.as_ref()?;
-        let source_tokens = reader.tokenize(text);
-        let romanization = source_tokens
-            .iter()
-            .fold(
-                (String::new(), false),
-                |(mut output, previous_was_word), token| {
-                    let is_word = token
-                        .surface
-                        .chars()
-                        .any(|character| character.is_alphanumeric());
-                    if previous_was_word && is_word {
-                        output.push(' ');
-                    }
-                    output.push_str(
-                        &reader.to_romaji(&token.surface, furigana::RomajiStyle::Hepburn),
-                    );
-                    (output, is_word)
-                },
-            )
-            .0;
-        let segments = source_tokens
-            .into_iter()
-            .flat_map(|token| {
-                let reading = reader.to_hiragana(&token.surface);
-                japanese_reading_segments(reader, token.surface, reading)
+        prepare_japanese_reader_state(&mut reader);
+        let JapaneseReaderState::Ready(tokenizer) = reader.as_ref()? else {
+            return None;
+        };
+        let mut worker = tokenizer.new_worker();
+        worker.reset_sentence(text);
+        worker.tokenize();
+        let source_tokens = (0..worker.num_tokens())
+            .map(|index| {
+                let token = worker.token(index);
+                let reading = match token.feature() {
+                    "" | "*" => token.surface(),
+                    reading => reading,
+                };
+                (token.surface().to_string(), reading.to_hiragana())
             })
-            .collect();
+            .collect::<Vec<_>>();
+        let romanization = show_romanization
+            .then(|| {
+                source_tokens
+                    .iter()
+                    .fold(
+                        (String::new(), false),
+                        |(mut output, previous_was_word), (surface, reading)| {
+                            let is_word =
+                                surface.chars().any(|character| character.is_alphanumeric());
+                            if previous_was_word && is_word {
+                                output.push(' ');
+                            }
+                            output.push_str(&reading.to_romaji());
+                            (output, is_word)
+                        },
+                    )
+                    .0
+            })
+            .unwrap_or_default();
+        let segments = show_furigana
+            .then(|| {
+                source_tokens
+                    .iter()
+                    .flat_map(|(surface, reading)| {
+                        japanese_reading_segments(surface.clone(), reading.clone())
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
         Some(JapaneseReading {
             segments,
             romanization,
@@ -439,10 +485,80 @@ pub fn japanese_reading_for_language(
     })
 }
 
+fn japanese_reader_needed(
+    text: &str,
+    language: Option<&str>,
+    show_furigana: bool,
+    show_romanization: bool,
+) -> bool {
+    if !show_furigana && !show_romanization {
+        return false;
+    }
+    let japanese = contains_japanese_kana(text)
+        || language.and_then(normalize_language_tag).as_deref() == Some("ja");
+    japanese && (show_romanization || show_furigana && text.chars().any(is_kanji))
+}
+
 pub fn release_japanese_reader() {
     JAPANESE_READER.with(|reader| {
         *reader.borrow_mut() = None;
     });
+}
+
+fn prepare_japanese_reader_state(reader: &mut Option<JapaneseReaderState>) {
+    if reader.is_none() {
+        *reader = Some(load_japanese_reader());
+    }
+}
+
+fn load_japanese_reader() -> JapaneseReaderState {
+    for path in japanese_dictionary_paths() {
+        if !path.is_file() {
+            continue;
+        }
+        match Dictionary::from_path(&path, LoadMode::Validate) {
+            Ok(dictionary) => return JapaneseReaderState::Ready(Tokenizer::new(dictionary)),
+            Err(error) => {
+                tracing::warn!(
+                    path = %path.display(),
+                    %error,
+                    "could not load Japanese readings dictionary"
+                );
+                return JapaneseReaderState::Unavailable;
+            }
+        }
+    }
+    tracing::warn!("Japanese readings dictionary is unavailable");
+    JapaneseReaderState::Unavailable
+}
+
+fn japanese_dictionary_paths() -> Vec<PathBuf> {
+    let mut paths = Vec::new();
+    if let Ok(executable) = std::env::current_exe()
+        && let Some(directory) = executable.parent()
+    {
+        paths.push(
+            directory
+                .join("..")
+                .join("share")
+                .join("rufin")
+                .join("japanese-readings.dic"),
+        );
+        paths.push(
+            directory
+                .join("share")
+                .join("rufin")
+                .join("japanese-readings.dic"),
+        );
+    }
+    paths.push(
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join("..")
+            .join("data")
+            .join("japanese-readings.dic"),
+    );
+    paths
 }
 
 pub fn contains_japanese_kana(text: &str) -> bool {
@@ -461,11 +577,7 @@ fn is_kanji(character: char) -> bool {
     )
 }
 
-fn japanese_reading_segments(
-    reader: &furigana::Furigana,
-    surface: String,
-    reading: String,
-) -> Vec<JapaneseReadingSegment> {
+fn japanese_reading_segments(surface: String, reading: String) -> Vec<JapaneseReadingSegment> {
     let mut runs = Vec::<(String, bool)>::new();
     for character in surface.chars() {
         let is_kanji = is_kanji(character);
@@ -486,9 +598,7 @@ fn japanese_reading_segments(
 
     let normalized_runs = runs
         .iter()
-        .map(|(text, is_kanji)| {
-            (!is_kanji).then(|| reader.to_hiragana(text).chars().collect::<Vec<_>>())
-        })
+        .map(|(text, is_kanji)| (!is_kanji).then(|| text.to_hiragana().chars().collect::<Vec<_>>()))
         .collect::<Vec<_>>();
     let reading = reading.chars().collect::<Vec<_>>();
     let Some(ranges) = align_japanese_reading_runs(&normalized_runs, &reading, 0, 0) else {
@@ -727,7 +837,7 @@ mod tests {
     }
 
     #[test]
-    fn local_japanese_readings_annotate_kanji_and_romanize_the_whole_line() {
+    fn local_japanese_readings_annotate_kanji_and_render_romaji() {
         assert!(contains_japanese_kana("君の名は"));
         assert!(!contains_japanese_kana("中文歌词"));
         assert!(!contains_japanese_kana("한국어 가사"));
@@ -763,6 +873,53 @@ mod tests {
 
         JAPANESE_READER.with(|reader| assert!(reader.borrow().is_some()));
         release_japanese_reader();
+        JAPANESE_READER.with(|reader| assert!(reader.borrow().is_none()));
+    }
+
+    #[test]
+    fn japanese_readings_are_inferred_once_for_the_complete_document() {
+        let mut inferred = document(LyricsRole::Original, None, "君の名は");
+        inferred.lines.push(LyricsLine {
+            text: "東京".to_string(),
+            start_millis: None,
+            end_millis: None,
+            cue_lines: Vec::new(),
+        });
+        assert!(inferred.is_japanese_for_readings());
+
+        let tagged = document(LyricsRole::Original, Some("jpn"), "東京");
+        assert!(tagged.is_japanese_for_readings());
+
+        let mut inferred_from_cue = document(LyricsRole::Original, None, "東京");
+        inferred_from_cue.lines[0].cue_lines.push(LyricsCueLine {
+            text: "きみ".to_string(),
+            start_millis: None,
+            end_millis: None,
+            agent_id: None,
+            cues: Vec::new(),
+        });
+        assert!(inferred_from_cue.is_japanese_for_readings());
+
+        let unknown_han = document(LyricsRole::Original, None, "東京");
+        assert!(!unknown_han.is_japanese_for_readings());
+
+        let chinese = document(LyricsRole::Original, Some("zh"), "君の名は");
+        assert!(!chinese.is_japanese_for_readings());
+    }
+
+    #[test]
+    fn non_japanese_lyrics_do_not_load_the_japanese_reader() {
+        release_japanese_reader();
+
+        assert!(
+            japanese_reading_for_language_options("한국어 가사", Some("ko"), true, true).is_none()
+        );
+        assert!(
+            japanese_reading_for_language_options("中文歌词", Some("zh"), true, true).is_none()
+        );
+        assert!(
+            japanese_reading_for_language_options("君の名は", Some("ja"), false, false).is_none()
+        );
         JAPANESE_READER.with(|reader| assert!(reader.borrow().is_none()));
     }
 

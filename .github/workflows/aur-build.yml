@@ -165,6 +165,10 @@ jobs:
 
           install -Dm755 "$target_dir/release/rufin" "$staging/usr/bin/rufin"
           strip --strip-unneeded "$staging/usr/bin/rufin"
+          install -Dm644 "$source_dir/data/japanese-readings.dic" \
+            "$staging/usr/share/rufin/japanese-readings.dic"
+          install -Dm644 "$source_dir/data/japanese-readings.LICENSE" \
+            "$staging/usr/share/licenses/rufin/japanese-readings.LICENSE"
           install -Dm644 "$source_dir/data/io.github.screwys.Rufin.desktop" \
             "$staging/usr/share/applications/io.github.screwys.Rufin.desktop"
           install -Dm644 "$source_dir/data/io.github.screwys.Rufin.metainfo.xml" \

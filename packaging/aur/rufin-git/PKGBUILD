@@ -7,7 +7,7 @@ pkgrel=1
 pkgdesc='Native GTK4/libadwaita music client for Jellyfin, Subsonic, Navidrome and local libraries written in Rust'
 arch=('x86_64' 'aarch64')
 url='https://github.com/screwys/Rufin'
-license=('GPL-3.0-or-later')
+license=('GPL-3.0-or-later' 'NAIST-2003')
 # Generated Linux package dependencies start.
 depends=(
   'gcc-libs'
@@ -66,6 +66,10 @@ package() {
   cd Rufin || return
 
   install -Dm755 target/release/rufin "$pkgdir/usr/bin/rufin"
+  install -Dm644 data/japanese-readings.dic \
+    "$pkgdir/usr/share/rufin/japanese-readings.dic"
+  install -Dm644 data/japanese-readings.LICENSE \
+    "$pkgdir/usr/share/licenses/rufin/japanese-readings.LICENSE"
   install -Dm644 data/io.github.screwys.Rufin.desktop \
     "$pkgdir/usr/share/applications/io.github.screwys.Rufin.desktop"
   install -Dm644 data/io.github.screwys.Rufin.metainfo.xml \

@@ -13,7 +13,6 @@ publish.workspace = true
 [dependencies]
 async-channel.workspace = true
 library.workspace = true
-ja-furigana.workspace = true
 playback.workspace = true
 reqwest = { workspace = true, features = ["blocking", "json"] }
 serde.workspace = true
@@ -21,6 +20,8 @@ serde_json.workspace = true
 sources.workspace = true
 tokio = { workspace = true, features = ["rt", "sync"] }
 tracing.workspace = true
+vibrato-rkyv.workspace = true
+wana_kana.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true

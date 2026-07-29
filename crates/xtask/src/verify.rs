@@ -135,6 +135,16 @@ fn package_layout(args: Vec<String>) -> Result<()> {
         &prefix,
         "share/metainfo/io.github.screwys.Rufin.metainfo.xml",
     ))?;
+    require_file(&package_path(
+        &root,
+        &prefix,
+        "share/rufin/japanese-readings.dic",
+    ))?;
+    require_file(&package_path(
+        &root,
+        &prefix,
+        "share/licenses/rufin/japanese-readings.LICENSE",
+    ))?;
 
     let repo = repo_root()?;
     let icon_root = repo.join("data/icons/hicolor");

@@ -5,7 +5,6 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
 use crate::Result;
-use crate::generate::{IPADIC_ARCHIVE, IPADIC_SHA256, IPADIC_URL};
 use crate::process::{ensure_command, read_to_string, repo_root, temp_path};
 use crate::release::normalize_plain_version;
 
@@ -62,7 +61,7 @@ fn select_source(tag: Option<String>, candidate_ref: Option<String>) -> Result<R
 }
 
 fn generate_srpm(source: RpmSource, output: &Path) -> Result<()> {
-    for command in ["cargo", "curl", "git", "rpmbuild", "sha256sum", "tar", "xz"] {
+    for command in ["cargo", "git", "rpmbuild", "sha256sum", "tar", "xz"] {
         ensure_command(command)?;
     }
 
@@ -95,10 +94,7 @@ fn generate_srpm(source: RpmSource, output: &Path) -> Result<()> {
 
     let source_name = format!("Rufin-{version}.tar.xz");
     let vendor_name = format!("Rufin-{version}-vendor.tar.xz");
-    refuse_existing_artifacts(
-        &output,
-        [&source_name, &vendor_name, IPADIC_ARCHIVE, "SHA256SUMS"],
-    )?;
+    refuse_existing_artifacts(&output, [&source_name, &vendor_name, "SHA256SUMS"])?;
 
     verify_source_inputs(&root, &spec, &source_ref, &version)?;
 
@@ -210,26 +206,6 @@ fn generate_srpm_inner(
     )?;
     set_archive_permissions(&staged_vendor)?;
 
-    let staged_dictionary = stage.join(IPADIC_ARCHIVE);
-    run(
-        Command::new("curl")
-            .args([
-                "--fail",
-                "--location",
-                "--retry",
-                "3",
-                "--retry-all-errors",
-                "--silent",
-                "--show-error",
-                "--output",
-            ])
-            .arg(&staged_dictionary)
-            .arg(IPADIC_URL),
-        "IPADIC download",
-    )?;
-    verify_sha256(&staged_dictionary, IPADIC_SHA256)?;
-    set_archive_permissions(&staged_dictionary)?;
-
     let staged_spec = stage.join("rufin.spec");
     fs::write(&staged_spec, spec)?;
     set_archive_permissions(&staged_spec)?;
@@ -257,7 +233,7 @@ fn generate_srpm_inner(
 
     let checksums = Command::new("sha256sum")
         .current_dir(&stage)
-        .args([source_name, vendor_name, IPADIC_ARCHIVE, &srpm_name])
+        .args([source_name, vendor_name, &srpm_name])
         .output()?;
     if !checksums.status.success() {
         return Err(format!("sha256sum failed with status {}", checksums.status).into());
@@ -266,38 +242,12 @@ fn generate_srpm_inner(
     set_archive_permissions(&stage.join("SHA256SUMS"))?;
 
     fs::create_dir_all(output)?;
-    for name in [
-        source_name,
-        vendor_name,
-        IPADIC_ARCHIVE,
-        &srpm_name,
-        "SHA256SUMS",
-    ] {
+    for name in [source_name, vendor_name, &srpm_name, "SHA256SUMS"] {
         fs::copy(stage.join(name), output.join(name))?;
     }
 
     eprintln!("Created {}", output.join(&srpm_name).display());
     eprintln!("Sources and checksums are in {}", output.display());
-    Ok(())
-}
-
-fn verify_sha256(path: &Path, expected: &str) -> Result<()> {
-    let output = Command::new("sha256sum").arg(path).output()?;
-    if !output.status.success() {
-        return Err(format!("sha256sum failed with status {}", output.status).into());
-    }
-    let actual = String::from_utf8(output.stdout)?
-        .split_whitespace()
-        .next()
-        .ok_or("sha256sum returned no checksum")?
-        .to_owned();
-    if actual != expected {
-        return Err(format!(
-            "{} checksum is {actual}, expected {expected}",
-            path.display()
-        )
-        .into());
-    }
     Ok(())
 }
 
@@ -351,7 +301,7 @@ fn verify_source_inputs(root: &Path, spec: &str, source_ref: &str, version: &str
         )
         .into());
     }
-    verify_spec_offline_dictionary(spec)?;
+    verify_spec_japanese_readings(spec)?;
 
     let cargo_toml = git_file(root, source_ref, "Cargo.toml")?;
     let cargo_version = workspace_version(&cargo_toml)?;
@@ -379,13 +329,13 @@ fn verify_source_inputs(root: &Path, spec: &str, source_ref: &str, version: &str
     Ok(())
 }
 
-fn verify_spec_offline_dictionary(spec: &str) -> Result<()> {
+fn verify_spec_japanese_readings(spec: &str) -> Result<()> {
     for marker in [
-        &format!("Source2:        {IPADIC_ARCHIVE}"),
-        "LINDERA_DICTIONARIES_PATH=",
+        "data/japanese-readings.dic",
+        "%{_datadir}/rufin/japanese-readings.dic",
     ] {
         if !spec.contains(marker) {
-            return Err(format!("RPM spec is missing offline dictionary setup: {marker}").into());
+            return Err(format!("RPM spec is missing Japanese readings data: {marker}").into());
         }
     }
     Ok(())
@@ -494,7 +444,7 @@ fn run(command: &mut Command, label: &str) -> Result<()> {
 mod tests {
     use super::{
         RpmSource, latest_metainfo_version, select_source, spec_version, verify_lock_sources,
-        verify_spec_offline_dictionary, workspace_version,
+        verify_spec_japanese_readings, workspace_version,
     };
 
     #[test]
@@ -533,10 +483,10 @@ mod tests {
     }
 
     #[test]
-    fn rpm_spec_requires_an_offline_dictionary() {
-        let spec = "Source2:        mecab-ipadic-2.7.0-20250920.tar.gz\n\
-                    LINDERA_DICTIONARIES_PATH=\"$PWD/lindera-dictionaries\"\n";
-        verify_spec_offline_dictionary(spec).unwrap();
-        assert!(verify_spec_offline_dictionary("Source0: Rufin.tar.xz\n").is_err());
+    fn rpm_spec_installs_japanese_readings_data() {
+        let spec = "install data/japanese-readings.dic \
+                    %{buildroot}%{_datadir}/rufin/japanese-readings.dic\n";
+        verify_spec_japanese_readings(spec).unwrap();
+        assert!(verify_spec_japanese_readings("Source0: Rufin.tar.xz\n").is_err());
     }
 }

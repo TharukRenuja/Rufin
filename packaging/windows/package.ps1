@@ -100,6 +100,12 @@ Copy-FileIfExists `
 
 $appShare = Join-Path $StageDir "share"
 Copy-FileIfExists `
+    (Join-Path $RepoRoot "data\japanese-readings.dic") `
+    (Join-Path $appShare "rufin\japanese-readings.dic")
+Copy-FileIfExists `
+    (Join-Path $RepoRoot "data\japanese-readings.LICENSE") `
+    (Join-Path $appShare "licenses\rufin\japanese-readings.LICENSE")
+Copy-FileIfExists `
     (Join-Path $RepoRoot "data\io.github.screwys.Rufin.desktop") `
     (Join-Path $appShare "applications\io.github.screwys.Rufin.desktop")
 Copy-FileIfExists `

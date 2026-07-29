@@ -682,6 +682,9 @@ msgstr ""
 msgid "Increase"
 msgstr ""
 
+msgid "Increases memory usage"
+msgstr ""
+
 msgid "Installed"
 msgstr ""
 
@@ -1333,7 +1336,7 @@ msgstr ""
 msgid "Rock"
 msgstr ""
 
-msgid "Romanization"
+msgid "Romaji"
 msgstr ""
 
 msgid "Rows"

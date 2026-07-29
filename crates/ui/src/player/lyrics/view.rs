@@ -7,7 +7,7 @@ use gtk::prelude::*;
 use localization::{msgid, tr};
 use lyrics::{
     JapaneseReadingSegment, LyricsAgentRole, LyricsCue, LyricsDocument, LyricsLine,
-    japanese_reading_for_language,
+    japanese_reading_for_language_options,
 };
 
 use super::wrapping_line::WrappingLine;
@@ -336,6 +336,13 @@ impl LyricsPane {
         word_by_word_highlighting: bool,
         seek: Rc<dyn Fn(u64)>,
     ) {
+        let local_japanese_readings =
+            track == LyricsRowTrack::Primary && document.is_japanese_for_readings();
+        let show_furigana = show_furigana && local_japanese_readings;
+        let show_romanization = show_romanization && local_japanese_readings;
+        let reading_language = local_japanese_readings
+            .then_some("ja")
+            .or(document.language.as_deref());
         for (line_index, line) in document.lines.iter().enumerate() {
             if !lyric_line_has_text(line) {
                 continue;
@@ -344,15 +351,16 @@ impl LyricsPane {
             content.set_hexpand(true);
             content.set_halign(gtk::Align::Fill);
             let mut cue_highlights = Vec::new();
-            let reading = (track == LyricsRowTrack::Primary
-                && (show_furigana || show_romanization))
-                .then(|| japanese_reading_for_language(&line.text, document.language.as_deref()))
+            let reading = (show_furigana || show_romanization)
+                .then(|| {
+                    japanese_reading_for_language_options(
+                        &line.text,
+                        reading_language,
+                        show_furigana,
+                        show_romanization,
+                    )
+                })
                 .flatten();
-            let reading_language = if reading.is_some() {
-                Some("ja")
-            } else {
-                document.language.as_deref()
-            };
             if word_by_word_highlighting && !line.cue_lines.is_empty() {
                 for cue_line in &line.cue_lines {
                     let cue_part = gtk::Box::new(gtk::Orientation::Vertical, 0);
@@ -624,7 +632,9 @@ fn ruby_line(segments: &[JapaneseReadingSegment]) -> WrappingLine {
 }
 
 fn lyrics_reading_unit(text: &str, show_furigana: bool, language: Option<&str>) -> gtk::Widget {
-    if show_furigana && let Some(reading) = japanese_reading_for_language(text, language) {
+    if show_furigana
+        && let Some(reading) = japanese_reading_for_language_options(text, language, true, false)
+    {
         let phrase = gtk::Box::new(gtk::Orientation::Horizontal, 0);
         for segment in &reading.segments {
             phrase.append(&ruby_segment(segment));
