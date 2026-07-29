@@ -162,6 +162,54 @@ fn album_classification_combines_track_tags_in_stable_order() {
 }
 
 #[test]
+fn metadata_editing_is_offered_only_for_writable_non_cue_local_files() {
+    let root = tempfile::tempdir().expect("Local root");
+    let wav = root.path().join("editable.wav");
+    write_tagged_wav(&wav, "Editable", "Artist", "Album", 1).expect("write editable WAV");
+    let source =
+        LocalSource::from_roots(vec![root.path().to_path_buf()]).expect("open Local source");
+    let track = complete_scan(&source)
+        .tracks()
+        .into_iter()
+        .next()
+        .expect("scanned WAV Track");
+
+    let editing = source
+        .track_metadata_editing(&track)
+        .expect("Lofty-backed WAV metadata editing");
+    assert!(editing.includes(crate::TrackMetadataField::Title));
+    assert!(editing.includes(crate::TrackMetadataField::Artwork));
+
+    let mut discoverer_track = track.clone();
+    discoverer_track.make_mut().source_path = Some(
+        root.path()
+            .join("read-only.mka")
+            .to_string_lossy()
+            .into_owned(),
+    );
+    assert_eq!(source.track_metadata_editing(&discoverer_track), None);
+
+    let mut cue_track = track.clone();
+    cue_track.make_mut().cue = Some(library::CueSegment {
+        cue_path: root.path().join("album.cue").to_string_lossy().into_owned(),
+        start_millis: 0,
+        end_millis: 1_000,
+    });
+    assert_eq!(source.track_metadata_editing(&cue_track), None);
+
+    let outside = tempfile::tempdir().expect("outside directory");
+    let mut outside_track = track;
+    outside_track.make_mut().source_path = Some(
+        outside
+            .path()
+            .join("outside.flac")
+            .to_string_lossy()
+            .into_owned(),
+    );
+    assert_eq!(source.track_metadata_editing(&outside_track), None);
+}
+
+#[test]
 fn complete_scan_maps_lofty_metadata_and_embedded_artwork() {
     let root = tempfile::tempdir().expect("Local root");
     let path = root.path().join("Tagged.wav");

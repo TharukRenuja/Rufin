@@ -9,6 +9,7 @@ use lofty::picture::{Picture, PictureType};
 
 use crate::{ImageBytes, SourceError, SourceResult};
 
+use super::discoverer;
 use super::format::{ArtworkReader, audio_format, read_lofty};
 
 const LOCAL_IMAGE_MAX_BYTES: usize = 32 * 1024 * 1024;
@@ -120,28 +121,32 @@ pub(super) fn read_image(reference: &ArtworkReference) -> SourceResult<ImageByte
             picture_index,
         } => {
             let format = audio_format(path).ok_or(SourceError::NotFound)?;
-            let Some(ArtworkReader::Lofty(file_types)) = format.artwork_reader() else {
-                return Err(SourceError::NotFound);
-            };
-            let file = read_lofty(path, file_types, true)
-                .map_err(|error| SourceError::Other(error.to_string()))?
-                .ok_or(SourceError::NotFound)?;
-            let picture = file
-                .tags()
-                .iter()
-                .flat_map(|tag| tag.pictures())
-                .nth(usize::try_from(*picture_index).map_err(|_| SourceError::NotFound)?)
-                .ok_or(SourceError::NotFound)?;
-            if picture.data().len() > LOCAL_IMAGE_MAX_BYTES {
-                return Err(SourceError::Other(format!(
-                    "Local artwork exceeds {} MiB",
-                    LOCAL_IMAGE_MAX_BYTES / (1024 * 1024)
-                )));
+            match format.artwork_reader() {
+                ArtworkReader::Lofty(file_types) => {
+                    let file = read_lofty(path, file_types, true)
+                        .map_err(|error| SourceError::Other(error.to_string()))?
+                        .ok_or(SourceError::NotFound)?;
+                    let picture = file
+                        .tags()
+                        .iter()
+                        .flat_map(|tag| tag.pictures())
+                        .nth(usize::try_from(*picture_index).map_err(|_| SourceError::NotFound)?)
+                        .ok_or(SourceError::NotFound)?;
+                    if picture.data().len() > LOCAL_IMAGE_MAX_BYTES {
+                        return Err(SourceError::Other(format!(
+                            "Local artwork exceeds {} MiB",
+                            LOCAL_IMAGE_MAX_BYTES / (1024 * 1024)
+                        )));
+                    }
+                    Ok(ImageBytes {
+                        bytes: picture.data().to_vec(),
+                        content_type: picture.mime_type().map(|mime| mime.as_str().to_string()),
+                    })
+                }
+                ArtworkReader::Discoverer(format) => {
+                    discoverer::read_image(path, *picture_index, format)
+                }
             }
-            Ok(ImageBytes {
-                bytes: picture.data().to_vec(),
-                content_type: picture.mime_type().map(|mime| mime.as_str().to_string()),
-            })
         }
     }
 }

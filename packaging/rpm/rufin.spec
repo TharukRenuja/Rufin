@@ -22,6 +22,7 @@ BuildRequires:  pkgconfig(gdk-pixbuf-2.0)
 BuildRequires:  pkgconfig(glib-2.0)
 BuildRequires:  pkgconfig(gstreamer-1.0)
 BuildRequires:  pkgconfig(gstreamer-audio-1.0)
+BuildRequires:  pkgconfig(gstreamer-pbutils-1.0)
 BuildRequires:  pkgconfig(gtk4)
 BuildRequires:  pkgconfig(libadwaita-1)
 BuildRequires:  rust >= 1.95.0
@@ -31,6 +32,7 @@ Recommends:     gstreamer1-plugins-base
 Recommends:     gstreamer1-plugins-good
 Recommends:     gstreamer1-plugins-bad-free
 Recommends:     gstreamer1-plugins-ugly-free
+Recommends:     gstreamer1-plugin-libav
 
 %description
 Rufin is a native GTK4/libadwaita music client for Jellyfin, Subsonic,

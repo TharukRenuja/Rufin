@@ -16,6 +16,7 @@ base64.workspace = true
 blake3.workspace = true
 futures-util.workspace = true
 getrandom.workspace = true
+gstreamer-pbutils = { workspace = true, features = ["v1_26"] }
 if-addrs.workspace = true
 library.workspace = true
 lofty.workspace = true
