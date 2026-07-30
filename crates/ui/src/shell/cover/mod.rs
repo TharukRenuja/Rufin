@@ -14,9 +14,9 @@ use crate::Settings as UiSettings;
 
 use super::Shell;
 
-pub(crate) const GRID_COVER_SIZE: u32 = 256;
-pub(crate) const DETAIL_COVER_SIZE: u32 = 512;
 pub(crate) const THUMB_COVER_SIZE: u32 = 96;
+pub(crate) const MEDIUM_COVER_SIZE: u32 = 256;
+pub(crate) const LARGE_COVER_SIZE: u32 = 512;
 const ROUTE_ARTWORK_SCROLL_SETTLE: Duration = Duration::from_millis(160);
 const THUMBNAIL_WARM_WINDOW: usize = 16;
 
@@ -48,10 +48,10 @@ pub(crate) fn cover_decode_size(display_size: i32, fetch_size: u32, scale: f64) 
 pub(crate) fn cover_fetch_size_for_display(display_size: i32) -> u32 {
     if display_size <= THUMB_COVER_SIZE as i32 {
         THUMB_COVER_SIZE
-    } else if display_size <= GRID_COVER_SIZE as i32 {
-        GRID_COVER_SIZE
+    } else if display_size <= MEDIUM_COVER_SIZE as i32 {
+        MEDIUM_COVER_SIZE
     } else {
-        DETAIL_COVER_SIZE
+        LARGE_COVER_SIZE
     }
 }
 
@@ -602,7 +602,7 @@ impl Shell {
             .textures
             .borrow_mut()
             .release_source_warm_textures(&selected.source_id);
-        let render_size = cover_decode_size(48, GRID_COVER_SIZE, self.artwork_scale());
+        let render_size = cover_decode_size(48, MEDIUM_COVER_SIZE, self.artwork_scale());
         let binding_limit = self
             .artwork
             .textures
@@ -654,7 +654,7 @@ impl Shell {
                         break;
                     };
                     let request =
-                        ArtworkRequest::new(binding.clone(), GRID_COVER_SIZE, render_size)
+                        ArtworkRequest::new(binding.clone(), MEDIUM_COVER_SIZE, render_size)
                             .with_external(external.clone());
                     let prepared = shell
                         .products

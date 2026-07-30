@@ -102,6 +102,7 @@ impl LibraryPageShell {
 pub(crate) struct LibraryToolbarProjection {
     key: LibraryListKey,
     widget: gtk::Widget,
+    controls: gtk::Box,
     sort_dropdown: gtk::DropDown,
     direction: gtk::Button,
     layout: gtk::Button,
@@ -157,6 +158,7 @@ impl Shell {
         wrapper.set_hexpand(true);
         wrapper.set_vexpand(true);
         let toolbar = self.library_toolbar_projection(key, search.clone());
+        self.set_current_library_toolbar_controls(&toolbar.controls);
         wrapper.append(&library_route_inset(toolbar.widget()));
         self.set_route_search(Some(search.clone()));
 
@@ -328,7 +330,6 @@ impl Shell {
             gtk::Orientation::Horizontal,
             LIBRARY_TOOLBAR_CONTROL_SPACING,
         );
-        self.set_current_library_toolbar_controls(&controls);
         let command_button = match key {
             LibraryListKey::Playlists => {
                 let create = gtk::Button::new();
@@ -455,6 +456,7 @@ impl Shell {
         LibraryToolbarProjection {
             key,
             widget,
+            controls,
             sort_dropdown,
             direction,
             layout,

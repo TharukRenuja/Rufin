@@ -13,7 +13,7 @@ use crate::favorites::{
 use crate::interactions::install_context_menu_openers;
 use crate::shell::Shell;
 use crate::shell::cover::presentation::stable_seed;
-use crate::shell::cover::{ArtworkTile, GRID_COVER_SIZE, THUMB_COVER_SIZE};
+use crate::shell::cover::{ArtworkTile, LARGE_COVER_SIZE, THUMB_COVER_SIZE};
 use crate::shell::route::{MountedRouteItemNavigation, item_navigation_entry_position};
 use ::library::{
     AlbumSummary, ArtistSummary, GenreSummary, PlaylistSummary, SmartPlaylistId,
@@ -36,9 +36,9 @@ use super::collections::{
 };
 use super::detail_links::album_artist_route;
 use super::library_fields::{
-    COLLECTION_GRID_CARD_MARGIN, COLLECTION_GRID_MIN_CARD_WIDTH, album_field, artist_field,
-    grid_title_with_label, item_at, item_at_from_item, playlist_field, smart_playlist_display_name,
-    smart_playlist_field, track_field,
+    COLLECTION_GRID_CARD_MARGIN, COLLECTION_GRID_MAX_CARD_WIDTH, COLLECTION_GRID_MIN_CARD_WIDTH,
+    album_field, artist_field, grid_title_with_label, item_at, item_at_from_item, playlist_field,
+    smart_playlist_display_name, smart_playlist_field, track_field,
 };
 use super::route::Route;
 use super::route_shell::restore_single_click_activation_on_primary_press;
@@ -49,8 +49,6 @@ pub(super) trait ReusableCollectionGridCell<T>: 'static {
     fn clear(&self);
     fn apply_fields(&self, fields: &[LibraryField]);
 }
-
-pub(super) const COLLECTION_GRID_MAX_COLUMNS: u32 = 12;
 
 #[derive(Clone)]
 pub(crate) struct CollectionGridProjection {
@@ -64,8 +62,8 @@ pub(crate) struct CollectionGridProjection {
 #[derive(Clone)]
 struct CollectionGridCacheBound {
     grid: glib::WeakRef<gtk::GridView>,
-    maximum_columns: u32,
     minimum_card_width: i32,
+    maximum_card_width: i32,
 }
 
 impl CollectionGridCacheBound {
@@ -78,7 +76,7 @@ impl CollectionGridCacheBound {
             grid.margin_start(),
             grid.margin_end(),
             self.minimum_card_width,
-            self.maximum_columns,
+            self.maximum_card_width,
         );
         if grid.max_columns() == maximum_columns {
             return;
@@ -92,26 +90,33 @@ fn collection_grid_column_limit(
     margin_start: i32,
     margin_end: i32,
     minimum_card_width: i32,
-    maximum_columns: u32,
+    maximum_card_width: i32,
 ) -> u32 {
     let available_width = allocation_width
         .saturating_sub(margin_start)
         .saturating_sub(margin_end)
         .max(1);
-    collection_grid_column_count(available_width, minimum_card_width, maximum_columns) as u32
+    collection_grid_column_count(available_width, minimum_card_width, maximum_card_width)
+        .min(u32::MAX as usize) as u32
 }
 
 pub(super) fn collection_grid_column_count(
     available_width: i32,
     minimum_card_width: i32,
-    maximum_columns: u32,
+    maximum_card_width: i32,
 ) -> usize {
     let minimum_slot_width = minimum_card_width
         .max(1)
         .saturating_add(COLLECTION_GRID_CARD_MARGIN.saturating_mul(2));
-    (available_width.max(1) / minimum_slot_width)
+    let maximum_slot_width = maximum_card_width
+        .max(minimum_card_width)
         .max(1)
-        .min(maximum_columns.max(1) as i32) as usize
+        .saturating_add(COLLECTION_GRID_CARD_MARGIN.saturating_mul(2));
+    let available_width = available_width.max(1);
+    let maximum_fitting_columns = (available_width / minimum_slot_width).max(1);
+    let minimum_needed_columns =
+        available_width.saturating_add(maximum_slot_width - 1) / maximum_slot_width;
+    minimum_needed_columns.max(1).min(maximum_fitting_columns) as usize
 }
 
 #[derive(Clone)]
@@ -197,20 +202,20 @@ where
     Activate: Fn(u32, T) + 'static,
     M: IsA<gio::ListModel> + Clone + 'static,
 {
-    collection_grid_with_column_bounds(
+    collection_grid_with_card_widths(
         model,
-        1,
-        COLLECTION_GRID_MAX_COLUMNS,
         COLLECTION_GRID_MIN_CARD_WIDTH,
+        COLLECTION_GRID_MAX_CARD_WIDTH,
         fields,
         make_cell,
         activate,
     )
 }
 
-pub(super) fn collection_grid_with_minimum_card_width<T, Cell, Make, Activate, M>(
+pub(super) fn collection_grid_with_card_widths<T, Cell, Make, Activate, M>(
     model: M,
     minimum_card_width: i32,
+    maximum_card_width: i32,
     fields: &[LibraryField],
     make_cell: Make,
     activate: Activate,
@@ -222,11 +227,10 @@ where
     Activate: Fn(u32, T) + 'static,
     M: IsA<gio::ListModel> + Clone + 'static,
 {
-    collection_grid_with_column_bounds(
+    collection_grid_with_card_widths_inner(
         model,
-        1,
-        COLLECTION_GRID_MAX_COLUMNS,
         minimum_card_width,
+        maximum_card_width,
         fields,
         make_cell,
         activate,
@@ -315,11 +319,10 @@ where
     FixedPageCollectionRow { row, page_size }
 }
 
-fn collection_grid_with_column_bounds<T, Cell, Make, Activate, M>(
+fn collection_grid_with_card_widths_inner<T, Cell, Make, Activate, M>(
     model: M,
-    min_columns: u32,
-    max_columns: u32,
     minimum_card_width: i32,
+    maximum_card_width: i32,
     fields: &[LibraryField],
     make_cell: Make,
     activate: Activate,
@@ -384,11 +387,11 @@ where
 
     let grid = gtk::GridView::new(Some(selection.clone()), Some(factory));
     grid.add_css_class("album-grid");
-    grid.set_min_columns(min_columns.max(1));
+    grid.set_min_columns(1);
     // GtkGridView keeps up to 30 rows times max-columns alive. Start with the
     // smallest cache bound; the allocation owner raises this to the number of
-    // minimum-width cards that can actually fit before the first allocation.
-    grid.set_max_columns(min_columns.max(1));
+    // cards in the allocated width before the first allocation.
+    grid.set_max_columns(1);
     grid.set_single_click_activate(true);
     restore_single_click_activation_on_primary_press(&grid, |grid| {
         grid.set_single_click_activate(true);
@@ -427,8 +430,8 @@ where
     let grid_weak = grid.downgrade();
     let cache_bound = CollectionGridCacheBound {
         grid: grid_weak.clone(),
-        maximum_columns: max_columns,
         minimum_card_width,
+        maximum_card_width,
     };
     let apply_cells = Rc::clone(&cells);
     CollectionGridProjection {
@@ -600,7 +603,7 @@ impl ReusableCollectionGridCell<Track> for TrackGridCell {
             artwork,
             stable_seed(track.id.as_str()),
             self.cover_size,
-            GRID_COVER_SIZE,
+            LARGE_COVER_SIZE,
         );
         self.body.bind(&track.title, |field| {
             (
@@ -790,7 +793,7 @@ impl ReusableCollectionGridCell<AlbumSummary> for AlbumGridCell {
             ArtworkBinding::album_artwork(&album.artwork),
             album.album.color_seed,
             self.cover_size,
-            GRID_COVER_SIZE,
+            LARGE_COVER_SIZE,
         );
         self.body.bind(&album.album.title, |field| {
             let value = album_field(&album, field);
@@ -991,8 +994,8 @@ impl ReusableCollectionGridCell<ArtistSummary> for ArtistGridCell {
             &self.cover_tile,
             ArtworkBinding::artist(&artist.artist, &artist.representative_albums),
             stable_seed(artist.artist.id.as_str()),
-            GRID_COVER_SIZE as i32,
-            GRID_COVER_SIZE,
+            COLLECTION_GRID_MAX_CARD_WIDTH,
+            LARGE_COVER_SIZE,
         );
         self.body.bind(&artist.artist.name, |field| {
             (artist_field(&artist, field), None)
@@ -1746,7 +1749,9 @@ fn install_dynamic_grid_label_link(
 
 #[cfg(test)]
 mod tests {
-    use super::super::library_fields::ALBUM_COLLECTION_GRID_MIN_CARD_WIDTH;
+    use super::super::library_fields::{
+        ALBUM_COLLECTION_GRID_MAX_CARD_WIDTH, ALBUM_COLLECTION_GRID_MIN_CARD_WIDTH,
+    };
     use super::*;
 
     fn fixed_slot(store: &gio::ListStore, position: u32) -> FixedPageSlot<u8> {
@@ -1783,9 +1788,17 @@ mod tests {
         let ordinary_slot = COLLECTION_GRID_MIN_CARD_WIDTH + COLLECTION_GRID_CARD_MARGIN * 2;
         assert_eq!(
             collection_grid_column_count(
+                450,
+                COLLECTION_GRID_MIN_CARD_WIDTH,
+                COLLECTION_GRID_MAX_CARD_WIDTH,
+            ),
+            3
+        );
+        assert_eq!(
+            collection_grid_column_count(
                 496,
                 COLLECTION_GRID_MIN_CARD_WIDTH,
-                COLLECTION_GRID_MAX_COLUMNS,
+                COLLECTION_GRID_MAX_CARD_WIDTH,
             ),
             3
         );
@@ -1793,7 +1806,7 @@ mod tests {
             collection_grid_column_count(
                 496,
                 ALBUM_COLLECTION_GRID_MIN_CARD_WIDTH,
-                COLLECTION_GRID_MAX_COLUMNS,
+                ALBUM_COLLECTION_GRID_MAX_CARD_WIDTH,
             ),
             2
         );
@@ -1801,7 +1814,7 @@ mod tests {
             collection_grid_column_count(
                 ordinary_slot * 3 - 1,
                 COLLECTION_GRID_MIN_CARD_WIDTH,
-                COLLECTION_GRID_MAX_COLUMNS,
+                COLLECTION_GRID_MAX_CARD_WIDTH,
             ),
             2
         );
@@ -1809,7 +1822,7 @@ mod tests {
             collection_grid_column_count(
                 ordinary_slot * 3,
                 COLLECTION_GRID_MIN_CARD_WIDTH,
-                COLLECTION_GRID_MAX_COLUMNS,
+                COLLECTION_GRID_MAX_CARD_WIDTH,
             ),
             3
         );
@@ -1819,7 +1832,7 @@ mod tests {
                 0,
                 0,
                 COLLECTION_GRID_MIN_CARD_WIDTH,
-                COLLECTION_GRID_MAX_COLUMNS,
+                COLLECTION_GRID_MAX_CARD_WIDTH,
             ),
             3
         );
@@ -1829,9 +1842,25 @@ mod tests {
                 0,
                 0,
                 ALBUM_COLLECTION_GRID_MIN_CARD_WIDTH,
-                COLLECTION_GRID_MAX_COLUMNS,
+                ALBUM_COLLECTION_GRID_MAX_CARD_WIDTH,
             ),
             2
+        );
+        assert_eq!(
+            collection_grid_column_count(
+                1_600,
+                COLLECTION_GRID_MIN_CARD_WIDTH,
+                COLLECTION_GRID_MAX_CARD_WIDTH,
+            ),
+            8
+        );
+        assert_eq!(
+            collection_grid_column_count(
+                3_200,
+                COLLECTION_GRID_MIN_CARD_WIDTH,
+                COLLECTION_GRID_MAX_CARD_WIDTH,
+            ),
+            16
         );
     }
 }

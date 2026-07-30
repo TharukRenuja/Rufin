@@ -21,7 +21,7 @@ use crate::localization::{bind_search_placeholder, bind_widget_tooltip, localize
 use crate::preferences::dialogs::popup::present_light_dismiss_dialog;
 use crate::shell::Shell;
 use crate::shell::cover::presentation::stable_seed;
-use crate::shell::cover::{ArtworkTile, GRID_COVER_SIZE, THUMB_COVER_SIZE};
+use crate::shell::cover::{ArtworkTile, LARGE_COVER_SIZE, THUMB_COVER_SIZE};
 use crate::shell::route::RouteCurrentTrack;
 use localization::{msgid, tr};
 
@@ -39,7 +39,9 @@ use super::detail_links::track_artist_route;
 use super::grid_cells::{
     CollectionGridCardCell, CollectionGridProjection, ReusableCollectionGridCell, collection_grid,
 };
-use super::library_fields::{item_at_from_item, play_count_column_width, track_field};
+use super::library_fields::{
+    COLLECTION_GRID_MAX_CARD_WIDTH, item_at_from_item, play_count_column_width, track_field,
+};
 use super::route::Route;
 use super::route_layout::PRIMARY_ROUTE_HORIZONTAL_INSET;
 use super::route_shell::LibraryToolbarProjection;
@@ -615,8 +617,8 @@ impl ReusableCollectionGridCell<PlaylistEntryRow> for PlaylistEntryGridCell {
             &self.cover,
             ArtworkBinding::track(&entry.track),
             stable_seed(entry.track.id.as_str()),
-            GRID_COVER_SIZE as i32,
-            GRID_COVER_SIZE,
+            COLLECTION_GRID_MAX_CARD_WIDTH,
+            LARGE_COVER_SIZE,
         );
         self.body.bind(&entry.track.title, |field| {
             (

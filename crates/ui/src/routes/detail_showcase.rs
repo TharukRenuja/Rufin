@@ -14,9 +14,10 @@ use crate::localization::bind_label_text_with;
 use crate::shell::Shell;
 use crate::shell::actions::{ActionButtonVariant, configure_action_button, icon_button};
 use crate::shell::actions::{PLAY_LATER_ICON, PLAY_NEXT_ICON, REMOVE_ICON};
-use crate::shell::cover::cover_fetch_size_for_display;
 use crate::shell::cover::presentation::add_album_seed_gradient_class;
-use crate::shell::cover::{ArtworkTile, CoverGroupProjection};
+use crate::shell::cover::{
+    ArtworkTile, CoverGroupProjection, LARGE_COVER_SIZE, cover_fetch_size_for_display,
+};
 use localization::{msgid, tr};
 
 use super::detail_links::{DetailEntityKind, DetailExternalLink, server_entity_link};
@@ -497,7 +498,7 @@ pub(crate) fn detail_cover_projection(
     cover_class: &str,
 ) -> DetailCoverProjection {
     let render_size = detail_cover_render_size();
-    let fetch_size = cover_fetch_size_for_display(render_size);
+    let fetch_size = LARGE_COVER_SIZE;
     let tile = ArtworkTile::new_sized(size, size, seed);
     shell.bind_artwork_tile(&tile, candidates.clone(), seed, render_size, fetch_size);
     let cover = tile.widget();

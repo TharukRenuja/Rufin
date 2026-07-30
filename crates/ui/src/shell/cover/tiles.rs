@@ -3,12 +3,12 @@ use std::{cell::Cell, rc::Rc};
 use adw::prelude::*;
 use artwork::ArtworkBinding;
 
-use super::{ArtworkTile, GRID_COVER_SIZE, cover_fetch_size_for_display};
+use super::{ArtworkTile, LARGE_COVER_SIZE, MEDIUM_COVER_SIZE, cover_fetch_size_for_display};
 use crate::shell::Shell;
 
 fn elastic_cover_fetch_size(artwork_count: usize, mosaic_fetch_size: u32) -> u32 {
     if artwork_count == 1 {
-        GRID_COVER_SIZE
+        LARGE_COVER_SIZE
     } else {
         mosaic_fetch_size
     }
@@ -139,7 +139,13 @@ impl Shell {
     ) -> (gtk::Widget, ArtworkTile) {
         let tile = ArtworkTile::new_elastic_square(seed);
         let widget = tile.widget();
-        self.bind_artwork_tile(&tile, candidates, seed, GRID_COVER_SIZE as i32, fetch_size);
+        self.bind_artwork_tile(
+            &tile,
+            candidates,
+            seed,
+            MEDIUM_COVER_SIZE as i32,
+            fetch_size,
+        );
         (widget, tile)
     }
 
@@ -214,13 +220,13 @@ impl Shell {
 #[cfg(test)]
 mod tests {
     use super::elastic_cover_fetch_size;
-    use crate::shell::cover::{GRID_COVER_SIZE, THUMB_COVER_SIZE};
+    use crate::shell::cover::{LARGE_COVER_SIZE, THUMB_COVER_SIZE};
 
     #[test]
-    fn a_single_elastic_cover_uses_the_full_grid_fetch_size() {
+    fn a_single_elastic_grid_cover_uses_the_large_fetch_size() {
         assert_eq!(
             elastic_cover_fetch_size(1, THUMB_COVER_SIZE),
-            GRID_COVER_SIZE
+            LARGE_COVER_SIZE
         );
         assert_eq!(
             elastic_cover_fetch_size(4, THUMB_COVER_SIZE),
