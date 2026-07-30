@@ -10,17 +10,15 @@ use gtk::{gio, glib};
 use crate::layout::width_allocation_owner;
 use crate::localization::{bind_search_placeholder, localized_label};
 use crate::shell::Shell;
-use crate::shell::cover::GRID_COVER_SIZE;
 use crate::{LibraryField, LibraryLayout, LibraryListKey, LibraryListSettings};
 use localization::msgid;
 
 use super::cards;
 use super::collections::{CollectionTableProjection, album_table};
-use super::grid_cells::{
-    AlbumGridCell, COLLECTION_GRID_MAX_COLUMNS, ReusableCollectionGridCell,
-    collection_grid_column_count,
+use super::grid_cells::{AlbumGridCell, ReusableCollectionGridCell, collection_grid_column_count};
+use super::library_fields::{
+    COLLECTION_GRID_MAX_CARD_WIDTH, COLLECTION_GRID_MIN_CARD_WIDTH, album_matches_query,
 };
-use super::library_fields::{COLLECTION_GRID_MIN_CARD_WIDTH, album_matches_query};
 use super::models::{replace_albums_in_model, sort_albums};
 use super::release_kind::{AlbumReleaseKind, album_release_kind};
 use super::route_layout::{
@@ -265,12 +263,6 @@ impl ArtistAlbumProjection {
         surface
     }
 
-    fn clear_row_projection(&self) {
-        self.row_surface.borrow_mut().take();
-        self.row_table.borrow_mut().take();
-        self.row_model.remove_all();
-    }
-
     fn apply_settings(&self, settings: &LibraryListSettings) {
         let previous = self.applied_settings.borrow().clone();
         if previous.sort_key != settings.sort_key || previous.descending != settings.descending {
@@ -327,7 +319,11 @@ impl ArtistReleaseProjections {
         let cell_shell = Rc::clone(shell);
         let (list, apply_grid_fields) =
             artist_route_list(rows.clone(), Rc::clone(&grid_fields), move |fields| {
-                AlbumGridCell::new(Rc::clone(&cell_shell), fields, GRID_COVER_SIZE as i32)
+                AlbumGridCell::new(
+                    Rc::clone(&cell_shell),
+                    fields,
+                    COLLECTION_GRID_MAX_CARD_WIDTH,
+                )
             });
         list.set_margin_top(ROUTE_TOP_MARGIN);
         list.set_margin_bottom(ARTIST_ROUTE_BOTTOM_MARGIN);
@@ -432,7 +428,7 @@ impl ArtistReleaseProjections {
             let next = collection_grid_column_count(
                 width.saturating_sub(PRIMARY_ROUTE_HORIZONTAL_INSET),
                 COLLECTION_GRID_MIN_CARD_WIDTH,
-                COLLECTION_GRID_MAX_COLUMNS,
+                COLLECTION_GRID_MAX_CARD_WIDTH,
             );
             if resize_columns.replace(next) != next {
                 resize_rebuild();
@@ -520,11 +516,6 @@ impl ArtistReleaseProjections {
             }
             if previous_layout != next_layout {
                 self.layout.set(next_layout);
-                if previous_layout == LibraryLayout::Row {
-                    for section in self.sections.iter() {
-                        section.clear_row_projection();
-                    }
-                }
                 self.update_gate.dirty.set(true);
             }
         });

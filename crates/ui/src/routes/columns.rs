@@ -30,6 +30,7 @@ use super::route::Route;
 use super::table_links::track_link_column;
 
 pub(crate) const ROW_INDEX_COLUMN_TITLE: &str = "\u{2003}\u{a0}#";
+pub(crate) const ALBUM_DETAIL_DURATION_COLUMN_WIDTH: i32 = 48;
 
 pub(crate) fn album_column(shell: &Rc<Shell>, field: LibraryField) -> gtk::ColumnViewColumn {
     match field {
@@ -354,6 +355,10 @@ pub(crate) fn track_column_fit_width(key: LibraryListKey, field: LibraryField) -
     column_fit_width(field, track_column_width(key, field))
 }
 pub(crate) fn track_column_width(key: LibraryListKey, field: LibraryField) -> i32 {
+    if key == LibraryListKey::AlbumDetailTracks && field == LibraryField::Duration {
+        return ALBUM_DETAIL_DURATION_COLUMN_WIDTH;
+    }
+
     match key {
         LibraryListKey::ArtistTracks
         | LibraryListKey::GenreTracks

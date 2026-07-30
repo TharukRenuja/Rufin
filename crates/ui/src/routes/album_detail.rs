@@ -17,13 +17,15 @@ use crate::favorites::{
 };
 use crate::shell::Shell;
 use crate::shell::cover::presentation::stable_seed;
-use crate::shell::cover::{GRID_COVER_SIZE, THUMB_COVER_SIZE};
+use crate::shell::cover::{LARGE_COVER_SIZE, THUMB_COVER_SIZE};
 use crate::shell::layout::route_content_width;
 use crate::{LibraryField, LibraryLayout, LibraryListKey, LibraryListSettings};
 use localization::tr;
 
 use super::cards;
-use super::columns::{track_column_width, track_row_index_cell};
+use super::columns::{
+    ALBUM_DETAIL_DURATION_COLUMN_WIDTH, track_column_width, track_row_index_cell,
+};
 use super::library_fields::{
     album_detail_meta_label, album_fact_text, item_at, play_count_column_width, track_field,
 };
@@ -1096,7 +1098,7 @@ pub(crate) fn album_detail_cover_tile(
         ArtworkBinding::album_artwork(&album.artwork),
         album.album.color_seed,
         cover_size,
-        GRID_COVER_SIZE,
+        LARGE_COVER_SIZE,
     )));
     let shell_for_open = Rc::clone(shell);
     let album_id = album.album.id.clone();
@@ -1531,7 +1533,7 @@ pub(crate) fn album_detail_track_column_width(key: LibraryListKey, field: Librar
         LibraryField::RowIndex => 40,
         LibraryField::TrackNumber => 52,
         LibraryField::DiscNumber => 44,
-        LibraryField::Duration => 48,
+        LibraryField::Duration => ALBUM_DETAIL_DURATION_COLUMN_WIDTH,
         LibraryField::Year | LibraryField::Bpm => 52,
         LibraryField::PlayCount => play_count_column_width().min(56),
         LibraryField::UserRating | LibraryField::SongCount | LibraryField::AlbumCount => 64,

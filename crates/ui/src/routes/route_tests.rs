@@ -860,6 +860,17 @@ fn merged_title_columns_get_extra_weight() {
     assert!(track_column_fit_width(LibraryListKey::Tracks, LibraryField::TitleMerged) > merged);
 }
 #[test]
+fn album_detail_duration_starts_compact() {
+    assert_eq!(
+        track_column_width(LibraryListKey::AlbumDetailTracks, LibraryField::Duration),
+        album_detail_track_column_width(LibraryListKey::Albums, LibraryField::Duration)
+    );
+    assert!(
+        track_column_width(LibraryListKey::AlbumDetailTracks, LibraryField::Duration)
+            < track_column_width(LibraryListKey::Tracks, LibraryField::Duration)
+    );
+}
+#[test]
 fn route_track_area() {
     let fields = [
         LibraryField::TrackNumber,

@@ -13,7 +13,6 @@ use gtk::{gio, glib};
 
 use crate::layout::{configure_fill_width_clip, width_allocation_owner};
 use crate::shell::Shell;
-use crate::shell::cover::GRID_COVER_SIZE;
 use crate::shell::route::{MountedRouteItemNavigation, item_navigation_entry_position};
 use crate::{LibraryColumnWidth, LibraryField, LibraryLayout, LibraryListKey};
 use localization::tr;
@@ -29,10 +28,11 @@ use super::detail_links::track_artist_route;
 use super::grid_cells::{
     AlbumGridCell, ArtistGridCell, CollectionGridProjection, FixedPageCollectionRow,
     PlaylistGridCell, ReusableCollectionGridCell, SmartPlaylistGridCell, TrackGridCell,
-    collection_grid, collection_grid_with_minimum_card_width, fixed_page_collection_row,
+    collection_grid, collection_grid_with_card_widths, fixed_page_collection_row,
 };
 use super::library_fields::{
-    ALBUM_COLLECTION_GRID_MIN_CARD_WIDTH, COLLECTION_GRID_CARD_GAP, COLLECTION_GRID_MIN_CARD_WIDTH,
+    ALBUM_COLLECTION_GRID_MAX_CARD_WIDTH, ALBUM_COLLECTION_GRID_MIN_CARD_WIDTH,
+    COLLECTION_GRID_CARD_GAP, COLLECTION_GRID_MAX_CARD_WIDTH, COLLECTION_GRID_MIN_CARD_WIDTH,
     clear_list_item_child, column_width, compact_header_column_width, grid_label_with_label,
     item_at, item_at_from_item,
 };
@@ -702,11 +702,17 @@ pub(crate) fn album_grid(
     } else {
         COLLECTION_GRID_MIN_CARD_WIDTH
     };
-    collection_grid_with_minimum_card_width(
+    let maximum_card_width = if key == LibraryListKey::Albums {
+        ALBUM_COLLECTION_GRID_MAX_CARD_WIDTH
+    } else {
+        COLLECTION_GRID_MAX_CARD_WIDTH
+    };
+    collection_grid_with_card_widths(
         model,
         minimum_card_width,
+        maximum_card_width,
         &fields,
-        move |fields| AlbumGridCell::new(Rc::clone(&cell_shell), fields, GRID_COVER_SIZE as i32),
+        move |fields| AlbumGridCell::new(Rc::clone(&cell_shell), fields, maximum_card_width),
         move |_, album: AlbumSummary| {
             activate_shell.navigate(Route::AlbumDetail(album.album.id.clone()))
         },
@@ -798,7 +804,7 @@ pub(crate) fn track_grid(
                 Rc::clone(&cell_shell),
                 fields,
                 Rc::clone(&cell_play_from_collection),
-                GRID_COVER_SIZE as i32,
+                COLLECTION_GRID_MAX_CARD_WIDTH,
             )
         },
         move |position, _: Track| {
@@ -821,7 +827,7 @@ pub(crate) fn home_item_row(
                 let cell = AlbumGridCell::new(
                     Rc::clone(&widget_shell),
                     &HOME_ALBUM_GRID_FIELDS,
-                    COLLECTION_GRID_MIN_CARD_WIDTH,
+                    COLLECTION_GRID_MAX_CARD_WIDTH,
                 );
                 cell.bind(position, album);
                 cell.widget()
@@ -836,7 +842,7 @@ pub(crate) fn home_item_row(
                     Rc::clone(&widget_shell),
                     &HOME_TRACK_GRID_FIELDS,
                     play,
-                    COLLECTION_GRID_MIN_CARD_WIDTH,
+                    COLLECTION_GRID_MAX_CARD_WIDTH,
                 );
                 cell.bind(position, track);
                 cell.widget()
