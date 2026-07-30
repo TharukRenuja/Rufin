@@ -13,7 +13,7 @@ use std::time::Instant;
 use adw::prelude::*;
 use gtk::{gio, glib};
 use library::{HomeSectionKind, HomeSnapshot, MusicFolderId, SourceId, TrackId};
-use playback::SourceSessionEpoch;
+use playback::{SourceSessionEpoch, TransportStatus};
 use tracing::{debug, warn};
 
 use super::Shell;
@@ -47,6 +47,7 @@ pub(crate) struct RouteCurrentTrack {
     pub(crate) track_id: TrackId,
     pub(crate) occurrence: playback::OccurrenceId,
     pub(crate) context: Option<RouteCurrentTrackContext>,
+    pub(crate) paused: bool,
 }
 
 pub(crate) fn route_current_track(
@@ -73,6 +74,7 @@ pub(crate) fn route_current_track(
         track_id: entry.track.id.clone(),
         occurrence: entry.id.occurrence.clone(),
         context,
+        paused: player.transport.effective_state() == TransportStatus::Paused,
     })
 }
 

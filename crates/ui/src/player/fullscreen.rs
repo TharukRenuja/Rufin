@@ -78,7 +78,7 @@ pub(crate) fn fullscreen_playback_refresh(
         || previous.transport.current != next.transport.current
     {
         FullscreenPlaybackRefresh::Static
-    } else if previous.transport.state != next.transport.state {
+    } else if previous.transport.effective_state() != next.transport.effective_state() {
         FullscreenPlaybackRefresh::Visualizer
     } else {
         FullscreenPlaybackRefresh::None
@@ -1394,7 +1394,7 @@ impl Shell {
                 .as_ref()
                 .is_some_and(|player| {
                     matches!(
-                        player.transport.state,
+                        player.transport.effective_state(),
                         TransportStatus::Playing | TransportStatus::Buffering
                     )
                 });
@@ -1941,6 +1941,7 @@ mod tests {
 
         let mut state_change = previous.clone();
         state_change.transport.state = TransportStatus::Paused;
+        state_change.transport.desired_playing = false;
         assert_eq!(
             super::fullscreen_playback_refresh(Some(&previous), &state_change),
             FullscreenPlaybackRefresh::Visualizer
@@ -1993,6 +1994,12 @@ mod tests {
                 source_id,
                 current: current.map(Arc::new),
                 state,
+                desired_playing: matches!(
+                    state,
+                    TransportStatus::Resolving
+                        | TransportStatus::Buffering
+                        | TransportStatus::Playing
+                ),
                 position_millis,
                 duration_millis: 180_000,
                 buffering_percent: None,

@@ -1267,12 +1267,14 @@ mod tests {
         };
         settings.default_profile.right_sidebar = RightSidebarMode::Hidden;
 
-        let shrunk = resolve_layout(&settings, 701);
-        let compact = resolve_layout(&settings, 625);
+        let minimum_full_window_width =
+            MIN_APP_WINDOW_WIDTH + LEFT_PANE_SEPARATOR_WIDTH + MIN_LEFT_SIDEBAR_WIDTH;
+        let shrunk = resolve_layout(&settings, minimum_full_window_width);
+        let compact = resolve_layout(&settings, minimum_full_window_width - 1);
         let hidden = resolve_layout(&settings, 505);
 
         assert_eq!(shrunk.left_sidebar, ResolvedLeftSidebarMode::Full);
-        assert_eq!(shrunk.left_sidebar_width, 250);
+        assert_eq!(shrunk.left_sidebar_width, MIN_LEFT_SIDEBAR_WIDTH);
         assert_eq!(shrunk.main_width, MIN_APP_WINDOW_WIDTH);
         assert_eq!(compact.left_sidebar, ResolvedLeftSidebarMode::Compact);
         assert_eq!(compact.left_sidebar_width, COMPACT_RAIL_WIDTH);

@@ -10,7 +10,7 @@ use crate::preferences::{
 };
 use crate::runtime::SelectedLibrary;
 use crate::runtime::source::{ConfiguredSources, LocalFolder, SourceSummary};
-use crate::shell::Shell;
+use crate::shell::{Shell, navigation::popdown_primary_menu};
 
 use super::{configured_source_display_name, configured_source_icon_name};
 
@@ -35,6 +35,7 @@ pub(crate) fn install_source_menu_actions(shell: &Rc<Shell>) {
     let manage_libraries = gio::SimpleAction::new(MANAGE_LIBRARIES_ACTION, None);
     let manage_libraries_shell = Rc::clone(shell);
     manage_libraries.connect_activate(move |_, _| {
+        popdown_primary_menu(&manage_libraries_shell);
         present_library_preferences_dialog(&manage_libraries_shell);
     });
     shell.chrome.window.add_action(&manage_libraries);
@@ -42,6 +43,7 @@ pub(crate) fn install_source_menu_actions(shell: &Rc<Shell>) {
     let add_library = gio::SimpleAction::new(ADD_LIBRARY_ACTION, None);
     let add_library_shell = Rc::clone(shell);
     add_library.connect_activate(move |_, _| {
+        popdown_primary_menu(&add_library_shell);
         present_add_server_preferences_dialog(&add_library_shell);
     });
     shell.chrome.window.add_action(&add_library);

@@ -363,6 +363,12 @@ impl PlaybackSession {
             })
     }
 
+    pub fn desired_playing(&self) -> bool {
+        self.current_run
+            .as_ref()
+            .is_some_and(|run| run.desired_playing)
+    }
+
     pub fn current_run(&self) -> Option<RunId> {
         self.current_run.as_ref().map(|run| run.id)
     }
@@ -1049,11 +1055,15 @@ impl PlaybackSession {
                 }
             }
             TransportStatus::Playing | TransportStatus::Buffering => {
-                if desired_playing {
+                if run.desired_playing == desired_playing {
                     return SessionUpdate::default();
                 }
-                run.desired_playing = false;
-                BackendCommand::Pause { run: run.id }
+                run.desired_playing = desired_playing;
+                if desired_playing {
+                    BackendCommand::Play { run: run.id }
+                } else {
+                    BackendCommand::Pause { run: run.id }
+                }
             }
             TransportStatus::Stopped | TransportStatus::Failed => {
                 return SessionUpdate::default();
@@ -1061,6 +1071,7 @@ impl PlaybackSession {
         };
         SessionUpdate {
             effects: vec![SessionEffect::Backend(command)],
+            view_changed: true,
             ..SessionUpdate::default()
         }
     }
@@ -2774,9 +2785,11 @@ mod tests {
         session.stream_resolved(run, PreparedStream::new("file:///track.flac"));
         session.handle_backend(BackendEvent::Started { run }, &sample(0));
 
-        session
+        let paused = session
             .handle_command(SessionCommand::PlayPause, &sample(1))
             .expect("pause");
+        assert!(paused.view_changed);
+        assert!(!session.desired_playing());
         session.handle_backend(
             BackendEvent::State {
                 run,
@@ -2787,6 +2800,8 @@ mod tests {
         let resumed = session
             .handle_command(SessionCommand::PlayPause, &sample(2))
             .expect("resume");
+        assert!(resumed.view_changed);
+        assert!(session.desired_playing());
         assert!(resumed.effects.iter().any(|effect| matches!(
             effect,
             SessionEffect::Backend(BackendCommand::Play { run: resumed }) if *resumed == run
@@ -2798,6 +2813,33 @@ mod tests {
         assert!(cancelled.effects.iter().any(|effect| matches!(
             effect,
             SessionEffect::Backend(BackendCommand::Pause { run: paused }) if *paused == run
+        )));
+    }
+
+    #[test]
+    fn resume_can_cancel_pause_before_the_backend_state_arrives() {
+        let mut session = session(&[1]);
+        session
+            .handle_command(SessionCommand::PlayPause, &sample(0))
+            .expect("start");
+        let run = session.current_run().expect("run");
+        session.stream_resolved(run, PreparedStream::new("file:///track.flac"));
+        session.handle_backend(BackendEvent::Started { run }, &sample(0));
+
+        let paused = session
+            .handle_command(SessionCommand::PlayPause, &sample(1))
+            .expect("pause");
+        assert!(paused.view_changed);
+        assert!(!session.desired_playing());
+
+        let resumed = session
+            .handle_command(SessionCommand::PlayPause, &sample(1))
+            .expect("cancel pause");
+        assert!(resumed.view_changed);
+        assert!(session.desired_playing());
+        assert!(resumed.effects.iter().any(|effect| matches!(
+            effect,
+            SessionEffect::Backend(BackendCommand::Play { run: resumed }) if *resumed == run
         )));
     }
 

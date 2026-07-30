@@ -500,7 +500,7 @@ impl Shell {
             .map(|player| player.transport.source_id.clone());
         let state = player
             .as_ref()
-            .map(|player| player.transport.state)
+            .map(|player| player.transport.effective_state())
             .unwrap_or(TransportStatus::Stopped);
         let duration_seconds = player
             .as_ref()

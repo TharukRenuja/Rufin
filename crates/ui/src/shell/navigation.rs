@@ -28,7 +28,7 @@ use super::{
     chrome,
     cover::presentation::stable_seed,
     layout::{COMPACT_RAIL_WIDTH, ResolvedLeftSidebarMode},
-    route::RouteStack,
+    route::{RouteStack, route_current_track},
 };
 use localization::{msgid, tr};
 
@@ -55,6 +55,7 @@ const NAV_ROUTE_FOLDERS_CLASS: &str = "nav-route-folders";
 const NAV_ROUTE_PLAYLISTS_CLASS: &str = "nav-route-playlists";
 const NAV_ROUTE_SMART_PLAYLISTS_CLASS: &str = "nav-route-smart-playlists";
 const SIDEBAR_PIN_ROW_CLASS: &str = "sidebar-pin-row";
+const SIDEBAR_PIN_PLAYING_CLASS: &str = "playing";
 const SIDEBAR_PIN_COVER_SIZE: i32 = 40;
 const PRIMARY_MENU_CLASS: &str = "rufin-primary-menu";
 const NAV_ROUTE_ICONS: [(&str, &str, &str); 13] = [
@@ -203,6 +204,7 @@ pub(super) fn rebuild_navigation(shell: &Rc<Shell>) {
     build_normal_navigation(shell);
     build_compact_navigation(shell);
     update_navigation_selection(shell.as_ref());
+    update_sidebar_pin_playback(shell.as_ref());
 }
 
 impl Shell {
@@ -260,6 +262,73 @@ pub(super) fn update_navigation_selection(shell: &Shell) {
     let active_route = shell.navigation.routes.borrow().current().clone();
     update_navigation_selection_in(&shell.navigation_view.normal_nav, &active_route);
     update_navigation_selection_in(&shell.navigation_view.compact_nav, &active_route);
+}
+
+pub(crate) fn update_sidebar_pin_playback(shell: &Shell) {
+    let selected_source_id = shell
+        .library
+        .selected
+        .borrow()
+        .as_ref()
+        .map(|selected| selected.source_id.clone());
+    let current = route_current_track(shell.playback.player.borrow().as_ref());
+    let playback_context_id = current
+        .as_ref()
+        .zip(selected_source_id.as_ref())
+        .filter(|(current, source_id)| &current.source_id == *source_id)
+        .and_then(|(current, _)| current.context.as_ref())
+        .map(|context| context.context_id.as_str());
+
+    let mut pin_rows = Vec::new();
+    let mut child = shell.navigation_view.normal_nav.first_child();
+    while let Some(widget) = child {
+        child = widget.next_sibling();
+        if !widget.has_css_class(SIDEBAR_PIN_ROW_CLASS) {
+            continue;
+        }
+        let pin_context_id = widget
+            .widget_name()
+            .strip_prefix("sidebar-pin-")
+            .map(str::to_string);
+        if let Some(pin_context_id) = pin_context_id {
+            pin_rows.push((widget, pin_context_id));
+        }
+    }
+    let playing_index = playback_context_id.and_then(|playback_context_id| {
+        pin_rows
+            .iter()
+            .enumerate()
+            .filter(|(_, (_, pin_context_id))| {
+                sidebar_pin_context_matches(pin_context_id, playback_context_id)
+            })
+            .max_by_key(|(_, (_, pin_context_id))| {
+                (
+                    pin_context_id.as_str() == playback_context_id,
+                    pin_context_id.len(),
+                )
+            })
+            .map(|(index, _)| index)
+    });
+    for (index, (widget, _)) in pin_rows.into_iter().enumerate() {
+        if playing_index == Some(index) {
+            widget.add_css_class(SIDEBAR_PIN_PLAYING_CLASS);
+        } else {
+            widget.remove_css_class(SIDEBAR_PIN_PLAYING_CLASS);
+        }
+    }
+}
+
+fn sidebar_pin_context_matches(pin_context_id: &str, playback_context_id: &str) -> bool {
+    playback_context_id == pin_context_id
+        || if pin_context_id.starts_with("playlist:") {
+            playback_context_id
+                .strip_prefix(pin_context_id)
+                .is_some_and(|suffix| suffix.starts_with(':'))
+        } else {
+            playback_context_id
+                .strip_prefix(pin_context_id)
+                .is_some_and(|suffix| suffix.starts_with('|'))
+        }
 }
 
 pub(super) fn relocalize_primary_menu_button(
@@ -428,6 +497,19 @@ pub(super) fn popup_primary_menu(
     if let Some(popover) = popover_slot.borrow().as_ref() {
         refresh_primary_menu(popover, shell);
         popover.popup();
+    }
+}
+
+pub(crate) fn popdown_primary_menu(shell: &Shell) {
+    for slot in [
+        &shell.navigation_view.normal_main_menu.popover,
+        &shell.navigation_view.compact_main_menu.popover,
+    ] {
+        if let Some(popover) = slot.borrow().as_ref()
+            && popover.is_visible()
+        {
+            popdown_native_menu(popover);
+        }
     }
 }
 
@@ -1298,6 +1380,39 @@ mod tests {
         assert_eq!(sidebar_pin_route_key(&Route::Genres), None);
         assert_eq!(sidebar_pin_route_key(&Route::Playlists), None);
         assert_eq!(sidebar_pin_route_key(&Route::SmartPlaylists), None);
+    }
+
+    #[test]
+    fn sidebar_pin_playback_only_matches_its_page_context() {
+        assert!(sidebar_pin_context_matches(
+            "artist:artist",
+            "artist:artist"
+        ));
+        assert!(sidebar_pin_context_matches(
+            "artist:artist",
+            "artist:artist|query=blue|sort=Title|descending=false"
+        ));
+        assert!(!sidebar_pin_context_matches(
+            "artist:artist",
+            "artist-favorites:artist|query=|sort=Title|descending=false"
+        ));
+        assert!(!sidebar_pin_context_matches(
+            "artist:artist",
+            "track:by-the-artist"
+        ));
+
+        assert!(sidebar_pin_context_matches(
+            "playlist:playlist",
+            "playlist:playlist:Title:false:blue"
+        ));
+        assert!(!sidebar_pin_context_matches(
+            "playlist:playlist",
+            "playlist:playlist-copy:Title:false:blue"
+        ));
+        assert!(sidebar_pin_context_matches(
+            "smart-playlist:smart",
+            "smart-playlist:smart|query=|sort=RowIndex|descending=false"
+        ));
     }
 
     #[test]
