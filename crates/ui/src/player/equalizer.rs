@@ -157,6 +157,12 @@ pub(crate) fn build_equalizer_preset_dropdown(selected: u32) -> gtk::DropDown {
         .build()
 }
 
+pub(crate) fn relocalize_equalizer_preset_dropdown(dropdown: &gtk::DropDown, selected: u32) {
+    let model = equalizer_preset_model();
+    dropdown.set_model(Some(&model));
+    dropdown.set_selected(selected);
+}
+
 pub(crate) fn connect_equalizer_scale_commit(
     scale: &gtk::Scale,
     guard: Rc<Cell<bool>>,
