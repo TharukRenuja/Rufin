@@ -11,34 +11,44 @@ use crate::localization::{
     bind_label_text, bind_search_placeholder, bind_widget_tooltip, localized_column,
     localized_label,
 };
+use crate::runtime::SelectedLibrary;
+use crate::runtime::source::FolderRequest;
 use crate::shell::Shell;
 use crate::shell::cover::THUMB_COVER_SIZE;
 use crate::shell::cover::presentation::stable_seed;
 use crate::shell::layout::route_content_width;
-use crate::shell::route::{MountedRoute, MountedRouteDeltaApplier};
-use crate::{LibraryListKey, LibraryListSettings, format_duration};
-use ::library::{Folder, FolderDetail, LibraryDelta, Track};
+use crate::shell::route::MountedRoute;
+use crate::{LibraryListKey, format_duration};
+use ::library::{Folder, FolderContents, Track};
 use adw::prelude::*;
 use artwork::ArtworkBinding;
 use gtk::{gio, glib};
 use localization::{msgid, tr};
-use playback::FolderWindowPlayRequest;
+use playback::{LoadedPlayRequest, QueuePlacement, SourceSessionEpoch};
 use tracing::warn;
 
-use super::collection_context::present_track_context_menu;
-use super::collection_routes::{MountedRefreshLoader, MountedRouteRefresh};
 use super::collections::library_route_inset;
 use super::library_fields::sort_tracks;
 use super::models::track_matches_query;
-use super::route_layout::{ROUTE_TOP_MARGIN, route_scroller_widget};
+use super::route_layout::{
+    PRIMARY_ROUTE_HORIZONTAL_INSET, ROUTE_TOP_MARGIN, route_scroller_widget,
+};
+use super::table_sizing::{
+    ColumnViewWidthFit, connect_column_width_save, install_column_view_width_fit,
+};
 
 const FOLDER_TREE_WIDTH: i32 = 260;
 const FOLDER_TREE_MIN_WIDTH: i32 = 132;
+const FOLDER_TREE_MAX_WIDTH: i32 = 480;
+const FOLDER_TABLE_MIN_WIDTH: i32 = 240;
 const FOLDER_TREE_HIDE_WIDTH: i32 = 550;
+const FOLDER_SPLIT_SEPARATOR_WIDTH: i32 = 17;
+const FOLDER_NAME_COLUMN_WIDTH: i32 = 220;
+const FOLDER_DETAIL_COLUMN_WIDTH: i32 = 200;
+const FOLDER_DURATION_COLUMN_WIDTH: i32 = 80;
 const FOLDER_ROW_ARTWORK_SIZE: i32 = 28;
 
 #[derive(Clone)]
-#[expect(clippy::large_enum_variant)]
 enum FolderTableRow {
     Folder {
         name: String,
@@ -46,8 +56,6 @@ enum FolderTableRow {
     },
     Track {
         track: Track,
-        tracks: Arc<Vec<Track>>,
-        source: Rc<(Vec<FolderPathItem>, String, LibraryListSettings)>,
         position: usize,
     },
     Empty,
@@ -67,27 +75,65 @@ impl FolderCellText {
     }
 }
 
+#[derive(Clone)]
+struct FolderPlayContext {
+    source_id: ::library::SourceId,
+    source_session_epoch: SourceSessionEpoch,
+    context_id: String,
+}
+
+#[derive(Clone)]
+struct FolderTableModel {
+    rows: gio::ListStore,
+    tracks: Rc<RefCell<Arc<[Track]>>>,
+    play: Rc<FolderPlayContext>,
+}
+
+impl FolderTableModel {
+    fn new(play: Rc<FolderPlayContext>) -> Self {
+        Self {
+            rows: gio::ListStore::new::<glib::BoxedAnyObject>(),
+            tracks: Rc::new(RefCell::new(Arc::from([]))),
+            play,
+        }
+    }
+
+    fn replace(&self, rows: Vec<FolderTableRow>, tracks: Arc<[Track]>) {
+        let additions = rows
+            .into_iter()
+            .map(glib::BoxedAnyObject::new)
+            .collect::<Vec<_>>();
+        self.tracks.replace(tracks);
+        self.rows.splice(0, self.rows.n_items(), &additions);
+    }
+}
+
 pub(crate) struct FolderRouteProjection {
     root: gtk::Widget,
     shell: Weak<Shell>,
     pub(crate) path: Vec<FolderPathItem>,
+    request: FolderRequest,
     status: gtk::Stack,
-    error_body: gtk::Label,
     search: gtk::SearchEntry,
     tree: gtk::ListBox,
-    table_model: gio::ListStore,
-    pub(crate) detail: RefCell<Option<FolderDetail>>,
-    pub(crate) error: RefCell<Option<String>>,
+    table_model: FolderTableModel,
+    contents: RefCell<Option<FolderContents>>,
 }
 
 impl FolderRouteProjection {
-    pub(crate) fn new(shell: &Rc<Shell>, path: Vec<FolderPathItem>) -> Rc<Self> {
+    pub(crate) fn new(
+        shell: &Rc<Shell>,
+        path: Vec<FolderPathItem>,
+        selected: &SelectedLibrary,
+    ) -> Rc<Self> {
         let wrapper = gtk::Box::new(gtk::Orientation::Vertical, 12);
         wrapper.add_css_class("route-content");
         wrapper.add_css_class("folders-route");
         wrapper.set_margin_top(ROUTE_TOP_MARGIN);
         wrapper.set_margin_bottom(28);
         wrapper.set_hexpand(true);
+        wrapper.set_halign(gtk::Align::Fill);
+        wrapper.set_width_request(1);
         wrapper.set_vexpand(true);
 
         if !path.is_empty() {
@@ -102,34 +148,56 @@ impl FolderRouteProjection {
         shell.set_route_search(Some(search.clone()));
 
         let route_width = route_content_width(shell);
+        let saved_tree_width = shell.settings.current.borrow().folder_view.tree_width;
+        let preferred_tree_width = Rc::new(Cell::new(
+            saved_tree_width.unwrap_or_else(|| folder_tree_width(route_width)),
+        ));
         let tree_visible = folder_tree_visible(route_width);
         let tree_width = if tree_visible {
-            folder_tree_width(route_width)
+            folder_tree_position(route_width, preferred_tree_width.get())
         } else {
             0
         };
 
-        let table_model = gio::ListStore::new::<glib::BoxedAnyObject>();
-        let table = folder_table(shell, &table_model);
+        let play = Rc::new(FolderPlayContext {
+            source_id: selected.source_id.clone(),
+            source_session_epoch: selected.source_session_epoch,
+            context_id: folder_context_id(&path),
+        });
+        let table_model = FolderTableModel::new(play);
+        let table_initial_width = route_width
+            .saturating_sub(tree_width)
+            .saturating_sub(if tree_visible {
+                FOLDER_SPLIT_SEPARATOR_WIDTH
+            } else {
+                0
+            })
+            .saturating_sub(PRIMARY_ROUTE_HORIZONTAL_INSET)
+            .max(1);
+        let (table, table_width_fit) = folder_table(shell, &table_model, table_initial_width);
 
         let table_scroller = gtk::ScrolledWindow::new();
         configure_fill_width_clip(&table_scroller, gtk::PolicyType::Automatic);
         table_scroller.set_hexpand(true);
         table_scroller.set_vexpand(true);
         table_scroller.set_child(Some(&library_route_inset(table.clone().upcast())));
-        let table_view = route_scroller_widget(table_scroller);
+        let table_view = route_scroller_widget(table_scroller.clone());
+        let resize_table_scroller = table_scroller.clone();
+        let table_view = width_allocation_owner(&table_view, move |width| {
+            table_width_fit.fit_scroller_allocation(&resize_table_scroller, width);
+        })
+        .upcast::<gtk::Widget>();
 
         let tree = gtk::ListBox::new();
         tree.add_css_class("folder-tree");
         tree.set_selection_mode(gtk::SelectionMode::None);
-        tree.set_size_request(tree_width, -1);
+        tree.set_width_request(1);
         tree.set_hexpand(true);
 
         let tree_scroller = gtk::ScrolledWindow::new();
         tree_scroller.add_css_class("folders-tree-pane");
         tree_scroller.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
-        tree_scroller.set_min_content_width(tree_width);
-        tree_scroller.set_size_request(tree_width, -1);
+        tree_scroller.set_min_content_width(FOLDER_TREE_MIN_WIDTH);
         tree_scroller.set_hexpand(false);
         tree_scroller.set_vexpand(true);
         tree_scroller.set_visible(tree_visible);
@@ -147,20 +215,49 @@ impl FolderRouteProjection {
         paned.set_end_child(Some(&table_view));
         paned.set_resize_end_child(true);
         paned.set_shrink_end_child(true);
+        let applying_tree_width = Rc::new(Cell::new(false));
+        let tree_width_changed = Rc::new(Cell::new(false));
+        let position_tree_scroller = tree_scroller.clone();
+        let position_preferred = Rc::clone(&preferred_tree_width);
+        let position_applying = Rc::clone(&applying_tree_width);
+        let position_changed = Rc::clone(&tree_width_changed);
+        paned.connect_position_notify(move |paned| {
+            if position_applying.get() || !position_tree_scroller.is_visible() {
+                return;
+            }
+            let position = paned.position();
+            if position >= FOLDER_TREE_MIN_WIDTH && position_preferred.replace(position) != position
+            {
+                position_changed.set(true);
+            }
+        });
+        connect_folder_tree_width_save(
+            shell,
+            &paned,
+            Rc::clone(&preferred_tree_width),
+            tree_width_changed,
+        );
 
         let content = gtk::Box::new(gtk::Orientation::Vertical, 12);
         content.set_hexpand(true);
         content.set_vexpand(true);
         content.append(&library_route_inset(search.clone().upcast()));
         let resize_tree_scroller = tree_scroller.clone();
-        let resize_tree = tree.clone();
         let resize_paned = paned.clone();
+        let resize_preferred = Rc::clone(&preferred_tree_width);
+        let resize_applying = Rc::clone(&applying_tree_width);
         let allocated_width = Cell::new(route_width);
         let paned_owner = width_allocation_owner(&paned, move |width| {
             if width <= 1 || allocated_width.replace(width) == width {
                 return;
             }
-            apply_folder_width(&resize_paned, &resize_tree_scroller, &resize_tree, width);
+            apply_folder_width(
+                &resize_paned,
+                &resize_tree_scroller,
+                width,
+                resize_preferred.get(),
+                &resize_applying,
+            );
         });
         content.append(&paned_owner);
 
@@ -172,32 +269,51 @@ impl FolderRouteProjection {
             &library_route_inset(shell.route_empty_view(msgid("Loading folders..."))),
             Some("loading"),
         );
-        let (error_view, error_body) = folder_error_view();
-        status.add_named(&library_route_inset(error_view), Some("error"));
-        status.add_named(
-            &library_route_inset(shell.route_empty_view(msgid("No folder contents found."))),
-            Some("empty"),
-        );
+        let empty = gtk::Box::new(gtk::Orientation::Vertical, 12);
+        empty.add_css_class("empty-state");
+        empty.set_vexpand(true);
+        empty.set_hexpand(true);
+        empty.set_valign(gtk::Align::Center);
+        empty.set_halign(gtk::Align::Center);
+        let empty_label = localized_label("No folder contents found.");
+        empty_label.add_css_class("muted");
+        let retry = gtk::Button::with_label(&tr("Refresh"));
+        retry.add_css_class("pill");
+        retry.set_halign(gtk::Align::Center);
+        empty.append(&empty_label);
+        empty.append(&retry);
+        status.add_named(&library_route_inset(empty.upcast()), Some("empty"));
         status.set_visible_child_name("loading");
         wrapper.append(&status);
 
+        let request = FolderRequest {
+            source_id: selected.source_id.clone(),
+            source_session_epoch: selected.source_session_epoch,
+            folder_id: path.last().map(|item| item.id.clone()),
+            music_folder_id: selected.music_folder_id.clone(),
+        };
         let projection = Rc::new(Self {
             root: wrapper.upcast(),
             shell: Rc::downgrade(shell),
             path,
+            request,
             status,
-            error_body,
             search,
             tree,
             table_model,
-            detail: RefCell::new(None),
-            error: RefCell::new(None),
+            contents: RefCell::new(None),
         });
 
         let search_projection = Rc::downgrade(&projection);
         projection.search.connect_search_changed(move |_| {
             if let Some(projection) = search_projection.upgrade() {
                 projection.publish_table();
+            }
+        });
+        let retry_projection = Rc::downgrade(&projection);
+        retry.connect_clicked(move |_| {
+            if let Some(projection) = retry_projection.upgrade() {
+                projection.request();
             }
         });
         projection
@@ -208,16 +324,11 @@ impl FolderRouteProjection {
     }
 
     pub(crate) fn publish(&self) {
-        if let Some(error) = self.error.borrow().as_deref() {
-            self.error_body.set_text(error);
-        }
-        if self.detail.borrow().is_some() {
+        if self.contents.borrow().is_some() {
             self.publish_tree();
             self.publish_table();
         }
-        let page = if self.error.borrow().is_some() && self.detail.borrow().is_none() {
-            "error"
-        } else if self.detail.borrow().is_none() {
+        let page = if self.contents.borrow().is_none() {
             "empty"
         } else {
             "content"
@@ -226,50 +337,66 @@ impl FolderRouteProjection {
     }
 
     fn begin_refresh(&self) {
-        *self.error.borrow_mut() = None;
-        if self.detail.borrow().is_none() {
+        if self.contents.borrow().is_none() {
             self.status.set_visible_child_name("loading");
         }
     }
 
-    fn apply_refresh(&self, result: Result<FolderDetail, String>) {
+    fn apply_loaded(&self, result: Result<FolderContents, String>) {
         match result {
-            Ok(detail) => {
-                *self.detail.borrow_mut() = Some(detail);
-                *self.error.borrow_mut() = None;
+            Ok(contents) => {
+                *self.contents.borrow_mut() = Some(contents);
             }
             Err(error) => {
                 warn!(%error, path = ?self.path, "folder load failed");
-                *self.error.borrow_mut() = Some(error);
+                self.contents.borrow_mut().take();
             }
         }
         self.publish();
+    }
+
+    fn request(self: &Rc<Self>) {
+        let Some(shell) = self.shell.upgrade() else {
+            return;
+        };
+        self.begin_refresh();
+        let receiver = shell.products.source.folder(self.request.clone());
+        let projection = Rc::downgrade(self);
+        glib::spawn_future_local(async move {
+            let result = receiver
+                .recv()
+                .await
+                .unwrap_or_else(|_| Err("Folder request ended before completion.".into()));
+            if let Some(projection) = projection.upgrade() {
+                projection.apply_loaded(result);
+            }
+        });
     }
 
     fn publish_tree(&self) {
         let Some(shell) = self.shell.upgrade() else {
             return;
         };
-        let detail = self.detail.borrow();
-        let Some(detail) = detail.as_ref() else {
+        let contents = self.contents.borrow();
+        let Some(contents) = contents.as_ref() else {
             return;
         };
-        populate_folder_tree(&shell, &self.tree, &self.path, detail);
+        populate_folder_tree(&shell, &self.tree, &self.path, contents);
     }
 
     fn publish_table(&self) {
         let Some(shell) = self.shell.upgrade() else {
             return;
         };
-        let detail = self.detail.borrow();
-        let Some(detail) = detail.as_ref() else {
+        let contents = self.contents.borrow();
+        let Some(contents) = contents.as_ref() else {
             return;
         };
         populate_folder_table(
             &shell,
             &self.table_model,
             &self.path,
-            detail,
+            contents,
             self.search.text().as_str(),
         );
     }
@@ -278,26 +405,59 @@ impl FolderRouteProjection {
 fn apply_folder_width(
     paned: &gtk::Paned,
     tree_scroller: &gtk::ScrolledWindow,
-    tree: &gtk::ListBox,
     width: i32,
+    preferred_tree_width: i32,
+    applying: &Cell<bool>,
 ) {
     let tree_visible = folder_tree_visible(width);
     let tree_width = if tree_visible {
-        folder_tree_width(width)
+        folder_tree_position(width, preferred_tree_width)
     } else {
         0
     };
+    applying.set(true);
     tree_scroller.set_visible(tree_visible);
-    tree_scroller.set_min_content_width(tree_width);
-    tree_scroller.set_size_request(tree_width, -1);
-    tree.set_size_request(tree_width, -1);
     paned.set_position(tree_width);
+    applying.set(false);
+}
+
+fn connect_folder_tree_width_save(
+    shell: &Rc<Shell>,
+    paned: &gtk::Paned,
+    preferred_width: Rc<Cell<i32>>,
+    changed: Rc<Cell<bool>>,
+) {
+    let events = gtk::EventControllerLegacy::new();
+    events.set_propagation_phase(gtk::PropagationPhase::Capture);
+    let shell = Rc::downgrade(shell);
+    events.connect_event(move |_, event| {
+        if matches!(
+            event.event_type(),
+            gtk::gdk::EventType::ButtonRelease | gtk::gdk::EventType::KeyRelease
+        ) {
+            let shell = shell.clone();
+            let preferred_width = Rc::clone(&preferred_width);
+            let changed = Rc::clone(&changed);
+            glib::idle_add_local_once(move || {
+                if !changed.replace(false) {
+                    return;
+                }
+                if let Some(shell) = shell.upgrade() {
+                    shell.save_folder_tree_width(preferred_width.get());
+                }
+            });
+        }
+        glib::Propagation::Proceed
+    });
+    paned.add_controller(events);
 }
 
 fn folder_breadcrumbs(shell: &Rc<Shell>, path: &[FolderPathItem]) -> gtk::Box {
     let breadcrumbs = gtk::Box::new(gtk::Orientation::Horizontal, 6);
     breadcrumbs.add_css_class("folder-breadcrumbs");
     breadcrumbs.set_hexpand(true);
+    breadcrumbs.set_halign(gtk::Align::Fill);
+    breadcrumbs.set_width_request(1);
 
     breadcrumbs.append(&breadcrumb_button(
         shell,
@@ -327,10 +487,18 @@ fn breadcrumb_button(
     current: bool,
     translate: bool,
 ) -> gtk::Button {
-    let button = gtk::Button::with_label(&display_label(label, translate));
+    let text = display_label(label, translate);
+    let button = gtk::Button::new();
     button.add_css_class("flat");
     button.add_css_class("folder-breadcrumb");
+    button.set_width_request(1);
     button.set_sensitive(!current);
+    let label = gtk::Label::new(Some(&text));
+    label.set_xalign(0.0);
+    label.set_ellipsize(gtk::pango::EllipsizeMode::End);
+    label.set_single_line_mode(true);
+    button.set_child(Some(&label));
+    button.set_tooltip_text(Some(&text));
     let shell = Rc::clone(shell);
     button.connect_clicked(move |_| {
         shell.navigate(Route::Folders { path: path.clone() });
@@ -342,7 +510,7 @@ fn populate_folder_tree(
     shell: &Rc<Shell>,
     tree: &gtk::ListBox,
     path: &[FolderPathItem],
-    detail: &FolderDetail,
+    contents: &FolderContents,
 ) {
     while let Some(child) = tree.first_child() {
         tree.remove(&child);
@@ -367,7 +535,7 @@ fn populate_folder_tree(
         ));
     }
 
-    let mut folders = detail.folders.clone();
+    let mut folders = contents.folders.to_vec();
     folders.sort_by(|left, right| {
         left.name
             .to_lowercase()
@@ -422,13 +590,13 @@ fn tree_row(
 
 fn populate_folder_table(
     shell: &Rc<Shell>,
-    model: &gio::ListStore,
+    model: &FolderTableModel,
     path: &[FolderPathItem],
-    detail: &FolderDetail,
+    contents: &FolderContents,
     query: &str,
 ) {
     let query = query.trim().to_lowercase();
-    let mut folders = detail
+    let mut folders = contents
         .folders
         .iter()
         .filter(|folder| query.is_empty() || folder.name.to_lowercase().contains(&query))
@@ -441,7 +609,7 @@ fn populate_folder_table(
             .then_with(|| left.id.cmp(&right.id))
     });
 
-    let mut tracks = detail
+    let mut tracks = contents
         .tracks
         .iter()
         .filter(|track| query.is_empty() || track_matches_query(track, &query))
@@ -452,10 +620,9 @@ fn populate_folder_table(
         .current
         .borrow()
         .library_list(LibraryListKey::Tracks);
-    sort_tracks(&mut tracks, &settings, false);
+    sort_tracks(&mut tracks, &settings);
 
-    let visible_tracks = Arc::new(tracks);
-    let source = Rc::new((path.to_vec(), query.clone(), settings.clone()));
+    let visible_tracks: Arc<[Track]> = tracks.into();
     let mut rows = folders
         .into_iter()
         .map(|folder| FolderTableRow::Folder {
@@ -469,23 +636,21 @@ fn populate_folder_table(
             .enumerate()
             .map(|(position, track)| FolderTableRow::Track {
                 track: track.clone(),
-                tracks: Arc::clone(&visible_tracks),
-                source: Rc::clone(&source),
                 position,
             }),
     );
     if rows.is_empty() {
         rows.push(FolderTableRow::Empty);
     }
-    let rows = rows
-        .into_iter()
-        .map(glib::BoxedAnyObject::new)
-        .collect::<Vec<_>>();
-    model.splice(0, model.n_items(), &rows);
+    model.replace(rows, visible_tracks);
 }
 
-fn folder_table(shell: &Rc<Shell>, model: &gio::ListStore) -> gtk::ColumnView {
-    let selection = gtk::SingleSelection::new(Some(model.clone()));
+fn folder_table(
+    shell: &Rc<Shell>,
+    model: &FolderTableModel,
+    initial_width: i32,
+) -> (gtk::ColumnView, ColumnViewWidthFit) {
+    let selection = gtk::SingleSelection::new(Some(model.rows.clone()));
     selection.set_autoselect(false);
     selection.set_can_unselect(true);
     selection.set_selected(gtk::INVALID_LIST_POSITION);
@@ -498,15 +663,42 @@ fn folder_table(shell: &Rc<Shell>, model: &gio::ListStore) -> gtk::ColumnView {
     table.set_halign(gtk::Align::Fill);
     table.set_vexpand(true);
 
-    let name = folder_name_column(shell);
-    name.set_expand(true);
-    table.append_column(&name);
-
-    let detail = folder_detail_column(shell);
-    detail.set_expand(true);
-    table.append_column(&detail);
-
-    table.append_column(&folder_duration_column(shell));
+    let folder_view = shell.settings.current.borrow().folder_view.clone();
+    let columns = vec![
+        (
+            folder_name_column(shell),
+            folder_view
+                .name_column_width
+                .unwrap_or(FOLDER_NAME_COLUMN_WIDTH),
+        ),
+        (
+            folder_detail_column(shell),
+            folder_view
+                .detail_column_width
+                .unwrap_or(FOLDER_DETAIL_COLUMN_WIDTH),
+        ),
+        (
+            folder_duration_column(shell),
+            folder_view
+                .duration_column_width
+                .unwrap_or(FOLDER_DURATION_COLUMN_WIDTH),
+        ),
+    ];
+    for (column, width) in &columns {
+        column.set_fixed_width(*width);
+        column.set_resizable(true);
+        table.append_column(column);
+    }
+    let width_fit = install_column_view_width_fit(&table, columns, initial_width);
+    let save_shell = Rc::downgrade(shell);
+    connect_column_width_save(&table, &width_fit, move |widths| {
+        let [name, detail, duration] = widths.as_slice() else {
+            return;
+        };
+        if let Some(shell) = save_shell.upgrade() {
+            shell.save_folder_column_widths([*name, *detail, *duration]);
+        }
+    });
 
     let row_factory = gtk::SignalListItemFactory::new();
     row_factory.connect_bind(|_, item| {
@@ -533,35 +725,13 @@ fn folder_table(shell: &Rc<Shell>, model: &gio::ListStore) -> gtk::ColumnView {
     let activate_shell = Rc::clone(shell);
     let activate_model = model.clone();
     table.connect_activate(move |_, position| {
-        let Some(row) = folder_table_row_at(&activate_model, position) else {
+        let Some(row) = folder_table_row_at(&activate_model.rows, position) else {
             return;
         };
-        activate_folder_table_row(&activate_shell, &row);
+        activate_folder_table_row(&activate_shell, &activate_model, &row);
     });
 
-    let menu_shell = Rc::clone(shell);
-    let menu_model = model.clone();
-    let menu_table = table.downgrade();
-    let menu_key = gtk::EventControllerKey::new();
-    menu_key.connect_key_pressed(move |_, key, _, state| {
-        let opens_menu = key == gtk::gdk::Key::Menu
-            || (key == gtk::gdk::Key::F10 && state.contains(gtk::gdk::ModifierType::SHIFT_MASK));
-        if !opens_menu {
-            return glib::Propagation::Proceed;
-        }
-        let Some(FolderTableRow::Track { track, .. }) =
-            folder_table_row_at(&menu_model, selection.selected())
-        else {
-            return glib::Propagation::Proceed;
-        };
-        let Some(table) = menu_table.upgrade() else {
-            return glib::Propagation::Proceed;
-        };
-        present_track_context_menu(&table.upcast(), &menu_shell, track, None);
-        glib::Propagation::Stop
-    });
-    table.add_controller(menu_key);
-    table
+    (table, width_fit)
 }
 
 fn folder_name_column(shell: &Rc<Shell>) -> gtk::ColumnViewColumn {
@@ -765,30 +935,23 @@ fn install_folder_table_cell_interactions(
     }
 }
 
-fn activate_folder_table_row(shell: &Rc<Shell>, row: &FolderTableRow) {
+fn activate_folder_table_row(shell: &Rc<Shell>, model: &FolderTableModel, row: &FolderTableRow) {
     match row {
         FolderTableRow::Folder { path, .. } => {
             shell.navigate(Route::Folders { path: path.clone() });
         }
-        FolderTableRow::Track {
-            tracks,
-            source,
-            position,
-            ..
-        } => {
-            let (path, query, settings) = source.as_ref();
-            shell
-                .products
-                .playback
-                .queue
-                .play_folder_window(FolderWindowPlayRequest {
-                    path: path.iter().map(|entry| entry.name.clone()).collect(),
-                    query: query.clone(),
-                    sort: settings.sort_key.track_sort(),
-                    descending: settings.descending,
-                    tracks: Arc::clone(tracks),
-                    anchor_index: *position,
-                });
+        FolderTableRow::Track { position, .. } => {
+            if let Some(request) = LoadedPlayRequest::context(
+                model.play.source_id.clone(),
+                model.play.source_session_epoch,
+                Arc::clone(&model.tracks.borrow()),
+                *position,
+                QueuePlacement::Now,
+                model.play.context_id.clone(),
+                false,
+            ) {
+                shell.products.playback.queue.play_loaded(request);
+            }
         }
         FolderTableRow::Empty => {}
     }
@@ -823,6 +986,14 @@ fn folder_tree_width(route_width: i32) -> i32 {
     }
 }
 
+fn folder_tree_position(route_width: i32, preferred_width: i32) -> i32 {
+    let maximum = route_width
+        .saturating_sub(FOLDER_SPLIT_SEPARATOR_WIDTH)
+        .saturating_sub(FOLDER_TABLE_MIN_WIDTH)
+        .clamp(FOLDER_TREE_MIN_WIDTH, FOLDER_TREE_MAX_WIDTH);
+    preferred_width.clamp(FOLDER_TREE_MIN_WIDTH, maximum)
+}
+
 fn folder_tree_visible(route_width: i32) -> bool {
     route_width >= FOLDER_TREE_HIDE_WIDTH
 }
@@ -835,25 +1006,6 @@ fn display_label(label: &str, translate: bool) -> String {
     }
 }
 
-fn folder_error_view() -> (gtk::Widget, gtk::Label) {
-    let wrapper = gtk::Box::new(gtk::Orientation::Vertical, 8);
-    wrapper.add_css_class("empty-state");
-    wrapper.set_vexpand(true);
-    wrapper.set_hexpand(true);
-    wrapper.set_valign(gtk::Align::Center);
-    wrapper.set_halign(gtk::Align::Center);
-
-    let heading = localized_label("Folder browsing failed");
-    heading.add_css_class("section-heading");
-    let body = gtk::Label::new(None);
-    body.add_css_class("muted");
-    body.set_wrap(true);
-    body.set_justify(gtk::Justification::Center);
-    wrapper.append(&heading);
-    wrapper.append(&body);
-    (wrapper.upcast(), body)
-}
-
 fn path_for_child(path: &[FolderPathItem], folder: &Folder) -> Vec<FolderPathItem> {
     let mut next = path.to_vec();
     next.push(FolderPathItem {
@@ -861,6 +1013,15 @@ fn path_for_child(path: &[FolderPathItem], folder: &Folder) -> Vec<FolderPathIte
         name: folder.name.clone(),
     });
     next
+}
+
+fn folder_context_id(path: &[FolderPathItem]) -> String {
+    let mut context = String::from("folder");
+    for item in path {
+        context.push(':');
+        context.push_str(item.id.as_str());
+    }
+    context
 }
 
 #[cfg(test)]
@@ -871,52 +1032,44 @@ mod tests {
         assert!(!super::folder_tree_visible(549));
         assert!(super::folder_tree_visible(550));
     }
+
+    #[test]
+    fn folder_tree_position_keeps_the_saved_width_inside_real_bounds() {
+        assert_eq!(super::folder_tree_position(900, 200), 200);
+        assert_eq!(
+            super::folder_tree_position(900, 40),
+            super::FOLDER_TREE_MIN_WIDTH
+        );
+        assert_eq!(super::folder_tree_position(550, 480), 293);
+        assert_eq!(
+            super::folder_tree_position(1_500, 900),
+            super::FOLDER_TREE_MAX_WIDTH
+        );
+    }
 }
 
 impl Shell {
-    pub(crate) fn folders_route(self: &Rc<Self>, path: Vec<FolderPathItem>) -> MountedRoute {
-        let load_path = path
-            .iter()
-            .map(|entry| entry.id.clone())
-            .collect::<Vec<_>>();
-        let projection = FolderRouteProjection::new(self, path);
-        let apply_loaded: Rc<dyn Fn(Result<FolderDetail, String>)> = {
-            let projection = Rc::clone(&projection);
-            Rc::new(move |result| projection.apply_refresh(result))
-        };
-        let load_library = self.products.library.clone();
-        let load: MountedRefreshLoader<Result<FolderDetail, String>> = Arc::new(move || {
-            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                load_library.folder(&load_path)
-            }))
-            .unwrap_or_else(|_| {
-                warn!("folder load task panicked");
-                Err("Folder load task failed.".to_string())
-            })
-        });
-        let refresh =
-            MountedRouteRefresh::new(Rc::downgrade(&apply_loaded), load, "mounted Folders");
-        projection.begin_refresh();
-        refresh.request();
+    pub(crate) fn folders_route(
+        self: &Rc<Self>,
+        path: Vec<FolderPathItem>,
+        selected: &SelectedLibrary,
+    ) -> MountedRoute {
+        let projection = FolderRouteProjection::new(self, path, selected);
+        projection.request();
 
-        let affected_by =
-            Rc::new(|delta: &LibraryDelta| delta.reset.is_some() || delta.folders_changed);
-        let apply_delta = {
-            let projection = Rc::clone(&projection);
-            let apply_loaded = Rc::clone(&apply_loaded);
-            let refresh = Rc::clone(&refresh);
-            Rc::new(move |_: &LibraryDelta| {
-                let _ = &apply_loaded;
-                projection.begin_refresh();
-                refresh.request();
-            }) as MountedRouteDeltaApplier
-        };
-
-        MountedRoute::new(
+        let resume_projection = Rc::clone(&projection);
+        let route = MountedRoute::new(
             projection.widget(),
-            affected_by,
-            apply_delta,
-            Rc::new(|| {}),
-        )
+            Rc::new(move || {
+                resume_projection.publish_table();
+            }),
+        );
+        let update_projection = Rc::clone(&projection);
+        route.with_library_update(Rc::new(move |update| {
+            if !update.change.local_folders_changed {
+                return;
+            }
+            update_projection.request();
+        }))
     }
 }

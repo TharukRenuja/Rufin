@@ -21,6 +21,25 @@ msgid ""
 "everywhere, including API secrets. App cache is not affected."
 msgstr ""
 
+msgid ""
+"Downloaded music from this server will no longer be available offline. "
+"Automatic download rules will also be turned off."
+msgstr ""
+
+msgid ""
+"Keep music from the selected server available without a connection. Folder "
+"changes apply to new downloads."
+msgstr ""
+
+msgid ""
+"Logs have secrets and absolute folder paths redacted, but you may still want "
+"to review the logs before sharing them"
+msgstr ""
+
+msgid ""
+"No results \302\257\\_(\302\260\342\225\255\342\225\256\302\260)_/\302\257"
+msgstr ""
+
 #, rust-format
 msgid ""
 "Saved mapping. {direct} direct, {prefix} prefix, {metadata} metadata, "
@@ -47,11 +66,6 @@ msgid ""
 msgstr ""
 
 msgid ""
-"This playlist uses nested rule groups. Rule editing is unavailable in this "
-"editor."
-msgstr ""
-
-msgid ""
 "This removes the server, cached library metadata, queue snapshot, and saved "
 "token for"
 msgstr ""
@@ -59,6 +73,11 @@ msgstr ""
 msgid ""
 "This uses Jellyfin API for play radio, necessary if you want recommendation "
 "plugins to work."
+msgstr ""
+
+msgid ""
+"Tracks used only by this rule will be deleted. Downloads shared with another "
+"rule or manual download will be kept."
 msgstr ""
 
 #, rust-format
@@ -86,6 +105,9 @@ msgstr ""
 msgid "320 kbps"
 msgstr ""
 
+msgid "5 Latest Albums"
+msgstr ""
+
 msgid "ALSA"
 msgstr ""
 
@@ -98,7 +120,13 @@ msgstr ""
 msgid "About Rufin"
 msgstr ""
 
+msgid "Accepted plays will appear here."
+msgstr ""
+
 msgid "Add Rule"
+msgstr ""
+
+msgid "Add a new source"
 msgstr ""
 
 msgid "Add a server to use Jellyfin, Navidrome, or OpenSubsonic."
@@ -113,9 +141,6 @@ msgstr ""
 msgid "Add folders to use the Local source."
 msgstr ""
 
-msgid "Add music library"
-msgstr ""
-
 msgid "Add music to start a queue."
 msgstr ""
 
@@ -123,6 +148,9 @@ msgid "Add server"
 msgstr ""
 
 msgid "Add to Favorites"
+msgstr ""
+
+msgid "Add to Pins"
 msgstr ""
 
 msgid "Add to Playlist"
@@ -135,6 +163,9 @@ msgid "Add"
 msgstr ""
 
 msgid "Added to favorites"
+msgstr ""
+
+msgid "Added to"
 msgstr ""
 
 msgid "Album Artists"
@@ -164,16 +195,13 @@ msgstr ""
 msgid "All Music"
 msgstr ""
 
+msgid "All Playlists"
+msgstr ""
+
 msgid "All tracks"
 msgstr ""
 
-msgid "All"
-msgstr ""
-
 msgid "Any genre"
-msgstr ""
-
-msgid "Any"
 msgstr ""
 
 msgid "App window"
@@ -233,13 +261,10 @@ msgstr ""
 msgid "Back"
 msgstr ""
 
+msgid "By default, this uses Rufin's own cache directory."
+msgstr ""
+
 msgid "Cached entries will appear here after sync finishes"
-msgstr ""
-
-msgid "Cached library cleared."
-msgstr ""
-
-msgid "Cached library ready"
 msgstr ""
 
 msgid "Cached"
@@ -251,6 +276,9 @@ msgstr ""
 msgid "Caching local library..."
 msgstr ""
 
+msgid "Cancel download"
+msgstr ""
+
 msgid "Cancel"
 msgstr ""
 
@@ -258,10 +286,6 @@ msgid "Change Secret Storage"
 msgstr ""
 
 msgid "Change"
-msgstr ""
-
-#, rust-format
-msgid "Checking {provider} server..."
 msgstr ""
 
 msgid "Choose a configured source or add another."
@@ -289,12 +313,6 @@ msgid "Choose"
 msgstr ""
 
 msgid "Classical"
-msgstr ""
-
-msgid "Clear Cache"
-msgstr ""
-
-msgid "Clear Cached Library"
 msgstr ""
 
 msgid "Clear Mapping"
@@ -349,16 +367,19 @@ msgstr ""
 msgid "Connected"
 msgstr ""
 
-msgid "Connected. Loading cached library..."
-msgstr ""
-
 msgid "Connecting to music server..."
 msgstr ""
 
 msgid "Connection"
 msgstr ""
 
+msgid "Context Menus"
+msgstr ""
+
 msgid "Control notifications"
+msgstr ""
+
+msgid "Could not save diagnostic log"
 msgstr ""
 
 msgid "Create"
@@ -380,6 +401,9 @@ msgid "Dance"
 msgstr ""
 
 msgid "Date added"
+msgstr ""
+
+msgid "Debug logging"
 msgstr ""
 
 msgid "Decrease"
@@ -409,6 +433,12 @@ msgstr ""
 msgid "Detail"
 msgstr ""
 
+msgid "Diagnostic log saved"
+msgstr ""
+
+msgid "Diagnostic log"
+msgstr ""
+
 msgid "DirectSound"
 msgstr ""
 
@@ -425,6 +455,39 @@ msgid "Discord"
 msgstr ""
 
 msgid "Don't duplicate"
+msgstr ""
+
+msgid "Download Folder"
+msgstr ""
+
+msgid "Download every track, including tracks added later."
+msgstr ""
+
+msgid "Download favorite tracks and tracks from favorite albums and artists."
+msgstr ""
+
+msgid "Download quality"
+msgstr ""
+
+msgid "Download queued"
+msgstr ""
+
+msgid "Download started"
+msgstr ""
+
+msgid "Download tracks from every playlist."
+msgstr ""
+
+msgid "Download"
+msgstr ""
+
+msgid "Downloaded"
+msgstr ""
+
+msgid "Downloading"
+msgstr ""
+
+msgid "Downloads"
 msgstr ""
 
 msgid "Drag to reorder"
@@ -469,6 +532,9 @@ msgstr ""
 msgid "Enter an artist or song."
 msgstr ""
 
+msgid "Entire Library"
+msgstr ""
+
 msgid "Equalizer"
 msgstr ""
 
@@ -511,6 +577,9 @@ msgstr ""
 msgid "Find your ListenBrainz user token"
 msgstr ""
 
+msgid "Fixed position"
+msgstr ""
+
 msgid "Flat"
 msgstr ""
 
@@ -536,6 +605,9 @@ msgid "Full Treble"
 msgstr ""
 
 msgid "Full"
+msgstr ""
+
+msgid "Furigana"
 msgstr ""
 
 msgid "Gapless"
@@ -577,9 +649,6 @@ msgstr ""
 msgid "Grid"
 msgstr ""
 
-msgid "Hidden server section"
-msgstr ""
-
 msgid "Hidden"
 msgstr ""
 
@@ -587,6 +656,9 @@ msgid "Hide lyrics"
 msgstr ""
 
 msgid "Hide sidebar"
+msgstr ""
+
+msgid "History"
 msgstr ""
 
 msgid "Hold and drag to resize"
@@ -607,7 +679,13 @@ msgstr ""
 msgid "Image"
 msgstr ""
 
+msgid "Include detailed Rufin diagnostics in this session"
+msgstr ""
+
 msgid "Increase"
+msgstr ""
+
+msgid "Increases memory usage"
 msgstr ""
 
 msgid "Installed"
@@ -622,13 +700,22 @@ msgstr ""
 msgid "Jellyfin"
 msgstr ""
 
+msgid "Karaoke mode"
+msgstr ""
+
 msgid "Keep album transitions gapless when possible"
+msgstr ""
+
+msgid "Keep tracks from the five most recently added albums downloaded."
 msgstr ""
 
 msgid "Keyboard Shortcuts"
 msgstr ""
 
 msgid "LRCLIB"
+msgstr ""
+
+msgid "Language and readings"
 msgstr ""
 
 msgid "Language"
@@ -712,6 +799,9 @@ msgstr ""
 msgid "Lyrics offset (ms)"
 msgstr ""
 
+msgid "Lyrics settings"
+msgstr ""
+
 msgid "Lyrics"
 msgstr ""
 
@@ -722,9 +812,6 @@ msgid "Map server tracks to local files"
 msgstr ""
 
 msgid "Mapped Local Path"
-msgstr ""
-
-msgid "Match"
 msgstr ""
 
 msgid "Maximum year"
@@ -766,6 +853,12 @@ msgstr ""
 msgid "Move down"
 msgstr ""
 
+msgid "Move provider down"
+msgstr ""
+
+msgid "Move provider up"
+msgstr ""
+
 msgid "Move up"
 msgstr ""
 
@@ -799,6 +892,12 @@ msgstr ""
 msgid "Navidrome"
 msgstr ""
 
+msgid "Navigate page items"
+msgstr ""
+
+msgid "Needs attention"
+msgstr ""
+
 msgid "NetEase"
 msgstr ""
 
@@ -809,6 +908,12 @@ msgid "New Playlist"
 msgstr ""
 
 msgid "New Smart Playlist"
+msgstr ""
+
+msgid "New download rule"
+msgstr ""
+
+msgid "New downloads will appear here."
 msgstr ""
 
 msgid "Newly added"
@@ -830,12 +935,6 @@ msgid "No Servers Found"
 msgstr ""
 
 msgid "No cached server path yet"
-msgstr ""
-
-msgid "No cached tracks yet. Sync the server to preview matches."
-msgstr ""
-
-msgid "No changes to save."
 msgstr ""
 
 msgid "No folder contents found."
@@ -865,9 +964,6 @@ msgstr ""
 msgid "No lyrics"
 msgstr ""
 
-msgid "No queue items match the search."
-msgstr ""
-
 msgid "No remote sources configured"
 msgstr ""
 
@@ -875,9 +971,6 @@ msgid "No server lyrics for the current track. External lyric lookup is off."
 msgstr ""
 
 msgid "No server lyrics for the current track. Private mode is on."
-msgstr ""
-
-msgid "No songs added"
 msgstr ""
 
 msgid "No source"
@@ -899,6 +992,9 @@ msgid "Not connected"
 msgstr ""
 
 msgid "Nothing playing"
+msgstr ""
+
+msgid "Nothing queued"
 msgstr ""
 
 msgid "Notifications"
@@ -962,6 +1058,9 @@ msgid "Password"
 msgstr ""
 
 msgid "Pause"
+msgstr ""
+
+msgid "Pins"
 msgstr ""
 
 msgid "PipeWire"
@@ -1033,6 +1132,9 @@ msgstr ""
 msgid "Playlist tracks"
 msgstr ""
 
+msgid "Playlist"
+msgstr ""
+
 msgid "Playlists"
 msgstr ""
 
@@ -1049,6 +1151,9 @@ msgid "Prefer server lyrics"
 msgstr ""
 
 msgid "Prefer server playlist covers"
+msgstr ""
+
+msgid "Prefer translations"
 msgstr ""
 
 msgid "Preferences"
@@ -1072,10 +1177,16 @@ msgstr ""
 msgid "Privacy and Security"
 msgstr ""
 
+msgid "Private mode is off"
+msgstr ""
+
 msgid "Private mode is on"
 msgstr ""
 
 msgid "Private mode"
+msgstr ""
+
+msgid "Pronunciation"
 msgstr ""
 
 msgid "PulseAudio"
@@ -1088,6 +1199,9 @@ msgid "Queue and transitions"
 msgstr ""
 
 msgid "Queue"
+msgstr ""
+
+msgid "Queued"
 msgstr ""
 
 msgid "Quit"
@@ -1111,6 +1225,9 @@ msgstr ""
 msgid "Refresh section"
 msgstr ""
 
+msgid "Refresh"
+msgstr ""
+
 msgid "Release date"
 msgstr ""
 
@@ -1123,13 +1240,34 @@ msgstr ""
 msgid "Remote lyrics"
 msgstr ""
 
+msgid "Remove All Downloads"
+msgstr ""
+
+msgid "Remove Download"
+msgstr ""
+
 msgid "Remove Local Folder"
+msgstr ""
+
+msgid "Remove Rule and Delete Downloads"
+msgstr ""
+
+msgid "Remove Rule and Downloads"
+msgstr ""
+
+msgid "Remove Rule, Keep Downloads"
+msgstr ""
+
+msgid "Remove and Delete"
 msgstr ""
 
 msgid "Remove folder"
 msgstr ""
 
 msgid "Remove from Favorites"
+msgstr ""
+
+msgid "Remove from Pins"
 msgstr ""
 
 msgid "Remove from Playlist"
@@ -1171,10 +1309,13 @@ msgstr ""
 msgid "ReplayGain"
 msgstr ""
 
-msgid "Reset display"
+msgid "Requires OpenSubsonic songLyrics v2"
 msgstr ""
 
 msgid "Reset equalizer"
+msgstr ""
+
+msgid "Reset to defaults"
 msgstr ""
 
 msgid "Reset"
@@ -1198,10 +1339,19 @@ msgstr ""
 msgid "Rock"
 msgstr ""
 
+msgid "Romaji"
+msgstr ""
+
 msgid "Rows"
 msgstr ""
 
 msgid "Rufin is running in the tray"
+msgstr ""
+
+msgid "Rule actions"
+msgstr ""
+
+msgid "Save Diagnostic Log"
 msgstr ""
 
 msgid "Save Lyrics"
@@ -1211,9 +1361,6 @@ msgid "Save Mapping"
 msgstr ""
 
 msgid "Save Server Settings"
-msgstr ""
-
-msgid "Save to apply this mapping after the next sync."
 msgstr ""
 
 msgid "Save to rescan this local library."
@@ -1241,6 +1388,9 @@ msgid "Search failed."
 msgstr ""
 
 msgid "Search lyrics"
+msgstr ""
+
+msgid "Search preferences"
 msgstr ""
 
 msgid "Search queue"
@@ -1279,6 +1429,9 @@ msgstr ""
 msgid "Seek playback"
 msgstr ""
 
+msgid "Select Download Folder"
+msgstr ""
+
 msgid "Select Music Folder"
 msgstr ""
 
@@ -1286,6 +1439,9 @@ msgid "Select Source"
 msgstr ""
 
 msgid "Selected device"
+msgstr ""
+
+msgid "Selection"
 msgstr ""
 
 msgid "Server Actions"
@@ -1331,6 +1487,9 @@ msgstr ""
 msgid "Show Rufin"
 msgstr ""
 
+msgid "Show downloaded badge"
+msgstr ""
+
 msgid "Show external service icons on album and artist pages"
 msgstr ""
 
@@ -1373,6 +1532,9 @@ msgstr ""
 msgid "Sidebar Items"
 msgstr ""
 
+msgid "Sidebar route by position"
+msgstr ""
+
 msgid "SimpMusic"
 msgstr ""
 
@@ -1412,22 +1574,25 @@ msgstr ""
 msgid "Sort"
 msgstr ""
 
-msgid "Source settings saved."
-msgstr ""
-
 msgid "Source to use for cover images and song/artist links"
 msgstr ""
 
-msgid "Source"
+msgid "Sources"
 msgstr ""
 
 msgid "Start minimized"
+msgstr ""
+
+msgid "Start typing to do a global search in your configured source"
 msgstr ""
 
 msgid "Status display"
 msgstr ""
 
 msgid "Stream quality"
+msgstr ""
+
+msgid "Support"
 msgstr ""
 
 msgid "Switching library..."
@@ -1443,9 +1608,6 @@ msgid "Techno"
 msgstr ""
 
 msgid "Text"
-msgstr ""
-
-msgid "This removes cached library metadata for"
 msgstr ""
 
 msgid "This removes the folder from the Local source."
@@ -1478,6 +1640,12 @@ msgstr ""
 msgid "Transition mode"
 msgstr ""
 
+msgid "Translation language"
+msgstr ""
+
+msgid "Troubleshooting"
+msgstr ""
+
 msgid "Turn off only for a server you control"
 msgstr ""
 
@@ -1497,6 +1665,9 @@ msgid "Unmuted"
 msgstr ""
 
 msgid "Use Jellyfin Instant Mix for recommendations"
+msgstr ""
+
+msgid "Use Rufin data folder"
 msgstr ""
 
 msgid "Use different layout below a threshold width"
@@ -1536,6 +1707,9 @@ msgid "Volume Up"
 msgstr ""
 
 msgid "WASAPI"
+msgstr ""
+
+msgid "Waiting for connection"
 msgstr ""
 
 msgid "Waveform seekbar"
@@ -1623,12 +1797,6 @@ msgstr[0] ""
 msgstr[1] ""
 
 #, rust-format
-msgid "{count} folder"
-msgid_plural "{count} folders"
-msgstr[0] ""
-msgstr[1] ""
-
-#, rust-format
 msgid "{count} month ago"
 msgid_plural "{count} months ago"
 msgstr[0] ""
@@ -1657,19 +1825,3 @@ msgid "{count} year ago"
 msgid_plural "{count} years ago"
 msgstr[0] ""
 msgstr[1] ""
-
-#, rust-format
-msgid "{track_count} song added to {playlist_count} playlist"
-msgstr ""
-
-#, rust-format
-msgid "{track_count} song added to {playlist_count} playlists"
-msgstr ""
-
-#, rust-format
-msgid "{track_count} songs added to {playlist_count} playlist"
-msgstr ""
-
-#, rust-format
-msgid "{track_count} songs added to {playlist_count} playlists"
-msgstr ""

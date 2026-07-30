@@ -4,151 +4,176 @@ use std::{
     sync::Arc,
 };
 
-use ::library::{ActiveLibraryQuery, play_context::PlayContextDescriptor};
+use ::library::{Genre, GenreDetail, GenreSummary, LoadedLibrary, MusicFolderId, RadioSeed};
 use adw::prelude::*;
 use artwork::ArtworkBinding;
 
-use crate::LibraryListKey;
 use crate::format_duration_units;
 use crate::localization::localized_label;
 use crate::shell::Shell;
-use crate::shell::actions::PLAY_ICON;
 use crate::shell::cover::presentation::stable_seed;
-use crate::shell::route::MountedRoute;
+use crate::shell::route::{LatestMountedRouteRead, MountedRoute, SelectedRouteIdentity};
+use crate::{LibraryListKey, LibraryListSettings};
 use localization::track_count_text;
-use playback::{ContextPlayRequest, QueuePlacement, RadioPlayRequest, RadioSeed};
+use playback::RadioPlayRequest;
 
-use super::collection_routes::{MountedRefreshLoader, MountedRouteRefresh};
-use super::detail_showcase::{
-    append_loaded_context_batch_queue_actions, detail_action_row, detail_primary_action_button,
-    detail_radio_button,
-};
+use super::detail_showcase::{detail_action_row, detail_radio_button};
 use super::grouped_detail::GroupedDetailData;
-use super::play_context::selected_music_folder_id;
+use super::route::Route;
+use super::track_model::{
+    PreparedTrackProjection, TrackProjectionRequest, prepare_track_projection,
+};
+
+#[derive(Clone)]
+struct GenreDetailReadRequest {
+    identity: SelectedRouteIdentity,
+    tracks: TrackProjectionRequest,
+}
+
+struct PreparedGenreDetail {
+    summary: GenreSummary,
+    tracks: PreparedTrackProjection,
+}
 
 impl Shell {
-    pub(crate) fn genre_detail_view_from_loaded(
+    pub(crate) fn genre_detail_view(
         self: &Rc<Self>,
-        library_query: ActiveLibraryQuery,
         genre_id: ::library::GenreId,
-        detail: Option<::library::CachedGenreDetail>,
+        detail: Option<GenreDetail>,
+        loaded: Arc<LoadedLibrary>,
+        music_folder_id: Option<MusicFolderId>,
     ) -> MountedRoute {
         let Some(detail) = detail else {
             return MountedRoute::static_widget(
                 self.placeholder_view("Genre", "The selected cached genre was not found."),
             );
         };
-        let seed = stable_seed(detail.genre.id.as_str());
-        let mut summary_items = vec![(
-            "rufin-route-tracks-symbolic",
-            track_count_text(detail.genre.track_count.into()),
-        )];
-        if detail.genre.duration_seconds > 0 {
-            summary_items.push((
-                "appointment-soon-symbolic",
-                format_duration_units(detail.genre.duration_seconds),
-            ));
-        }
-        let genre = detail.genre;
-        let current_genre = Rc::new(RefCell::new(genre.clone()));
-        let artwork = ArtworkBinding::genre_slots(&genre);
+        let genre = detail.summary;
+        let tracks = detail.tracks;
+        let seed = stable_seed(genre.genre.id.as_str());
+        let summary_items = genre_summary_items(&genre);
+        let artwork = ArtworkBinding::genre_slots(&genre.genre, &genre.representative_albums);
+        let current_genre = Rc::new(RefCell::new(Arc::clone(&genre.genre)));
         let kind_row = self.genre_detail_kind_row(Rc::clone(&current_genre));
         let actions = detail_action_row();
         actions.set_halign(gtk::Align::Start);
-        let source_descriptor = PlayContextDescriptor::Genre {
-            genre_id: genre_id.clone(),
-            music_folder_id: selected_music_folder_id(self),
-        };
+        let context_id = format!("genre:{}", genre_id.as_str());
         let grouped = self.grouped_detail_view(GroupedDetailData {
             key: LibraryListKey::GenreTracks,
             kind_row: Some(kind_row.upcast()),
-            title: genre.name.clone(),
+            title: genre.genre.name.clone(),
             artwork,
             seed,
             summary_items,
             actions: Some(actions.clone().upcast()),
-            tracks: detail.tracks,
+            tracks,
             table_context: "genre-detail",
-            source_descriptor: Some(source_descriptor.clone()),
+            playback_context: context_id.clone(),
         });
-        self.install_genre_detail_actions(&actions, &grouped, source_descriptor);
-        let mounted_track_count = Rc::new(Cell::new(u64::from(genre.track_count)));
-        let track_count_for_locale = Rc::clone(&mounted_track_count);
-        grouped.bind_summary_text_with(0, move || track_count_text(track_count_for_locale.get()));
-        let route_stack = gtk::Stack::new();
-        route_stack.set_hexpand(true);
-        route_stack.set_vexpand(true);
-        route_stack.add_named(&grouped.widget(), Some("detail"));
-        route_stack.add_named(
+        self.install_grouped_detail_actions(&actions, grouped.tracks(), context_id);
+        let track_count = Rc::new(Cell::new(genre.track_count));
+        let localized_track_count = Rc::clone(&track_count);
+        grouped.bind_summary_text_with(0, move || {
+            track_count_text(u64::from(localized_track_count.get()))
+        });
+        let stack = gtk::Stack::new();
+        stack.set_hexpand(true);
+        stack.set_vexpand(true);
+        stack.add_named(&grouped.widget(), Some("content"));
+        stack.add_named(
             &self.placeholder_view("Genre", "The selected cached genre was not found."),
             Some("missing"),
         );
-        route_stack.set_visible_child_name("detail");
-
-        let shell = Rc::clone(self);
-        let apply_stack = route_stack.clone();
-        let delta_grouped = grouped.clone();
-        let delta_track_count = Rc::clone(&mounted_track_count);
-        let apply_current_genre = Rc::clone(&current_genre);
-        let apply_loaded: Rc<dyn Fn(Result<Option<::library::CachedGenreDetail>, String>)> =
-            Rc::new(move |result| {
-                let detail = match result {
-                    Ok(Some(detail)) => detail,
-                    Ok(None) => {
-                        apply_stack.set_visible_child_name("missing");
+        stack.set_visible_child_name("content");
+        let identity = self.mounted_route_read_identity(
+            Route::GenreDetail(genre_id.clone()),
+            &loaded,
+            music_folder_id.clone(),
+        );
+        let apply = {
+            let shell = Rc::clone(self);
+            let grouped = grouped.clone();
+            let stack = stack.clone();
+            let current_genre = Rc::clone(&current_genre);
+            let track_count = Rc::clone(&track_count);
+            Rc::new(
+                move |request: GenreDetailReadRequest,
+                      result: Result<Option<PreparedGenreDetail>, String>| {
+                    if !shell.mounted_route_read_is_current(&request.identity) {
                         return;
                     }
-                    Err(error) => {
-                        tracing::warn!(%error, "failed to refresh Genre detail projection");
+                    let next = match result {
+                        Ok(next) => next,
+                        Err(error) => {
+                            tracing::warn!(%error, "failed to refresh the mounted Genre route");
+                            return;
+                        }
+                    };
+                    let Some(next) = next else {
+                        stack.set_visible_child_name("missing");
+                        return;
+                    };
+                    let artwork = ArtworkBinding::genre_slots(
+                        &next.summary.genre,
+                        &next.summary.representative_albums,
+                    );
+                    if !grouped.replace_prepared(
+                        &shell,
+                        &next.summary.genre.name,
+                        &artwork,
+                        stable_seed(next.summary.genre.id.as_str()),
+                        &genre_summary_items(&next.summary),
+                        next.tracks,
+                    ) {
                         return;
                     }
-                };
-                let mut summary_items = vec![(
-                    "rufin-route-tracks-symbolic",
-                    track_count_text(detail.genre.track_count.into()),
-                )];
-                if detail.genre.duration_seconds > 0 {
-                    summary_items.push((
-                        "appointment-soon-symbolic",
-                        format_duration_units(detail.genre.duration_seconds),
-                    ));
-                }
-                let seed = stable_seed(detail.genre.id.as_str());
-                let artwork = ArtworkBinding::genre_slots(&detail.genre);
-                delta_track_count.set(u64::from(detail.genre.track_count));
-                delta_grouped.replace(
-                    &shell,
-                    &detail.genre.name,
-                    &summary_items,
-                    &artwork,
-                    seed,
-                    detail.tracks,
-                );
-                apply_current_genre.replace(detail.genre);
-                apply_stack.set_visible_child_name("detail");
-            });
-        let load_query = library_query.clone();
-        let load_genre_id = genre_id.clone();
-        let load: MountedRefreshLoader<Result<Option<::library::CachedGenreDetail>, String>> =
-            Arc::new(move || load_query.genre_detail(&load_genre_id));
-        let refresh =
-            MountedRouteRefresh::new(Rc::downgrade(&apply_loaded), load, "mounted Genre detail");
-        let affected_by = Rc::new(|delta: &::library::LibraryDelta| {
-            delta.reset.is_some()
-                || !delta.genres.is_empty()
-                || !delta.albums.is_empty()
-                || !delta.tracks.is_empty()
-        });
-        let apply_delta = {
-            let apply_loaded = Rc::clone(&apply_loaded);
-            let refresh = Rc::clone(&refresh);
-            Rc::new(move |_: &::library::LibraryDelta| {
-                let _ = &apply_loaded;
-                refresh.request();
+                    track_count.set(next.summary.track_count);
+                    current_genre.replace(Arc::clone(&next.summary.genre));
+                    stack.set_visible_child_name("content");
+                },
+            )
+        };
+        let load = {
+            let loaded = Arc::clone(&loaded);
+            let genre_id = genre_id.clone();
+            let music_folder_id = music_folder_id.clone();
+            Arc::new(move |request: &GenreDetailReadRequest| {
+                load_genre_detail(
+                    &loaded,
+                    &genre_id,
+                    music_folder_id.as_ref(),
+                    &request.tracks.settings,
+                )
+                .and_then(|detail| {
+                    detail
+                        .map(|GenreDetail { summary, tracks }| {
+                            prepare_track_projection(tracks, request.tracks.clone())
+                                .map(|tracks| PreparedGenreDetail { summary, tracks })
+                                .map_err(|error| error.to_string())
+                        })
+                        .transpose()
+                })
             })
         };
+        let read = LatestMountedRouteRead::new_with_request(apply, load, "mounted Genre route");
+        {
+            let read = Rc::downgrade(&read);
+            let identity = identity.clone();
+            grouped.tracks().connect_search_request(move |tracks| {
+                let Some(read) = read.upgrade() else {
+                    return;
+                };
+                read.request_with_if_running(GenreDetailReadRequest {
+                    identity: identity.clone(),
+                    tracks,
+                });
+            });
+        }
         let resume = {
             let shell = Rc::clone(self);
+            let grouped = grouped.clone();
+            let read = Rc::clone(&read);
+            let identity = identity.clone();
             Rc::new(move || {
                 let settings = shell
                     .settings
@@ -156,15 +181,52 @@ impl Shell {
                     .borrow()
                     .library_list(LibraryListKey::GenreTracks);
                 grouped.apply_library_list_settings(LibraryListKey::GenreTracks, &settings);
+                read.request_with_if_running(GenreDetailReadRequest {
+                    identity: identity.clone(),
+                    tracks: grouped.tracks().projection_request(),
+                });
             })
         };
-        MountedRoute::new(route_stack.upcast(), affected_by, apply_delta, resume)
+        let update = {
+            let genre_id = genre_id.clone();
+            let grouped = grouped.clone();
+            let read = Rc::clone(&read);
+            let identity = identity.clone();
+            let music_folder_id = music_folder_id.clone();
+            Rc::new(move |update: &crate::runtime::SelectedLibraryUpdate| {
+                let replacements = update.change.tracks.as_slice();
+                if !update.change.genres.contains(&genre_id) {
+                    if replacements.is_empty() {
+                        return;
+                    }
+                    if grouped
+                        .tracks()
+                        .apply_track_replacement(replacements, |track| {
+                            track
+                                .relations
+                                .genres
+                                .iter()
+                                .any(|genre| genre.id == genre_id)
+                                && music_folder_id.as_ref().is_none_or(|folder_id| {
+                                    track.relations.music_folders.contains(folder_id)
+                                })
+                        })
+                    {
+                        return;
+                    }
+                }
+                read.request_with(GenreDetailReadRequest {
+                    identity: identity.clone(),
+                    tracks: grouped.tracks().projection_request(),
+                });
+            })
+        };
+        MountedRoute::new(stack.upcast(), resume)
+            .with_item_navigation(grouped.item_navigation())
+            .with_library_update(update)
     }
 
-    fn genre_detail_kind_row(
-        self: &Rc<Self>,
-        current_genre: Rc<RefCell<::library::Genre>>,
-    ) -> gtk::Box {
+    fn genre_detail_kind_row(self: &Rc<Self>, genre: Rc<RefCell<Arc<Genre>>>) -> gtk::Box {
         let kind = localized_label("Genre");
         kind.add_css_class("eyebrow");
         kind.set_xalign(0.0);
@@ -182,39 +244,45 @@ impl Shell {
         let radio = detail_radio_button();
         let controller = self.products.playback.radio.clone();
         radio.connect_clicked(move |_| {
-            controller.play_radio(RadioPlayRequest::now(RadioSeed::Genre(
-                current_genre.borrow().clone(),
-            )));
+            let genre = genre.borrow();
+            controller.play_radio(RadioPlayRequest::now(RadioSeed::Genre {
+                id: genre.id.clone(),
+                name: genre.name.clone(),
+            }));
         });
         row.append(&radio);
         row
     }
+}
 
-    fn install_genre_detail_actions(
-        self: &Rc<Self>,
-        actions: &gtk::Box,
-        grouped: &super::grouped_detail::GroupedDetailView,
-        descriptor: PlayContextDescriptor,
-    ) {
-        let play = detail_primary_action_button(PLAY_ICON, "Play");
-        let controller = self.products.playback.queue.clone();
-        let play_grouped = grouped.clone();
-        let play_descriptor = descriptor.clone();
-        play.connect_clicked(move |_| {
-            controller.play_context(ContextPlayRequest::loaded(
-                play_descriptor.clone(),
-                QueuePlacement::Now,
-                play_grouped.source_tracks(),
-            ));
-        });
-        actions.append(&play);
-
-        let batch_grouped = grouped.clone();
-        append_loaded_context_batch_queue_actions(
-            actions,
-            &self.products.playback.queue,
-            descriptor,
-            Rc::new(move || batch_grouped.source_tracks()),
-        );
+pub(crate) fn load_genre_detail(
+    loaded: &Arc<LoadedLibrary>,
+    genre_id: &::library::GenreId,
+    music_folder_id: Option<&MusicFolderId>,
+    settings: &LibraryListSettings,
+) -> Result<Option<GenreDetail>, String> {
+    let mut detail = loaded
+        .genre_detail(genre_id, music_folder_id)
+        .map_err(|error| error.to_string())?;
+    if let Some(detail) = detail.as_mut() {
+        detail.tracks = detail
+            .tracks
+            .sorted(settings.sort_key.track_sort(), settings.descending)
+            .map_err(|error| error.to_string())?;
     }
+    Ok(detail)
+}
+
+fn genre_summary_items(genre: &GenreSummary) -> Vec<(&'static str, String)> {
+    let mut items = vec![(
+        "rufin-route-tracks-symbolic",
+        track_count_text(genre.track_count.into()),
+    )];
+    if genre.duration_seconds > 0 {
+        items.push((
+            "appointment-soon-symbolic",
+            format_duration_units(genre.duration_seconds),
+        ));
+    }
+    items
 }

@@ -2,15 +2,13 @@ use std::cell::RefCell;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
-use crate::runtime::source::SourceHandle;
-use ::library::SourceId;
-use ::library::SourceLocalAccess;
-use adw::prelude::*;
-use gtk::gio;
-use sources::{
-    CredentialHostPreset, CredentialSettingsInput, LocalAccessStatus, SourceLocalAccessInput,
+use crate::runtime::source::{
+    CredentialInput, CredentialPreset, LocalAccessStatus, SourceHandle, SourceLocalAccess,
+    SourceSummary,
 };
-use sources::{LibrarySourceSelection, SourceIdentity};
+use ::library::{LocalAccessMapping, SourceId, project_local_access_path};
+use adw::prelude::*;
+use gtk::{gio, glib};
 
 use localization::{tr, trn_with};
 
@@ -26,13 +24,13 @@ const MANAGE_SERVER_CLAMP_WIDTH: i32 = 560;
 
 #[derive(Clone)]
 struct ManageServerExitSlot {
-    navigation: adw::NavigationView,
+    navigation: glib::WeakRef<adw::NavigationView>,
     on_close: Rc<dyn Fn()>,
 }
 
 pub(crate) fn manage_server_navigation_page(
     shell: &Rc<Shell>,
-    server: SourceIdentity,
+    server: SourceSummary,
     navigation: &adw::NavigationView,
     preferences_dialog: &adw::Dialog,
     on_close: Rc<dyn Fn()>,
@@ -42,7 +40,7 @@ pub(crate) fn manage_server_navigation_page(
         shell,
         server,
         ManageServerExitSlot {
-            navigation: navigation.clone(),
+            navigation: navigation.downgrade(),
             on_close,
         },
         preferences_dialog,
@@ -52,42 +50,23 @@ pub(crate) fn manage_server_navigation_page(
 
 fn manage_server_content(
     shell: &Rc<Shell>,
-    server: SourceIdentity,
+    server: SourceSummary,
     exit: ManageServerExitSlot,
     preferences_dialog: &adw::Dialog,
 ) -> gtk::Widget {
     let (access, access_status, selected) = {
-        let library = shell.source.presentation.borrow();
-        let summary = library
-            .source_local_access
+        let configured = shell.source.configured.borrow();
+        let summary = configured
+            .local_access
             .iter()
             .find(|summary| summary.source_id == server.id)
             .cloned();
-        let access = summary
-            .as_ref()
-            .and_then(|summary| summary.access.clone())
-            .or_else(|| {
-                library
-                    .source
-                    .as_ref()
-                    .filter(|active| active.id == server.id)
-                    .and_then(|_| library.local_access.clone())
-            });
+        let access = summary.as_ref().and_then(|summary| summary.access.clone());
         let status = summary
             .as_ref()
             .map(|summary| summary.status.clone())
-            .or_else(|| {
-                library
-                    .source
-                    .as_ref()
-                    .filter(|active| active.id == server.id)
-                    .map(|_| library.local_access_status.clone())
-            })
             .unwrap_or_default();
-        let selected = matches!(
-            &library.selected_source,
-            Some(LibrarySourceSelection::Source(source_id)) if *source_id == server.id
-        );
+        let selected = configured.selected_source_id.as_ref() == Some(&server.id);
         (access, status, selected)
     };
     let scroller = gtk::ScrolledWindow::new();
@@ -123,9 +102,7 @@ fn manage_server_content(
     }
 
     let folder = Rc::new(RefCell::new(
-        access
-            .as_ref()
-            .map(|access| PathBuf::from(&access.root_path)),
+        access.as_ref().map(|access| access.root_path.clone()),
     ));
     let saved_local_prefix = access
         .as_ref()
@@ -133,7 +110,7 @@ fn manage_server_content(
         .unwrap_or_default();
     let saved_server_prefix = access
         .as_ref()
-        .and_then(|access| access.path_replace_from.as_deref())
+        .and_then(|access| access.server_prefix.as_deref())
         .unwrap_or_default()
         .to_string();
     let mut display_local_prefix = saved_local_prefix.clone();
@@ -160,7 +137,7 @@ fn manage_server_content(
         .subtitle(
             access
                 .as_ref()
-                .map(|access| access.root_path.clone())
+                .map(|access| access.root_path.display().to_string())
                 .unwrap_or_else(|| tr("No folder selected")),
         )
         .build();
@@ -254,14 +231,30 @@ fn manage_server_content(
     ));
     let update_state = Rc::new({
         let folder = Rc::clone(&folder);
-        let server_prefix = server_prefix.clone();
-        let local_prefix = local_prefix.clone();
-        let preview_row = preview_row.clone();
-        let status = status.clone();
-        let save = save.clone();
+        let server_prefix = server_prefix.downgrade();
+        let local_prefix = local_prefix.downgrade();
+        let preview_row = preview_row.downgrade();
+        let status = status.downgrade();
+        let save = save.downgrade();
         let initial_draft = initial_draft.clone();
         let access_status = access_status.clone();
         move || {
+            let (
+                Some(server_prefix),
+                Some(local_prefix),
+                Some(preview_row),
+                Some(status),
+                Some(save),
+            ) = (
+                server_prefix.upgrade(),
+                local_prefix.upgrade(),
+                preview_row.upgrade(),
+                status.upgrade(),
+                save.upgrade(),
+            )
+            else {
+                return;
+            };
             let draft = local_access_draft(&folder, &server_prefix, &local_prefix, true);
             let has_location = draft.folder.is_some() && !draft.local_prefix.trim().is_empty();
             let local_prefix_exists = Path::new(draft.local_prefix.trim()).is_dir();
@@ -327,7 +320,7 @@ fn manage_server_content(
             status_for_save.set_text(&tr("Enter a local prefix."));
             return;
         }
-        source.save_local_access(SourceLocalAccessInput {
+        source.save_local_access(SourceLocalAccess {
             source_id: source_id.clone(),
             root_path: root,
             server_prefix: Some(server_prefix.text().to_string()),
@@ -347,17 +340,18 @@ fn source_settings_error(error: &str) -> gtk::Widget {
 }
 
 fn close_manage_server(exit: &ManageServerExitSlot) {
-    exit.navigation.pop();
+    if let Some(navigation) = exit.navigation.upgrade() {
+        navigation.pop();
+    }
     (exit.on_close)();
 }
 
 pub(crate) fn credential_source_settings_group(
     shell: &Rc<Shell>,
-    source_id: SourceId,
-    preset: CredentialHostPreset,
+    preset: CredentialPreset,
     source_title: &'static str,
     extra: Option<adw::SwitchRow>,
-    submit: impl Fn(&SourceHandle, CredentialSettingsInput) + 'static,
+    submit: impl Fn(&SourceHandle, CredentialInput) + 'static,
 ) -> gtk::Widget {
     let section = gtk::Box::new(gtk::Orientation::Vertical, 8);
 
@@ -367,7 +361,7 @@ pub(crate) fn credential_source_settings_group(
         .build();
 
     let (name_address_row, name, address) =
-        server_name_address_row(&preset.server_name, &preset.server_url, true);
+        server_name_address_row(&preset.source_name, &preset.server_url, true);
     fields_group.add(&name_address_row);
     section.append(&fields_group);
 
@@ -405,10 +399,9 @@ pub(crate) fn credential_source_settings_group(
     save.connect_activated(move |_| {
         submit(
             &source,
-            CredentialSettingsInput {
-                source_id: source_id.clone(),
-                name: name.text().trim().to_string(),
-                base_url: address.text().trim().to_string(),
+            CredentialInput {
+                source_name: Some(name.text().trim().to_string()),
+                server_url: address.text().trim().to_string(),
                 username: username.text().trim().to_string(),
                 password: password.text().to_string(),
                 trust_invalid_cert: !cert_verify.is_active(),
@@ -455,7 +448,7 @@ fn server_name_address_row(
 
 fn server_actions_group(
     shell: &Rc<Shell>,
-    server: &SourceIdentity,
+    server: &SourceSummary,
     selected: bool,
     exit: &ManageServerExitSlot,
     preferences_dialog: &adw::Dialog,
@@ -471,11 +464,13 @@ fn server_actions_group(
         let source = shell.products.source.clone();
         let source_id = server.id.clone();
         let exit = exit.clone();
-        let preferences_dialog = preferences_dialog.clone();
+        let preferences_dialog = preferences_dialog.downgrade();
         select.connect_clicked(move |_| {
-            source.select_source(LibrarySourceSelection::Source(source_id.clone()));
+            source.select_source(source_id.clone());
             close_manage_server(&exit);
-            preferences_dialog.close();
+            if let Some(dialog) = preferences_dialog.upgrade() {
+                dialog.close();
+            }
         });
         actions.append(&select);
     }
@@ -483,21 +478,14 @@ fn server_actions_group(
     let resync = row_action_button("Resync Library", "view-refresh-symbolic");
     let source = shell.products.source.clone();
     let source_id = server.id.clone();
-    let preferences_dialog_for_resync = preferences_dialog.clone();
+    let preferences_dialog_for_resync = preferences_dialog.downgrade();
     resync.connect_clicked(move |_| {
-        source.resync_source(source_id.clone());
-        preferences_dialog_for_resync.close();
+        source.refresh_source(source_id.clone());
+        if let Some(dialog) = preferences_dialog_for_resync.upgrade() {
+            dialog.close();
+        }
     });
     actions.append(&resync);
-
-    let clear_cache = row_action_button("Clear Cached Library", "edit-clear-symbolic");
-    let clear_shell = Rc::clone(shell);
-    let source_id = server.id.clone();
-    let server_name = server_display_name(server);
-    clear_cache.connect_clicked(move |_| {
-        confirm_clear_source_cache(&clear_shell, source_id.clone(), &server_name);
-    });
-    actions.append(&clear_cache);
 
     let forget = row_action_button("Forget Server", "window-close-symbolic");
     forget.add_css_class("destructive-action");
@@ -505,7 +493,7 @@ fn server_actions_group(
     let source_id = server.id.clone();
     let server_name = server_display_name(server);
     let exit = exit.clone();
-    let preferences_dialog = preferences_dialog.clone();
+    let preferences_dialog = preferences_dialog.downgrade();
     forget.connect_clicked(move |_| {
         confirm_forget_source(
             &forget_shell,
@@ -516,7 +504,9 @@ fn server_actions_group(
                 let preferences_dialog = preferences_dialog.clone();
                 move || {
                     close_manage_server(&exit);
-                    preferences_dialog.close();
+                    if let Some(dialog) = preferences_dialog.upgrade() {
+                        dialog.close();
+                    }
                 }
             }),
         );
@@ -574,33 +564,6 @@ fn button_row(title: &str, icon_name: &str) -> adw::ButtonRow {
     row
 }
 
-fn confirm_clear_source_cache(shell: &Rc<Shell>, source_id: SourceId, server_name: &str) {
-    let dialog = adw::AlertDialog::builder()
-        .heading(tr("Clear Cached Library"))
-        .body(format!(
-            "{} {}",
-            tr("This removes cached library metadata for"),
-            server_name
-        ))
-        .build();
-    let cancel = tr("Cancel");
-    let clear = tr("Clear Cache");
-    dialog.add_responses(&[("cancel", cancel.as_str()), ("clear", clear.as_str())]);
-    dialog.set_default_response(Some("cancel"));
-    dialog.set_close_response("cancel");
-    dialog.set_response_appearance("clear", adw::ResponseAppearance::Destructive);
-    let source = shell.products.source.clone();
-    dialog.choose(
-        Some(&shell.chrome.window),
-        None::<&gio::Cancellable>,
-        move |response| {
-            if response.as_str() == "clear" {
-                source.clear_source_cache(source_id.clone());
-            }
-        },
-    );
-}
-
 pub(crate) fn confirm_forget_source(
     shell: &Rc<Shell>,
     source_id: SourceId,
@@ -634,7 +597,7 @@ pub(crate) fn confirm_forget_source(
     );
 }
 
-fn server_display_name(server: &SourceIdentity) -> String {
+fn server_display_name(server: &SourceSummary) -> String {
     if server.name.trim().is_empty() {
         source_kind_title(&server.kind)
             .map(tr)
@@ -646,11 +609,11 @@ fn server_display_name(server: &SourceIdentity) -> String {
 
 fn local_access_display_path(access: &SourceLocalAccess) -> String {
     access
-        .path_replace_to
+        .local_prefix
         .as_deref()
         .filter(|value| !value.trim().is_empty())
-        .unwrap_or(&access.root_path)
-        .to_string()
+        .map(ToString::to_string)
+        .unwrap_or_else(|| access.root_path.display().to_string())
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -723,31 +686,35 @@ fn preview_local_path_preview(
     } else {
         PathBuf::from(local_prefix)
     };
+    let mapping = LocalAccessMapping {
+        root_path: folder
+            .map(Path::to_path_buf)
+            .unwrap_or_else(|| base.clone()),
+        server_prefix: (!server_prefix.is_empty()).then(|| server_prefix.to_string()),
+        local_prefix: (!local_prefix.is_empty()).then(|| local_prefix.to_string()),
+    };
+    let projected = project_local_access_path(sample, &mapping);
 
     if !server_prefix.is_empty() {
-        if !sample.starts_with(server_prefix) {
-            return LocalPathPreview {
+        return match projected {
+            Some(path) => LocalPathPreview {
+                text: path.to_string_lossy().into_owned(),
+                saveable: true,
+            },
+            _ => LocalPathPreview {
                 text: tr("Server sample does not match the server prefix."),
                 saveable: false,
-            };
-        }
-        let suffix = sample
-            .get(server_prefix.len()..)
-            .unwrap_or_default()
-            .trim_start_matches(['/', '\\']);
-        return LocalPathPreview {
-            text: base
-                .join(path_from_server_suffix(suffix))
-                .to_string_lossy()
-                .into_owned(),
-            saveable: true,
+            },
         };
     }
 
     let sample_path = Path::new(sample);
     if sample_path.is_relative() {
         return LocalPathPreview {
-            text: base.join(sample_path).to_string_lossy().into_owned(),
+            text: projected
+                .unwrap_or_else(|| base.join(sample_path))
+                .to_string_lossy()
+                .into_owned(),
             saveable: true,
         };
     }
@@ -787,9 +754,9 @@ fn local_access_status_text(
     }
     if status.total_track_count == 0 {
         return if changed {
-            tr("Save to apply this mapping after the next sync.")
+            tr("Save to rescan this local library.")
         } else {
-            tr("No cached tracks yet. Sync the server to preview matches.")
+            tr("Local library folder is saved.")
         };
     }
 
@@ -889,11 +856,4 @@ fn path_component_spans(value: &str) -> Vec<PathComponent<'_>> {
         });
     }
     parts
-}
-
-fn path_from_server_suffix(suffix: &str) -> PathBuf {
-    suffix
-        .split(['/', '\\'])
-        .filter(|part| !part.is_empty())
-        .collect::<PathBuf>()
 }

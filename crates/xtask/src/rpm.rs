@@ -10,9 +10,16 @@ use crate::release::normalize_plain_version;
 
 const REGISTRY_SOURCE: &str = "registry+https://github.com/rust-lang/crates.io-index";
 
+#[derive(Debug, Eq, PartialEq)]
+enum RpmSource {
+    ReleaseTag(String),
+    CandidateRef(String),
+}
+
 pub(crate) fn srpm_command(mut args: Vec<String>) -> Result<()> {
-    let usage = "Usage: cargo run --locked -p xtask -- generate rpm-srpm TAG --output PATH";
+    let usage = "Usage: cargo run --locked -p xtask -- generate rpm-srpm [TAG | --candidate-ref REF] --output PATH";
     let mut tag = None;
+    let mut candidate_ref = None;
     let mut output = None;
 
     while !args.is_empty() {
@@ -27,47 +34,75 @@ pub(crate) fn srpm_command(mut args: Vec<String>) -> Result<()> {
                 }
                 output = Some(PathBuf::from(args.remove(0)));
             }
+            "--candidate-ref" => {
+                if args.is_empty() {
+                    return Err("--candidate-ref requires a Git ref".into());
+                }
+                candidate_ref = Some(args.remove(0));
+            }
             arg if arg.starts_with('-') => return Err(format!("unknown option: {arg}").into()),
             arg if tag.is_none() => tag = Some(arg.to_owned()),
             arg => return Err(format!("unexpected argument: {arg}").into()),
         }
     }
 
-    let tag = tag.ok_or("generate rpm-srpm requires TAG")?;
+    let source = select_source(tag, candidate_ref)?;
     let output = output.ok_or("generate rpm-srpm requires --output PATH")?;
-    generate_srpm(&tag, &output)
+    generate_srpm(source, &output)
 }
 
-fn generate_srpm(tag: &str, output: &Path) -> Result<()> {
+fn select_source(tag: Option<String>, candidate_ref: Option<String>) -> Result<RpmSource> {
+    match (tag, candidate_ref) {
+        (Some(tag), None) => Ok(RpmSource::ReleaseTag(tag)),
+        (None, Some(candidate_ref)) => Ok(RpmSource::CandidateRef(candidate_ref)),
+        (Some(_), Some(_)) => Err("pass either TAG or --candidate-ref, not both".into()),
+        (None, None) => Err("generate rpm-srpm requires TAG or --candidate-ref".into()),
+    }
+}
+
+fn generate_srpm(source: RpmSource, output: &Path) -> Result<()> {
     for command in ["cargo", "git", "rpmbuild", "sha256sum", "tar", "xz"] {
         ensure_command(command)?;
     }
 
-    let version = normalize_plain_version(tag)?;
-    let tag = format!("v{version}");
     let root = repo_root()?;
+    let (source_ref, version, spec) = match source {
+        RpmSource::ReleaseTag(tag) => {
+            let version = normalize_plain_version(&tag)?.to_owned();
+            let tag = format!("v{version}");
+            verify_tag(&root, &tag)?;
+            let spec_path = root.join("packaging/rpm/rufin.spec");
+            if !spec_path.is_file() {
+                return Err(format!("missing RPM spec: {}", spec_path.display()).into());
+            }
+            let spec = read_to_string(&spec_path)?;
+            (tag, version, spec)
+        }
+        RpmSource::CandidateRef(candidate_ref) => {
+            verify_ref(&root, &candidate_ref)?;
+            let cargo_toml = git_file(&root, &candidate_ref, "Cargo.toml")?;
+            let version = normalize_plain_version(workspace_version(&cargo_toml)?)?.to_owned();
+            let spec = git_file(&root, &candidate_ref, "packaging/rpm/rufin.spec")?;
+            (candidate_ref, version, spec)
+        }
+    };
     let output = if output.is_absolute() {
         output.to_path_buf()
     } else {
         root.join(output)
     };
-    let spec = root.join("packaging/rpm/rufin.spec");
-    if !spec.is_file() {
-        return Err(format!("missing RPM spec: {}", spec.display()).into());
-    }
 
     let source_name = format!("Rufin-{version}.tar.xz");
     let vendor_name = format!("Rufin-{version}-vendor.tar.xz");
     refuse_existing_artifacts(&output, [&source_name, &vendor_name, "SHA256SUMS"])?;
 
-    verify_tag(&root, &tag)?;
-    verify_release_inputs(&root, &spec, &tag, &version)?;
+    verify_source_inputs(&root, &spec, &source_ref, &version)?;
 
     let temp = temp_path("rpm-srpm");
     let result = generate_srpm_inner(
         &root,
         &spec,
-        &tag,
+        &source_ref,
         &version,
         &source_name,
         &vendor_name,
@@ -81,8 +116,8 @@ fn generate_srpm(tag: &str, output: &Path) -> Result<()> {
 #[allow(clippy::too_many_arguments)]
 fn generate_srpm_inner(
     root: &Path,
-    spec: &Path,
-    tag: &str,
+    spec: &str,
+    source_ref: &str,
     version: &str,
     source_name: &str,
     vendor_name: &str,
@@ -109,7 +144,7 @@ fn generate_srpm_inner(
             .arg(format!("--prefix=Rufin-{version}/"))
             .args(["--output"])
             .arg(&raw_source)
-            .arg(tag),
+            .arg(source_ref),
         "git archive",
     )?;
     run(
@@ -141,10 +176,15 @@ fn generate_srpm_inner(
 
     let timestamp_output = Command::new("git")
         .current_dir(root)
-        .args(["show", "-s", "--format=%ct", &format!("{tag}^{{commit}}")])
+        .args([
+            "show",
+            "-s",
+            "--format=%ct",
+            &format!("{source_ref}^{{commit}}"),
+        ])
         .output()?;
     if !timestamp_output.status.success() {
-        return Err(format!("could not read the commit timestamp for {tag}").into());
+        return Err(format!("could not read the commit timestamp for {source_ref}").into());
     }
     let timestamp = String::from_utf8(timestamp_output.stdout)?;
     run(
@@ -167,7 +207,7 @@ fn generate_srpm_inner(
     set_archive_permissions(&staged_vendor)?;
 
     let staged_spec = stage.join("rufin.spec");
-    fs::copy(spec, &staged_spec)?;
+    fs::write(&staged_spec, spec)?;
     set_archive_permissions(&staged_spec)?;
 
     run(
@@ -242,33 +282,63 @@ fn verify_tag(root: &Path, tag: &str) -> Result<()> {
     )
 }
 
-fn verify_release_inputs(root: &Path, spec: &Path, tag: &str, version: &str) -> Result<()> {
-    let spec_contents = read_to_string(spec)?;
-    let spec_version = spec_version(&spec_contents)?;
+fn verify_ref(root: &Path, source_ref: &str) -> Result<()> {
+    run(
+        Command::new("git").current_dir(root).args([
+            "rev-parse",
+            "--verify",
+            &format!("{source_ref}^{{commit}}"),
+        ]),
+        "candidate ref",
+    )
+}
+
+fn verify_source_inputs(root: &Path, spec: &str, source_ref: &str, version: &str) -> Result<()> {
+    let spec_version = spec_version(spec)?;
     if spec_version != version {
         return Err(format!(
-            "RPM spec version is {spec_version}, but {tag} contains version {version}"
+            "RPM spec version is {spec_version}, but {source_ref} contains version {version}"
+        )
+        .into());
+    }
+    verify_spec_japanese_readings(spec)?;
+
+    let cargo_toml = git_file(root, source_ref, "Cargo.toml")?;
+    let cargo_version = workspace_version(&cargo_toml)?;
+    if cargo_version != version {
+        return Err(format!(
+            "{source_ref} Cargo.toml version is {cargo_version}, expected {version}"
         )
         .into());
     }
 
-    let cargo_toml = git_file(root, tag, "Cargo.toml")?;
-    let cargo_version = workspace_version(&cargo_toml)?;
-    if cargo_version != version {
-        return Err(
-            format!("{tag} Cargo.toml version is {cargo_version}, expected {version}").into(),
-        );
-    }
-
-    let metainfo = git_file(root, tag, "data/io.github.screwys.Rufin.metainfo.xml")?;
+    let metainfo = git_file(
+        root,
+        source_ref,
+        "data/io.github.screwys.Rufin.metainfo.xml",
+    )?;
     let metainfo_version = latest_metainfo_version(&metainfo)?;
     if metainfo_version != version {
-        return Err(
-            format!("{tag} metainfo release is {metainfo_version}, expected {version}").into(),
-        );
+        return Err(format!(
+            "{source_ref} metainfo release is {metainfo_version}, expected {version}"
+        )
+        .into());
     }
 
-    verify_lock_sources(&git_file(root, tag, "Cargo.lock")?)
+    verify_lock_sources(&git_file(root, source_ref, "Cargo.lock")?)?;
+    Ok(())
+}
+
+fn verify_spec_japanese_readings(spec: &str) -> Result<()> {
+    for marker in [
+        "data/japanese-readings.dic",
+        "%{_datadir}/rufin/japanese-readings.dic",
+    ] {
+        if !spec.contains(marker) {
+            return Err(format!("RPM spec is missing Japanese readings data: {marker}").into());
+        }
+    }
+    Ok(())
 }
 
 fn git_file(root: &Path, tag: &str, path: &str) -> Result<String> {
@@ -372,31 +442,28 @@ fn run(command: &mut Command, label: &str) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::{latest_metainfo_version, spec_version, verify_lock_sources, workspace_version};
+    use super::{RpmSource, select_source, verify_lock_sources, verify_spec_japanese_readings};
 
     #[test]
-    fn release_versions_come_from_their_owner_fields() {
+    fn candidate_ref_is_distinct_from_a_signed_release_tag() {
         assert_eq!(
-            spec_version("Name: rufin\nVersion: 0.9.0\n").unwrap(),
-            "0.9.0"
+            select_source(None, Some("HEAD".to_owned())).unwrap(),
+            RpmSource::CandidateRef("HEAD".to_owned())
         );
-        assert_eq!(
-            workspace_version("[workspace.package]\nversion = \"0.9.0\"\n[dependencies]\n")
-                .unwrap(),
-            "0.9.0"
-        );
-        assert_eq!(
-            latest_metainfo_version(
-                "<releases>\n<release version=\"0.9.0\" date=\"2026-07-16\"/>\n</releases>"
-            )
-            .unwrap(),
-            "0.9.0"
-        );
+        assert!(select_source(Some("v0.9.0".to_owned()), Some("HEAD".to_owned())).is_err());
     }
 
     #[test]
     fn remote_git_dependencies_are_rejected() {
         let lock = "source = \"git+https://example.com/dependency\"\n";
         assert!(verify_lock_sources(lock).is_err());
+    }
+
+    #[test]
+    fn rpm_spec_installs_japanese_readings_data() {
+        let spec = "install data/japanese-readings.dic \
+                    %{buildroot}%{_datadir}/rufin/japanese-readings.dic\n";
+        verify_spec_japanese_readings(spec).unwrap();
+        assert!(verify_spec_japanese_readings("Source0: Rufin.tar.xz\n").is_err());
     }
 }

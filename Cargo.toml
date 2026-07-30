@@ -3,7 +3,7 @@ members = ["crates/*"]
 resolver = "2"
 
 [workspace.package]
-version = "0.9.0"
+version = "0.11.1"
 authors = ["screwy <screwygit@proton.me>"]
 edition = "2024"
 license = "GPL-3.0-or-later"
@@ -18,21 +18,28 @@ adw = { package = "libadwaita", version = "0.9.1" }
 async-channel = "2.5.0"
 async-trait = "0.1.89"
 artwork = { path = "crates/artwork" }
+album-lookup = { path = "crates/album-lookup" }
 base64 = "0.22.1"
+blake3 = "1.8.2"
+csv = "1.4.0"
 directories = "6.0.0"
+desktop-integration = { path = "crates/desktop-integration" }
+downloads = { path = "crates/downloads" }
 futures-executor = "0.3.32"
 futures-util = "0.3.32"
 getrandom = "0.4.0"
+gio = "0.22.6"
 gstreamer = "0.25.2"
 gstreamer-audio = "0.25.2"
+gstreamer-pbutils = "0.25.2"
 gtk = { package = "gtk4", version = "0.11.3" }
 glib = "0.22.7"
 image = { version = "0.25.10", default-features = false, features = ["bmp", "gif", "jpeg", "png", "tiff", "webp"] }
+if-addrs = "0.15.0"
 ksni = "0.3.4"
 library = { path = "crates/library" }
-library-sync = { path = "crates/library-sync" }
 localization = { path = "crates/localization" }
-metadata = { path = "crates/metadata" }
+lyrics = { path = "crates/lyrics" }
 lofty = "0.24.0"
 md5 = "0.8.0"
 mpris-server = "0.10.0"
@@ -41,14 +48,14 @@ oo7 = "0.6.0"
 percent-encoding = "2.3.2"
 playback = { path = "crates/playback" }
 playback-gstreamer = { path = "crates/playback-gstreamer" }
-rich-presence = { path = "crates/rich-presence" }
 scrobbling = { path = "crates/scrobbling" }
 reqwest = "0.13.3"
 rusqlite = "0.40.1"
 rustfft = "6.2.0"
 secrets = { path = "crates/secrets" }
-serde = { version = "1.0.228", features = ["derive"] }
+serde = { version = "1.0.228", features = ["derive", "rc"] }
 serde_json = "1.0.150"
+serde_path_to_error = "0.1.20"
 sources = { path = "crates/sources" }
 tempfile = "3.23.0"
 thiserror = "2.0.18"
@@ -58,7 +65,9 @@ tracing = "0.1.41"
 tracing-subscriber = "0.3.23"
 ui = { path = "crates/ui" }
 url = "2.5.7"
+vibrato-rkyv = { version = "=0.7.13", default-features = false }
 walkdir = "2.5.0"
+wana_kana = { version = "=5.0.0", default-features = false }
 wiremock = "0.6.5"
 
 [workspace.lints.rust]

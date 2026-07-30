@@ -1,35 +1,39 @@
 use std::{cell::Cell, rc::Rc};
 
 use super::route::Route;
-use ::library::{Album, FavoriteItemId};
+use ::library::{AlbumSummary, FavoriteItemId, Track};
 use adw::prelude::*;
 use artwork::ArtworkBinding;
-use playback::{AlbumPlayRequest, QueueHandle};
+use playback::QueuePlacement;
 
-use super::collection_context::{context_album, present_album_context_menu};
+use super::collection_context::{present_album_context_menu, present_track_context_menu};
+use super::collections::PlaybackTarget;
+use super::home_layout::home_showcase_cover_size;
 use super::library_fields::{COLLECTION_GRID_CARD_MARGIN, COLLECTION_GRID_MIN_CARD_WIDTH};
 use crate::favorites::{
-    album_favorite_key, favorite_button_is_active, favorite_icon_button, set_favorite_button_active,
+    album_favorite_key, favorite_button_is_active, favorite_icon_button,
+    set_favorite_button_active, track_favorite_key,
 };
+use crate::interactions::install_context_menu_openers;
 use crate::shell::Shell;
 use crate::shell::actions::{
     ActionButtonVariant, MORE_ICON, PLAY_ICON, PLAY_LATER_ICON, PLAY_NEXT_ICON,
     configure_action_button, icon_button, icon_button_without_tooltip,
 };
-use crate::shell::cover::{ArtworkTile, GRID_COVER_SIZE};
-use ::library::ActiveLibraryQuery;
+use crate::shell::cover::presentation::stable_seed;
+use crate::shell::cover::{ArtworkTile, cover_fetch_size_for_display};
 
 const COVER_CORNER_ACTION_INSET: i32 = 8;
 
 #[derive(Clone)]
-pub(crate) struct AlbumCoverOverlay {
+pub(crate) struct ShowcaseCoverOverlay {
     root: gtk::Overlay,
     button: gtk::Button,
     tile: ArtworkTile,
     size: Rc<Cell<i32>>,
 }
 
-impl AlbumCoverOverlay {
+impl ShowcaseCoverOverlay {
     pub(crate) fn widget(&self) -> gtk::Widget {
         self.root.clone().upcast()
     }
@@ -47,89 +51,75 @@ impl AlbumCoverOverlay {
 
 pub(crate) fn album_cover_overlay(
     shell: &Rc<Shell>,
-    album: &Album,
+    album: &AlbumSummary,
     size: i32,
-    controller: &QueueHandle,
-    query: &ActiveLibraryQuery,
-) -> AlbumCoverOverlay {
+) -> ShowcaseCoverOverlay {
     let overlay = cover_overlay(size);
+    let album_value = &album.album;
 
     let album_button = gtk::Button::new();
     album_button.add_css_class("album-cover-button");
     album_button.add_css_class("flat");
     constrain_cover_widget(&album_button, size);
     clip_cover(&album_button);
-    let tile = ArtworkTile::new_sized(size, size, album.color_seed);
+    let tile = ArtworkTile::new_sized(size, size, album_value.color_seed);
     shell.bind_artwork_tile(
         &tile,
-        ArtworkBinding::album(album),
-        album.color_seed,
-        size,
-        GRID_COVER_SIZE,
+        ArtworkBinding::album_artwork(&album.artwork),
+        album_value.color_seed,
+        home_showcase_render_size(),
+        home_showcase_fetch_size(),
     );
     album_button.set_child(Some(&tile.widget()));
     let open_shell = Rc::clone(shell);
-    let open_album_id = album.id.clone();
+    let open_album_id = album_value.id.clone();
     album_button
         .connect_clicked(move |_| open_shell.navigate(Route::AlbumDetail(open_album_id.clone())));
     overlay.set_child(Some(&album_button));
 
-    let mut controls = cover_hover_controls(0, "Play album", album.favorite);
+    let mut controls = cover_hover_controls(0, "Play album", album_value.favorite);
     let menu = controls.add_context_button();
-    let menu_target = overlay.downgrade();
     let menu_shell = Rc::clone(shell);
     let menu_album = album.clone();
+    let open_menu: Rc<dyn Fn(&gtk::Widget, Option<(f64, f64)>)> =
+        Rc::new(move |target, position| {
+            present_album_context_menu(target, &menu_shell, menu_album.clone(), position);
+        });
+    install_context_menu_openers(&overlay, Rc::clone(&open_menu));
+    let menu_target = overlay.downgrade();
     menu.connect_clicked(move |_| {
         let Some(menu_target) = menu_target.upgrade() else {
             return;
         };
-        present_album_context_menu(
+        open_menu(
             menu_target.upcast_ref(),
-            &menu_shell,
-            context_album(&menu_shell, &menu_album),
             elastic_cover_context_point(&menu_target),
         );
     });
-    let play_controller = controller.clone();
-    let play_query = query.clone();
-    let album_id = album.id.clone();
+    let play_shell = Rc::clone(shell);
+    let play_album = album.clone();
     controls.play.connect_clicked(move |_| {
-        if let Ok(Some((album, tracks))) = play_query.album_detail(&album_id) {
-            play_controller.play_album(AlbumPlayRequest {
-                album_id: album.id,
-                tracks,
-                anchor_index: 0,
-                shuffled_start: true,
-            });
-        }
+        play_loaded_album(&play_shell, &play_album, QueuePlacement::Now, true);
     });
 
-    let next_controller = controller.clone();
-    let next_query = query.clone();
-    let album_id = album.id.clone();
+    let next_shell = Rc::clone(shell);
+    let next_album = album.clone();
     controls.play_next.connect_clicked(move |_| {
-        if let Ok(Some((_, tracks))) = next_query.album_detail(&album_id) {
-            for track in tracks.iter().rev() {
-                next_controller.play_next(track.clone());
-            }
-        }
+        play_loaded_album(&next_shell, &next_album, QueuePlacement::Next, false);
     });
 
-    let last_controller = controller.clone();
-    let last_query = query.clone();
-    let album_id = album.id.clone();
+    let last_shell = Rc::clone(shell);
+    let last_album = album.clone();
     controls.play_last.connect_clicked(move |_| {
-        if let Ok(Some((_, tracks))) = last_query.album_detail(&album_id) {
-            last_controller.play_last(tracks);
-        }
+        play_loaded_album(&last_shell, &last_album, QueuePlacement::Last, false);
     });
 
     if let Some(favorite) = controls.favorite.as_ref() {
         shell
             .favorites
-            .register_button(album_favorite_key(&album.id), favorite);
+            .register_button(album_favorite_key(&album_value.id), favorite);
         let shell = Rc::clone(shell);
-        let album_id = album.id.clone();
+        let album_id = album_value.id.clone();
         favorite.connect_clicked(move |button| {
             let favorite = !favorite_button_is_active(button);
             shell.set_favorite_with_feedback(
@@ -142,12 +132,135 @@ pub(crate) fn album_cover_overlay(
     controls.add_to_overlay(&overlay);
     controls.connect_hover(&overlay);
 
-    AlbumCoverOverlay {
+    ShowcaseCoverOverlay {
         root: overlay,
         button: album_button,
         tile,
         size: Rc::new(Cell::new(size)),
     }
+}
+
+pub(crate) fn track_cover_overlay(
+    shell: &Rc<Shell>,
+    track: Track,
+    size: i32,
+) -> ShowcaseCoverOverlay {
+    let overlay = cover_overlay(size);
+    let cover_button = gtk::Button::new();
+    cover_button.add_css_class("album-cover-button");
+    cover_button.add_css_class("flat");
+    constrain_cover_widget(&cover_button, size);
+    clip_cover(&cover_button);
+    let seed = stable_seed(track.id.as_str());
+    let tile = ArtworkTile::new_sized(size, size, seed);
+    shell.bind_artwork_tile(
+        &tile,
+        ArtworkBinding::track(&track),
+        seed,
+        home_showcase_render_size(),
+        home_showcase_fetch_size(),
+    );
+    cover_button.set_child(Some(&tile.widget()));
+    let activate_shell = Rc::clone(shell);
+    let activate_track = track.clone();
+    cover_button.connect_clicked(move |_| {
+        play_loaded_track(&activate_shell, activate_track.clone(), QueuePlacement::Now);
+    });
+    overlay.set_child(Some(&cover_button));
+
+    let mut controls = cover_hover_controls(0, "Play track", track.favorite);
+    let menu = controls.add_context_button();
+    let menu_shell = Rc::clone(shell);
+    let menu_track = track.clone();
+    let open_menu: Rc<dyn Fn(&gtk::Widget, Option<(f64, f64)>)> =
+        Rc::new(move |target, position| {
+            present_track_context_menu(target, &menu_shell, menu_track.clone(), position);
+        });
+    install_context_menu_openers(&overlay, Rc::clone(&open_menu));
+    let menu_target = overlay.downgrade();
+    menu.connect_clicked(move |_| {
+        let Some(menu_target) = menu_target.upgrade() else {
+            return;
+        };
+        open_menu(
+            menu_target.upcast_ref(),
+            elastic_cover_context_point(&menu_target),
+        );
+    });
+    let play_shell = Rc::clone(shell);
+    let play_track = track.clone();
+    controls.play.connect_clicked(move |_| {
+        play_loaded_track(&play_shell, play_track.clone(), QueuePlacement::Now);
+    });
+    let next_shell = Rc::clone(shell);
+    let next_track = track.clone();
+    controls.play_next.connect_clicked(move |_| {
+        play_loaded_track(&next_shell, next_track.clone(), QueuePlacement::Next);
+    });
+    let last_shell = Rc::clone(shell);
+    let last_track = track.clone();
+    controls.play_last.connect_clicked(move |_| {
+        play_loaded_track(&last_shell, last_track.clone(), QueuePlacement::Last);
+    });
+    if let Some(favorite) = controls.favorite.as_ref() {
+        shell
+            .favorites
+            .register_button(track_favorite_key(&track.id), favorite);
+        let favorite_shell = Rc::clone(shell);
+        let favorite_id = track.id.clone();
+        favorite.connect_clicked(move |button| {
+            let favorite = !favorite_button_is_active(button);
+            favorite_shell.set_favorite_with_feedback(
+                FavoriteItemId::Track(favorite_id.clone()),
+                favorite,
+                Some(button),
+            );
+        });
+    }
+    controls.add_to_overlay(&overlay);
+    controls.connect_hover(&overlay);
+
+    ShowcaseCoverOverlay {
+        root: overlay,
+        button: cover_button,
+        tile,
+        size: Rc::new(Cell::new(size)),
+    }
+}
+
+fn home_showcase_render_size() -> i32 {
+    home_showcase_cover_size(i32::MAX)
+}
+
+fn home_showcase_fetch_size() -> u32 {
+    cover_fetch_size_for_display(home_showcase_render_size())
+}
+
+fn play_loaded_album(
+    shell: &Shell,
+    album: &AlbumSummary,
+    placement: QueuePlacement,
+    shuffled_start: bool,
+) {
+    let Some(request) = PlaybackTarget::Album(album.album.id.clone()).play_request(
+        shell,
+        placement,
+        shuffled_start,
+    ) else {
+        return;
+    };
+    shell.products.playback.queue.play_loaded(request);
+}
+
+fn play_loaded_track(shell: &Shell, track: Track, placement: QueuePlacement) {
+    let Some(selected) = shell.library.selected.borrow().as_ref().cloned() else {
+        return;
+    };
+    shell
+        .products
+        .playback
+        .queue
+        .play_loaded(selected.one_track(track, placement));
 }
 
 pub(super) fn cover_overlay(size: i32) -> gtk::Overlay {
@@ -281,6 +394,14 @@ mod collection_grid_card_inset_tests {
     use super::*;
 
     #[test]
+    fn responsive_home_artwork_covers_every_presented_size() {
+        let render_size = home_showcase_render_size();
+        for width in 1..=1_200 {
+            assert!(home_showcase_cover_size(width) <= render_size);
+        }
+    }
+
+    #[test]
     fn preliminary_allocations_never_produce_a_negative_card_extent() {
         for allocation in 0..=COLLECTION_GRID_CARD_MARGIN * 2 {
             let (leading, inner) = collection_grid_card_inner_extent(allocation);
@@ -293,9 +414,9 @@ mod collection_grid_card_inset_tests {
 
     #[test]
     fn grid_slot_width_uses_the_configured_card_width() {
-        let expected = 160 + COLLECTION_GRID_CARD_MARGIN * 2;
+        let expected = COLLECTION_GRID_MIN_CARD_WIDTH + COLLECTION_GRID_CARD_MARGIN * 2;
         assert_eq!(
-            collection_grid_card_horizontal_measure(160),
+            collection_grid_card_horizontal_measure(COLLECTION_GRID_MIN_CARD_WIDTH),
             (expected, expected, -1, -1)
         );
     }

@@ -1,165 +1,105 @@
-use std::{
-    cell::RefCell,
-    collections::{HashMap, HashSet},
-    sync::Arc,
-};
+use std::{cell::RefCell, collections::HashMap};
 
-use ::library::{Track, TrackDelta, TrackId};
 use gtk::{gio, glib, prelude::*};
+use library::{AcceptedTrackReplacement, LoadedLibraryResult, SourceId, Track, TrackId, TrackList};
+use playback::{LoadedPlayRequest, QueuePlacement, SourceSessionEpoch};
 
-use crate::{LibraryField, LibraryListSettings};
+use crate::LibraryListSettings;
 
 use super::models::track_matches_query;
 
-struct TrackLocation {
-    source_position: usize,
-    display_generation: u64,
-    display_position: u32,
-    row: Option<glib::WeakRef<glib::BoxedAnyObject>>,
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct TrackProjectionRequest {
+    pub(crate) query: String,
+    pub(crate) settings: LibraryListSettings,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct PreparedTrackProjection {
+    source: TrackList,
+    visible: TrackList,
+    request: TrackProjectionRequest,
+}
+
+/// Prepares one complete Track model projection away from GTK.
+///
+/// The mounted model remains the only row and selection owner. This function
+/// only derives its compact visible order from the accepted source order.
+pub(crate) fn prepare_track_projection(
+    source: TrackList,
+    request: TrackProjectionRequest,
+) -> LoadedLibraryResult<PreparedTrackProjection> {
+    let visible = visible_tracks(&source, &request.query, &request.settings)?;
+    Ok(PreparedTrackProjection {
+        source,
+        visible,
+        request,
+    })
 }
 
 struct TrackModelState {
-    tracks: Arc<Vec<Track>>,
-    order: Vec<usize>,
-    locations: HashMap<TrackId, TrackLocation>,
-    generation: u64,
+    source_id: SourceId,
+    source_session_epoch: SourceSessionEpoch,
+    source: TrackList,
+    visible: TrackList,
+    rows: HashMap<u32, glib::WeakRef<glib::BoxedAnyObject>>,
     query: String,
     settings: LibraryListSettings,
+    point_change: Option<TrackPointChange>,
     #[cfg(test)]
     order_rebuilds: usize,
     #[cfg(test)]
-    source_visits: usize,
+    point_updates: usize,
+    #[cfg(test)]
+    point_order_slot_copies: usize,
+    #[cfg(test)]
+    point_notified_items: usize,
+}
+
+#[derive(Clone, Debug)]
+struct TrackPointChange {
+    id: TrackId,
+    previous_position: Option<u32>,
+    position: Option<u32>,
 }
 
 impl TrackModelState {
     fn new(
-        tracks: Arc<Vec<Track>>,
+        source_id: SourceId,
+        source_session_epoch: SourceSessionEpoch,
+        source: TrackList,
         settings: LibraryListSettings,
-        initial_tracks_are_sorted: bool,
     ) -> Self {
-        let mut state = Self {
-            order: Vec::with_capacity(tracks.len()),
-            locations: HashMap::with_capacity(tracks.len()),
-            tracks,
-            generation: 1,
+        let visible = visible_tracks(&source, "", &settings)
+            .expect("a mounted Track list keeps its loaded Library available");
+        Self {
+            source_id,
+            source_session_epoch,
+            source,
+            visible,
+            rows: HashMap::new(),
             query: String::new(),
             settings,
+            point_change: None,
             #[cfg(test)]
-            order_rebuilds: 0,
+            order_rebuilds: 1,
             #[cfg(test)]
-            source_visits: 0,
-        };
-        for (source_position, track) in state.tracks.iter().enumerate() {
-            state.order.push(source_position);
+            point_updates: 0,
             #[cfg(test)]
-            {
-                state.source_visits += 1;
-            }
-            let replaced = state.locations.insert(
-                track.id.clone(),
-                TrackLocation {
-                    source_position,
-                    display_generation: u64::from(initial_tracks_are_sorted),
-                    display_position: initial_tracks_are_sorted
-                        .then(|| position_u32(source_position))
-                        .unwrap_or_default(),
-                    row: None,
-                },
-            );
-            assert!(replaced.is_none(), "Tracks model requires unique Track IDs");
+            point_order_slot_copies: 0,
+            #[cfg(test)]
+            point_notified_items: 0,
         }
-        if !initial_tracks_are_sorted {
-            let sort = state.settings.sort_key.track_sort();
-            let descending = state.settings.descending;
-            state.order.sort_by(|left, right| {
-                ::library::compare_tracks(
-                    &state.tracks[*left],
-                    &state.tracks[*right],
-                    sort,
-                    descending,
-                )
-            });
-            for (display_position, source_position) in state.order.iter().copied().enumerate() {
-                let track_id = &state.tracks[source_position].id;
-                let location = state
-                    .locations
-                    .get_mut(track_id)
-                    .expect("every displayed Track has a model location");
-                location.display_generation = state.generation;
-                location.display_position = position_u32(display_position);
-            }
-        }
-        #[cfg(test)]
-        {
-            state.order_rebuilds = 1;
-        }
-        state
     }
 
-    fn rebuild_locations(
-        &mut self,
-        mut previous: HashMap<TrackId, TrackLocation>,
-        changed: &HashSet<TrackId>,
-    ) {
-        let mut locations = HashMap::with_capacity(self.tracks.len());
-        for (source_position, track) in self.tracks.iter().enumerate() {
-            let row = previous
-                .remove(&track.id)
-                .filter(|_| !changed.contains(&track.id))
-                .and_then(|location| location.row);
-            let replaced = locations.insert(
-                track.id.clone(),
-                TrackLocation {
-                    source_position,
-                    display_generation: 0,
-                    display_position: 0,
-                    row,
-                },
-            );
-            assert!(replaced.is_none(), "Tracks model requires unique Track IDs");
-        }
-        self.locations = locations;
-    }
-
-    fn rebuild_order(&mut self) {
-        let query = self.query.to_lowercase();
-        let mut order = Vec::with_capacity(self.tracks.len());
-        for (source_position, track) in self.tracks.iter().enumerate() {
-            if query.is_empty() || track_matches_query(track, &query) {
-                order.push(source_position);
-            }
-        }
-        #[cfg(test)]
-        {
-            self.source_visits += self.tracks.len();
-        }
-        let sort = self.settings.sort_key.track_sort();
-        let descending = self.settings.descending;
-        order.sort_by(|left, right| {
-            ::library::compare_tracks(&self.tracks[*left], &self.tracks[*right], sort, descending)
-        });
-
-        self.generation = self.generation.wrapping_add(1);
-        for (display_position, source_position) in order.iter().copied().enumerate() {
-            let track_id = &self.tracks[source_position].id;
-            let location = self
-                .locations
-                .get_mut(track_id)
-                .expect("every displayed Track has a model location");
-            location.display_generation = self.generation;
-            location.display_position = position_u32(display_position);
-        }
-        self.order = order;
+    fn rebuild_visible(&mut self) {
+        self.visible = visible_tracks(&self.source, &self.query, &self.settings)
+            .expect("a mounted Track list keeps its loaded Library available");
+        self.rows.clear();
         #[cfg(test)]
         {
             self.order_rebuilds += 1;
         }
-    }
-
-    fn position(&self, track_id: &TrackId) -> Option<u32> {
-        self.locations.get(track_id).and_then(|location| {
-            (location.display_generation == self.generation).then_some(location.display_position)
-        })
     }
 }
 
@@ -193,33 +133,22 @@ mod imp {
             self.state
                 .borrow()
                 .as_ref()
-                .map_or(0, |state| position_u32(state.order.len()))
+                .map_or(0, |state| position_u32(state.visible.len()))
         }
 
         fn item(&self, position: u32) -> Option<glib::Object> {
-            let mut state = self.state.borrow_mut();
-            let state = state.as_mut()?;
-            let TrackModelState {
-                tracks,
-                order,
-                locations,
-                ..
-            } = state;
-            let source_position = *order.get(position as usize)?;
-            let track = tracks
-                .get(source_position)
-                .expect("Tracks display order contains a valid source position");
-            let location = locations
-                .get_mut(&track.id)
-                .expect("displayed Track has a model location");
-            if let Some(row) = location.row.as_ref().and_then(glib::WeakRef::upgrade) {
+            let mut borrowed = self.state.borrow_mut();
+            let state = borrowed.as_mut()?;
+            if let Some(row) = state.rows.get(&position).and_then(glib::WeakRef::upgrade) {
                 return Some(row.upcast());
             }
+            state.rows.retain(|_, row| row.upgrade().is_some());
+            let track = state.visible.track(position as usize).ok().flatten()?;
             #[cfg(test)]
             self.row_materializations
                 .set(self.row_materializations.get() + 1);
-            let row = glib::BoxedAnyObject::new(track.clone());
-            location.row = Some(row.downgrade());
+            let row = glib::BoxedAnyObject::new(track);
+            state.rows.insert(position, row.downgrade());
             Some(row.upcast())
         }
     }
@@ -233,33 +162,75 @@ glib::wrapper! {
 
 impl TrackCollectionModel {
     pub(crate) fn new(
-        tracks: Arc<Vec<Track>>,
+        source_id: SourceId,
+        source_session_epoch: SourceSessionEpoch,
+        tracks: TrackList,
         settings: LibraryListSettings,
-        initial_tracks_are_sorted: bool,
     ) -> Self {
         use glib::subclass::prelude::ObjectSubclassIsExt;
 
         let model: Self = glib::Object::new();
         model.imp().state.replace(Some(TrackModelState::new(
+            source_id,
+            source_session_epoch,
             tracks,
             settings,
-            initial_tracks_are_sorted,
         )));
         model
     }
 
     pub(crate) fn source_is_empty(&self) -> bool {
-        self.with_state(|state| state.tracks.is_empty())
+        self.with_state(|state| state.source.is_empty())
     }
 
-    pub(crate) fn source_tracks(&self) -> Arc<Vec<Track>> {
-        self.with_state(|state| Arc::clone(&state.tracks))
+    pub(crate) fn play_request(
+        &self,
+        anchor_index: usize,
+        placement: QueuePlacement,
+        context_base: &str,
+        shuffled_start: bool,
+    ) -> Option<LoadedPlayRequest> {
+        self.with_state(|state| {
+            LoadedPlayRequest::context(
+                state.source_id.clone(),
+                state.source_session_epoch,
+                state.visible.clone(),
+                anchor_index,
+                placement,
+                visible_context_id(state, context_base),
+                shuffled_start,
+            )
+        })
+    }
+
+    pub(crate) fn visible_context_id(&self, context_base: &str) -> String {
+        self.with_state(|state| visible_context_id(state, context_base))
+    }
+
+    pub(crate) fn source_play_request(
+        &self,
+        placement: QueuePlacement,
+        context_id: &str,
+        shuffled_start: bool,
+    ) -> Option<LoadedPlayRequest> {
+        self.with_state(|state| {
+            LoadedPlayRequest::context(
+                state.source_id.clone(),
+                state.source_session_epoch,
+                state.source.clone(),
+                0,
+                placement,
+                context_id,
+                shuffled_start,
+            )
+        })
     }
 
     pub(crate) fn visible_count(&self) -> usize {
-        self.with_state(|state| state.order.len())
+        self.with_state(|state| state.visible.len())
     }
 
+    #[cfg(test)]
     pub(crate) fn query(&self) -> String {
         self.with_state(|state| state.query.clone())
     }
@@ -268,41 +239,112 @@ impl TrackCollectionModel {
         self.with_state(|state| state.settings.clone())
     }
 
-    pub(crate) fn position(&self, track_id: &TrackId) -> Option<u32> {
-        self.with_state(|state| state.position(track_id))
-    }
-
-    pub(crate) fn track_at(&self, position: u32) -> Option<Track> {
-        self.with_track(position, Track::clone)
-    }
-
-    pub(crate) fn with_track<R>(&self, position: u32, read: impl FnOnce(&Track) -> R) -> Option<R> {
-        self.with_state(|state| {
-            let source_position = *state.order.get(position as usize)?;
-            state.tracks.get(source_position).map(read)
+    pub(crate) fn projection_request(&self) -> TrackProjectionRequest {
+        self.with_state(|state| TrackProjectionRequest {
+            query: state.query.clone(),
+            settings: state.settings.clone(),
         })
+    }
+
+    pub(crate) fn position(&self, track_id: &TrackId) -> Option<u32> {
+        self.with_state(|state| state.visible.position(track_id).ok().flatten())
+    }
+
+    pub(crate) fn position_for_current(
+        &self,
+        track_id: &TrackId,
+        source_rank: Option<usize>,
+    ) -> Option<u32> {
+        self.with_state(|state| {
+            source_rank
+                .and_then(|position| {
+                    state
+                        .visible
+                        .track(position)
+                        .ok()
+                        .flatten()
+                        .filter(|track| &track.id == track_id)
+                        .and_then(|_| u32::try_from(position).ok())
+                })
+                .or_else(|| state.visible.position(track_id).ok().flatten())
+        })
+    }
+
+    /// Translates the known selected position through the exact point change
+    /// currently being announced by `items_changed`.
+    ///
+    /// The model signal is synchronous, so this hint exists only while its
+    /// matching notification is running. Other model changes fall back to the
+    /// ordinary identity lookup.
+    pub(crate) fn selection_position_after_point_change(
+        &self,
+        track_id: &TrackId,
+        selected_position: u32,
+    ) -> Option<u32> {
+        self.with_state(|state| {
+            let change = state.point_change.as_ref()?;
+            if &change.id == track_id {
+                return Some(change.position.unwrap_or(gtk::INVALID_LIST_POSITION));
+            }
+            if selected_position == gtk::INVALID_LIST_POSITION {
+                return Some(selected_position);
+            }
+            match (change.previous_position, change.position) {
+                (Some(previous), Some(position)) if previous < position => {
+                    if selected_position == previous {
+                        None
+                    } else if selected_position > previous && selected_position <= position {
+                        Some(selected_position - 1)
+                    } else {
+                        Some(selected_position)
+                    }
+                }
+                (Some(previous), Some(position)) if position < previous => {
+                    if selected_position == previous {
+                        None
+                    } else if selected_position >= position && selected_position < previous {
+                        Some(selected_position + 1)
+                    } else {
+                        Some(selected_position)
+                    }
+                }
+                (Some(previous), None) => {
+                    if selected_position == previous {
+                        None
+                    } else if selected_position > previous {
+                        Some(selected_position - 1)
+                    } else {
+                        Some(selected_position)
+                    }
+                }
+                (None, Some(position)) if selected_position >= position => {
+                    Some(selected_position + 1)
+                }
+                (Some(_), Some(_)) | (None, Some(_)) | (None, None) => Some(selected_position),
+            }
+        })
+    }
+
+    #[cfg(test)]
+    pub(crate) fn track_at(&self, position: u32) -> Option<Track> {
+        self.with_state(|state| state.visible.track(position as usize).ok().flatten())
     }
 
     pub(crate) fn set_query(&self, query: &str) -> bool {
         let query = query.trim();
-        let (old_len, new_len, query_changed, order_changed) = self.with_state_mut(|state| {
+        let (old_len, new_len, changed) = self.with_state_mut(|state| {
             if state.query == query {
-                return (state.order.len(), state.order.len(), false, false);
+                return (state.visible.len(), state.visible.len(), false);
             }
-            let old_order = state.order.clone();
+            let old_len = state.visible.len();
             state.query = query.to_string();
-            state.rebuild_order();
-            (
-                old_order.len(),
-                state.order.len(),
-                true,
-                old_order != state.order,
-            )
+            state.rebuild_visible();
+            (old_len, state.visible.len(), true)
         });
-        if order_changed {
+        if changed {
             self.items_changed(0, position_u32(old_len), position_u32(new_len));
         }
-        query_changed
+        changed
     }
 
     pub(crate) fn apply_settings(&self, settings: LibraryListSettings) -> bool {
@@ -311,11 +353,11 @@ impl TrackCollectionModel {
                 || state.settings.descending != settings.descending;
             state.settings = settings;
             if !order_changed {
-                return (state.order.len(), state.order.len(), false);
+                return (state.visible.len(), state.visible.len(), false);
             }
-            let old_order = state.order.clone();
-            state.rebuild_order();
-            (old_order.len(), state.order.len(), old_order != state.order)
+            let old_len = state.visible.len();
+            state.rebuild_visible();
+            (old_len, state.visible.len(), true)
         });
         if changed {
             self.items_changed(0, position_u32(old_len), position_u32(new_len));
@@ -323,91 +365,161 @@ impl TrackCollectionModel {
         changed
     }
 
-    pub(crate) fn replace_tracks(&self, tracks: Arc<Vec<Track>>) -> Arc<Vec<Track>> {
-        let (previous, old_len, new_len, changed) = self.with_state_mut(|state| {
-            let previous = std::mem::replace(&mut state.tracks, tracks);
-            if state.tracks.as_ref() == previous.as_ref() {
-                return (previous, state.order.len(), state.order.len(), false);
+    /// Admits a complete order prepared by the mounted read worker.
+    ///
+    /// A query or settings change that happened while the worker ran rejects
+    /// the stale result. Swapping the compact orders, clearing bound rows, and
+    /// notifying the model are the only GTK-thread work.
+    pub(crate) fn replace_prepared(&self, prepared: PreparedTrackProjection) -> bool {
+        let result = self.with_state_mut(|state| {
+            let current = TrackProjectionRequest {
+                query: state.query.clone(),
+                settings: state.settings.clone(),
+            };
+            if current != prepared.request {
+                return None;
             }
-            let old_len = state.order.len();
-            let previous_locations = std::mem::take(&mut state.locations);
-            let changed_ids = changed_track_values(previous.as_ref(), state.tracks.as_ref());
-            state.rebuild_locations(previous_locations, &changed_ids);
-            state.rebuild_order();
-            (previous, old_len, state.order.len(), true)
+            let old_len = state.visible.len();
+            state.source = prepared.source;
+            state.visible = prepared.visible;
+            state.rows.clear();
+            state.point_change = None;
+            #[cfg(test)]
+            {
+                state.order_rebuilds += 1;
+            }
+            Some((old_len, state.visible.len()))
         });
-        if changed {
-            self.items_changed(0, position_u32(old_len), position_u32(new_len));
-        }
-        previous
-    }
-
-    pub(crate) fn patch(&self, changed_tracks: Vec<Track>, delta: &TrackDelta) {
-        if track_delta_can_preserve_order(delta, self.settings().sort_key)
-            && self.patch_in_place(&changed_tracks)
-        {
-            return;
-        }
-        let old_len = self.visible_count();
-        self.with_state_mut(|state| {
-            let deleted = delta.deleted.iter().cloned().collect::<HashSet<_>>();
-            let mut changed = changed_tracks
-                .into_iter()
-                .map(|track| (track.id.clone(), track))
-                .collect::<HashMap<_, _>>();
-            let changed_ids = changed.keys().cloned().collect::<HashSet<_>>();
-            let tracks = Arc::make_mut(&mut state.tracks);
-            tracks.retain_mut(|track| {
-                if deleted.contains(&track.id) {
-                    return false;
-                }
-                if let Some(replacement) = changed.remove(&track.id) {
-                    *track = replacement;
-                }
-                true
-            });
-            tracks.extend(changed.into_values());
-            let previous_locations = std::mem::take(&mut state.locations);
-            state.rebuild_locations(previous_locations, &changed_ids);
-            state.rebuild_order();
-        });
-        self.items_changed(0, position_u32(old_len), position_u32(self.visible_count()));
-    }
-
-    fn patch_in_place(&self, changed_tracks: &[Track]) -> bool {
-        let all_present = self.with_state(|state| {
-            changed_tracks
-                .iter()
-                .all(|track| state.locations.contains_key(&track.id))
-        });
-        if !all_present {
+        let Some((old_len, new_len)) = result else {
             return false;
-        }
-        let mut positions = self.with_state_mut(|state| {
-            let generation = state.generation;
-            let TrackModelState {
-                tracks, locations, ..
-            } = state;
-            let tracks = Arc::make_mut(tracks);
-            let mut positions = Vec::with_capacity(changed_tracks.len());
-            for track in changed_tracks {
-                let location = locations
-                    .get_mut(&track.id)
-                    .expect("checked existing Track location");
-                tracks[location.source_position] = track.clone();
-                location.row = None;
-                if location.display_generation == generation {
-                    positions.push(location.display_position);
+        };
+        self.items_changed(0, position_u32(old_len), position_u32(new_len));
+        true
+    }
+
+    /// Applies the ordinary one-Track update path without rereading and
+    /// resorting the complete route projection.
+    ///
+    /// Multi-Track changes and deletions return `false` so the caller can
+    /// request a fresh complete projection.
+    pub(crate) fn apply_track_replacement(
+        &self,
+        replacements: &[AcceptedTrackReplacement],
+        include: impl Fn(&Track) -> bool,
+    ) -> bool {
+        let [replacement] = replacements else {
+            return false;
+        };
+        let Some(track) = replacement.track.as_ref() else {
+            return false;
+        };
+        let result = self.with_state_mut(|state| {
+            let source_include = include(track);
+            let source_and_visible_share_order = state.source.shares_order(&state.visible);
+            let Some(source) = state
+                .source
+                .with_current_track(&replacement.id, |_| source_include)
+                .ok()
+                .flatten()
+            else {
+                return None;
+            };
+            let query = state.query.to_lowercase();
+            let visible_include =
+                source_include && (query.is_empty() || track_matches_query(track, &query));
+            let reuse_source_order =
+                source_and_visible_share_order && source_include == visible_include;
+            let visible = if reuse_source_order {
+                source.clone()
+            } else {
+                let Some(visible) = state
+                    .visible
+                    .with_current_track(&replacement.id, |_| visible_include)
+                    .ok()
+                    .flatten()
+                else {
+                    return None;
+                };
+                visible
+            };
+            #[cfg(test)]
+            {
+                state.point_updates += 1;
+                if source.order_changed {
+                    state.point_order_slot_copies += state.source.len();
+                }
+                if visible.order_changed && !reuse_source_order {
+                    state.point_order_slot_copies += state.visible.len();
                 }
             }
-            positions
+            state.source = source.tracks;
+            state.visible = visible.tracks;
+            match (visible.previous_position, visible.position) {
+                (Some(previous), Some(position)) => {
+                    let first = previous.min(position);
+                    let last = previous.max(position);
+                    state
+                        .rows
+                        .retain(|candidate, _| *candidate < first || *candidate > last);
+                }
+                (Some(previous), None) => {
+                    state.rows.retain(|candidate, _| *candidate < previous);
+                }
+                (None, Some(position)) => {
+                    state.rows.retain(|candidate, _| *candidate < position);
+                }
+                (None, None) => {}
+            }
+            Some((visible.previous_position, visible.position))
         });
-        positions.sort_unstable();
-        positions.dedup();
-        if let (Some(first), Some(last)) = (positions.first(), positions.last()) {
-            let count = last - first + 1;
-            self.items_changed(*first, count, count);
-        }
+        let Some((previous, position)) = result else {
+            return false;
+        };
+        let _notified_items = match (previous, position) {
+            (Some(previous), Some(position)) => {
+                let start = previous.min(position);
+                let count = previous.max(position) - start + 1;
+                self.with_state_mut(|state| {
+                    state.point_change = Some(TrackPointChange {
+                        id: replacement.id.clone(),
+                        previous_position: Some(previous),
+                        position: Some(position),
+                    });
+                });
+                self.items_changed(start, count, count);
+                count
+            }
+            (Some(previous), None) => {
+                self.with_state_mut(|state| {
+                    state.point_change = Some(TrackPointChange {
+                        id: replacement.id.clone(),
+                        previous_position: Some(previous),
+                        position: None,
+                    });
+                });
+                self.items_changed(previous, 1, 0);
+                1
+            }
+            (None, Some(position)) => {
+                self.with_state_mut(|state| {
+                    state.point_change = Some(TrackPointChange {
+                        id: replacement.id.clone(),
+                        previous_position: None,
+                        position: Some(position),
+                    });
+                });
+                self.items_changed(position, 0, 1);
+                1
+            }
+            (None, None) => 0,
+        };
+        self.with_state_mut(|state| {
+            state.point_change = None;
+            #[cfg(test)]
+            {
+                state.point_notified_items += _notified_items as usize;
+            }
+        });
         true
     }
 
@@ -426,74 +538,68 @@ impl TrackCollectionModel {
     }
 
     #[cfg(test)]
-    pub(crate) fn source_is(&self, tracks: &Arc<Vec<Track>>) -> bool {
-        self.with_state(|state| Arc::ptr_eq(&state.tracks, tracks))
-    }
-
-    #[cfg(test)]
     pub(crate) fn test_stats(&self) -> TrackModelTestStats {
         use glib::subclass::prelude::ObjectSubclassIsExt;
 
         let row_materializations = self.imp().row_materializations.get();
         self.with_state(|state| TrackModelTestStats {
             order_rebuilds: state.order_rebuilds,
-            source_visits: state.source_visits,
+            point_updates: state.point_updates,
+            point_order_slot_copies: state.point_order_slot_copies,
+            point_notified_items: state.point_notified_items,
             row_materializations,
             live_rows: state
-                .locations
+                .rows
                 .values()
-                .filter(|location| {
-                    location
-                        .row
-                        .as_ref()
-                        .and_then(glib::WeakRef::upgrade)
-                        .is_some()
-                })
+                .filter(|row| row.upgrade().is_some())
                 .count(),
         })
     }
 }
 
-fn changed_track_values(previous: &[Track], current: &[Track]) -> HashSet<TrackId> {
-    let previous = previous
-        .iter()
-        .map(|track| (&track.id, track))
-        .collect::<HashMap<_, _>>();
-    current
-        .iter()
-        .filter(|track| previous.get(&track.id).is_none_or(|old| *old != *track))
-        .map(|track| track.id.clone())
-        .collect()
-}
-
-fn track_delta_can_preserve_order(delta: &TrackDelta, sort_key: LibraryField) -> bool {
-    if !delta.added.is_empty()
-        || !delta.deleted.is_empty()
-        || !delta.fields.is_empty()
-        || !delta.metadata.is_empty()
-    {
-        return false;
-    }
-    if !delta.stats.is_empty()
-        && matches!(
-            sort_key,
-            LibraryField::LastPlayed | LibraryField::PlayCount | LibraryField::UserRating
-        )
-    {
-        return false;
-    }
-    delta.favorite.is_empty() || sort_key != LibraryField::Favorite
+fn visible_context_id(state: &TrackModelState, context_base: &str) -> String {
+    format!(
+        "{context_base}|query={}|sort={:?}|descending={}",
+        state.query, state.settings.sort_key, state.settings.descending
+    )
 }
 
 fn position_u32(position: usize) -> u32 {
     u32::try_from(position).expect("prepared Tracks count fits a GTK list position")
 }
 
+fn visible_tracks(
+    source: &TrackList,
+    query: &str,
+    settings: &LibraryListSettings,
+) -> LoadedLibraryResult<TrackList> {
+    if settings.sort_key == crate::LibraryField::RowIndex {
+        let query = query.to_lowercase();
+        return source.filtered_in_source_order(
+            |track| query.is_empty() || track_matches_query(track, &query),
+            settings.descending,
+        );
+    }
+    let sort = settings.sort_key.track_sort();
+    if query.is_empty() {
+        source.sorted(sort, settings.descending)
+    } else {
+        let query = query.to_lowercase();
+        source.filtered_sorted(
+            |track| track_matches_query(track, &query),
+            sort,
+            settings.descending,
+        )
+    }
+}
+
 #[cfg(test)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct TrackModelTestStats {
     pub(crate) order_rebuilds: usize,
-    pub(crate) source_visits: usize,
+    pub(crate) point_updates: usize,
+    pub(crate) point_order_slot_copies: usize,
+    pub(crate) point_notified_items: usize,
     pub(crate) row_materializations: usize,
     pub(crate) live_rows: usize,
 }

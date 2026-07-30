@@ -1,3 +1,6 @@
+use std::collections::HashSet;
+
+use library::{AlbumId, ArtistId, GenreId, PlaylistId, SmartPlaylistId, SourceId};
 use localization::msgid;
 use serde::{Deserialize, Deserializer, Serialize};
 
@@ -6,7 +9,7 @@ use super::sidebar::{
     default_grid_fields, default_row_fields, default_sort_key, ensure_usable_row_field,
     sanitize_optional_fields, sanitize_required_fields,
 };
-pub const LIBRARY_LIST_LAYOUT_VERSION: u8 = 7;
+pub const LIBRARY_LIST_LAYOUT_VERSION: u8 = 8;
 pub const DEFAULT_WINDOW_WIDTH: i32 = 1_500;
 pub const DEFAULT_WINDOW_HEIGHT: i32 = 900;
 pub const MIN_RESTORED_WINDOW_WIDTH: i32 = 450;
@@ -24,12 +27,45 @@ fn default_narrow_layout_threshold() -> i32 {
 }
 pub const MIN_NARROW_LAYOUT_THRESHOLD: i32 = 700;
 pub const MAX_NARROW_LAYOUT_THRESHOLD: i32 = 3_400;
-pub const DEFAULT_LEFT_SIDEBAR_WIDTH: i32 = 176;
-pub const MIN_LEFT_SIDEBAR_WIDTH: i32 = 176;
+pub const DEFAULT_LEFT_SIDEBAR_WIDTH: i32 = 230;
+pub const MIN_LEFT_SIDEBAR_WIDTH: i32 = 210;
 pub const MAX_LEFT_SIDEBAR_WIDTH: i32 = 400;
 pub const DEFAULT_RIGHT_SIDEBAR_WIDTH: i32 = 300;
 pub const MIN_RIGHT_SIDEBAR_WIDTH: i32 = 250;
 pub const MAX_RIGHT_SIDEBAR_WIDTH: i32 = 500;
+pub const MIN_TABLE_COLUMN_WIDTH: i32 = 24;
+pub const MAX_TABLE_COLUMN_WIDTH: i32 = 4_096;
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+pub struct FolderViewSettings {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tree_width: Option<i32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name_column_width: Option<i32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub detail_column_width: Option<i32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub duration_column_width: Option<i32>,
+}
+impl FolderViewSettings {
+    pub fn is_default(&self) -> bool {
+        self == &Self::default()
+    }
+
+    pub fn sanitize(&mut self) {
+        for width in [
+            &mut self.name_column_width,
+            &mut self.detail_column_width,
+            &mut self.duration_column_width,
+        ] {
+            if let Some(value) = width {
+                *value = (*value).clamp(MIN_TABLE_COLUMN_WIDTH, MAX_TABLE_COLUMN_WIDTH);
+            }
+        }
+        if let Some(width) = &mut self.tree_width {
+            *width = (*width).clamp(1, MAX_TABLE_COLUMN_WIDTH);
+        }
+    }
+}
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize)]
 pub enum LeftSidebarMode {
     #[default]
@@ -256,6 +292,7 @@ impl<'de> Deserialize<'de> for LayoutSettings {
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
 pub enum SidebarRouteItem {
     Home,
+    Search,
     Favorites,
     Albums,
     Tracks,
@@ -266,11 +303,13 @@ pub enum SidebarRouteItem {
     Folders,
     Playlists,
     SmartPlaylists,
+    History,
 }
 impl SidebarRouteItem {
-    pub fn all() -> [Self; 11] {
+    pub fn all() -> [Self; 13] {
         [
             Self::Home,
+            Self::Search,
             Self::Favorites,
             Self::Albums,
             Self::Tracks,
@@ -278,6 +317,7 @@ impl SidebarRouteItem {
             Self::AlbumArtists,
             Self::Genres,
             Self::Moods,
+            Self::History,
             Self::Folders,
             Self::Playlists,
             Self::SmartPlaylists,
@@ -285,7 +325,7 @@ impl SidebarRouteItem {
     }
 
     fn default_visible(self) -> bool {
-        !matches!(self, Self::Moods)
+        !matches!(self, Self::Search | Self::Moods)
     }
 }
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -293,10 +333,48 @@ pub struct SidebarRouteItemSettings {
     pub item: SidebarRouteItem,
     pub visible: bool,
 }
+#[derive(Clone, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
+pub enum SidebarPin {
+    Album {
+        source_id: SourceId,
+        album_id: AlbumId,
+    },
+    Artist {
+        source_id: SourceId,
+        artist_id: ArtistId,
+    },
+    Genre {
+        source_id: SourceId,
+        genre_id: GenreId,
+    },
+    Playlist {
+        source_id: SourceId,
+        playlist_id: PlaylistId,
+    },
+    SmartPlaylist {
+        source_id: SourceId,
+        playlist_id: SmartPlaylistId,
+    },
+}
+impl SidebarPin {
+    pub fn source_id(&self) -> &SourceId {
+        match self {
+            Self::Album { source_id, .. }
+            | Self::Artist { source_id, .. }
+            | Self::Genre { source_id, .. }
+            | Self::Playlist { source_id, .. }
+            | Self::SmartPlaylist { source_id, .. } => source_id,
+        }
+    }
+}
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct SidebarSettings {
     #[serde(default = "default_sidebar_route_items")]
     pub route_items: Vec<SidebarRouteItemSettings>,
+    #[serde(default = "default_true")]
+    pub pins_visible: bool,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub pins: Vec<SidebarPin>,
     #[serde(default = "default_true")]
     pub server_visible: bool,
 }
@@ -304,6 +382,8 @@ impl Default for SidebarSettings {
     fn default() -> Self {
         Self {
             route_items: default_sidebar_route_items(),
+            pins_visible: true,
+            pins: Vec::new(),
             server_visible: true,
         }
     }
@@ -340,6 +420,25 @@ impl SidebarSettings {
             home.visible = true;
         }
         self.route_items = sanitized;
+        let mut seen = HashSet::new();
+        self.pins.retain(|pin| seen.insert(pin.clone()));
+    }
+
+    pub fn is_pinned(&self, pin: &SidebarPin) -> bool {
+        self.pins.contains(pin)
+    }
+
+    pub fn set_pinned(&mut self, pin: SidebarPin, pinned: bool) -> bool {
+        if pinned {
+            if self.pins.contains(&pin) {
+                return false;
+            }
+            self.pins.push(pin);
+            return true;
+        }
+        let previous_len = self.pins.len();
+        self.pins.retain(|stored| stored != &pin);
+        self.pins.len() != previous_len
     }
 }
 fn insert_sidebar_route_item_in_default_order(
@@ -404,6 +503,7 @@ pub enum LibraryListKey {
     AlbumArtists,
     Tracks,
     FavoriteTracks,
+    History,
     Genres,
     Moods,
     Playlists,
@@ -417,13 +517,14 @@ pub enum LibraryListKey {
     SmartPlaylistTracks,
 }
 impl LibraryListKey {
-    pub fn all() -> [Self; 16] {
+    pub fn all() -> [Self; 17] {
         [
             Self::Albums,
             Self::Artists,
             Self::AlbumArtists,
             Self::Tracks,
             Self::FavoriteTracks,
+            Self::History,
             Self::Genres,
             Self::Moods,
             Self::Playlists,
@@ -445,6 +546,7 @@ impl LibraryListKey {
             Self::AlbumArtists => msgid("Album artists"),
             Self::Tracks => msgid("Tracks"),
             Self::FavoriteTracks => msgid("Favorites"),
+            Self::History => msgid("History"),
             Self::Genres => msgid("Genres"),
             Self::Moods => msgid("Moods"),
             Self::Playlists => msgid("Playlists"),
@@ -471,6 +573,7 @@ impl LibraryListKey {
             Self::Albums => LibraryLayout::Grid,
             Self::Tracks
             | Self::FavoriteTracks
+            | Self::History
             | Self::AlbumDetailTracks
             | Self::ArtistTracks
             | Self::GenreTracks
@@ -572,8 +675,15 @@ pub struct LibraryListSettings {
     pub detail_track_fields: Vec<LibraryField>,
     pub sort_key: LibraryField,
     pub descending: bool,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub row_column_widths: Vec<LibraryColumnWidth>,
     #[serde(default)]
     pub layout_version: u8,
+}
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct LibraryColumnWidth {
+    pub field: LibraryField,
+    pub width: i32,
 }
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct LibraryListSettingsEntry {
@@ -589,6 +699,7 @@ impl LibraryListSettings {
             detail_track_fields: default_detail_track_fields(),
             sort_key: default_sort_key(key),
             descending: false,
+            row_column_widths: Vec::new(),
             layout_version: LIBRARY_LIST_LAYOUT_VERSION,
         }
     }
@@ -614,7 +725,26 @@ impl LibraryListSettings {
         if !available_sort_fields(key).contains(&self.sort_key) {
             self.sort_key = default_sort_key(key);
         }
+        let mut seen = HashSet::new();
+        self.row_column_widths.retain_mut(|entry| {
+            let valid = entry.field != LibraryField::RowIndex
+                && available_row_fields(key).contains(&entry.field)
+                && seen.insert(entry.field);
+            if valid {
+                entry.width = entry
+                    .width
+                    .clamp(MIN_TABLE_COLUMN_WIDTH, MAX_TABLE_COLUMN_WIDTH);
+            }
+            valid
+        });
         self.layout_version = LIBRARY_LIST_LAYOUT_VERSION;
+    }
+
+    pub fn row_column_width(&self, field: LibraryField) -> Option<i32> {
+        self.row_column_widths
+            .iter()
+            .find(|entry| entry.field == field)
+            .map(|entry| entry.width)
     }
 
     fn migrate_defaults(&mut self, key: LibraryListKey) {
@@ -691,6 +821,7 @@ impl LibraryListSettings {
                 | LibraryListKey::AlbumArtists
                 | LibraryListKey::Tracks
                 | LibraryListKey::FavoriteTracks
+                | LibraryListKey::History
                 | LibraryListKey::Genres
                 | LibraryListKey::Moods
                 | LibraryListKey::Playlists
@@ -730,6 +861,7 @@ impl LibraryListSettings {
                 LibraryListKey::Artists
                 | LibraryListKey::AlbumArtists
                 | LibraryListKey::Tracks
+                | LibraryListKey::History
                 | LibraryListKey::Genres
                 | LibraryListKey::Moods
                 | LibraryListKey::Playlists
@@ -740,6 +872,36 @@ impl LibraryListSettings {
                 | LibraryListKey::MoodTracks
                 | LibraryListKey::PlaylistTracks
                 | LibraryListKey::SmartPlaylistTracks => {}
+            }
+        }
+
+        if self.layout_version < 8 {
+            let defaults = default_row_fields(key);
+            let standard_track_default = matches!(
+                key,
+                LibraryListKey::Tracks
+                    | LibraryListKey::FavoriteTracks
+                    | LibraryListKey::ArtistTracks
+            ) && self.row_fields == defaults[1..];
+            let album_detail_default = key == LibraryListKey::AlbumDetailTracks
+                && self.row_fields
+                    == [
+                        LibraryField::TrackNumber,
+                        LibraryField::Title,
+                        LibraryField::Duration,
+                    ];
+            if standard_track_default || album_detail_default {
+                self.row_fields = defaults;
+            }
+
+            if self.detail_track_fields
+                == [
+                    LibraryField::TrackNumber,
+                    LibraryField::Title,
+                    LibraryField::Duration,
+                ]
+            {
+                self.detail_track_fields = default_detail_track_fields();
             }
         }
     }
@@ -804,6 +966,7 @@ pub fn available_row_fields(key: LibraryListKey) -> &'static [LibraryField] {
         ],
         LibraryListKey::Tracks
         | LibraryListKey::FavoriteTracks
+        | LibraryListKey::History
         | LibraryListKey::AlbumDetailTracks
         | LibraryListKey::ArtistTracks
         | LibraryListKey::GenreTracks
@@ -860,6 +1023,7 @@ pub fn available_grid_fields(key: LibraryListKey) -> &'static [LibraryField] {
         }
         LibraryListKey::Tracks
         | LibraryListKey::FavoriteTracks
+        | LibraryListKey::History
         | LibraryListKey::AlbumDetailTracks
         | LibraryListKey::ArtistTracks
         | LibraryListKey::GenreTracks

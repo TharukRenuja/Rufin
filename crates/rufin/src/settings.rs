@@ -1,11 +1,71 @@
+use std::fs;
+use std::io::{ErrorKind, Write as _};
+use std::path::{Path, PathBuf};
+use std::rc::Rc;
+use std::sync::{Arc, Mutex};
+
 use ::ui::{
     LibraryField, LibraryListKey, LibraryListSettings, LibraryListSettingsEntry,
     Settings as UiSettings,
 };
-use library::{HomeBlockKind, HomeSectionKind};
-use scrobbling::Settings;
+use library::{HomeBlockKind, HomeSectionKind, MusicFolderId, SourceId};
+use scrobbling::Settings as ScrobblingSettings;
+use secrets::{
+    CachedSecretStore, ConfigSecretStore, SecretKey, SecretStorageMode, SecretStore,
+    SwitchableSecretStore,
+};
 use serde::{Deserialize, Serialize};
-use sources::LibrarySourceSettings;
+use sources::SourceConfiguration;
+use tracing::warn;
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(transparent)]
+pub(crate) struct CredentialRef(String);
+
+impl CredentialRef {
+    pub(crate) fn new(value: impl Into<String>) -> Self {
+        Self(value.into())
+    }
+
+    pub(crate) fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+pub(crate) fn fresh_credential_ref() -> Result<CredentialRef, String> {
+    random_identity("source-").map(CredentialRef::new)
+}
+
+pub(crate) fn fresh_secret_scope_id() -> Result<String, String> {
+    random_identity("")
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub(crate) struct ConfiguredLocalAccess {
+    pub(crate) root_path: PathBuf,
+    pub(crate) server_prefix: Option<String>,
+    pub(crate) local_prefix: Option<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub(crate) struct ConfiguredSource {
+    #[serde(flatten)]
+    pub(crate) configuration: SourceConfiguration,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) credential_ref: Option<CredentialRef>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) music_folder_id: Option<MusicFolderId>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) local_access: Option<ConfiguredLocalAccess>,
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+pub(crate) struct SourceSettings {
+    #[serde(default)]
+    pub(crate) configured: Vec<ConfiguredSource>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) selected_source_id: Option<SourceId>,
+}
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq)]
 pub(crate) enum LegacyTrackSortKey {
@@ -46,7 +106,9 @@ pub(crate) struct StoredSettings {
     #[serde(flatten)]
     pub(crate) ui: UiSettings,
     #[serde(default)]
-    pub(crate) sources: LibrarySourceSettings,
+    pub(crate) scrobbling: ScrobblingSettings,
+    #[serde(default)]
+    pub(crate) sources: SourceSettings,
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub(crate) secret_scope_id: String,
     #[serde(default)]
@@ -61,7 +123,8 @@ impl Default for StoredSettings {
     fn default() -> Self {
         Self {
             ui: UiSettings::default(),
-            sources: LibrarySourceSettings::default(),
+            scrobbling: ScrobblingSettings::default(),
+            sources: SourceSettings::default(),
             secret_scope_id: String::new(),
             jellyfin_device_id: String::new(),
             legacy_home_sections: None,
@@ -72,19 +135,24 @@ impl Default for StoredSettings {
 
 impl StoredSettings {
     pub(crate) fn migrate_defaults(&mut self) {
-        if self.ui.lastfm_api_key.trim().is_empty() && !self.ui.scrobbling.lastfm.api_key.is_empty()
-        {
-            self.ui.lastfm_api_key = self.ui.scrobbling.lastfm.api_key.clone();
+        if self.ui.lastfm_api_key.trim().is_empty() && !self.scrobbling.lastfm.api_key.is_empty() {
+            self.ui.lastfm_api_key = self.scrobbling.lastfm.api_key.clone();
         }
-        self.ui.scrobbling.lastfm.api_key.clear();
-        self.sources.sanitize();
+        self.scrobbling.lastfm.api_key.clear();
+        self.scrobbling.sanitize();
         self.migrate_home_blocks();
         self.migrate_legacy_track_table();
         self.ui.sanitize();
+        self.ui.downloads.retain(|download| {
+            self.sources
+                .configured
+                .iter()
+                .any(|source| source.configuration.source_id == download.source_id)
+        });
     }
 
-    pub(crate) fn scrobbling_runtime_settings(&self) -> Settings {
-        let mut settings = self.ui.scrobbling.clone();
+    pub(crate) fn scrobbling_runtime_settings(&self) -> ScrobblingSettings {
+        let mut settings = self.scrobbling.clone();
         settings.lastfm.api_key = self.ui.lastfm_api_key.clone();
         settings
     }
@@ -148,21 +216,473 @@ fn default_home_sections() -> Vec<HomeSectionKind> {
     ]
 }
 
+#[derive(Clone)]
+pub(crate) struct SettingsFile {
+    path: PathBuf,
+    value: Arc<Mutex<StoredSettings>>,
+}
+
+impl SettingsFile {
+    pub(crate) fn open(path: PathBuf) -> Result<Self, String> {
+        let mut value = read_settings(&path)?;
+        value.migrate_defaults();
+        let mut changed = false;
+        if value.jellyfin_device_id.trim().is_empty() {
+            value.jellyfin_device_id = random_identity("rufin-")?;
+            changed = true;
+        }
+        let file = Self {
+            path,
+            value: Arc::new(Mutex::new(value)),
+        };
+        if changed {
+            let current = file.load();
+            file.write(&current)?;
+        }
+        Ok(file)
+    }
+
+    pub(crate) fn load(&self) -> StoredSettings {
+        self.value
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone()
+    }
+
+    pub(crate) fn playback_stream_quality(&self) -> playback::StreamQuality {
+        self.value
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .ui
+            .playback
+            .stream_quality
+    }
+
+    pub(crate) fn update<T>(
+        &self,
+        operation: impl FnOnce(&mut StoredSettings) -> Result<T, String>,
+    ) -> Result<T, String> {
+        let mut current = self
+            .value
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let mut next = current.clone();
+        let output = operation(&mut next)?;
+        next.migrate_defaults();
+        write_settings(&self.path, &next)?;
+        *current = next;
+        Ok(output)
+    }
+
+    fn write(&self, value: &StoredSettings) -> Result<(), String> {
+        write_settings(&self.path, value)?;
+        *self
+            .value
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = value.clone();
+        Ok(())
+    }
+}
+
+pub(crate) struct SettingsUiPort {
+    file: SettingsFile,
+    on_change: Arc<dyn Fn(&StoredSettings, &StoredSettings) + Send + Sync>,
+}
+
+impl SettingsUiPort {
+    pub(crate) fn new(
+        file: SettingsFile,
+        on_change: impl Fn(&StoredSettings, &StoredSettings) + Send + Sync + 'static,
+    ) -> Rc<Self> {
+        Rc::new(Self {
+            file,
+            on_change: Arc::new(on_change),
+        })
+    }
+
+    fn save_ui(&self, settings: &UiSettings) -> Result<UiSettings, String> {
+        let previous = self.file.load();
+        self.file.update(|stored| {
+            stored.ui = settings.clone();
+            Ok(())
+        })?;
+        let current = self.file.load();
+        (self.on_change)(&previous, &current);
+        Ok(current.ui)
+    }
+}
+
+impl ::ui::SettingsPort for SettingsUiPort {
+    fn load(&self) -> UiSettings {
+        self.file.load().ui
+    }
+
+    fn save(&self, settings: &UiSettings) -> Result<UiSettings, String> {
+        self.save_ui(settings)
+    }
+}
+
+pub(crate) fn platform_secret_store(settings: &StoredSettings) -> Arc<dyn SecretStore> {
+    match settings.ui.secret_storage_mode {
+        SecretStorageMode::ConfigFile => Arc::new(CachedSecretStore::new(Arc::new(
+            ConfigSecretStore::with_scope(
+                crate::paths::secrets_file(),
+                settings.secret_scope_id.clone(),
+            ),
+        ))),
+        SecretStorageMode::SystemKeyring => system_keyring_secret_store(&settings.secret_scope_id),
+    }
+}
+
+#[cfg(unix)]
+fn system_keyring_secret_store(scope_id: &str) -> Arc<dyn SecretStore> {
+    Arc::new(CachedSecretStore::new(Arc::new(
+        secrets::SecretServiceStore::new(scope_id.to_string()),
+    )))
+}
+
+#[cfg(not(unix))]
+fn system_keyring_secret_store(_scope_id: &str) -> Arc<dyn SecretStore> {
+    Arc::new(secrets::UnavailableSecretStore::new(
+        "system keyring is unavailable on this platform",
+    ))
+}
+
+pub(crate) fn provider_secret_key(reference: &CredentialRef) -> SecretKey {
+    SecretKey::provider_token(reference.as_str())
+}
+
+pub(crate) fn all_secret_keys(settings: &StoredSettings) -> Vec<SecretKey> {
+    let mut keys = settings
+        .sources
+        .configured
+        .iter()
+        .filter_map(|source| source.credential_ref.as_ref())
+        .map(provider_secret_key)
+        .collect::<Vec<_>>();
+    keys.extend(
+        scrobbling::secret_descriptors()
+            .iter()
+            .map(|descriptor| scrobbling_secret_key(*descriptor)),
+    );
+    keys
+}
+
+pub(crate) fn persist_scrobbling_settings(
+    file: &SettingsFile,
+    secrets: &Arc<SwitchableSecretStore>,
+    input: &ScrobblingSettings,
+) -> Result<ScrobblingSettings, String> {
+    let mut input = input.clone();
+    input.sanitize();
+    let stored = file.load();
+    let mut current = stored.scrobbling_runtime_settings();
+    for descriptor in scrobbling::secret_descriptors() {
+        if !descriptor.value(&current).trim().is_empty() {
+            continue;
+        }
+        let key = scrobbling_secret_key(*descriptor);
+        if let Some(secret) = load_secret(Arc::clone(secrets), key.clone())
+            .map_err(|error| format!("failed to load scrobbling secret {key:?}: {error}"))?
+        {
+            *descriptor.value_mut(&mut current) = secret;
+        }
+    }
+    current.sanitize();
+
+    let changed_secrets = scrobbling::secret_descriptors()
+        .iter()
+        .copied()
+        .filter_map(|descriptor| {
+            let inline_secret = !descriptor.value(&stored.scrobbling).trim().is_empty();
+            let changed = inline_secret || descriptor.value(&current) != descriptor.value(&input);
+            changed.then(|| {
+                (
+                    descriptor,
+                    scrobbling_secret_key(descriptor),
+                    descriptor.value(&input).to_string(),
+                )
+            })
+        })
+        .collect::<Vec<_>>();
+
+    // Removing the previous fixed-key value first makes an interrupted account
+    // change disconnected rather than pairing a new username with an old session.
+    for (_, key, _) in &changed_secrets {
+        delete_secret(Arc::clone(secrets), key.clone())
+            .map_err(|error| format!("failed to replace scrobbling secret {key:?}: {error}"))?;
+    }
+
+    let mut persisted = input.clone();
+    for descriptor in scrobbling::secret_descriptors() {
+        descriptor.value_mut(&mut persisted).clear();
+    }
+    persisted.lastfm.api_key.clear();
+    file.update(|stored| {
+        stored.ui.lastfm_api_key = input.lastfm.api_key.clone();
+        stored.scrobbling = persisted;
+        Ok(())
+    })?;
+
+    // Descriptor order keeps each session after the credentials that make it
+    // usable. A partial write therefore still cannot connect the wrong account.
+    for (_, key, value) in changed_secrets {
+        if !value.is_empty() {
+            save_secret(Arc::clone(secrets), key.clone(), value)
+                .map_err(|error| format!("failed to save scrobbling secret {key:?}: {error}"))?;
+        }
+    }
+    Ok(load_scrobbling_settings(file, secrets))
+}
+
+pub(crate) fn load_scrobbling_settings(
+    file: &SettingsFile,
+    secrets: &Arc<SwitchableSecretStore>,
+) -> ScrobblingSettings {
+    let stored = file.load();
+    let mut settings = stored.scrobbling_runtime_settings();
+    for descriptor in scrobbling::secret_descriptors() {
+        let value = descriptor.value_mut(&mut settings);
+        if !value.trim().is_empty() {
+            continue;
+        }
+        match load_secret(Arc::clone(secrets), scrobbling_secret_key(*descriptor)) {
+            Ok(Some(secret)) => *value = secret,
+            Ok(None) => {}
+            Err(error) => warn!(%error, "failed to load a scrobbling secret"),
+        }
+    }
+    settings.sanitize();
+    settings
+}
+
+pub(crate) fn startup_scrobbling_settings(
+    file: &SettingsFile,
+    secrets: &Arc<SwitchableSecretStore>,
+) -> ScrobblingSettings {
+    let stored = file.load();
+    let settings = stored.scrobbling_runtime_settings();
+    let has_inline_secrets = scrobbling::secret_descriptors()
+        .iter()
+        .any(|descriptor| !descriptor.value(&stored.scrobbling).trim().is_empty());
+    let has_enabled_service =
+        settings.lastfm.enabled || settings.librefm.enabled || settings.listenbrainz.enabled;
+    if !has_inline_secrets && !has_enabled_service {
+        return settings;
+    }
+
+    let settings = load_scrobbling_settings(file, secrets);
+    if !has_inline_secrets {
+        return settings;
+    }
+    match persist_scrobbling_settings(file, secrets, &settings) {
+        Ok(settings) => settings,
+        Err(error) => {
+            warn!(%error, "could not move scrobbling credentials to secret storage");
+            settings
+        }
+    }
+}
+
+fn scrobbling_secret_key(descriptor: scrobbling::SecretDescriptor) -> SecretKey {
+    SecretKey::namespaced(
+        descriptor.namespace(),
+        descriptor.kind(),
+        descriptor.label(),
+    )
+}
+
+pub(crate) fn load_provider_secret(
+    secrets: &Arc<SwitchableSecretStore>,
+    reference: &CredentialRef,
+) -> Result<Option<String>, String> {
+    load_secret(Arc::clone(secrets), provider_secret_key(reference))
+}
+
+pub(crate) fn save_provider_secret(
+    secrets: &Arc<SwitchableSecretStore>,
+    reference: &CredentialRef,
+    value: String,
+) -> Result<(), String> {
+    save_secret(Arc::clone(secrets), provider_secret_key(reference), value)
+}
+
+pub(crate) fn delete_provider_secret(
+    secrets: &Arc<SwitchableSecretStore>,
+    reference: &CredentialRef,
+) -> Result<(), String> {
+    delete_secret(Arc::clone(secrets), provider_secret_key(reference))
+}
+
+fn load_secret<S>(store: Arc<S>, key: SecretKey) -> Result<Option<String>, String>
+where
+    S: SecretStore + ?Sized + 'static,
+{
+    blocking_secret(move || store.load_secret(&key))
+}
+
+fn save_secret<S>(store: Arc<S>, key: SecretKey, value: String) -> Result<(), String>
+where
+    S: SecretStore + ?Sized + 'static,
+{
+    blocking_secret(move || store.save_secret(&key, &value))
+}
+
+fn delete_secret<S>(store: Arc<S>, key: SecretKey) -> Result<(), String>
+where
+    S: SecretStore + ?Sized + 'static,
+{
+    blocking_secret(move || store.delete_secret(&key))
+}
+
+fn blocking_secret<T: Send + 'static>(
+    operation: impl FnOnce() -> secrets::SecretResult<T> + Send + 'static,
+) -> Result<T, String> {
+    std::thread::Builder::new()
+        .name("rufin-secrets".to_string())
+        .spawn(operation)
+        .map_err(|error| error.to_string())?
+        .join()
+        .map_err(|_| "the secrets operation panicked".to_string())?
+        .map_err(|error| error.to_string())
+}
+
+fn random_identity(prefix: &str) -> Result<String, String> {
+    use std::fmt::Write as _;
+
+    let mut bytes = [0_u8; 16];
+    getrandom::fill(&mut bytes).map_err(|error| error.to_string())?;
+    let mut value = String::with_capacity(prefix.len() + bytes.len() * 2);
+    value.push_str(prefix);
+    for byte in bytes {
+        write!(&mut value, "{byte:02x}").map_err(|error| error.to_string())?;
+    }
+    Ok(value)
+}
+
+pub(crate) fn read_settings(path: &Path) -> Result<StoredSettings, String> {
+    match fs::read_to_string(path) {
+        Ok(json) => serde_json::from_str(&json).map_err(|error| error.to_string()),
+        Err(error) if error.kind() == ErrorKind::NotFound => Ok(StoredSettings::default()),
+        Err(error) => Err(error.to_string()),
+    }
+}
+
+pub(crate) fn write_settings(path: &Path, value: &StoredSettings) -> Result<(), String> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+    }
+    let json = serde_json::to_string_pretty(value).map_err(|error| error.to_string())?;
+    let temporary = path.with_extension("json.tmp");
+    let mut file = fs::File::create(&temporary).map_err(|error| error.to_string())?;
+    restrict_file(&temporary).map_err(|error| error.to_string())?;
+    file.write_all(format!("{json}\n").as_bytes())
+        .and_then(|()| file.sync_all())
+        .map_err(|error| error.to_string())?;
+    fs::rename(&temporary, path).map_err(|error| error.to_string())?;
+    if let Some(parent) = path.parent() {
+        fs::File::open(parent)
+            .and_then(|directory| directory.sync_all())
+            .map_err(|error| error.to_string())?;
+    }
+    Ok(())
+}
+
+fn restrict_file(path: &Path) -> std::io::Result<()> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+
+        fs::set_permissions(path, fs::Permissions::from_mode(0o600))?;
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
+    use std::collections::HashMap;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
     use ::ui::{
         LeftSidebarMode, LibraryField, LibraryLayout, LibraryListKey, LibraryListSettings,
-        RightSidebarMode,
+        RightSidebarMode, SettingsPort as _,
     };
+    use desktop_integration::Settings as RichPresenceSettings;
     use localization::SYSTEM_LANGUAGE_PREFERENCE;
-    use metadata::{ExternalLyricsProvider, Settings as MetadataSettings};
+    use lyrics::{ExternalLyricsProvider, Settings as LyricsSettings};
     use playback::{DEFAULT_AUTO_DJ_REFILL_THRESHOLD, MIN_AUTO_DJ_REFILL_THRESHOLD};
-    use rich_presence::Settings as RichPresenceSettings;
-    use scrobbling::AudioscrobblerSettings;
-    use secrets::SecretStorageMode;
-    use sources::{LibrarySourceSelection, LocalLibraryFolder};
+    use scrobbling::{
+        AudioscrobblerSettings, LASTFM_API_SECRET, LASTFM_SESSION, LIBREFM_SESSION,
+        LISTENBRAINZ_TOKEN, ListenBrainzSettings, Settings as ScrobblingSettings,
+    };
+    use secrets::{
+        MemorySecretStore, SecretError, SecretKey, SecretResult, SecretStorageMode, SecretStore,
+        SwitchableSecretStore,
+    };
+    use sources::SourceConfiguration;
 
     use super::*;
+
+    #[derive(Clone, Default)]
+    struct FaultSecretStore {
+        secrets: Arc<Mutex<HashMap<SecretKey, String>>>,
+        fail_on_save: Arc<Mutex<Option<usize>>>,
+        operations: Arc<AtomicUsize>,
+    }
+
+    impl FaultSecretStore {
+        fn fail_on_save(&self, number: usize) {
+            *self
+                .fail_on_save
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(number);
+        }
+
+        fn operation_count(&self) -> usize {
+            self.operations.load(Ordering::Acquire)
+        }
+    }
+
+    impl SecretStore for FaultSecretStore {
+        fn save_secret(&self, key: &SecretKey, secret: &str) -> SecretResult<()> {
+            self.operations.fetch_add(1, Ordering::AcqRel);
+            let mut fail_on_save = self
+                .fail_on_save
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            if let Some(remaining) = fail_on_save.as_mut() {
+                if *remaining == 1 {
+                    *fail_on_save = None;
+                    return Err(SecretError::Backend("injected save failure".to_string()));
+                }
+                *remaining -= 1;
+            }
+            self.secrets
+                .lock()
+                .map_err(|_| SecretError::Locked)?
+                .insert(key.clone(), secret.to_string());
+            Ok(())
+        }
+
+        fn load_secret(&self, key: &SecretKey) -> SecretResult<Option<String>> {
+            self.operations.fetch_add(1, Ordering::AcqRel);
+            Ok(self
+                .secrets
+                .lock()
+                .map_err(|_| SecretError::Locked)?
+                .get(key)
+                .cloned())
+        }
+
+        fn delete_secret(&self, key: &SecretKey) -> SecretResult<()> {
+            self.operations.fetch_add(1, Ordering::AcqRel);
+            self.secrets
+                .lock()
+                .map_err(|_| SecretError::Locked)?
+                .remove(key);
+            Ok(())
+        }
+    }
 
     #[test]
     fn sparse_legacy_json_keeps_persisted_defaults_and_home_order() {
@@ -191,8 +711,8 @@ mod tests {
         assert!(settings.ui.control_notifications_enabled);
         assert!(settings.ui.release_notifications_enabled);
         assert_eq!(
-            settings.ui.metadata.external_lyrics_providers,
-            metadata::default_external_lyrics_providers()
+            settings.ui.lyrics.external_lyrics_providers,
+            lyrics::default_external_lyrics_providers()
         );
 
         settings.migrate_defaults();
@@ -253,7 +773,7 @@ mod tests {
     }
 
     #[test]
-    fn rich_presence_owner_preserves_flat_settings_shape() {
+    fn desktop_integration_owner_preserves_flat_settings_shape() {
         let mut value = serde_json::to_value(StoredSettings::default())
             .unwrap_or_else(|error| panic!("serialize settings: {error}"));
         let object = value
@@ -278,15 +798,15 @@ mod tests {
         assert!(!restored.ui.rich_presence.enabled);
         assert_eq!(
             restored.ui.rich_presence.client_id,
-            rich_presence::DEFAULT_CLIENT_ID
+            desktop_integration::DEFAULT_CLIENT_ID
         );
         assert_eq!(
             restored.ui.rich_presence.display_type,
-            rich_presence::DisplayType::Application
+            desktop_integration::DisplayType::Application
         );
         assert_eq!(
             restored.ui.rich_presence.link_type,
-            rich_presence::LinkType::MusicBrainz
+            desktop_integration::LinkType::MusicBrainz
         );
     }
 
@@ -409,7 +929,7 @@ mod tests {
                     client_id: String::new(),
                     ..RichPresenceSettings::default()
                 },
-                metadata: MetadataSettings {
+                lyrics: LyricsSettings {
                     external_lyrics_providers: vec![
                         ExternalLyricsProvider::Genius,
                         ExternalLyricsProvider::Netease,
@@ -417,20 +937,13 @@ mod tests {
                     ],
                     lyrics_provider_settings_version: 0,
                     suppressed_auto_lyrics_track_ids: vec!["track-one".to_string()],
-                    ..MetadataSettings::default()
+                    ..LyricsSettings::default()
                 },
                 auto_dj_refill_threshold: 0,
                 tray_enabled: false,
                 exit_to_tray: true,
                 start_minimized: true,
                 lastfm_api_key: String::new(),
-                scrobbling: Settings {
-                    lastfm: AudioscrobblerSettings {
-                        api_key: " scrobble-key ".to_string(),
-                        ..AudioscrobblerSettings::default()
-                    },
-                    ..Settings::default()
-                },
                 library_lists: vec![LibraryListSettingsEntry {
                     key: LibraryListKey::Playlists,
                     settings: LibraryListSettings {
@@ -445,10 +958,18 @@ mod tests {
                         detail_track_fields: Vec::new(),
                         sort_key: LibraryField::Title,
                         descending: false,
+                        row_column_widths: Vec::new(),
                         layout_version: 2,
                     },
                 }],
                 ..UiSettings::default()
+            },
+            scrobbling: ScrobblingSettings {
+                lastfm: AudioscrobblerSettings {
+                    api_key: " scrobble-key ".to_string(),
+                    ..AudioscrobblerSettings::default()
+                },
+                ..ScrobblingSettings::default()
             },
             ..StoredSettings::default()
         };
@@ -459,24 +980,24 @@ mod tests {
         assert_eq!(settings.ui.release_notification_seen_version, None);
         assert_eq!(
             settings.ui.rich_presence.client_id,
-            rich_presence::DEFAULT_CLIENT_ID
+            desktop_integration::DEFAULT_CLIENT_ID
         );
         assert!(!settings.ui.rich_presence.enabled);
         assert_eq!(
-            settings.ui.metadata.external_lyrics_providers,
+            settings.ui.lyrics.external_lyrics_providers,
             vec![
                 ExternalLyricsProvider::Genius,
                 ExternalLyricsProvider::Netease
             ]
         );
         assert_eq!(
-            settings.ui.metadata.lyrics_provider_settings_version,
-            metadata::LYRICS_PROVIDER_SETTINGS_VERSION
+            settings.ui.lyrics.lyrics_provider_settings_version,
+            lyrics::LYRICS_PROVIDER_SETTINGS_VERSION
         );
         assert!(
             settings
                 .ui
-                .metadata
+                .lyrics
                 .suppressed_auto_lyrics_track_ids
                 .is_empty()
         );
@@ -487,7 +1008,7 @@ mod tests {
         assert!(!settings.ui.exit_to_tray);
         assert!(!settings.ui.start_minimized);
         assert_eq!(settings.ui.lastfm_api_key, "scrobble-key");
-        assert!(settings.ui.scrobbling.lastfm.api_key.is_empty());
+        assert!(settings.scrobbling.lastfm.api_key.is_empty());
         assert_eq!(
             settings.scrobbling_runtime_settings().lastfm.api_key,
             "scrobble-key"
@@ -506,11 +1027,181 @@ mod tests {
     }
 
     #[test]
+    fn disabled_startup_does_not_read_secret_storage() {
+        let directory = tempfile::tempdir().expect("temporary settings directory");
+        let file =
+            SettingsFile::open(directory.path().join("settings.json")).expect("open settings");
+        let backend = FaultSecretStore::default();
+        let secrets = Arc::new(SwitchableSecretStore::new(Arc::new(backend.clone())));
+
+        let defaults = startup_scrobbling_settings(&file, &secrets);
+        assert!(!defaults.lastfm.enabled);
+        assert_eq!(backend.operation_count(), 0);
+
+        file.update(|stored| {
+            stored.ui.lastfm_api_key = "retained-api-key".to_string();
+            stored.scrobbling.lastfm.username = "retained-listener".to_string();
+            stored.scrobbling.lastfm.enabled = false;
+            Ok(())
+        })
+        .expect("save disabled account metadata");
+        let retained = startup_scrobbling_settings(&file, &secrets);
+        assert_eq!(retained.lastfm.username, "retained-listener");
+        assert_eq!(backend.operation_count(), 0);
+    }
+
+    #[test]
+    fn enabled_startup_hydrates_stored_scrobbling_account() {
+        let directory = tempfile::tempdir().expect("temporary settings directory");
+        let file =
+            SettingsFile::open(directory.path().join("settings.json")).expect("open settings");
+        file.update(|stored| {
+            stored.ui.lastfm_api_key = "lastfm-key".to_string();
+            stored.scrobbling.lastfm.enabled = true;
+            stored.scrobbling.lastfm.username = "listener".to_string();
+            Ok(())
+        })
+        .expect("save enabled account");
+        let secrets = Arc::new(SwitchableSecretStore::new(Arc::new(
+            MemorySecretStore::new(),
+        )));
+        secrets
+            .save_secret(&scrobbling_secret_key(LASTFM_API_SECRET), "lastfm-secret")
+            .expect("save API secret");
+        secrets
+            .save_secret(&scrobbling_secret_key(LASTFM_SESSION), "lastfm-session")
+            .expect("save session");
+
+        let settings = startup_scrobbling_settings(&file, &secrets);
+
+        assert!(settings.lastfm.enabled);
+        assert_eq!(settings.lastfm.api_secret, "lastfm-secret");
+        assert_eq!(settings.lastfm.session_key, "lastfm-session");
+    }
+
+    #[test]
+    fn inline_legacy_scrobbling_secrets_migrate_while_disabled() {
+        let directory = tempfile::tempdir().expect("temporary settings directory");
+        let file =
+            SettingsFile::open(directory.path().join("settings.json")).expect("open settings");
+        file.update(|stored| {
+            stored.ui.lastfm_api_key = "lastfm-key".to_string();
+            stored.scrobbling = ScrobblingSettings {
+                lastfm: AudioscrobblerSettings {
+                    api_secret: "lastfm-secret".to_string(),
+                    session_key: "lastfm-session".to_string(),
+                    ..AudioscrobblerSettings::default()
+                },
+                librefm: AudioscrobblerSettings {
+                    session_key: "librefm-session".to_string(),
+                    ..AudioscrobblerSettings::default()
+                },
+                listenbrainz: ListenBrainzSettings {
+                    user_token: "listenbrainz-token".to_string(),
+                    ..ListenBrainzSettings::default()
+                },
+            };
+            Ok(())
+        })
+        .expect("save inline credentials");
+        let secrets = Arc::new(SwitchableSecretStore::new(Arc::new(
+            MemorySecretStore::new(),
+        )));
+
+        let migrated = startup_scrobbling_settings(&file, &secrets);
+
+        assert_eq!(migrated.lastfm.api_key, "lastfm-key");
+        assert_eq!(migrated.lastfm.api_secret, "lastfm-secret");
+        assert_eq!(migrated.lastfm.session_key, "lastfm-session");
+        assert_eq!(migrated.librefm.session_key, "librefm-session");
+        assert_eq!(migrated.listenbrainz.user_token, "listenbrainz-token");
+        let persisted = file.load();
+        for descriptor in scrobbling::secret_descriptors() {
+            assert!(descriptor.value(&persisted.scrobbling).is_empty());
+        }
+        for (descriptor, expected) in [
+            (LASTFM_API_SECRET, "lastfm-secret"),
+            (LASTFM_SESSION, "lastfm-session"),
+            (LIBREFM_SESSION, "librefm-session"),
+            (LISTENBRAINZ_TOKEN, "listenbrainz-token"),
+        ] {
+            assert_eq!(
+                secrets
+                    .load_secret(&scrobbling_secret_key(descriptor))
+                    .expect("load migrated credential")
+                    .as_deref(),
+                Some(expected)
+            );
+        }
+
+        let ui = SettingsUiPort::new(file.clone(), |_, _| {});
+        let mut ordinary = ui.load();
+        ordinary.language = "tr".to_string();
+        ui.save(&ordinary).expect("save ordinary UI setting");
+
+        assert_eq!(load_scrobbling_settings(&file, &secrets), migrated);
+    }
+
+    #[test]
+    fn interrupted_scrobbling_account_change_cannot_pair_old_identity_and_session() {
+        let directory = tempfile::tempdir().expect("temporary settings directory");
+        let file =
+            SettingsFile::open(directory.path().join("settings.json")).expect("open settings");
+        let backend = FaultSecretStore::default();
+        let secrets = Arc::new(SwitchableSecretStore::new(Arc::new(backend.clone())));
+        let account = |username: &str, api_secret: &str, session_key: &str| ScrobblingSettings {
+            lastfm: AudioscrobblerSettings {
+                enabled: true,
+                username: username.to_string(),
+                api_key: "lastfm-key".to_string(),
+                api_secret: api_secret.to_string(),
+                session_key: session_key.to_string(),
+                ..AudioscrobblerSettings::default()
+            },
+            ..ScrobblingSettings::default()
+        };
+
+        persist_scrobbling_settings(
+            &file,
+            &secrets,
+            &account("first-listener", "first-secret", "first-session"),
+        )
+        .expect("save first account");
+        backend.fail_on_save(2);
+        let error = persist_scrobbling_settings(
+            &file,
+            &secrets,
+            &account("second-listener", "second-secret", "second-session"),
+        )
+        .expect_err("interrupt second account");
+        assert!(error.contains("injected save failure"));
+
+        let interrupted = load_scrobbling_settings(&file, &secrets);
+        assert_eq!(interrupted.lastfm.username, "second-listener");
+        assert_eq!(interrupted.lastfm.api_secret, "second-secret");
+        assert!(interrupted.lastfm.session_key.is_empty());
+        assert_ne!(interrupted.lastfm.session_key, "first-session");
+    }
+
+    #[test]
     fn current_home_blocks_replace_the_read_only_legacy_input() {
-        let sources = LibrarySourceSettings {
-            selected: Some(LibrarySourceSelection::Local),
-            local_folders: vec![LocalLibraryFolder {
-                path: "/music".to_string(),
+        let local_id = SourceId::new("local:server:library");
+        let sources = SourceSettings {
+            selected_source_id: Some(local_id.clone()),
+            configured: vec![ConfiguredSource {
+                configuration: SourceConfiguration {
+                    source_id: local_id,
+                    kind: "local".to_string(),
+                    name: "Local".to_string(),
+                    provider_payload: serde_json::json!({
+                        "version": 1,
+                        "roots": ["/music"],
+                    })
+                    .to_string(),
+                },
+                credential_ref: None,
+                music_folder_id: None,
+                local_access: None,
             }],
         };
         let mut stored = StoredSettings {
@@ -547,5 +1238,47 @@ mod tests {
             serialized.get("home_blocks"),
             Some(&serde_json::json!(["Showcase", "RecentlyPlayed"]))
         );
+    }
+
+    #[test]
+    fn download_rules_follow_their_configured_source() {
+        let source_id = SourceId::new("jellyfin:configured");
+        let removed_id = SourceId::new("jellyfin:removed");
+        let mut stored = StoredSettings {
+            sources: SourceSettings {
+                selected_source_id: Some(source_id.clone()),
+                configured: vec![ConfiguredSource {
+                    configuration: SourceConfiguration {
+                        source_id: source_id.clone(),
+                        kind: "jellyfin".to_string(),
+                        name: "Server".to_string(),
+                        provider_payload: "{}".to_string(),
+                    },
+                    credential_ref: None,
+                    music_folder_id: None,
+                    local_access: None,
+                }],
+            },
+            ..StoredSettings::default()
+        };
+        stored.ui.set_download_rules(
+            source_id.clone(),
+            ::ui::DownloadRules {
+                entire_library: true,
+                ..::ui::DownloadRules::default()
+            },
+        );
+        stored.ui.set_download_rules(
+            removed_id.clone(),
+            ::ui::DownloadRules {
+                favorites: true,
+                ..::ui::DownloadRules::default()
+            },
+        );
+
+        stored.migrate_defaults();
+
+        assert!(stored.ui.download_rules(&source_id).entire_library);
+        assert!(stored.ui.download_rules(&removed_id).is_empty());
     }
 }

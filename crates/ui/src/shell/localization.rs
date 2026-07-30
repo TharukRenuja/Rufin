@@ -1,4 +1,4 @@
-use super::{Shell, navigation};
+use super::Shell;
 use crate::localization::relocalize_bound_widgets;
 use adw::prelude::*;
 use localization::tr;
@@ -27,32 +27,6 @@ impl Shell {
         if !self.localization.bindings.borrow().is_empty() {
             return;
         }
-
-        self.bind_locale({
-            let normal_button = self.navigation_view.normal_main_menu.button.clone();
-            let normal_source_button = self.navigation_view.server_selector.normal_button.clone();
-            let compact_button = self.navigation_view.compact_main_menu.button.clone();
-            let compact_source_button = self.navigation_view.server_selector.compact_button.clone();
-            let shell = Rc::clone(self);
-            move || {
-                navigation::relocalize_primary_menu_button(
-                    &normal_button,
-                    &normal_source_button,
-                    &shell.navigation_view.normal_main_menu.popover,
-                    &shell.navigation_view.normal_main_menu.click_handler,
-                    &shell,
-                    false,
-                );
-                navigation::relocalize_primary_menu_button(
-                    &compact_button,
-                    &compact_source_button,
-                    &shell.navigation_view.compact_main_menu.popover,
-                    &shell.navigation_view.compact_main_menu.click_handler,
-                    &shell,
-                    true,
-                );
-            }
-        });
 
         self.bind_locale({
             let area = self.player_view.player_controls.cover.area.clone();

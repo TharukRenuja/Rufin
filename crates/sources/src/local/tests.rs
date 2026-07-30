@@ -1,229 +1,1436 @@
+use std::collections::BTreeSet;
+use std::fs;
+use std::path::{Path, PathBuf};
+use std::sync::Mutex;
+
+use library::{
+    CandidateBatch, CandidateFinish, CandidateHeader, HomeFacts, Library, LocalFile,
+    LocalReadState, SourceId, Track, TrackSort,
+};
+use lofty::config::WriteOptions;
+use lofty::file::TaggedFileExt;
+use lofty::id3::v2::Id3v2Tag;
+use lofty::picture::{MimeType, Picture, PictureType};
+use lofty::prelude::*;
+use lofty::probe::Probe;
+use lofty::tag::{ItemKey, ItemValue, Tag, TagItem, TagType};
+
 use super::*;
-use lofty::picture::MimeType;
-use lofty::tag::{ItemValue, TagItem, TagType};
-#[test]
-fn local_root_identity() {
-    let dir = tempfile::tempdir().expect("tempdir");
+use crate::source::{BatchEmitter, SourceReadProgress, SourceReadStage};
 
-    let first = LocalSource::identity_for_root(dir.path()).expect("identity");
-    let second = LocalSource::identity_for_root(dir.path()).expect("identity");
-
-    assert_eq!(first, second);
-    assert_eq!(first.kind, LOCAL_SOURCE_ID);
+#[derive(Default)]
+struct ScanFacts {
+    batches: Vec<CandidateBatch>,
+    progress: Vec<SourceReadProgress>,
+    summary: crate::SourceReadSummary,
 }
-#[tokio::test]
-async fn local_provider_scans_multiple_roots() {
-    let first = tempfile::tempdir().expect("first root");
-    let second = tempfile::tempdir().expect("second root");
-    fs::write(first.path().join("first.mp3"), []).expect("first track");
-    fs::write(second.path().join("second.mp3"), []).expect("second track");
 
-    let provider = LocalSource::from_roots(vec![
+impl ScanFacts {
+    fn albums(&self) -> Vec<library::Album> {
+        self.batches
+            .iter()
+            .filter_map(|batch| match batch {
+                CandidateBatch::Albums(values) => Some(values.as_slice()),
+                _ => None,
+            })
+            .flatten()
+            .cloned()
+            .collect()
+    }
+
+    fn tracks(&self) -> Vec<Track> {
+        self.batches
+            .iter()
+            .filter_map(|batch| match batch {
+                CandidateBatch::Tracks(values) => Some(values.as_slice()),
+                _ => None,
+            })
+            .flatten()
+            .cloned()
+            .collect()
+    }
+
+    fn files(&self) -> Vec<LocalFile> {
+        self.batches
+            .iter()
+            .filter_map(|batch| match batch {
+                CandidateBatch::LocalFiles(values) => Some(values.as_slice()),
+                _ => None,
+            })
+            .flatten()
+            .cloned()
+            .collect()
+    }
+}
+
+fn complete_scan(source: &LocalSource) -> ScanFacts {
+    let mut batches = Vec::new();
+    let progress = std::sync::Mutex::new(Vec::new());
+    let mut accept = |batch| {
+        batches.push(batch);
+        true
+    };
+    let mut emitter = BatchEmitter::new(&mut accept);
+    source
+        .read_facts(
+            &mut emitter,
+            &|value| progress.lock().expect("progress lock").push(value),
+            &|| false,
+        )
+        .expect("complete Local scan");
+    let summary = emitter.summary();
+    drop(emitter);
+    ScanFacts {
+        batches,
+        progress: progress.into_inner().expect("progress lock"),
+        summary,
+    }
+}
+
+fn exact_replacement(
+    source: &LocalSource,
+    loaded: &library::LoadedLibrary,
+    path: PathBuf,
+    observed_at: i64,
+) -> library::LocalComponentReplacement {
+    let check = source
+        .check(
+            crate::LocalFilesystemChange::Paths(BTreeSet::from([path])),
+            &|| false,
+        )
+        .expect("check exact Local change");
+    let accepted_files = loaded
+        .local_file_baseline(check.file_seeds())
+        .expect("read exact file baseline");
+    let change = source
+        .confirm_change(check, accepted_files, &|_| {}, &|| false)
+        .expect("confirm exact Local change")
+        .expect("changed Local file");
+    let baseline = loaded
+        .local_component_baseline(change.component_seeds())
+        .expect("read exact Local component");
+    source
+        .complete_change(change, baseline, observed_at, &|| false)
+        .expect("complete exact Local change")
+}
+
+#[test]
+fn complete_scan_reads_picard_album_classification() {
+    let root = tempfile::tempdir().expect("Local root");
+    write_tagged_release_wav(
+        &root.path().join("Track.wav"),
+        "Track",
+        " Album ; Compilation; Live; album ",
+        None,
+    )
+    .expect("write tagged WAV");
+    let source =
+        LocalSource::from_roots(vec![root.path().to_path_buf()]).expect("open Local source");
+
+    let albums = complete_scan(&source).albums();
+
+    assert_eq!(albums.len(), 1);
+    assert_eq!(albums[0].release_types, ["album", "compilation", "live"]);
+    assert_eq!(albums[0].is_compilation, Some(true));
+}
+
+#[test]
+fn album_classification_combines_track_tags_in_stable_order() {
+    let root = tempfile::tempdir().expect("Local root");
+    write_tagged_release_wav(
+        &root.path().join("First.wav"),
+        "First",
+        "Single; Live",
+        Some(false),
+    )
+    .expect("write first tagged WAV");
+    write_tagged_release_wav(
+        &root.path().join("Second.wav"),
+        "Second",
+        "EP; single",
+        Some(true),
+    )
+    .expect("write second tagged WAV");
+    let source =
+        LocalSource::from_roots(vec![root.path().to_path_buf()]).expect("open Local source");
+
+    let albums = complete_scan(&source).albums();
+
+    assert_eq!(albums.len(), 1);
+    assert_eq!(albums[0].release_types, ["ep", "live", "single"]);
+    assert_eq!(albums[0].is_compilation, Some(true));
+}
+
+#[test]
+fn metadata_editing_is_offered_only_for_writable_non_cue_local_files() {
+    let root = tempfile::tempdir().expect("Local root");
+    let wav = root.path().join("editable.wav");
+    write_tagged_wav(&wav, "Editable", "Artist", "Album", 1).expect("write editable WAV");
+    let source =
+        LocalSource::from_roots(vec![root.path().to_path_buf()]).expect("open Local source");
+    let track = complete_scan(&source)
+        .tracks()
+        .into_iter()
+        .next()
+        .expect("scanned WAV Track");
+
+    let editing = source
+        .track_metadata_editing(&track)
+        .expect("Lofty-backed WAV metadata editing");
+    assert!(editing.includes(crate::TrackMetadataField::Title));
+    assert!(editing.includes(crate::TrackMetadataField::Artwork));
+
+    let mut discoverer_track = track.clone();
+    discoverer_track.make_mut().source_path = Some(
+        root.path()
+            .join("read-only.mka")
+            .to_string_lossy()
+            .into_owned(),
+    );
+    assert_eq!(source.track_metadata_editing(&discoverer_track), None);
+
+    let mut cue_track = track.clone();
+    cue_track.make_mut().cue = Some(library::CueSegment {
+        cue_path: root.path().join("album.cue").to_string_lossy().into_owned(),
+        start_millis: 0,
+        end_millis: 1_000,
+    });
+    assert_eq!(source.track_metadata_editing(&cue_track), None);
+
+    let outside = tempfile::tempdir().expect("outside directory");
+    let mut outside_track = track;
+    outside_track.make_mut().source_path = Some(
+        outside
+            .path()
+            .join("outside.flac")
+            .to_string_lossy()
+            .into_owned(),
+    );
+    assert_eq!(source.track_metadata_editing(&outside_track), None);
+}
+
+#[test]
+fn complete_scan_maps_lofty_metadata_and_embedded_artwork() {
+    let root = tempfile::tempdir().expect("Local root");
+    let path = root.path().join("Tagged.wav");
+    write_complete_tagged_wav(&path).expect("write complete tagged WAV");
+    let source =
+        LocalSource::from_roots(vec![root.path().to_path_buf()]).expect("open Local source");
+
+    let facts = complete_scan(&source);
+    let tracks = facts.tracks();
+    let [track] = tracks.as_slice() else {
+        panic!("expected one mapped Track");
+    };
+
+    assert_eq!(track.title, "Track Title");
+    assert_eq!(track.artist, "Track Artist One; Track Artist Two");
+    assert_eq!(track.album, "Album Title");
+    assert_eq!(track.year, 2024);
+    assert_eq!(track.duration_seconds, 1);
+    assert_eq!(track.disc_number, 2);
+    assert_eq!(track.track_number, 7);
+    assert_eq!(track.comment.as_deref(), Some("Track comment"));
+    assert_eq!(track.bpm, Some(123));
+    assert_eq!(
+        track.musicbrainz_recording_id.as_deref(),
+        Some("recording-id")
+    );
+    assert_eq!(
+        track
+            .relations
+            .artists
+            .iter()
+            .map(|artist| (
+                artist.name.as_str(),
+                artist.musicbrainz_artist_id.as_deref()
+            ))
+            .collect::<Vec<_>>(),
+        [
+            ("Track Artist One", Some("artist-one-id")),
+            ("Track Artist Two", Some("artist-two-id")),
+        ]
+    );
+    assert_eq!(
+        track
+            .relations
+            .album_artists
+            .iter()
+            .map(|artist| (
+                artist.name.as_str(),
+                artist.musicbrainz_artist_id.as_deref()
+            ))
+            .collect::<Vec<_>>(),
+        [("Album Artist", Some("album-artist-id"))]
+    );
+    assert_eq!(
+        track.genre_names().collect::<Vec<_>>(),
+        ["Electronic", "Ambient"]
+    );
+    assert_eq!(track.mood_names().collect::<Vec<_>>(), ["Focused", "Calm"]);
+
+    let artwork = track
+        .local_artwork
+        .as_ref()
+        .expect("embedded artwork reference");
+    let image = source.image_bytes(artwork).expect("read embedded artwork");
+    assert_eq!(image.bytes, TEST_PNG);
+    assert_eq!(image.content_type.as_deref(), Some("image/png"));
+
+    let albums = facts.albums();
+    let [album] = albums.as_slice() else {
+        panic!("expected one mapped Album");
+    };
+    assert_eq!(album.artist, "Album Artist");
+    assert_eq!(album.release_types, ["album", "live"]);
+    assert_eq!(album.is_compilation, Some(false));
+    assert_eq!(album.musicbrainz_album_id.as_deref(), Some("release-id"));
+    assert_eq!(
+        album.musicbrainz_release_group_id.as_deref(),
+        Some("release-group-id")
+    );
+}
+
+#[test]
+fn local_access_reuses_unchanged_files_and_drops_deleted_files() {
+    let root = tempfile::tempdir().expect("local access root");
+    let path = root.path().join("No Tags.mp3");
+    fs::write(&path, []).expect("write metadata fallback file");
+
+    let first =
+        read_local_access(root.path(), &[], &|_| {}, &|| false).expect("read local access files");
+    assert_eq!(first.len(), 1);
+    assert_eq!(first[0].title, "No Tags");
+    assert_eq!(first[0].artist, "Unknown Artist");
+
+    let mut accepted = first;
+    accepted[0].title = "Accepted without rereading tags".to_string();
+    let unchanged = read_local_access(root.path(), &accepted, &|_| {}, &|| false)
+        .expect("reuse unchanged local access file");
+    assert_eq!(unchanged, accepted);
+
+    fs::write(&path, [0_u8]).expect("change local access file");
+    let changed = read_local_access(root.path(), &unchanged, &|_| {}, &|| false)
+        .expect("reread changed local access file");
+    assert_eq!(changed[0].title, "No Tags");
+
+    fs::remove_file(path).expect("remove local access file");
+    let deleted = read_local_access(root.path(), &changed, &|_| {}, &|| false)
+        .expect("rescan after deletion");
+    assert!(deleted.is_empty());
+}
+
+#[test]
+fn local_access_reads_only_match_fields_from_audio_files() {
+    let root = tempfile::tempdir().expect("local access root");
+    let path = root.path().join("Tagged.wav");
+    write_tagged_wav_fields(&path, "Title", "Artist", "Album", 2, 7).expect("write tagged WAV");
+    fs::write(root.path().join("Album.cue"), b"FILE \"Tagged.wav\" WAVE")
+        .expect("write sibling CUE");
+    fs::write(root.path().join("cover.png"), [1_u8, 2, 3, 4]).expect("write sibling image");
+    let progress = std::sync::Mutex::new(Vec::new());
+
+    let files = read_local_access(
+        root.path(),
+        &[],
+        &|value| progress.lock().expect("progress lock").push(value),
+        &|| false,
+    )
+    .expect("read local access fields");
+
+    assert_eq!(files.len(), 1);
+    let file = &files[0];
+    assert_eq!(file.title, "Title");
+    assert_eq!(file.artist, "Artist");
+    assert_eq!(file.album, "Album");
+    assert_eq!(file.disc_number, 2);
+    assert_eq!(file.track_number, 7);
+    assert_eq!(file.duration_seconds, 1);
+    let progress = progress.into_inner().expect("progress lock");
+    assert!(progress.iter().any(|progress| {
+        progress.stage == SourceReadStage::Files
+            && progress.completed == 1
+            && progress.total == Some(1)
+    }));
+    assert!(progress.iter().any(|progress| {
+        progress.stage == SourceReadStage::Tracks
+            && progress.completed == 1
+            && progress.total == Some(1)
+    }));
+}
+
+#[test]
+fn local_access_honors_cancellation_before_reading_tags() {
+    let root = tempfile::tempdir().expect("local access root");
+    write_silent_wav(&root.path().join("Track.wav"), 1).expect("write WAV");
+
+    let error = read_local_access(root.path(), &[], &|_| {}, &|| true)
+        .expect_err("cancel local access read");
+
+    assert!(matches!(error, crate::SourceError::Cancelled));
+}
+
+#[test]
+fn complete_scan_streams_roots_and_isolates_metadata_fallback() {
+    let first = tempfile::tempdir().expect("first Local root");
+    let nested = first.path().join("nested");
+    let second = tempfile::tempdir().expect("second Local root");
+    fs::create_dir_all(&nested).expect("create nested root");
+    write_silent_wav(&nested.join("Good.wav"), 1).expect("write WAV");
+    fs::write(second.path().join("No Tags.mp3"), []).expect("write readable fallback file");
+    let source = LocalSource::from_roots(vec![
         first.path().to_path_buf(),
+        nested,
         second.path().to_path_buf(),
     ])
-    .expect("provider");
+    .expect("open Local source");
 
-    let tracks = provider
-        .tracks(PagedRequest::new(0, 10))
-        .await
-        .expect("tracks");
+    let facts = complete_scan(&source);
+    let mut tracks = facts.tracks();
+    tracks.sort_by(|left, right| left.title.cmp(&right.title));
 
-    assert_eq!(tracks.total, 2);
-    assert_eq!(tracks.items.len(), 2);
-}
-#[tokio::test]
-async fn local_provider_projects_single_file_cue_tracks() {
-    let dir = tempfile::tempdir().expect("tempdir");
-    let audio = dir.path().join("album.wav");
-    write_silent_wav(&audio, 8).expect("write wav");
-    fs::write(
-        dir.path().join("album.cue"),
-        r#"
-PERFORMER "Cue Artist"
-TITLE "Cue Album"
-FILE "album.wav" WAVE
-  TRACK 01 AUDIO
-    TITLE "First Cue Track"
-    INDEX 01 00:00:00
-  TRACK 02 AUDIO
-    TITLE "Second Cue Track"
-    INDEX 01 00:04:00
-"#,
-    )
-    .expect("write cue");
-
-    let provider = LocalSource::from_root(dir.path().to_path_buf()).expect("provider");
-    let tracks = provider
-        .tracks(PagedRequest::new(0, 10))
-        .await
-        .expect("tracks");
-
-    assert_eq!(tracks.total, 2);
-    assert!(
-        tracks
-            .items
-            .iter()
-            .any(|track| track.title == "First Cue Track")
-    );
-    assert!(
-        tracks
-            .items
-            .iter()
-            .any(|track| track.title == "Second Cue Track")
-    );
-    assert!(tracks.items.iter().all(|track| track.album == "Cue Album"));
-    assert_eq!(provider.manifest_scan().cue_track_sources.len(), 2);
-    assert_eq!(provider.manifest_scan().entries.len(), 2);
-    assert_eq!(provider.manifest_scan().counters.cue_sheets, 1);
-    assert_eq!(provider.manifest_scan().counters.cue_tracks, 2);
-    assert_eq!(provider.manifest_scan().counters.cue_backing_reads, 1);
-}
-
-#[tokio::test]
-async fn local_provider_reuses_unchanged_cue_tracks_without_backing_read() {
-    let dir = tempfile::tempdir().expect("tempdir");
-    let audio = dir.path().join("album.wav");
-    write_silent_wav(&audio, 8).expect("write wav");
-    fs::write(
-        dir.path().join("album.cue"),
-        r#"
-PERFORMER "Cue Artist"
-TITLE "Cue Album"
-FILE "album.wav" WAVE
-  TRACK 01 AUDIO
-    TITLE "First Cue Track"
-    INDEX 01 00:00:00
-  TRACK 02 AUDIO
-    TITLE "Second Cue Track"
-    INDEX 01 00:04:00
-"#,
-    )
-    .expect("write cue");
-    let server = identity_for_root(dir.path());
-    let cold =
-        LocalSource::from_roots_with_identity(vec![dir.path().to_path_buf()], server.clone())
-            .expect("cold provider");
-
-    let warm = LocalSource::from_roots_with_manifest_cache(
-        vec![dir.path().to_path_buf()],
-        server,
-        cold.manifest_scan().entries.clone(),
-    )
-    .expect("warm provider");
-
-    assert_eq!(cold.manifest_scan().counters.cue_backing_reads, 1);
-    assert_eq!(warm.manifest_scan().counters.cue_sheets, 1);
-    assert_eq!(warm.manifest_scan().counters.cue_tracks, 2);
-    assert_eq!(warm.manifest_scan().counters.cue_backing_reads, 0);
-    assert_eq!(warm.manifest_scan().counters.cue_reused_tracks, 2);
-    assert_eq!(warm.manifest_scan().counters.tag_reads, 0);
-    assert_eq!(warm.manifest_scan().cue_track_sources.len(), 2);
-    assert!(warm.manifest_scan().changed_manifest_paths.is_empty());
-    assert!(!warm.manifest_scan().library_changed);
+    assert_eq!(tracks.len(), 2);
     assert_eq!(
-        warm.tracks(PagedRequest::new(0, 10))
-            .await
-            .expect("tracks")
-            .total,
+        tracks
+            .iter()
+            .map(|track| track.title.as_str())
+            .collect::<Vec<_>>(),
+        ["Good", "No Tags"]
+    );
+    assert!(tracks.iter().any(|track| track.artist == "Unknown Artist"));
+    assert_eq!(facts.summary.tracks, 2);
+    assert_eq!(facts.summary.metadata_fallbacks, 1);
+    assert_eq!(facts.summary.unreadable_files, 0);
+    assert!(facts.batches.iter().all(|batch| batch.len() <= 1_024));
+    assert!(facts.progress.iter().any(|progress| {
+        progress.stage == SourceReadStage::Finalizing
+            && progress.completed == 1
+            && progress.total == Some(1)
+    }));
+}
+
+#[test]
+fn unchanged_rescan_returns_no_component_plan() {
+    let root = tempfile::tempdir().expect("Local root");
+    write_silent_wav(&root.path().join("Track.wav"), 1).expect("write WAV");
+    let source =
+        LocalSource::from_roots(vec![root.path().to_path_buf()]).expect("open Local source");
+    let facts = complete_scan(&source);
+    let store = tempfile::tempdir().expect("Store directory");
+    let library = Library::open(store.path().join("library.db")).expect("open Library");
+    let source_id = SourceId::new(LOCAL_LIBRARY_SOURCE_ID);
+    let mut candidate = library
+        .begin_source_candidate(CandidateHeader {
+            source_id,
+            input_version: 1,
+            input_digest: [1; 32],
+        })
+        .expect("begin Local candidate");
+    for batch in facts.batches {
+        candidate.write(batch).expect("write Local facts");
+    }
+    let accepted = candidate
+        .finish(
+            CandidateFinish {
+                freshness: None,
+                home: HomeFacts::RufinDefined,
+                accepted_at: 1,
+            },
+            None,
+        )
+        .and_then(library::PreparedSourceCandidate::accept)
+        .expect("accept Local library");
+
+    let check = source
+        .check(crate::LocalFilesystemChange::Rescan, &|| false)
+        .expect("inspect Local source");
+    let accepted_files = accepted
+        .loaded
+        .local_file_baseline(check.file_seeds())
+        .expect("read Local file baseline");
+    let track_progress = Mutex::new(Vec::new());
+    assert!(
+        source
+            .confirm_change(
+                check,
+                accepted_files,
+                &|progress| {
+                    if progress.stage == SourceReadStage::Tracks {
+                        track_progress
+                            .lock()
+                            .expect("Track progress lock")
+                            .push(progress);
+                    }
+                },
+                &|| false,
+            )
+            .expect("check Local source")
+            .is_none()
+    );
+    assert!(
+        track_progress
+            .into_inner()
+            .expect("Track progress lock")
+            .is_empty()
+    );
+}
+
+#[test]
+fn unchanged_file_identity_keeps_an_accepted_unreadable_file() {
+    let root = tempfile::tempdir().expect("Local root");
+    let path = root.path().join("Recovered.wav");
+    write_silent_wav(&path, 1).expect("write WAV");
+    let source =
+        LocalSource::from_roots(vec![root.path().to_path_buf()]).expect("open Local source");
+    let mut facts = complete_scan(&source);
+    for batch in &mut facts.batches {
+        if let CandidateBatch::LocalFiles(files) = batch {
+            for file in files {
+                if file.path == path.to_string_lossy() {
+                    file.read_state = LocalReadState::Unreadable;
+                }
+            }
+        }
+    }
+
+    let store = tempfile::tempdir().expect("Store directory");
+    let library = Library::open(store.path().join("library.db")).expect("open Library");
+    let mut candidate = library
+        .begin_source_candidate(CandidateHeader {
+            source_id: SourceId::new(LOCAL_LIBRARY_SOURCE_ID),
+            input_version: 1,
+            input_digest: [6; 32],
+        })
+        .expect("begin Local candidate");
+    for batch in facts.batches {
+        candidate.write(batch).expect("write Local facts");
+    }
+    let accepted = candidate
+        .finish(
+            CandidateFinish {
+                freshness: None,
+                home: HomeFacts::RufinDefined,
+                accepted_at: 1,
+            },
+            None,
+        )
+        .and_then(library::PreparedSourceCandidate::accept)
+        .expect("accept Local library");
+
+    let check = source
+        .check(
+            crate::LocalFilesystemChange::Paths(BTreeSet::from([path.clone()])),
+            &|| false,
+        )
+        .expect("check recovered file");
+    let accepted_files = accepted
+        .loaded
+        .local_file_baseline(check.file_seeds())
+        .expect("read recovered file baseline");
+    assert_eq!(accepted_files.files.len(), 1);
+    assert_eq!(
+        accepted_files.files[0].read_state,
+        LocalReadState::Unreadable
+    );
+    assert!(
+        source
+            .confirm_change(check, accepted_files, &|_| {}, &|| false)
+            .expect("confirm unchanged unreadable file")
+            .is_none()
+    );
+}
+
+#[test]
+fn exact_reread_failure_keeps_the_accepted_path_backed_track() {
+    let root = tempfile::tempdir().expect("Local root");
+    let path = root.path().join("Temporarily Unreadable.wav");
+    write_silent_wav(&path, 1).expect("write WAV");
+    let source =
+        LocalSource::from_roots(vec![root.path().to_path_buf()]).expect("open Local source");
+    let facts = complete_scan(&source);
+    let store = tempfile::tempdir().expect("Store directory");
+    let library = Library::open(store.path().join("library.db")).expect("open Library");
+    let mut candidate = library
+        .begin_source_candidate(CandidateHeader {
+            source_id: SourceId::new(LOCAL_LIBRARY_SOURCE_ID),
+            input_version: 1,
+            input_digest: [7; 32],
+        })
+        .expect("begin Local candidate");
+    for batch in facts.batches {
+        candidate.write(batch).expect("write Local facts");
+    }
+    let accepted = candidate
+        .finish(
+            CandidateFinish {
+                freshness: None,
+                home: HomeFacts::RufinDefined,
+                accepted_at: 1,
+            },
+            None,
+        )
+        .and_then(library::PreparedSourceCandidate::accept)
+        .expect("accept Local library");
+    let track_id = accepted
+        .loaded
+        .track_list(None, TrackSort::Title, false)
+        .expect("read accepted Tracks")
+        .materialize()
+        .expect("materialize accepted Tracks")
+        .first()
+        .expect("accepted Track")
+        .id
+        .clone();
+
+    write_silent_wav(&path, 2).expect("change WAV");
+    let check = source
+        .check(
+            crate::LocalFilesystemChange::Paths(BTreeSet::from([path.clone()])),
+            &|| false,
+        )
+        .expect("check changed file");
+    fs::remove_file(&path).expect("make the checked file temporarily unreadable");
+    let accepted_files = accepted
+        .loaded
+        .local_file_baseline(check.file_seeds())
+        .expect("read changed file baseline");
+    let change = source
+        .confirm_change(check, accepted_files, &|_| {}, &|| false)
+        .expect("confirm changed file")
+        .expect("changed Local file");
+    let baseline = accepted
+        .loaded
+        .local_component_baseline(change.component_seeds())
+        .expect("read changed component");
+    let replacement = source
+        .complete_change(change, baseline, 2, &|| false)
+        .expect("complete unreadable file");
+
+    assert!(replacement.removed_track_ids.is_empty());
+    assert!(replacement.files.iter().any(|file| {
+        file.path == path.to_string_lossy() && file.read_state == LocalReadState::Unreadable
+    }));
+    library
+        .accept_local_component(&accepted.loaded, replacement)
+        .expect("accept unreadable observation");
+    assert!(
+        accepted
+            .loaded
+            .track(&track_id)
+            .expect("read retained Track")
+            .is_some()
+    );
+}
+
+#[test]
+fn exact_file_change_does_not_parse_or_replace_flat_folder_siblings() {
+    let root = tempfile::tempdir().expect("Local root");
+    let paths = (0..128)
+        .map(|index| root.path().join(format!("Track {index:03}.wav")))
+        .collect::<Vec<_>>();
+    for path in &paths {
+        write_silent_wav(path, 1).expect("write WAV");
+    }
+    let changed_path = paths[64].clone();
+    let source =
+        LocalSource::from_roots(vec![root.path().to_path_buf()]).expect("open Local source");
+    let facts = complete_scan(&source);
+    let store = tempfile::tempdir().expect("Store directory");
+    let library = Library::open(store.path().join("library.db")).expect("open Library");
+    let mut candidate = library
+        .begin_source_candidate(CandidateHeader {
+            source_id: SourceId::new(LOCAL_LIBRARY_SOURCE_ID),
+            input_version: 1,
+            input_digest: [2; 32],
+        })
+        .expect("begin Local candidate");
+    for batch in facts.batches {
+        candidate.write(batch).expect("write Local facts");
+    }
+    let accepted = candidate
+        .finish(
+            CandidateFinish {
+                freshness: None,
+                home: HomeFacts::RufinDefined,
+                accepted_at: 1,
+            },
+            None,
+        )
+        .and_then(library::PreparedSourceCandidate::accept)
+        .expect("accept Local library");
+
+    let unchanged = source
+        .check(
+            crate::LocalFilesystemChange::Paths(BTreeSet::from([changed_path.clone()])),
+            &|| false,
+        )
+        .expect("check unchanged file");
+    let unchanged_files = accepted
+        .loaded
+        .local_file_baseline(unchanged.file_seeds())
+        .expect("read unchanged file baseline");
+    let unchanged_progress = Mutex::new(Vec::new());
+    assert!(
+        source
+            .confirm_change(
+                unchanged,
+                unchanged_files,
+                &|progress| {
+                    if progress.stage == SourceReadStage::Tracks {
+                        unchanged_progress
+                            .lock()
+                            .expect("unchanged progress lock")
+                            .push(progress);
+                    }
+                },
+                &|| false,
+            )
+            .expect("confirm unchanged file")
+            .is_none()
+    );
+    assert!(
+        unchanged_progress
+            .into_inner()
+            .expect("unchanged progress lock")
+            .is_empty()
+    );
+
+    write_silent_wav(&changed_path, 2).expect("edit WAV");
+    let check = source
+        .check(
+            crate::LocalFilesystemChange::Paths(BTreeSet::from([changed_path])),
+            &|| false,
+        )
+        .expect("check changed file");
+    let accepted_files = accepted
+        .loaded
+        .local_file_baseline(check.file_seeds())
+        .expect("read changed file baseline");
+    let changed_progress = Mutex::new(Vec::new());
+    let change = source
+        .confirm_change(
+            check,
+            accepted_files,
+            &|progress| {
+                if progress.stage == SourceReadStage::Tracks {
+                    changed_progress
+                        .lock()
+                        .expect("changed progress lock")
+                        .push(progress);
+                }
+            },
+            &|| false,
+        )
+        .expect("confirm changed file")
+        .expect("changed Local file");
+    let baseline = accepted
+        .loaded
+        .local_component_baseline(change.component_seeds())
+        .expect("read changed component");
+    let replacement = source
+        .complete_change(change, baseline, 2, &|| false)
+        .expect("complete changed file");
+    assert_eq!(replacement.tracks.len(), 1);
+    assert_eq!(
+        changed_progress
+            .into_inner()
+            .expect("changed progress lock")
+            .into_iter()
+            .filter_map(|progress| progress.total)
+            .max(),
+        Some(1)
+    );
+    library
+        .accept_local_component(&accepted.loaded, replacement)
+        .expect("accept exact changed file");
+
+    write_silent_wav(&paths[65], 2).expect("edit a second WAV");
+    let check = source
+        .check(crate::LocalFilesystemChange::Rescan, &|| false)
+        .expect("rescan changed library");
+    let accepted_files = accepted
+        .loaded
+        .local_file_baseline(check.file_seeds())
+        .expect("read rescan file baseline");
+    let rescan_progress = Mutex::new(Vec::new());
+    let change = source
+        .confirm_change(
+            check,
+            accepted_files,
+            &|progress| {
+                if progress.stage == SourceReadStage::Tracks {
+                    rescan_progress
+                        .lock()
+                        .expect("rescan progress lock")
+                        .push(progress);
+                }
+            },
+            &|| false,
+        )
+        .expect("confirm changed rescan")
+        .expect("changed rescan");
+    let baseline = accepted
+        .loaded
+        .local_component_baseline(change.component_seeds())
+        .expect("read rescan component");
+    let replacement = source
+        .complete_change(change, baseline, 3, &|| false)
+        .expect("complete changed rescan");
+    assert_eq!(replacement.tracks.len(), 1);
+    assert_eq!(
+        rescan_progress
+            .into_inner()
+            .expect("rescan progress lock")
+            .into_iter()
+            .filter_map(|progress| progress.total)
+            .max(),
+        Some(1)
+    );
+}
+
+#[test]
+fn valid_cue_projects_ordered_segments_and_suppresses_the_raw_track() {
+    let root = tempfile::tempdir().expect("Local root");
+    let audio = root.path().join("album.wav");
+    let cue = root.path().join("album.cue");
+    let cover = root.path().join("cover.png");
+    write_silent_wav(&audio, 8).expect("write WAV");
+    fs::write(&cover, [1_u8, 2, 3, 4]).expect("write CUE Album cover");
+    let cue_text = r#"
+PERFORMER "Cue Artist"
+TITLE "Cue Album"
+FILE "album.wav" WAVE
+  TRACK 01 AUDIO
+    TITLE "First"
+    INDEX 01 00:00:00
+  TRACK 02 AUDIO
+    TITLE "Second"
+    INDEX 01 00:04:00
+"#;
+    fs::write(&cue, cue_text).expect("write CUE");
+    let source =
+        LocalSource::from_roots(vec![root.path().to_path_buf()]).expect("open Local source");
+
+    let facts = complete_scan(&source);
+    let mut tracks = facts.tracks();
+    tracks.sort_by_key(|track| track.track_number);
+
+    assert_eq!(tracks.len(), 2);
+    assert_eq!(tracks[0].title, "First");
+    assert_eq!(tracks[1].title, "Second");
+    assert_eq!(tracks[0].duration_seconds, 4);
+    assert_eq!(tracks[1].duration_seconds, 4);
+    assert_eq!(tracks[0].id, tags::cue_track_id(&cue, 1));
+    assert_eq!(tracks[1].id, tags::cue_track_id(&cue, 2));
+    assert!(tracks.iter().all(|track| {
+        track.source_path.as_deref() == Some(audio.to_string_lossy().as_ref())
+            && track
+                .cue
+                .as_ref()
+                .is_some_and(|segment| segment.cue_path == cue.to_string_lossy().as_ref())
+    }));
+    let album = facts
+        .batches
+        .iter()
+        .find_map(|batch| match batch {
+            CandidateBatch::Albums(albums) => albums.first(),
+            _ => None,
+        })
+        .expect("CUE Album");
+    assert_eq!(
+        album
+            .local_artwork
+            .as_ref()
+            .expect("CUE Album artwork")
+            .path(),
+        cover.to_string_lossy().as_ref()
+    );
+    let cue_file = facts
+        .files()
+        .into_iter()
+        .find(|file| file.path == cue.to_string_lossy())
+        .expect("accepted CUE observation");
+    assert_eq!(cue_file.read_state, LocalReadState::Parsed);
+    assert_eq!(
+        cue_file.dependencies,
+        vec![audio.to_string_lossy().into_owned()]
+    );
+
+    let store = tempfile::tempdir().expect("Store directory");
+    let library = Library::open(store.path().join("library.db")).expect("open Library");
+    let mut candidate = library
+        .begin_source_candidate(CandidateHeader {
+            source_id: SourceId::new(LOCAL_LIBRARY_SOURCE_ID),
+            input_version: 1,
+            input_digest: [4; 32],
+        })
+        .expect("begin Local candidate");
+    for batch in facts.batches {
+        candidate.write(batch).expect("write Local facts");
+    }
+    let accepted = candidate
+        .finish(
+            CandidateFinish {
+                freshness: None,
+                home: HomeFacts::RufinDefined,
+                accepted_at: 1,
+            },
+            None,
+        )
+        .and_then(library::PreparedSourceCandidate::accept)
+        .expect("accept Local CUE library");
+
+    write_silent_wav(&audio, 10).expect("change CUE backing audio");
+    let replacement = exact_replacement(&source, &accepted.loaded, audio.clone(), 2);
+    assert_eq!(replacement.tracks.len(), 2);
+    assert_eq!(
+        replacement.albums[0]
+            .local_artwork
+            .as_ref()
+            .expect("retained CUE Album artwork")
+            .path(),
+        cover.to_string_lossy().as_ref()
+    );
+    assert!(
+        replacement
+            .tracks
+            .iter()
+            .any(|track| track.title == "Second" && track.duration_seconds == 6)
+    );
+    library
+        .accept_local_component(&accepted.loaded, replacement)
+        .expect("accept changed CUE backing");
+
+    fs::remove_file(&cue).expect("remove CUE");
+    let replacement = exact_replacement(&source, &accepted.loaded, cue.clone(), 3);
+    assert_eq!(replacement.tracks.len(), 1);
+    assert_eq!(replacement.removed_track_ids.len(), 2);
+    assert!(replacement.tracks[0].cue.is_none());
+    library
+        .accept_local_component(&accepted.loaded, replacement)
+        .expect("accept removed CUE");
+
+    fs::write(&cue, cue_text).expect("restore CUE");
+    let replacement = exact_replacement(&source, &accepted.loaded, cue, 4);
+    assert_eq!(replacement.tracks.len(), 2);
+    assert_eq!(replacement.removed_track_ids.len(), 1);
+    assert!(replacement.tracks.iter().all(|track| track.cue.is_some()));
+    library
+        .accept_local_component(&accepted.loaded, replacement)
+        .expect("accept restored CUE");
+    let final_tracks = accepted
+        .loaded
+        .track_list(None, library::TrackSort::Title, false)
+        .expect("read final CUE Tracks")
+        .materialize()
+        .expect("materialize final CUE Tracks");
+    assert_eq!(final_tracks.len(), 2);
+    assert!(final_tracks.iter().all(|track| track.cue.is_some()));
+}
+
+#[test]
+fn arbitrary_part_directories_share_one_album_and_parent_cover() {
+    let root = tempfile::tempdir().expect("Local root");
+    let album = root.path().join("Artist").join("Album");
+    let first_part = album.join("first-half");
+    let second_part = album.join("blue-section");
+    fs::create_dir_all(&first_part).expect("create first part");
+    fs::create_dir_all(&second_part).expect("create second part");
+    let first = first_part.join("One.wav");
+    let second = second_part.join("Two.wav");
+    write_tagged_wav(&first, "One", "Artist", "Album", 1).expect("write first Track");
+    write_tagged_wav(&second, "Two", "Artist", "Album", 2).expect("write second Track");
+    let cover = album.join("cover.png");
+    fs::write(&cover, [1_u8, 2, 3, 4]).expect("write cover");
+    let source =
+        LocalSource::from_roots(vec![root.path().to_path_buf()]).expect("open Local source");
+
+    let facts = complete_scan(&source);
+    let tracks = facts.tracks();
+    let album_ids = tracks
+        .iter()
+        .filter_map(|track| track.album_id.clone())
+        .collect::<std::collections::HashSet<_>>();
+    let albums = facts
+        .batches
+        .iter()
+        .filter_map(|batch| match batch {
+            CandidateBatch::Albums(values) => Some(values.as_slice()),
+            _ => None,
+        })
+        .flatten()
+        .collect::<Vec<_>>();
+
+    assert_eq!(tracks.len(), 2);
+    assert_eq!(album_ids.len(), 1);
+    let album_id = album_ids.into_iter().next().expect("shared Album ID");
+    assert_eq!(albums.len(), 1);
+    let artwork = albums[0]
+        .local_artwork
+        .as_ref()
+        .expect("shared Album artwork");
+    assert_eq!(artwork.path(), cover.to_string_lossy().as_ref());
+    assert_eq!(
+        source
+            .image_bytes(artwork)
+            .expect("read shared artwork")
+            .bytes,
+        [1, 2, 3, 4]
+    );
+
+    let store = tempfile::tempdir().expect("Store directory");
+    let store_path = store.path().join("library.db");
+    let library = Library::open(&store_path).expect("open Library");
+    let source_id = SourceId::new(LOCAL_LIBRARY_SOURCE_ID);
+    let mut candidate = library
+        .begin_source_candidate(CandidateHeader {
+            source_id: source_id.clone(),
+            input_version: 1,
+            input_digest: [3; 32],
+        })
+        .expect("begin Local candidate");
+    for batch in facts.batches {
+        candidate.write(batch).expect("write Local facts");
+    }
+    let accepted = candidate
+        .finish(
+            CandidateFinish {
+                freshness: None,
+                home: HomeFacts::RufinDefined,
+                accepted_at: 1,
+            },
+            None,
+        )
+        .and_then(library::PreparedSourceCandidate::accept)
+        .expect("accept Local library");
+
+    write_tagged_wav(&first, "One Retagged", "Artist", "Album", 1).expect("retag first Track");
+    let check = source
+        .check(
+            crate::LocalFilesystemChange::Paths(BTreeSet::from([first.clone()])),
+            &|| false,
+        )
+        .expect("check retagged Track");
+    let accepted_files = accepted
+        .loaded
+        .local_file_baseline(check.file_seeds())
+        .expect("read retagged file baseline");
+    let change = source
+        .confirm_change(check, accepted_files, &|_| {}, &|| false)
+        .expect("confirm retagged Track")
+        .expect("retagged Local Track");
+    let baseline = accepted
+        .loaded
+        .local_component_baseline(change.component_seeds())
+        .expect("read shared Album component");
+    assert_eq!(baseline.tracks.len(), 2);
+    let replacement = source
+        .complete_change(change, baseline, 2, &|| false)
+        .expect("complete retagged Track");
+    assert_eq!(replacement.tracks.len(), 1);
+    assert_eq!(
+        replacement.albums[0]
+            .local_artwork
+            .as_ref()
+            .expect("retained parent artwork")
+            .path(),
+        cover.to_string_lossy().as_ref()
+    );
+    library
+        .accept_local_component(&accepted.loaded, replacement)
+        .expect("accept retagged Track");
+    let detail = accepted
+        .loaded
+        .album_detail(&album_id, None)
+        .expect("read shared Album")
+        .expect("shared Album");
+    assert_eq!(detail.tracks.len(), 2);
+    let detail_tracks = detail.tracks.materialize().expect("read Album Tracks");
+    assert!(
+        detail_tracks
+            .iter()
+            .any(|track| track.title == "One Retagged")
+    );
+    assert!(detail_tracks.iter().any(|track| track.title == "Two"));
+
+    fs::remove_dir_all(&second_part).expect("remove second part directory");
+    let replacement = exact_replacement(&source, &accepted.loaded, second_part.clone(), 3);
+    assert_eq!(replacement.removed_track_ids.len(), 1);
+    assert_eq!(
+        replacement.albums[0]
+            .local_artwork
+            .as_ref()
+            .expect("parent artwork after directory removal")
+            .path(),
+        cover.to_string_lossy().as_ref()
+    );
+    library
+        .accept_local_component(&accepted.loaded, replacement)
+        .expect("accept removed part directory");
+    let detail = accepted
+        .loaded
+        .album_detail(&album_id, None)
+        .expect("read Album after directory removal")
+        .expect("Album after directory removal");
+    assert_eq!(detail.tracks.len(), 1);
+
+    fs::create_dir(&second_part).expect("restore second part directory");
+    write_tagged_wav(&second, "Two", "Artist", "Album", 2).expect("restore second Track");
+    let replacement = exact_replacement(&source, &accepted.loaded, second_part, 4);
+    assert_eq!(replacement.tracks.len(), 1);
+    assert_eq!(
+        replacement.albums[0]
+            .local_artwork
+            .as_ref()
+            .expect("parent artwork after directory addition")
+            .path(),
+        cover.to_string_lossy().as_ref()
+    );
+    library
+        .accept_local_component(&accepted.loaded, replacement)
+        .expect("accept restored part directory");
+
+    fs::remove_file(&cover).expect("remove parent cover");
+    let replacement = exact_replacement(&source, &accepted.loaded, cover.clone(), 5);
+    assert!(replacement.tracks.is_empty());
+    assert_eq!(replacement.albums.len(), 1);
+    assert!(replacement.albums[0].local_artwork.is_none());
+    library
+        .accept_local_component(&accepted.loaded, replacement)
+        .expect("accept removed parent cover");
+
+    fs::write(&cover, [5_u8, 6, 7, 8]).expect("restore parent cover");
+    let replacement = exact_replacement(&source, &accepted.loaded, cover.clone(), 6);
+    assert!(replacement.tracks.is_empty());
+    assert_eq!(
+        replacement.albums[0]
+            .local_artwork
+            .as_ref()
+            .expect("restored parent artwork")
+            .path(),
+        cover.to_string_lossy().as_ref()
+    );
+    library
+        .accept_local_component(&accepted.loaded, replacement)
+        .expect("accept restored parent cover");
+
+    drop(accepted);
+    drop(library);
+    let reopened_library = Library::open(store_path).expect("reopen Library");
+    let reopened = reopened_library
+        .load_source(&source_id)
+        .expect("load Local source")
+        .expect("Local source");
+    assert_eq!(
+        reopened
+            .album_detail(&album_id, None)
+            .expect("read reopened Album")
+            .expect("reopened Album")
+            .tracks
+            .len(),
         2
     );
+
+    write_tagged_wav(&first, "One After Reopen", "Artist", "Album", 1)
+        .expect("retag Track after reopen");
+    let replacement = exact_replacement(&source, &reopened, first, 7);
+    assert_eq!(
+        replacement.albums[0]
+            .local_artwork
+            .as_ref()
+            .expect("parent artwork after reopen")
+            .path(),
+        cover.to_string_lossy().as_ref()
+    );
+    reopened_library
+        .accept_local_component(&reopened, replacement)
+        .expect("accept Track edit after reopen");
+    let detail = reopened
+        .album_detail(&album_id, None)
+        .expect("read Album after reopen edit")
+        .expect("Album after reopen edit");
+    assert!(
+        detail
+            .tracks
+            .materialize()
+            .expect("read Tracks after reopen edit")
+            .iter()
+            .any(|track| track.title == "One After Reopen")
+    );
 }
 
-#[tokio::test]
-async fn local_provider_replaces_cached_file_track_with_cue_tracks() {
-    let dir = tempfile::tempdir().expect("tempdir");
-    let audio = dir.path().join("album.wav");
-    write_silent_wav(&audio, 8).expect("write wav");
-    let server = identity_for_root(dir.path());
-    let cold =
-        LocalSource::from_roots_with_identity(vec![dir.path().to_path_buf()], server.clone())
-            .expect("cold provider");
-    let old_track_id = cold.manifest_scan().entries[0].track.id.clone();
-    fs::write(
-        dir.path().join("album.cue"),
-        r#"
-PERFORMER "Cue Artist"
-TITLE "Cue Album"
-FILE "album.wav" WAVE
-  TRACK 01 AUDIO
-    TITLE "First Cue Track"
-    INDEX 01 00:00:00
-  TRACK 02 AUDIO
-    TITLE "Second Cue Track"
-    INDEX 01 00:04:00
-"#,
-    )
-    .expect("write cue");
+#[test]
+fn new_cross_directory_album_uses_an_existing_parent_cover() {
+    let root = tempfile::tempdir().expect("Local root");
+    let album = root.path().join("Artist").join("Future Album");
+    let first_part = album.join("arbitrary-a");
+    let second_part = album.join("arbitrary-b");
+    fs::create_dir_all(&first_part).expect("create first part");
+    fs::create_dir_all(&second_part).expect("create second part");
+    let cover = album.join("cover.png");
+    fs::write(&cover, [1_u8, 2, 3, 4]).expect("write future cover");
+    let source =
+        LocalSource::from_roots(vec![root.path().to_path_buf()]).expect("open Local source");
+    let facts = complete_scan(&source);
+    let store = tempfile::tempdir().expect("Store directory");
+    let library = Library::open(store.path().join("library.db")).expect("open Library");
+    let mut candidate = library
+        .begin_source_candidate(CandidateHeader {
+            source_id: SourceId::new(LOCAL_LIBRARY_SOURCE_ID),
+            input_version: 1,
+            input_digest: [5; 32],
+        })
+        .expect("begin Local candidate");
+    for batch in facts.batches {
+        candidate.write(batch).expect("write Local facts");
+    }
+    let accepted = candidate
+        .finish(
+            CandidateFinish {
+                freshness: None,
+                home: HomeFacts::RufinDefined,
+                accepted_at: 1,
+            },
+            None,
+        )
+        .and_then(library::PreparedSourceCandidate::accept)
+        .expect("accept empty future Album");
 
-    let warm = LocalSource::from_roots_with_manifest_cache(
-        vec![dir.path().to_path_buf()],
-        server,
-        cold.manifest_scan().entries.clone(),
-    )
-    .expect("warm provider");
-    let tracks = warm.tracks(PagedRequest::new(0, 10)).await.expect("tracks");
+    let first = first_part.join("One.wav");
+    let second = second_part.join("Two.wav");
+    write_tagged_wav(&first, "One", "Artist", "Future Album", 1).expect("write first Track");
+    write_tagged_wav(&second, "Two", "Artist", "Future Album", 2).expect("write second Track");
+    let check = source
+        .check(
+            crate::LocalFilesystemChange::Paths(BTreeSet::from([first, second])),
+            &|| false,
+        )
+        .expect("check new Album");
+    let accepted_files = accepted
+        .loaded
+        .local_file_baseline(check.file_seeds())
+        .expect("read new Album file baseline");
+    let change = source
+        .confirm_change(check, accepted_files, &|_| {}, &|| false)
+        .expect("confirm new Album")
+        .expect("new Local Album");
+    let baseline = accepted
+        .loaded
+        .local_component_baseline(change.component_seeds())
+        .expect("read new Album component");
+    let replacement = source
+        .complete_change(change, baseline, 2, &|| false)
+        .expect("complete new Album");
 
-    assert_eq!(tracks.total, 2);
-    assert_eq!(warm.manifest_scan().cue_track_sources.len(), 2);
-    assert_eq!(warm.manifest_scan().deleted_track_ids, vec![old_track_id]);
-    assert!(warm.manifest_scan().library_changed);
+    assert_eq!(replacement.tracks.len(), 2);
+    assert_eq!(replacement.albums.len(), 1);
+    assert_eq!(
+        replacement.albums[0]
+            .local_artwork
+            .as_ref()
+            .expect("new Album parent artwork")
+            .path(),
+        cover.to_string_lossy().as_ref()
+    );
 }
-#[tokio::test]
-async fn local_provider_skips_oversized_cue_sheet() {
-    let dir = tempfile::tempdir().expect("tempdir");
-    let audio = dir.path().join("album.wav");
-    write_silent_wav(&audio, 8).expect("write wav");
-    let cue = dir.path().join("album.cue");
-    fs::write(
-        &cue,
-        r#"
-PERFORMER "Cue Artist"
-TITLE "Cue Album"
-FILE "album.wav" WAVE
-  TRACK 01 AUDIO
-    TITLE "First Cue Track"
-    INDEX 01 00:00:00
-  TRACK 02 AUDIO
-    TITLE "Second Cue Track"
-    INDEX 01 00:04:00
-"#,
-    )
-    .expect("write cue");
-    let file = fs::OpenOptions::new()
-        .write(true)
-        .open(&cue)
-        .expect("cue file");
-    file.set_len((LOCAL_CUE_MAX_BYTES + 1) as u64)
-        .expect("cue length");
 
-    let provider = LocalSource::from_root(dir.path().to_path_buf()).expect("provider");
-    let tracks = provider
-        .tracks(PagedRequest::new(0, 10))
-        .await
-        .expect("tracks");
+#[test]
+fn artist_directory_image_does_not_become_album_art_after_an_exact_edit() {
+    let root = tempfile::tempdir().expect("Local root");
+    let artist = root.path().join("Artist");
+    let first_album = artist.join("First Album").join("part");
+    let second_album = artist.join("Second Album").join("part");
+    fs::create_dir_all(&first_album).expect("create first Album");
+    fs::create_dir_all(&second_album).expect("create second Album");
+    let first = first_album.join("One.wav");
+    let second = second_album.join("Two.wav");
+    write_tagged_wav(&first, "One", "Artist", "First Album", 1).expect("write first Track");
+    write_tagged_wav(&second, "Two", "Artist", "Second Album", 1).expect("write second Track");
+    fs::write(artist.join("folder.jpg"), [1_u8, 2, 3, 4]).expect("write artist image");
+    let source =
+        LocalSource::from_roots(vec![root.path().to_path_buf()]).expect("open Local source");
+    let facts = complete_scan(&source);
+    assert!(facts.batches.iter().all(|batch| match batch {
+        CandidateBatch::Albums(albums) => albums.iter().all(|album| album.local_artwork.is_none()),
+        _ => true,
+    }));
 
-    assert_eq!(tracks.total, 1);
-    assert_eq!(provider.manifest_scan().cue_track_sources.len(), 0);
-    assert_eq!(provider.manifest_scan().entries.len(), 1);
+    let store = tempfile::tempdir().expect("Store directory");
+    let library = Library::open(store.path().join("library.db")).expect("open Library");
+    let mut candidate = library
+        .begin_source_candidate(CandidateHeader {
+            source_id: SourceId::new(LOCAL_LIBRARY_SOURCE_ID),
+            input_version: 1,
+            input_digest: [7; 32],
+        })
+        .expect("begin Local candidate");
+    for batch in facts.batches {
+        candidate.write(batch).expect("write Local facts");
+    }
+    let accepted = candidate
+        .finish(
+            CandidateFinish {
+                freshness: None,
+                home: HomeFacts::RufinDefined,
+                accepted_at: 1,
+            },
+            None,
+        )
+        .and_then(library::PreparedSourceCandidate::accept)
+        .expect("accept Local library");
+
+    write_tagged_wav(&first, "One Retagged", "Artist", "First Album", 1)
+        .expect("retag first Track");
+    let replacement = exact_replacement(&source, &accepted.loaded, first, 2);
+
+    assert_eq!(replacement.albums.len(), 1);
+    assert!(replacement.albums[0].local_artwork.is_none());
 }
-#[tokio::test]
-async fn local_provider_dedupes_overlapping_roots() {
-    let root = tempfile::tempdir().expect("root");
-    let nested = root.path().join("nested");
-    fs::create_dir_all(&nested).expect("nested root");
-    fs::write(nested.join("track.mp3"), []).expect("track");
 
-    let provider =
-        LocalSource::from_roots(vec![root.path().to_path_buf(), nested]).expect("provider");
+#[test]
+fn source_input_rejects_missing_or_relative_roots_without_forgetting_saved_roots() {
+    let relative = LocalSource::from_roots(vec![PathBuf::from("music")])
+        .expect_err("relative setup root is not accepted");
+    assert!(matches!(relative, crate::SourceError::Other(_)));
 
-    let tracks = provider
-        .tracks(PagedRequest::new(0, 10))
-        .await
-        .expect("tracks");
+    let missing = SourceConfiguration {
+        source_id: SourceId::new(LOCAL_LIBRARY_SOURCE_ID),
+        kind: LOCAL_SOURCE_ID.to_string(),
+        name: "Local".to_string(),
+        provider_payload: LocalSourceConfig {
+            roots: vec![PathBuf::from("/definitely/missing/rufin-music")],
+        }
+        .into_payload()
+        .to_string(),
+    };
+    let opened = LocalSource::from_configuration(&missing).expect("open saved Local source");
+    assert_eq!(
+        opened.roots(),
+        [PathBuf::from("/definitely/missing/rufin-music")]
+    );
+    let mut accept = |_| true;
+    let mut emitter = BatchEmitter::new(&mut accept);
+    assert!(opened.read_facts(&mut emitter, &|_| {}, &|| false).is_err());
+}
 
-    assert_eq!(tracks.total, 1);
-    assert_eq!(provider.manifest_scan().entries.len(), 1);
+fn write_tagged_wav(
+    path: &Path,
+    title: &str,
+    artist: &str,
+    album: &str,
+    disc: u32,
+) -> Result<(), Box<dyn std::error::Error>> {
+    write_silent_wav(path, 1)?;
+    let mut tagged = Probe::open(path)?.read()?;
+    let mut tag = Tag::new(TagType::Id3v2);
+    tag.set_title(title.to_string());
+    tag.set_artist(artist.to_string());
+    tag.set_album(album.to_string());
+    tag.set_disk(disc);
+    tagged.insert_tag(tag);
+    tagged.save_to_path(path, WriteOptions::default())?;
+    Ok(())
+}
+
+fn write_tagged_wav_fields(
+    path: &Path,
+    title: &str,
+    artist: &str,
+    album: &str,
+    disc: u32,
+    track: u32,
+) -> Result<(), Box<dyn std::error::Error>> {
+    write_silent_wav(path, 1)?;
+    let mut tagged = Probe::open(path)?.read()?;
+    let mut tag = Tag::new(TagType::Id3v2);
+    tag.set_title(title.to_string());
+    tag.set_artist(artist.to_string());
+    tag.set_album(album.to_string());
+    tag.set_disk(disc);
+    tag.set_track(track);
+    tagged.insert_tag(tag);
+    tagged.save_to_path(path, WriteOptions::default())?;
+    Ok(())
+}
+
+fn write_tagged_release_wav(
+    path: &Path,
+    title: &str,
+    release_types: &str,
+    is_compilation: Option<bool>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    write_silent_wav(path, 1)?;
+    let mut tagged = Probe::open(path)?.read()?;
+    let mut tag = Tag::new(TagType::Id3v2);
+    tag.set_title(title.to_string());
+    tag.set_artist("Artist".to_string());
+    tag.set_album("Album".to_string());
+    if !tag.insert_text(ItemKey::MusicBrainzReleaseType, release_types.to_string()) {
+        return Err("ID3 does not support the MusicBrainz release type tag".into());
+    }
+    if let Some(is_compilation) = is_compilation
+        && !tag.insert_text(
+            ItemKey::FlagCompilation,
+            u8::from(is_compilation).to_string(),
+        )
+    {
+        return Err("ID3 does not support the compilation flag".into());
+    }
+    tagged.insert_tag(tag);
+    tagged.save_to_path(path, WriteOptions::default())?;
+    Ok(())
+}
+
+const TEST_PNG: &[u8] = &[
+    0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52,
+    0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x06, 0x00, 0x00, 0x00, 0x1f, 0x15, 0xc4,
+    0x89, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x44, 0x41, 0x54, 0x08, 0xd7, 0x63, 0xf8, 0xcf, 0xc0, 0xf0,
+    0x1f, 0x00, 0x05, 0x00, 0x01, 0xff, 0x89, 0x99, 0x3d, 0x1d, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45,
+    0x4e, 0x44, 0xae, 0x42, 0x60, 0x82,
+];
+
+fn write_complete_tagged_wav(path: &Path) -> Result<(), Box<dyn std::error::Error>> {
+    write_silent_wav(path, 1)?;
+    let mut tag = Tag::new(TagType::Id3v2);
+    tag.set_title("Track Title".to_string());
+    tag.set_artist("Track Artist One; Track Artist Two".to_string());
+    tag.set_album("Album Title".to_string());
+    tag.set_track(7);
+    tag.set_disk(2);
+    for (key, value) in [
+        (ItemKey::AlbumArtist, "Album Artist"),
+        (ItemKey::RecordingDate, "2024-03-14"),
+        (ItemKey::Genre, "Electronic; Ambient"),
+        (ItemKey::Mood, "Focused; Calm"),
+        (ItemKey::Comment, "Track comment"),
+        (ItemKey::IntegerBpm, "123"),
+        (ItemKey::MusicBrainzArtistId, "artist-one-id; artist-two-id"),
+        (ItemKey::MusicBrainzReleaseArtistId, "album-artist-id"),
+        (ItemKey::MusicBrainzReleaseType, "Album; Live"),
+        (ItemKey::FlagCompilation, "0"),
+    ] {
+        if !tag.insert_text(key, value.to_string()) {
+            return Err(format!("ID3 does not support {key:?}").into());
+        }
+    }
+    tag.insert_unchecked(TagItem::new(
+        ItemKey::MusicBrainzRecordingId,
+        ItemValue::Text("recording-id".to_string()),
+    ));
+    tag.push_picture(
+        Picture::unchecked(TEST_PNG.to_vec())
+            .pic_type(PictureType::CoverFront)
+            .mime_type(MimeType::Png)
+            .build(),
+    );
+    let mut tag = Id3v2Tag::from(tag);
+    tag.insert_user_text("MusicBrainz Album Id".to_string(), "release-id".to_string());
+    tag.insert_user_text(
+        "MusicBrainz Release Group Id".to_string(),
+        "release-group-id".to_string(),
+    );
+    tag.save_to_path(path, WriteOptions::default())?;
+    Ok(())
 }
 
 fn write_silent_wav(path: &Path, seconds: u32) -> std::io::Result<()> {
@@ -249,1033 +1456,4 @@ fn write_silent_wav(path: &Path, seconds: u32) -> std::io::Result<()> {
     bytes.extend_from_slice(&data_len.to_le_bytes());
     bytes.resize(bytes.len() + data_len as usize, 0);
     fs::write(path, bytes)
-}
-#[tokio::test]
-async fn manifest_scan_reuse() {
-    let dir = tempfile::tempdir().expect("tempdir");
-    fs::write(dir.path().join("track.mp3"), []).expect("track file");
-    let server = LocalSource::identity_for_root(dir.path()).expect("identity");
-    let cold =
-        LocalSource::from_roots_with_identity(vec![dir.path().to_path_buf()], server.clone())
-            .expect("cold provider");
-
-    let warm = LocalSource::from_roots_with_manifest_cache(
-        vec![dir.path().to_path_buf()],
-        server,
-        cold.manifest_scan().entries.clone(),
-    )
-    .expect("warm provider");
-
-    assert_eq!(cold.manifest_scan().counters.tag_reads, 1);
-    assert_eq!(warm.manifest_scan().counters.tag_reads, 0);
-    assert_eq!(warm.manifest_scan().counters.unchanged_reused, 1);
-    assert!(warm.manifest_scan().changed_manifest_paths.is_empty());
-    assert!(!warm.manifest_scan().library_changed);
-    assert_eq!(
-        warm.tracks(PagedRequest::new(0, 10))
-            .await
-            .expect("tracks")
-            .total,
-        1
-    );
-}
-
-#[cfg(unix)]
-#[tokio::test]
-async fn manifest_scan_keeps_cached_track_when_changed_file_cannot_be_read() {
-    use std::os::unix::fs::PermissionsExt;
-
-    let dir = tempfile::tempdir().expect("tempdir");
-    let audio = dir.path().join("track.wav");
-    write_silent_wav(&audio, 1).expect("track file");
-    let server = LocalSource::identity_for_root(dir.path()).expect("identity");
-    let cold =
-        LocalSource::from_roots_with_identity(vec![dir.path().to_path_buf()], server.clone())
-            .expect("cold provider");
-    let cached = cold.manifest_scan().entries.clone();
-    let original_permissions = fs::metadata(&audio).expect("track metadata").permissions();
-    fs::OpenOptions::new()
-        .write(true)
-        .open(&audio)
-        .expect("open track")
-        .set_len(fs::metadata(&audio).expect("track metadata").len() + 1)
-        .expect("change track");
-    let mut unreadable = original_permissions.clone();
-    unreadable.set_mode(0o0);
-    fs::set_permissions(&audio, unreadable).expect("make track unreadable");
-
-    let warm = LocalSource::from_roots_with_manifest_cache(
-        vec![dir.path().to_path_buf()],
-        server,
-        cached.clone(),
-    )
-    .expect("warm provider");
-    fs::set_permissions(&audio, original_permissions).expect("restore track permissions");
-
-    assert_eq!(warm.manifest_scan().entries, cached);
-    assert!(warm.manifest_scan().changed_manifest_paths.is_empty());
-    assert!(warm.manifest_scan().deleted_paths.is_empty());
-    assert!(warm.manifest_scan().deleted_track_ids.is_empty());
-    assert!(!warm.manifest_scan().library_changed);
-    assert_eq!(warm.manifest_scan().counters.parse_failures, 1);
-    assert_eq!(
-        warm.tracks(PagedRequest::new(0, 10))
-            .await
-            .expect("tracks")
-            .total,
-        1
-    );
-}
-
-#[test]
-fn manifest_scan_rejects_an_incomplete_cached_root_walk() {
-    let dir = tempfile::tempdir().expect("tempdir");
-    let root = dir.path().to_path_buf();
-    let audio = root.join("track.wav");
-    write_silent_wav(&audio, 1).expect("track file");
-    let server = LocalSource::identity_for_root(&root).expect("identity");
-    let cold =
-        LocalSource::from_roots_with_identity(vec![root.clone()], server.clone()).expect("cold");
-    let cached = cold.manifest_scan().entries.clone();
-    drop(dir);
-
-    let error = LocalSource::from_roots_with_manifest_cache(vec![root], server, cached)
-        .expect_err("incomplete walk");
-
-    assert!(!error.to_string().is_empty());
-}
-
-#[tokio::test]
-async fn manifest_path_scan_updates_only_the_dirty_audio() {
-    let dir = tempfile::tempdir().expect("tempdir");
-    let changed = dir.path().join("changed.wav");
-    let untouched = dir.path().join("untouched.wav");
-    write_silent_wav(&changed, 1).expect("changed track");
-    write_silent_wav(&untouched, 1).expect("untouched track");
-    let identity = LocalSource::identity_for_root(dir.path()).expect("identity");
-    let cold =
-        LocalSource::from_roots_with_identity(vec![dir.path().to_path_buf()], identity.clone())
-            .expect("cold source");
-    let untouched_before = cold
-        .manifest_scan()
-        .entries
-        .iter()
-        .find(|entry| entry.facts.path == untouched)
-        .cloned()
-        .expect("untouched manifest");
-    write_silent_wav(&changed, 2).expect("replace changed track");
-
-    let finite = finite_path_source(
-        dir.path(),
-        identity,
-        cold.manifest_scan().entries.clone(),
-        BTreeSet::from([changed.clone()]),
-    );
-    let scan = finite.manifest_scan();
-
-    assert_eq!(scan.counters.tag_reads, 1);
-    assert_eq!(scan.changed_manifest_paths, vec![changed]);
-    assert_eq!(
-        scan.entries
-            .iter()
-            .find(|entry| entry.facts.path == untouched)
-            .expect("retained manifest"),
-        &untouched_before
-    );
-    let tracks = finite
-        .tracks(PagedRequest::new(0, 10))
-        .await
-        .expect("tracks");
-    assert_eq!(tracks.total, 2);
-    assert!(
-        tracks
-            .items
-            .iter()
-            .any(|track| track.title == "changed" && track.duration_seconds == 2)
-    );
-}
-
-#[tokio::test]
-async fn manifest_path_scan_deletes_one_proven_missing_audio() {
-    let dir = tempfile::tempdir().expect("tempdir");
-    let audio = dir.path().join("removed.wav");
-    write_silent_wav(&audio, 1).expect("track");
-    let identity = LocalSource::identity_for_root(dir.path()).expect("identity");
-    let cold =
-        LocalSource::from_roots_with_identity(vec![dir.path().to_path_buf()], identity.clone())
-            .expect("cold source");
-    let removed_id = cold.manifest_scan().entries[0].track.id.clone();
-    fs::remove_file(&audio).expect("remove track");
-
-    let finite = finite_path_source(
-        dir.path(),
-        identity,
-        cold.manifest_scan().entries.clone(),
-        BTreeSet::from([audio.clone()]),
-    );
-
-    assert!(finite.manifest_scan().entries.is_empty());
-    assert_eq!(finite.manifest_scan().deleted_paths, vec![audio]);
-    assert_eq!(finite.manifest_scan().deleted_track_ids, vec![removed_id]);
-    assert_eq!(
-        finite
-            .tracks(PagedRequest::new(0, 10))
-            .await
-            .expect("tracks")
-            .total,
-        0
-    );
-}
-
-#[tokio::test]
-async fn manifest_path_scan_applies_a_complete_rename() {
-    let dir = tempfile::tempdir().expect("tempdir");
-    let old = dir.path().join("old.wav");
-    let new = dir.path().join("new.wav");
-    write_silent_wav(&old, 1).expect("track");
-    let identity = LocalSource::identity_for_root(dir.path()).expect("identity");
-    let cold =
-        LocalSource::from_roots_with_identity(vec![dir.path().to_path_buf()], identity.clone())
-            .expect("cold source");
-    let old_id = cold.manifest_scan().entries[0].track.id.clone();
-    fs::rename(&old, &new).expect("rename track");
-
-    let finite = finite_path_source(
-        dir.path(),
-        identity,
-        cold.manifest_scan().entries.clone(),
-        BTreeSet::from([old.clone(), new.clone()]),
-    );
-    let scan = finite.manifest_scan();
-
-    assert_eq!(scan.entries.len(), 1);
-    assert_eq!(scan.entries[0].facts.path, new);
-    assert_eq!(scan.deleted_paths, vec![old]);
-    assert_eq!(scan.deleted_track_ids, vec![old_id]);
-    let tracks = finite
-        .tracks(PagedRequest::new(0, 10))
-        .await
-        .expect("tracks");
-    assert_eq!(tracks.total, 1);
-    assert_eq!(tracks.items[0].title, "new");
-}
-
-#[tokio::test]
-async fn manifest_path_scan_adds_an_ordinary_new_audio_file() {
-    let root = tempfile::tempdir().expect("root");
-    let existing = root.path().join("existing.wav");
-    let added = root.path().join("added.wav");
-    write_silent_wav(&existing, 1).expect("existing track");
-    fs::write(
-        root.path().join("dormant.cue"),
-        r#"
-FILE "future.wav" WAVE
-  TRACK 01 AUDIO
-    INDEX 01 00:00:00
-"#,
-    )
-    .expect("dormant cue");
-    let identity = LocalSource::identity_for_root(root.path()).expect("identity");
-    let cold =
-        LocalSource::from_roots_with_identity(vec![root.path().to_path_buf()], identity.clone())
-            .expect("cold source");
-    assert_eq!(cold.manifest_scan().cue_dependencies.len(), 1);
-    write_silent_wav(&added, 1).expect("added track");
-
-    let finite = LocalSource::from_roots_with_manifest_paths(
-        vec![root.path().to_path_buf()],
-        identity,
-        cold.manifest_scan().entries.clone(),
-        &cold.manifest_scan().cue_dependencies,
-        &BTreeSet::from([added.clone()]),
-        |_| {},
-        || false,
-    )
-    .expect("path scan")
-    .expect("ordinary new file is exact");
-
-    assert_eq!(finite.manifest_scan().entries.len(), 2);
-    assert_eq!(finite.manifest_scan().changed_manifest_paths, vec![added]);
-    assert_eq!(
-        finite.manifest_scan().cue_dependencies,
-        cold.manifest_scan().cue_dependencies
-    );
-    assert_eq!(
-        finite
-            .tracks(PagedRequest::new(0, 10))
-            .await
-            .expect("tracks")
-            .total,
-        2
-    );
-}
-
-#[test]
-fn manifest_path_scan_widens_ambiguous_dependencies() {
-    let root = tempfile::tempdir().expect("root");
-    let album = root.path().join("album");
-    fs::create_dir_all(&album).expect("album directory");
-    let audio = album.join("track.wav");
-    let cover = album.join("cover.jpg");
-    write_silent_wav(&audio, 1).expect("track");
-    fs::write(&cover, [1_u8]).expect("cover");
-    let identity = LocalSource::identity_for_root(root.path()).expect("identity");
-    let cold =
-        LocalSource::from_roots_with_identity(vec![root.path().to_path_buf()], identity.clone())
-            .expect("cold source");
-    let outside = tempfile::tempdir().expect("outside");
-
-    for path in [
-        root.path().to_path_buf(),
-        album,
-        cover,
-        root.path().join("new.cue"),
-        outside.path().join("outside.wav"),
-    ] {
-        let result = LocalSource::from_roots_with_manifest_paths(
-            vec![root.path().to_path_buf()],
-            identity.clone(),
-            cold.manifest_scan().entries.clone(),
-            &cold.manifest_scan().cue_dependencies,
-            &BTreeSet::from([path]),
-            |_| {},
-            || false,
-        )
-        .expect("path classification");
-        assert!(result.is_none());
-    }
-}
-
-#[test]
-fn manifest_path_scan_widens_a_dormant_cue_target() {
-    let root = tempfile::tempdir().expect("root");
-    let cue = root.path().join("album.cue");
-    let audio = root.path().join("missing.wav");
-    fs::write(
-        &cue,
-        r#"
-FILE "missing.wav" WAVE
-  TRACK 01 AUDIO
-    INDEX 01 00:00:00
-"#,
-    )
-    .expect("cue");
-    let identity = LocalSource::identity_for_root(root.path()).expect("identity");
-    let cold =
-        LocalSource::from_roots_with_identity(vec![root.path().to_path_buf()], identity.clone())
-            .expect("cold source");
-    assert_eq!(
-        cold.manifest_scan().cue_dependencies,
-        vec![LocalCueDependency {
-            cue_path: cue,
-            source_path: audio.clone(),
-        }]
-    );
-    write_silent_wav(&audio, 8).expect("backing track");
-
-    let result = LocalSource::from_roots_with_manifest_paths(
-        vec![root.path().to_path_buf()],
-        identity,
-        cold.manifest_scan().entries.clone(),
-        &cold.manifest_scan().cue_dependencies,
-        &BTreeSet::from([audio]),
-        |_| {},
-        || false,
-    )
-    .expect("path classification");
-
-    assert!(result.is_none());
-}
-
-#[test]
-fn manifest_path_scan_does_not_delete_an_unreadable_root() {
-    let dir = tempfile::tempdir().expect("root");
-    let root = dir.path().to_path_buf();
-    let audio = root.join("track.wav");
-    write_silent_wav(&audio, 1).expect("track");
-    let identity = LocalSource::identity_for_root(&root).expect("identity");
-    let cold = LocalSource::from_roots_with_identity(vec![root.clone()], identity.clone())
-        .expect("cold source");
-    let manifest = cold.manifest_scan().entries.clone();
-    let cue_dependencies = cold.manifest_scan().cue_dependencies.clone();
-    drop(dir);
-
-    let result = LocalSource::from_roots_with_manifest_paths(
-        vec![root],
-        identity,
-        manifest,
-        &cue_dependencies,
-        &BTreeSet::from([audio]),
-        |_| {},
-        || false,
-    );
-
-    result.expect_err("unreadable root");
-}
-
-fn finite_path_source(
-    root: &Path,
-    identity: SourceIdentity,
-    manifest: Vec<LocalManifestEntry>,
-    dirty_paths: BTreeSet<PathBuf>,
-) -> LocalSource {
-    LocalSource::from_roots_with_manifest_paths(
-        vec![root.to_path_buf()],
-        identity,
-        manifest,
-        &[],
-        &dirty_paths,
-        |_| {},
-        || false,
-    )
-    .expect("finite path scan")
-    .expect("exact paths")
-}
-
-#[test]
-fn manifest_reuse_keeps_embedded_cover() {
-    let path = "/tmp/rufin-embedded-cover.flac";
-    let mut tag = Tag::new(TagType::Id3v2);
-    tag.push_picture(
-        Picture::unchecked(vec![1_u8, 2, 3])
-            .pic_type(PictureType::CoverFront)
-            .mime_type(MimeType::Png)
-            .build(),
-    );
-    let cover = embedded_cover(Path::new(path), None, Some(&tag)).expect("embedded cover");
-    let mut scanned = scanned_test_track(1, AlbumId::new("local:album:embedded"), Some(cover));
-    scanned.track.local_path = Some(path.to_string());
-    let entry = manifest_entry_for_scanned(&test_file_facts(path), &scanned);
-    let saved_cover = entry.cover.as_ref().expect("manifest cover");
-
-    assert_eq!(saved_cover.kind, LocalManifestCoverKind::Embedded);
-    assert_eq!(saved_cover.source_path, PathBuf::from(path));
-
-    let (reused, _entry, artwork_changed) = reuse_manifest_track(test_file_facts(path), entry);
-    let library = build_library(vec![reused], Vec::new(), HashMap::new());
-
-    assert!(!artwork_changed);
-    let album_ref = library.albums[0].image_ref.clone().expect("album cover");
-    assert_eq!(library.tracks[0].image_ref.as_ref(), Some(&album_ref));
-}
-
-#[test]
-fn manifest_sync_stores_projected_embedded_cover() {
-    let path = PathBuf::from("/tmp/rufin-projected-embedded.flac");
-    let cover = LocalCover::Embedded {
-        path: path.clone(),
-        revision: Some("embedded:projected".to_string()),
-    };
-    let image_ref = ImageRef::new(cover_id(&cover), cover_revision(&cover));
-    let mut scanned = scanned_test_track(1, AlbumId::new("local:album:projected"), None);
-    scanned.track.image_ref = Some(image_ref);
-    let mut entry = manifest_entry_for_scanned(
-        &test_file_facts(path.to_str().expect("test path")),
-        &scanned,
-    );
-    entry.cover = None;
-    let library = LocalLibrary {
-        tracks: vec![scanned.track],
-        ..LocalLibrary::default()
-    };
-
-    sync_manifest_covers_from_library(&library, std::slice::from_mut(&mut entry));
-
-    let saved_cover = entry.cover.expect("manifest cover");
-    assert_eq!(saved_cover.kind, LocalManifestCoverKind::Embedded);
-    assert_eq!(saved_cover.source_path, path);
-    assert_eq!(saved_cover.revision, "embedded:projected");
-}
-
-#[test]
-fn local_scan_reports_progress() {
-    let dir = tempfile::tempdir().expect("tempdir");
-    fs::write(dir.path().join("track.mp3"), []).expect("track file");
-    let server = LocalSource::identity_for_root(dir.path()).expect("identity");
-    let mut reports = Vec::new();
-
-    let provider = LocalSource::from_roots_with_manifest_scan(
-        vec![dir.path().to_path_buf()],
-        server,
-        Vec::new(),
-        |progress| reports.push(progress),
-        || false,
-    )
-    .expect("provider");
-
-    assert_eq!(provider.manifest_scan().counters.audio_candidates, 1);
-    assert!(reports.iter().any(
-        |progress| progress.stage == LocalScanStage::Walking && progress.audio_candidates == 1
-    ));
-    assert!(
-        reports
-            .iter()
-            .any(|progress| progress.stage == LocalScanStage::ReadingTags
-                && progress.total_tracks == Some(1))
-    );
-    assert!(
-        reports
-            .iter()
-            .any(|progress| progress.stage == LocalScanStage::BuildingLibrary
-                && progress.processed_tracks == 1)
-    );
-}
-
-#[test]
-fn cancelled_manifest_scan_stops_tag_workers_without_returning_partial_source() {
-    use std::sync::Arc;
-    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-
-    let dir = tempfile::tempdir().expect("tempdir");
-    let track_count = 16;
-    for index in 0..track_count {
-        write_silent_wav(&dir.path().join(format!("track-{index:02}.wav")), 1).expect("track file");
-    }
-    let server = LocalSource::identity_for_root(dir.path()).expect("identity");
-    let scan_thread = thread::current().id();
-    let first_worker_job = Arc::new(AtomicBool::new(true));
-    let cancelled = Arc::new(AtomicBool::new(false));
-    let worker_checks = Arc::new(AtomicUsize::new(0));
-    let callback_cancelled = Arc::clone(&cancelled);
-    let callback_first_worker_job = Arc::clone(&first_worker_job);
-    let callback_worker_checks = Arc::clone(&worker_checks);
-
-    let error = LocalSource::from_roots_with_manifest_scan(
-        vec![dir.path().to_path_buf()],
-        server,
-        Vec::new(),
-        |_| {},
-        move || {
-            if thread::current().id() == scan_thread {
-                return callback_cancelled.load(Ordering::Acquire);
-            }
-            callback_worker_checks.fetch_add(1, Ordering::Relaxed);
-            if callback_first_worker_job.swap(false, Ordering::AcqRel) {
-                return false;
-            }
-            callback_cancelled.store(true, Ordering::Release);
-            true
-        },
-    )
-    .expect_err("cancelled scan");
-
-    assert!(error.to_string().contains("cancelled"));
-    assert!(cancelled.load(Ordering::Acquire));
-    assert!(worker_checks.load(Ordering::Relaxed) < track_count);
-}
-
-#[test]
-fn artist_identity_preserves_visible_case_for_hidden_case_only_tag() {
-    let mut tag = Tag::new(TagType::Id3v2);
-    tag.insert_text(ItemKey::TrackArtists, "FEEDER".to_string());
-
-    let names = artist_names(Some(&tag), "Feeder");
-    let visible = artist_credit("Feeder", None);
-    let hidden_case = artist_credit("FEEDER", None);
-
-    assert_eq!(names, vec!["Feeder".to_string()]);
-    assert_eq!(visible.id, hidden_case.id);
-    assert_eq!(visible.name, "Feeder");
-}
-
-#[test]
-fn musicbrainz_ids_become_optional_identity_data() {
-    let recording_id = "b3b3c0bb-1111-4222-8333-123456789abc";
-    let release_track_id = "c4c4d1cc-2222-4333-9444-123456789abc";
-    let artist_id = "d5d5e2dd-3333-4444-a555-123456789abc";
-    let mut tag = Tag::new(TagType::Id3v2);
-    tag.push_unchecked(TagItem::new(
-        ItemKey::MusicBrainzRecordingId,
-        ItemValue::Text(recording_id.to_string()),
-    ));
-    tag.push_unchecked(TagItem::new(
-        ItemKey::MusicBrainzTrackId,
-        ItemValue::Text(release_track_id.to_string()),
-    ));
-    tag.push_unchecked(TagItem::new(
-        ItemKey::MusicBrainzArtistId,
-        ItemValue::Text(artist_id.to_string()),
-    ));
-
-    let credit = artist_credit("Example Artist", Some(artist_id));
-
-    assert_eq!(
-        tag_mbid(&tag, ItemKey::MusicBrainzRecordingId).as_deref(),
-        Some(recording_id)
-    );
-    assert_eq!(
-        tag_mbid(&tag, ItemKey::MusicBrainzTrackId).as_deref(),
-        Some(release_track_id)
-    );
-    assert_eq!(
-        tag_mbids(Some(&tag), ItemKey::MusicBrainzArtistId),
-        vec![artist_id.to_string()]
-    );
-    assert_eq!(credit.musicbrainz_artist_id.as_deref(), Some(artist_id));
-    assert!(credit.id.as_str().contains(artist_id));
-}
-
-#[test]
-fn local_track_tags_include_mood_and_bpm() {
-    let mut tag = Tag::new(TagType::Id3v2);
-    tag.push_unchecked(TagItem::new(
-        ItemKey::Mood,
-        ItemValue::Text("Energetic; Focus".to_string()),
-    ));
-    tag.push_unchecked(TagItem::new(
-        ItemKey::IntegerBpm,
-        ItemValue::Text("128".to_string()),
-    ));
-
-    assert_eq!(
-        tag_moods(Some(&tag)),
-        vec!["Energetic".to_string(), "Focus".to_string()]
-    );
-    assert_eq!(tag_bpm(Some(&tag)), Some(128));
-}
-
-#[test]
-fn local_track_bpm_accepts_decimal_tag_values() {
-    let mut tag = Tag::new(TagType::Id3v2);
-    tag.push_unchecked(TagItem::new(
-        ItemKey::Bpm,
-        ItemValue::Text("127.6".to_string()),
-    ));
-
-    assert_eq!(tag_bpm(Some(&tag)), Some(128));
-}
-
-#[tokio::test]
-async fn manifest_scan_update() {
-    let dir = tempfile::tempdir().expect("tempdir");
-    fs::write(dir.path().join("track.mp3"), []).expect("track file");
-    let cover = dir.path().join("cover.jpg");
-    fs::write(&cover, [1_u8]).expect("cover file");
-    let server = LocalSource::identity_for_root(dir.path()).expect("identity");
-    let cold =
-        LocalSource::from_roots_with_identity(vec![dir.path().to_path_buf()], server.clone())
-            .expect("cold provider");
-    let cold_tag = cold
-        .albums(PagedRequest::new(0, 10))
-        .await
-        .expect("albums")
-        .items
-        .into_iter()
-        .next()
-        .and_then(|album| album.image_ref.and_then(|image_ref| image_ref.tag))
-        .expect("cold cover tag");
-    fs::write(&cover, [1_u8, 2]).expect("replace cover file");
-
-    let warm = LocalSource::from_roots_with_manifest_cache(
-        vec![dir.path().to_path_buf()],
-        server,
-        cold.manifest_scan().entries.clone(),
-    )
-    .expect("warm provider");
-    let warm_tag = warm
-        .albums(PagedRequest::new(0, 10))
-        .await
-        .expect("albums")
-        .items
-        .into_iter()
-        .next()
-        .and_then(|album| album.image_ref.and_then(|image_ref| image_ref.tag))
-        .expect("warm cover tag");
-
-    assert_eq!(warm.manifest_scan().counters.tag_reads, 0);
-    assert_eq!(warm.manifest_scan().counters.artwork_changed, 1);
-    assert_eq!(warm.manifest_scan().changed_manifest_paths.len(), 1);
-    assert!(warm.manifest_scan().library_changed);
-    assert_ne!(cold_tag, warm_tag);
-}
-
-#[test]
-fn reparsed_track_artwork() {
-    let stale = scanned_test_track(
-        1,
-        AlbumId::new("local:album:one"),
-        Some(LocalCover::File {
-            path: PathBuf::from("/tmp/cover.jpg"),
-            revision: Some("cover-one".to_string()),
-        }),
-    );
-    let current = scanned_test_track(
-        1,
-        AlbumId::new("local:album:one"),
-        Some(LocalCover::File {
-            path: PathBuf::from("/tmp/cover.jpg"),
-            revision: Some("cover-two".to_string()),
-        }),
-    );
-    let classification =
-        classify_reparsed_manifest_entry("/tmp/rufin-track-cover.flac", &stale, &current);
-
-    assert_eq!(classification.changed_track_ids, vec![TrackId::fake(1)]);
-    assert_eq!(classification.counters.artwork_changed, 1);
-}
-
-#[test]
-fn metadata_track_reparse() {
-    let stale_scanned = scanned_test_track(1, AlbumId::new("local:album:one"), None);
-    let mut current_scanned = stale_scanned.clone();
-    current_scanned.track.duration_seconds += 1;
-    current_scanned.track.bpm = Some(128);
-    current_scanned.track.moods = vec!["Focused".to_string()];
-    let classification = classify_reparsed_manifest_entry(
-        "/tmp/rufin-track-duration.flac",
-        &stale_scanned,
-        &current_scanned,
-    );
-
-    assert_eq!(classification.changed_track_ids, vec![TrackId::fake(1)]);
-    assert_eq!(classification.counters.artwork_changed, 0);
-}
-
-#[test]
-fn reparsed_track_changed() {
-    let stale_scanned = scanned_test_track(1, AlbumId::new("local:album:one"), None);
-    let mut current_scanned = stale_scanned.clone();
-    current_scanned.track.album_id = AlbumId::new("local:album:two");
-    let classification = classify_reparsed_manifest_entry(
-        "/tmp/rufin-track-album-id.flac",
-        &stale_scanned,
-        &current_scanned,
-    );
-
-    assert_eq!(classification.changed_track_ids, vec![TrackId::fake(1)]);
-    assert_eq!(classification.counters.artwork_changed, 0);
-}
-
-#[test]
-fn comment_track_reparse() {
-    let stale_scanned = scanned_test_track(1, AlbumId::new("local:album:one"), None);
-    let mut current_scanned = stale_scanned.clone();
-    current_scanned.track.comment = Some("alternate edition".to_string());
-    let classification = classify_reparsed_manifest_entry(
-        "/tmp/rufin-track-comment.flac",
-        &stale_scanned,
-        &current_scanned,
-    );
-
-    assert_eq!(classification.changed_track_ids, vec![TrackId::fake(1)]);
-}
-
-#[test]
-fn local_repairs_album_ref_from_retained_track_ref() {
-    let album_id = AlbumId::new("local:album:test");
-    let retained_ref = ImageRef::new("local:cover:retained", Some("retained-tag".to_string()));
-    let mut scanned = scanned_test_track(1, album_id, None);
-    scanned.track.image_ref = Some(retained_ref.clone());
-
-    let library = build_library(vec![scanned], Vec::new(), HashMap::new());
-
-    assert_eq!(library.albums.len(), 1);
-    assert_eq!(library.albums[0].image_ref.as_ref(), Some(&retained_ref));
-    assert_eq!(library.tracks[0].image_ref.as_ref(), Some(&retained_ref));
-    assert_eq!(library.artists[0].image_ref, None);
-    assert_eq!(library.album_artists[0].image_ref, None);
-}
-
-#[test]
-fn local_reject_file() {
-    let dir = tempfile::tempdir().expect("tempdir");
-    let cover_path = dir.path().join("folder.jpg");
-    let file = fs::File::create(&cover_path).expect("cover file");
-    file.set_len((LOCAL_COVER_MAX_BYTES + 1) as u64)
-        .expect("cover length");
-    let item_id = cover_id(&LocalCover::File {
-        path: cover_path,
-        revision: None,
-    });
-
-    let error = LocalSource::cover_item_bytes(&item_id, vec![dir.path().to_path_buf()])
-        .expect_err("oversized local cover");
-
-    assert!(error.to_string().contains("local cover exceeded"));
-}
-#[test]
-fn local_read_root() {
-    let dir = tempfile::tempdir().expect("tempdir");
-    let cover_path = dir.path().join("folder.jpg");
-    fs::write(&cover_path, [1_u8, 2, 3]).expect("cover file");
-    let item_id = cover_id(&LocalCover::File {
-        path: cover_path,
-        revision: None,
-    });
-
-    let image = LocalSource::cover_item_bytes(&item_id, vec![dir.path().to_path_buf()])
-        .expect("local cover");
-
-    assert_eq!(image.bytes, vec![1, 2, 3]);
-    assert_eq!(image.content_type.as_deref(), Some("image/jpeg"));
-}
-#[test]
-fn local_reject_root() {
-    let root = tempfile::tempdir().expect("root");
-    let outside = tempfile::tempdir().expect("outside");
-    let cover_path = outside.path().join("folder.jpg");
-    fs::write(&cover_path, [1_u8, 2, 3]).expect("cover file");
-    let item_id = cover_id(&LocalCover::File {
-        path: cover_path,
-        revision: None,
-    });
-
-    let error = LocalSource::cover_item_bytes(&item_id, vec![root.path().to_path_buf()])
-        .expect_err("outside-root cover");
-
-    assert_eq!(error.to_string(), "source item was not found");
-}
-#[test]
-fn embedded_reject_picture() {
-    let picture = Picture::unchecked(vec![0_u8; LOCAL_COVER_MAX_BYTES + 1]).build();
-
-    let error = picture_data_bounded(&picture).expect_err("oversized embedded cover");
-
-    assert!(error.to_string().contains("embedded cover exceeded"));
-}
-#[test]
-fn folder_use_fallback() {
-    let dir = tempfile::tempdir().expect("tempdir");
-    let image = dir.path().join("artwork.png");
-    fs::write(&image, [1_u8]).expect("image file");
-
-    assert_eq!(folder_cover(dir.path()).as_deref(), Some(image.as_path()));
-}
-#[test]
-fn folder_cover_prefers() {
-    let dir = tempfile::tempdir().expect("tempdir");
-    let booklet = dir.path().join("booklet.png");
-    let cover = dir.path().join("Cover.JPG");
-    fs::write(&booklet, [1_u8]).expect("booklet image");
-    fs::write(&cover, [2_u8]).expect("cover image");
-
-    assert_eq!(folder_cover(dir.path()).as_deref(), Some(cover.as_path()));
-}
-#[test]
-fn folder_cover_skips() {
-    let dir = tempfile::tempdir().expect("tempdir");
-    fs::write(dir.path().join("back.jpg"), [1_u8]).expect("back image");
-    fs::write(dir.path().join("booklet.png"), [2_u8]).expect("booklet image");
-
-    assert!(folder_cover(dir.path()).is_none());
-}
-#[test]
-fn local_cover_artist() {
-    let dir = tempfile::tempdir().expect("tempdir");
-    let album_id = AlbumId::new("local:album:test");
-    let artist_dir = dir.path().join("Example Artist");
-    let album_dir = artist_dir.join("Example Album");
-    fs::create_dir_all(&album_dir).expect("album dir");
-    let artist_image = artist_dir.join("artist.jpg");
-    let album_image = album_dir.join("cover.jpg");
-    let track_path = album_dir.join("track.flac");
-    fs::write(&artist_image, [1_u8]).expect("artist image");
-    fs::write(&album_image, [2_u8]).expect("album image");
-    fs::write(&track_path, []).expect("track file");
-
-    let library = build_library(
-        vec![scanned_test_track_at(
-            1,
-            album_id,
-            Some(LocalCover::File {
-                path: album_image,
-                revision: Some("file:album".to_string()),
-            }),
-            &track_path,
-        )],
-        Vec::new(),
-        HashMap::new(),
-    );
-
-    let artist_ref = ImageRef::new(
-        cover_id(&LocalCover::File {
-            path: artist_image,
-            revision: None,
-        }),
-        file_revision(&artist_dir.join("artist.jpg")),
-    );
-    assert_eq!(library.artists[0].image_ref.as_ref(), Some(&artist_ref));
-    assert_eq!(
-        library.album_artists[0].image_ref.as_ref(),
-        Some(&artist_ref)
-    );
-}
-#[tokio::test]
-async fn local_root_folder() {
-    let first = tempfile::tempdir().expect("first root");
-    let second = tempfile::tempdir().expect("second root");
-
-    let provider = LocalSource::from_roots(vec![
-        first.path().to_path_buf(),
-        second.path().to_path_buf(),
-    ])
-    .expect("provider");
-
-    let detail = provider.folder(None, None).await.expect("root folder");
-    let folder_names = detail
-        .folders
-        .iter()
-        .map(|folder| folder.name.as_str())
-        .collect::<Vec<_>>();
-
-    assert_eq!(detail.tracks.len(), 0);
-    let first_name = first
-        .path()
-        .file_name()
-        .expect("first root has file name")
-        .to_str()
-        .expect("first root file name is utf-8");
-    let second_name = second
-        .path()
-        .file_name()
-        .expect("second root has file name")
-        .to_str()
-        .expect("second root file name is utf-8");
-    assert!(folder_names.contains(&first_name));
-    assert!(folder_names.contains(&second_name));
-}
-#[tokio::test]
-async fn local_track_folders() {
-    let root = tempfile::tempdir().expect("root");
-    let artist = root.path().join("Artist");
-    let album = artist.join("Album");
-    fs::create_dir_all(&album).expect("album dir");
-    fs::write(artist.join("single.mp3"), []).expect("single track");
-    fs::write(album.join("album-track.mp3"), []).expect("album track");
-    let provider = LocalSource::from_root(root.path().to_path_buf()).expect("provider");
-
-    let root_path = root.path().canonicalize().expect("canonical root");
-    let artist_id = folder_for_path(&root_path.join("Artist")).id;
-    let artist_detail = provider
-        .folder(Some(&artist_id), None)
-        .await
-        .expect("artist folder");
-
-    assert_eq!(artist_detail.folders.len(), 1);
-    assert_eq!(artist_detail.folders[0].name, "Album");
-    assert_eq!(artist_detail.tracks.len(), 1);
-    assert_eq!(artist_detail.tracks[0].title, "single");
-
-    let album_id = folder_for_path(&root_path.join("Artist").join("Album")).id;
-    let album_detail = provider
-        .folder(Some(&album_id), None)
-        .await
-        .expect("album folder");
-
-    assert_eq!(album_detail.folders.len(), 0);
-    assert_eq!(album_detail.tracks.len(), 1);
-    assert_eq!(album_detail.tracks[0].title, "album-track");
-}
-#[tokio::test]
-async fn local_reject_id() {
-    let root = tempfile::tempdir().expect("root");
-    let provider = LocalSource::from_root(root.path().to_path_buf()).expect("provider");
-    let outside = FolderId::new("local:folder:%2Fetc%2Fmusic");
-
-    let result = provider.folder(Some(&outside), None).await;
-
-    assert!(matches!(result, Err(SourceError::NotFound)));
-}
-
-struct ReparsedClassification {
-    changed_track_ids: Vec<TrackId>,
-    counters: LocalScanCounters,
-}
-
-fn classify_reparsed_manifest_entry(
-    facts_path: &str,
-    stale_scanned: &ScannedTrack,
-    current_scanned: &ScannedTrack,
-) -> ReparsedClassification {
-    let facts = test_file_facts(facts_path);
-    let stale = manifest_entry_for_scanned(&facts, stale_scanned);
-    let current = manifest_entry_for_scanned(&facts, current_scanned);
-    let mut result = ReparsedClassification {
-        changed_track_ids: Vec::new(),
-        counters: LocalScanCounters::default(),
-    };
-
-    assert!(classify_reparsed_track(
-        Some(&stale),
-        &current,
-        &mut result.changed_track_ids,
-        &mut result.counters,
-    ));
-    result
-}
-
-fn scanned_test_track(number: u32, album_id: AlbumId, cover: Option<LocalCover>) -> ScannedTrack {
-    let artist = ArtistCredit {
-        id: ArtistId::new("local:artist:example"),
-        name: "Example Artist".to_string(),
-        musicbrainz_artist_id: None,
-    };
-    ScannedTrack {
-        track: Track {
-            id: TrackId::fake(number),
-            album_id,
-            title: format!("Track {number}"),
-            artist: artist.name.clone(),
-            artist_id: Some(artist.id.clone()),
-            artist_credits: vec![artist.clone()],
-            album_artist_credits: vec![artist],
-            album: "Example Album".to_string(),
-            year: 2024,
-            release_date: None,
-            date_added: None,
-            last_played: None,
-            play_count: None,
-            user_rating: None,
-            duration_seconds: 60,
-            favorite: false,
-            disc_number: 1,
-            track_number: number as u16,
-            image_ref: None,
-            album_artwork: None,
-            genres: Vec::new(),
-            musicbrainz_recording_id: None,
-            musicbrainz_release_track_id: None,
-            local_path: Some(format!("/tmp/rufin-track-{number}.flac")),
-            source_format: Some("flac".to_string()),
-            comment: None,
-            skip_count: None,
-            bpm: None,
-            moods: Vec::new(),
-        },
-        album_artist: "Example Artist".to_string(),
-        musicbrainz_album_id: None,
-        musicbrainz_release_group_id: None,
-        cue_source: None,
-        cover,
-        embedded_cover_path: None,
-    }
-}
-
-fn scanned_test_track_at(
-    number: u32,
-    album_id: AlbumId,
-    cover: Option<LocalCover>,
-    path: &Path,
-) -> ScannedTrack {
-    let mut scanned = scanned_test_track(number, album_id, cover);
-    scanned.track.local_path = Some(path.to_string_lossy().into_owned());
-    scanned
-}
-
-fn test_file_facts(path: &str) -> LocalFileFacts {
-    let path = PathBuf::from(path);
-    LocalFileFacts {
-        root_path: path.parent().unwrap_or(Path::new("/")).to_path_buf(),
-        relative_path: path
-            .file_name()
-            .and_then(|name| name.to_str())
-            .unwrap_or("track.flac")
-            .to_string(),
-        path,
-        file_size: 128,
-        mtime_seconds: 1,
-        mtime_nanos: 2,
-        inode: Some(3),
-        device: Some(4),
-    }
 }

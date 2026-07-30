@@ -66,6 +66,10 @@ package() {
   cd Rufin || return
 
   install -Dm755 target/release/rufin "$pkgdir/usr/bin/rufin"
+  install -Dm644 data/japanese-readings.dic \
+    "$pkgdir/usr/share/rufin/japanese-readings.dic"
+  install -Dm644 data/japanese-readings.LICENSE \
+    "$pkgdir/usr/share/licenses/rufin/japanese-readings.LICENSE"
   install -Dm644 data/io.github.screwys.Rufin.desktop \
     "$pkgdir/usr/share/applications/io.github.screwys.Rufin.desktop"
   install -Dm644 data/io.github.screwys.Rufin.metainfo.xml \

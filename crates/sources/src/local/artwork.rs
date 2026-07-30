@@ -1,0 +1,185 @@
+use std::fs;
+use std::io::Read;
+use std::path::{Path, PathBuf};
+
+use library::LocalArtworkRef;
+use lofty::file::TaggedFile;
+use lofty::file::TaggedFileExt;
+use lofty::picture::{Picture, PictureType};
+
+use crate::{ImageBytes, SourceError, SourceResult};
+
+use super::discoverer;
+use super::format::{ArtworkReader, audio_format, read_lofty};
+
+const LOCAL_IMAGE_MAX_BYTES: usize = 32 * 1024 * 1024;
+
+#[derive(Clone, Debug)]
+pub(super) enum ArtworkReference {
+    File(PathBuf),
+    Embedded { path: PathBuf, picture_index: u32 },
+}
+
+impl ArtworkReference {
+    pub(super) fn path(&self) -> &Path {
+        match self {
+            Self::File(path) | Self::Embedded { path, .. } => path,
+        }
+    }
+}
+
+pub(super) fn supported_image(path: &Path) -> bool {
+    path.extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| {
+            ["jpg", "jpeg", "png", "webp"]
+                .iter()
+                .any(|candidate| extension.eq_ignore_ascii_case(candidate))
+        })
+}
+
+/// Select from the one scan-owned image inventory for this actual directory.
+///
+/// This preserves Rufin's released sidecar names and sole-image fallback
+/// without another `read_dir` per Track or a directory-name hierarchy guess.
+pub(super) fn sidecar(images: &[PathBuf]) -> Option<PathBuf> {
+    images
+        .iter()
+        .filter_map(|path| sidecar_rank(path).map(|rank| (rank, path)))
+        .min_by_key(|(rank, _)| *rank)
+        .map(|(_, path)| path.clone())
+        .or_else(|| match images {
+            [path] => Some(path.clone()),
+            _ => None,
+        })
+}
+
+fn sidecar_rank(path: &Path) -> Option<(usize, usize)> {
+    let stem = path.file_stem()?.to_str()?;
+    let extension = path.extension()?.to_str()?;
+    let stem_rank = ["cover", "folder", "front", "album"]
+        .iter()
+        .position(|candidate| stem.eq_ignore_ascii_case(candidate))?;
+    let extension_rank = ["jpg", "jpeg", "png", "webp"]
+        .iter()
+        .position(|candidate| extension.eq_ignore_ascii_case(candidate))?;
+    Some((stem_rank, extension_rank))
+}
+
+pub(super) fn file_reference(path: &Path, revision: String) -> LocalArtworkRef {
+    LocalArtworkRef::File {
+        path: path.to_string_lossy().into_owned(),
+        revision,
+    }
+}
+
+pub(super) fn embedded_reference(
+    path: &Path,
+    picture_index: u32,
+    revision: String,
+) -> LocalArtworkRef {
+    LocalArtworkRef::Embedded {
+        path: path.to_string_lossy().into_owned(),
+        picture_index,
+        revision,
+    }
+}
+
+pub(super) fn best_picture_index(
+    file: &TaggedFile,
+    preferred: Option<&lofty::tag::Tag>,
+) -> Option<u32> {
+    let picture = preferred
+        .and_then(|tag| best_picture(tag.pictures()))
+        .or_else(|| {
+            file.tags()
+                .iter()
+                .find_map(|tag| best_picture(tag.pictures()))
+        })?;
+    file.tags()
+        .iter()
+        .flat_map(|tag| tag.pictures())
+        .position(|candidate| std::ptr::eq(candidate, picture))
+        .and_then(|index| u32::try_from(index).ok())
+}
+
+fn best_picture(pictures: &[Picture]) -> Option<&Picture> {
+    pictures
+        .iter()
+        .find(|picture| picture.pic_type() == PictureType::CoverFront)
+        .or_else(|| pictures.first())
+}
+
+pub(super) fn read_image(reference: &ArtworkReference) -> SourceResult<ImageBytes> {
+    match reference {
+        ArtworkReference::File(path) => Ok(ImageBytes {
+            bytes: read_bounded(fs::File::open(path).map_err(file_error)?)?,
+            content_type: content_type(path),
+        }),
+        ArtworkReference::Embedded {
+            path,
+            picture_index,
+        } => {
+            let format = audio_format(path).ok_or(SourceError::NotFound)?;
+            match format.artwork_reader() {
+                ArtworkReader::Lofty(file_types) => {
+                    let file = read_lofty(path, file_types, true)
+                        .map_err(|error| SourceError::Other(error.to_string()))?
+                        .ok_or(SourceError::NotFound)?;
+                    let picture = file
+                        .tags()
+                        .iter()
+                        .flat_map(|tag| tag.pictures())
+                        .nth(usize::try_from(*picture_index).map_err(|_| SourceError::NotFound)?)
+                        .ok_or(SourceError::NotFound)?;
+                    if picture.data().len() > LOCAL_IMAGE_MAX_BYTES {
+                        return Err(SourceError::Other(format!(
+                            "Local artwork exceeds {} MiB",
+                            LOCAL_IMAGE_MAX_BYTES / (1024 * 1024)
+                        )));
+                    }
+                    Ok(ImageBytes {
+                        bytes: picture.data().to_vec(),
+                        content_type: picture.mime_type().map(|mime| mime.as_str().to_string()),
+                    })
+                }
+                ArtworkReader::Discoverer(format) => {
+                    discoverer::read_image(path, *picture_index, format)
+                }
+            }
+        }
+    }
+}
+
+fn read_bounded(mut file: fs::File) -> SourceResult<Vec<u8>> {
+    let mut bytes = Vec::new();
+    file.by_ref()
+        .take((LOCAL_IMAGE_MAX_BYTES + 1) as u64)
+        .read_to_end(&mut bytes)
+        .map_err(file_error)?;
+    if bytes.len() > LOCAL_IMAGE_MAX_BYTES {
+        return Err(SourceError::Other(format!(
+            "Local artwork exceeds {} MiB",
+            LOCAL_IMAGE_MAX_BYTES / (1024 * 1024)
+        )));
+    }
+    Ok(bytes)
+}
+
+fn content_type(path: &Path) -> Option<String> {
+    match path
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .map(str::to_ascii_lowercase)
+        .as_deref()
+    {
+        Some("jpg" | "jpeg") => Some("image/jpeg".to_string()),
+        Some("png") => Some("image/png".to_string()),
+        Some("webp") => Some("image/webp".to_string()),
+        _ => None,
+    }
+}
+
+fn file_error(error: std::io::Error) -> SourceError {
+    SourceError::Other(error.to_string())
+}

@@ -1,17 +1,17 @@
-//! Loads artwork and keeps decoded images in a shared cache.
+//! Selects, fetches, caches, and decodes artwork.
 //!
-//! The UI decides what it needs now; this crate chooses the image source, avoids
-//! duplicate work, prioritizes requests, and removes older cached images.
+//! The caller owns final decoded results. This crate chooses the image source,
+//! avoids duplicate work, prioritizes requests, and keeps normalized images on
+//! disk.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use async_channel::Receiver;
-
-use library::SourceId;
-use sources::ImageProvider;
+use library::{SourceArtwork, SourceId};
+use sources::{ImageBytes, Source, SourceImageRequest, SourceResult};
 use thiserror::Error;
-use tokio::runtime::Runtime;
+use tokio::runtime::Handle;
+use tokio::sync::oneshot;
 
 mod cache;
 mod decode;
@@ -23,28 +23,75 @@ mod selection;
 mod tests;
 
 pub use decode::{DecodedImage, RgbaImage, decode_rgba, square_thumbnail_png};
-pub use selection::{ArtworkBinding, ArtworkPresentation};
+pub use selection::ArtworkBinding;
 
 #[derive(Clone)]
 pub struct SourceImages {
     pub source_id: SourceId,
-    pub(crate) provider: Option<Arc<dyn ImageProvider + Send + Sync>>,
+    source: Option<Arc<Source>>,
+    #[cfg(test)]
+    test_source: Option<Arc<dyn TestImageSource + Send + Sync>>,
 }
 
 impl SourceImages {
-    pub fn new(source_id: SourceId, provider: Arc<dyn ImageProvider + Send + Sync>) -> Self {
+    pub fn new(source: Arc<Source>) -> Self {
         Self {
-            source_id,
-            provider: Some(provider),
+            source_id: source.source_id().clone(),
+            source: Some(source),
+            #[cfg(test)]
+            test_source: None,
         }
     }
 
     pub fn cache_only(source_id: SourceId) -> Self {
         Self {
             source_id,
-            provider: None,
+            source: None,
+            #[cfg(test)]
+            test_source: None,
         }
     }
+
+    fn can_fetch(&self) -> bool {
+        self.source.is_some() || {
+            #[cfg(test)]
+            {
+                self.test_source.is_some()
+            }
+            #[cfg(not(test))]
+            {
+                false
+            }
+        }
+    }
+
+    async fn image(&self, request: SourceImageRequest) -> SourceResult<ImageBytes> {
+        if let Some(source) = &self.source {
+            return source.image(request).await;
+        }
+        #[cfg(test)]
+        if let Some(source) = &self.test_source {
+            return source.image(request).await;
+        }
+        Err(sources::SourceError::InvalidRequest(
+            "artwork source is not connected",
+        ))
+    }
+
+    #[cfg(test)]
+    fn testing(source_id: SourceId, source: Arc<dyn TestImageSource + Send + Sync>) -> Self {
+        Self {
+            source_id,
+            source: None,
+            test_source: Some(source),
+        }
+    }
+}
+
+#[cfg(test)]
+#[async_trait::async_trait(?Send)]
+trait TestImageSource {
+    async fn image(&self, request: SourceImageRequest) -> SourceResult<ImageBytes>;
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -113,37 +160,56 @@ impl ArtworkKey {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-pub struct RequestId(u64);
-
-impl RequestId {
-    pub const fn get(self) -> u64 {
-        self.0
-    }
-}
+#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct DecodedImageIdentity(ArtworkKey);
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-pub struct PrefetchOwner(u64);
+pub(crate) struct RequestId(u64);
 
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-pub enum PrefetchPriority {
-    Viewport,
-    Background,
-    Idle,
+pub enum ArtworkLoad {
+    Ready(Arc<DecodedImage>),
+    Missing,
+    Pending(PendingArtwork),
 }
 
 #[derive(Clone, Debug)]
-pub enum Readiness {
-    Pending,
+pub enum ArtworkOutcome {
     Ready(Arc<DecodedImage>),
     Missing,
     Failed(Arc<str>),
+    Invalidated,
 }
 
-#[derive(Clone, Debug)]
-pub struct ArtworkProjection {
-    pub request_id: RequestId,
-    pub readiness: Readiness,
+pub struct PendingArtwork {
+    request_id: RequestId,
+    completion: Option<oneshot::Receiver<ArtworkOutcome>>,
+    pipeline: Arc<pipeline::Pipeline>,
+}
+
+impl PendingArtwork {
+    pub async fn finish(mut self) -> ArtworkOutcome {
+        let Some(completion) = self.completion.take() else {
+            return ArtworkOutcome::Failed("artwork request ended unexpectedly".into());
+        };
+        match completion.await {
+            Ok(outcome) => outcome,
+            Err(_) => ArtworkOutcome::Failed("artwork request ended unexpectedly".into()),
+        }
+    }
+}
+
+impl Drop for PendingArtwork {
+    fn drop(&mut self) {
+        self.pipeline.cancel(self.request_id);
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct ArtworkPreparation {
+    pub total: usize,
+    pub ready: usize,
+    pub missing: usize,
+    pub failed: usize,
 }
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
@@ -177,22 +243,16 @@ pub struct PreparedArtwork {
     request: ArtworkRequest,
 }
 
-#[derive(Clone, Debug)]
-pub enum ArtworkEvent {
-    Changed(ArtworkProjection),
-    Invalidated(RequestId),
-}
-
 #[derive(Debug, Error)]
 pub enum ArtworkError {
     #[error("artwork cache failed: {0}")]
     Cache(#[from] std::io::Error),
     #[error("artwork decode failed: {0}")]
     Decode(String),
-    #[error("artwork pipeline is busy")]
-    Busy,
     #[error("artwork fetch setup failed: {0}")]
     FetchSetup(String),
+    #[error("artwork preparation was cancelled")]
+    Cancelled,
 }
 
 #[derive(Clone)]
@@ -201,26 +261,12 @@ pub struct Artwork {
 }
 
 impl Artwork {
-    pub fn new(
-        cache_root: impl AsRef<Path>,
-        runtime: Arc<Runtime>,
-    ) -> Result<(Self, Receiver<ArtworkEvent>), ArtworkError> {
+    pub fn new(cache_root: impl AsRef<Path>, runtime: Handle) -> Result<Self, ArtworkError> {
         let cache_root = cache::current_layout(cache_root.as_ref())?;
-        let (pipeline, events) = pipeline::Pipeline::new(&cache_root, runtime)?;
-        Ok((
-            Self {
-                pipeline: Arc::new(pipeline),
-            },
-            events,
-        ))
-    }
-
-    pub fn request(
-        &self,
-        source: SourceImages,
-        request: ArtworkRequest,
-    ) -> Result<ArtworkProjection, ArtworkError> {
-        self.pipeline.request(source, request)
+        let pipeline = pipeline::Pipeline::new(&cache_root, runtime)?;
+        Ok(Self {
+            pipeline: Arc::new(pipeline),
+        })
     }
 
     pub fn prepare(&self, source: SourceImages, request: ArtworkRequest) -> PreparedArtwork {
@@ -233,43 +279,25 @@ impl Artwork {
         }
     }
 
-    pub fn request_prepared(
-        &self,
-        prepared: PreparedArtwork,
-    ) -> Result<ArtworkProjection, ArtworkError> {
-        self.request(prepared.source, prepared.request)
+    pub fn request_prepared(&self, prepared: PreparedArtwork) -> Result<ArtworkLoad, ArtworkError> {
+        self.pipeline.request(prepared.source, prepared.request)
     }
 
-    pub fn allocate_prefetch_owner(&self) -> PrefetchOwner {
-        self.pipeline.allocate_prefetch_owner()
+    pub fn warm_prepared(&self, prepared: PreparedArtwork) -> Result<ArtworkLoad, ArtworkError> {
+        self.pipeline.warm(prepared.source, prepared.request)
     }
 
-    pub fn replace_prefetch(
+    /// Caches the canonical source-owned images before publishing a new
+    /// cacheless library.
+    pub fn prepare_source_artwork(
         &self,
-        owner: PrefetchOwner,
-        priority: PrefetchPriority,
         source: SourceImages,
-        requests: Vec<ArtworkRequest>,
-    ) {
+        artwork: Arc<[SourceArtwork]>,
+        progress: &(dyn Fn(usize, usize) + Send + Sync),
+        cancelled: &(dyn Fn() -> bool + Send + Sync),
+    ) -> Result<ArtworkPreparation, ArtworkError> {
         self.pipeline
-            .replace_prefetch(owner, priority, source, requests);
-    }
-
-    pub fn clear_prefetch(&self, owner: PrefetchOwner) {
-        self.pipeline.clear_prefetch(owner);
-    }
-
-    pub fn set_prefetch_paused(&self, priority: PrefetchPriority, paused: bool) {
-        self.pipeline.set_prefetch_paused(priority, paused);
-    }
-
-    pub fn cancel(&self, request_id: RequestId) {
-        self.pipeline.cancel(request_id);
-    }
-
-    #[cfg(test)]
-    pub(crate) fn has_pending_request(&self, request_id: RequestId) -> bool {
-        self.pipeline.projection(request_id).is_some()
+            .prepare_source_artwork(source, artwork, progress, cancelled)
     }
 
     pub fn cache_only_file(
@@ -280,29 +308,11 @@ impl Artwork {
         self.pipeline.cache_only_file(source_id, request)
     }
 
-    pub fn binding_identity(
-        &self,
-        source: &SourceImages,
-        request: &ArtworkRequest,
-    ) -> ArtworkBindingIdentity {
-        self.pipeline.binding_identity(source, request)
-    }
-
     pub fn retry_external(&self) -> Result<(), ArtworkError> {
         self.pipeline.retry_external()
     }
 
     pub fn invalidate_source(&self, source_id: &SourceId) -> Result<(), ArtworkError> {
         self.pipeline.invalidate_source(source_id)
-    }
-
-    pub fn resolve_public_album_url(
-        &self,
-        candidates: &ArtworkBinding,
-        size: u32,
-        external: &ExternalPolicy,
-    ) -> Result<Option<String>, String> {
-        self.pipeline
-            .resolve_public_album_url(candidates, size, external)
     }
 }

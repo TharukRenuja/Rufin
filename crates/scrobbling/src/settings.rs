@@ -214,12 +214,6 @@ impl Settings {
         }
         self.listenbrainz.sanitize();
     }
-
-    pub(crate) fn has_target(&self, now_playing: bool) -> bool {
-        self.lastfm.configured(now_playing)
-            || self.librefm.configured(now_playing)
-            || self.listenbrainz.configured(now_playing)
-    }
 }
 
 #[cfg(test)]

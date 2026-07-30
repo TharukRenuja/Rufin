@@ -4,7 +4,8 @@ use crate::localization::localized_label;
 
 use crate::shell::actions::icon_button;
 
-const HOME_SHOWCASE_TEXT_MIN_WIDTH: i32 = 360;
+const HOME_SHOWCASE_METADATA_MIN_WIDTH: i32 = 360;
+const HOME_SHOWCASE_COVER_GROWTH_WIDTH: i32 = 444;
 const HOME_SHOWCASE_COMPACT_WIDTH: i32 = 640;
 const HOME_SHOWCASE_FULL_COVER: i32 = 196;
 const HOME_SHOWCASE_MIN_COVER: i32 = 150;
@@ -66,7 +67,7 @@ pub(super) enum HomeShowcaseMode {
 }
 
 pub(super) fn home_showcase_mode(width: i32) -> HomeShowcaseMode {
-    if width < HOME_SHOWCASE_TEXT_MIN_WIDTH {
+    if width < HOME_SHOWCASE_METADATA_MIN_WIDTH {
         HomeShowcaseMode::CoverOnly
     } else if home_showcase_is_compact(width) {
         HomeShowcaseMode::Compact
@@ -76,13 +77,15 @@ pub(super) fn home_showcase_mode(width: i32) -> HomeShowcaseMode {
 }
 
 pub(super) fn home_showcase_cover_size(width: i32) -> i32 {
-    if width < HOME_SHOWCASE_TEXT_MIN_WIDTH {
+    if width < HOME_SHOWCASE_METADATA_MIN_WIDTH {
         width.clamp(96, HOME_SHOWCASE_MIN_COVER)
+    } else if width < HOME_SHOWCASE_COVER_GROWTH_WIDTH {
+        HOME_SHOWCASE_MIN_COVER
     } else if width < HOME_SHOWCASE_COMPACT_WIDTH {
         HOME_SHOWCASE_MIN_COVER
-            + ((width - HOME_SHOWCASE_TEXT_MIN_WIDTH)
+            + ((width - HOME_SHOWCASE_COVER_GROWTH_WIDTH)
                 * (HOME_SHOWCASE_FULL_COVER - HOME_SHOWCASE_MIN_COVER)
-                / (HOME_SHOWCASE_COMPACT_WIDTH - HOME_SHOWCASE_TEXT_MIN_WIDTH))
+                / (HOME_SHOWCASE_COMPACT_WIDTH - HOME_SHOWCASE_COVER_GROWTH_WIDTH))
     } else {
         HOME_SHOWCASE_FULL_COVER
     }
@@ -113,12 +116,13 @@ mod tests {
     fn home_compacts_width_bound_widgets() {
         assert_eq!(home_showcase_mode(359), HomeShowcaseMode::CoverOnly);
         assert_eq!(home_showcase_mode(360), HomeShowcaseMode::Compact);
-        assert_eq!(home_showcase_mode(419), HomeShowcaseMode::Compact);
+        assert_eq!(home_showcase_mode(435), HomeShowcaseMode::Compact);
         assert_eq!(home_showcase_mode(640), HomeShowcaseMode::Full);
         assert_eq!(home_showcase_cover_size(359), HOME_SHOWCASE_MIN_COVER);
         assert_eq!(home_showcase_cover_size(360), HOME_SHOWCASE_MIN_COVER);
-        assert_eq!(home_showcase_cover_size(450), 164);
-        assert_eq!(home_showcase_cover_size(520), 176);
+        assert_eq!(home_showcase_cover_size(435), HOME_SHOWCASE_MIN_COVER);
+        assert_eq!(home_showcase_cover_size(444), HOME_SHOWCASE_MIN_COVER);
+        assert_eq!(home_showcase_cover_size(520), 167);
         assert_eq!(home_showcase_cover_size(639), 195);
         assert_eq!(home_showcase_cover_size(640), HOME_SHOWCASE_FULL_COVER);
     }

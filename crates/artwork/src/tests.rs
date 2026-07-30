@@ -1,22 +1,23 @@
-use std::collections::HashSet;
 use std::fs;
 use std::io::Cursor;
-use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{Arc, Condvar, Mutex};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::{Arc, Condvar, Mutex, OnceLock};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use async_channel::{Receiver, TryRecvError};
 use async_trait::async_trait;
 use image::{DynamicImage, ImageFormat, Rgba, RgbaImage};
-use library::{AlbumArtwork, AlbumId, ImageRef, SourceId};
-use sources::{ImageBytes, ImageProvider, SourceError, SourceResult};
+use library::{
+    Album, AlbumArtwork, AlbumArtworkFacts, AlbumId, AlbumRelations, ImageRef, SourceArtwork,
+    SourceId, Track, TrackData, TrackId, TrackRelations,
+};
+use sources::{ImageBytes, SourceError, SourceImageRequest, SourceResult};
 use tempfile::TempDir;
-use tokio::runtime::{Builder, Runtime};
+use tokio::runtime::{Builder, Handle, Runtime};
 
 use crate::{
-    Artwork, ArtworkBinding, ArtworkEvent, ArtworkRequest, ExternalPolicy, PrefetchPriority,
-    Readiness, RequestId, SourceImages,
+    Artwork, ArtworkBinding, ArtworkLoad, ArtworkOutcome, ArtworkRequest, ExternalPolicy,
+    PendingArtwork, SourceImages, TestImageSource,
 };
 
 struct StaticImages {
@@ -25,8 +26,8 @@ struct StaticImages {
 }
 
 #[async_trait(?Send)]
-impl ImageProvider for StaticImages {
-    async fn image_bytes(&self, _image_ref: &ImageRef, _size: u32) -> SourceResult<ImageBytes> {
+impl TestImageSource for StaticImages {
+    async fn image(&self, _request: SourceImageRequest) -> SourceResult<ImageBytes> {
         self.calls.fetch_add(1, Ordering::Relaxed);
         Ok(ImageBytes {
             bytes: self.bytes.clone(),
@@ -39,9 +40,252 @@ struct MissingImages {
     calls: AtomicUsize,
 }
 
+struct MixedImages {
+    calls: AtomicUsize,
+    bytes: Vec<u8>,
+}
+
 #[async_trait(?Send)]
-impl ImageProvider for MissingImages {
-    async fn image_bytes(&self, _image_ref: &ImageRef, _size: u32) -> SourceResult<ImageBytes> {
+impl TestImageSource for MixedImages {
+    async fn image(&self, request: SourceImageRequest) -> SourceResult<ImageBytes> {
+        self.calls.fetch_add(1, Ordering::Relaxed);
+        if matches!(
+            request,
+            SourceImageRequest::Native { ref image_ref, .. }
+                if image_ref.item_id == "missing-image"
+        ) {
+            return Err(SourceError::NotFound);
+        }
+        Ok(ImageBytes {
+            bytes: self.bytes.clone(),
+            content_type: Some("image/png".to_string()),
+        })
+    }
+}
+
+#[test]
+fn album_binding_uses_the_album_image_before_its_track_fallback() {
+    let album = album_with_image("album-image");
+    let track = track_with_artwork(Arc::clone(&album), "track-image");
+
+    let binding = ArtworkBinding::album_artwork(&AlbumArtwork {
+        album,
+        representative_track: Some(track),
+    });
+    let identities = binding
+        .candidates()
+        .iter()
+        .map(|candidate| candidate.stable_identity())
+        .collect::<Vec<_>>();
+
+    assert!(identities[0].contains("album-image"));
+    assert!(identities[1].contains("track-image"));
+}
+
+fn album_with_image(image_id: &str) -> Arc<Album> {
+    Arc::new(Album {
+        id: AlbumId::new("album-artwork-order"),
+        title: "Album".to_string(),
+        artist: "Artist".to_string(),
+        year: 2024,
+        release_date: None,
+        date_added: None,
+        last_played: None,
+        play_count: None,
+        user_rating: None,
+        favorite: false,
+        color_seed: 0,
+        image_ref: Some(ImageRef::new(image_id, None)),
+        local_artwork: None,
+        release_types: Vec::new(),
+        is_compilation: None,
+        musicbrainz_album_id: None,
+        musicbrainz_release_group_id: None,
+        relations: AlbumRelations::default(),
+    })
+}
+
+fn track_with_artwork(album: Arc<Album>, image_id: &str) -> Track {
+    Track::new(TrackData {
+        id: TrackId::new("track-artwork-order"),
+        album_id: Some(album.id.clone()),
+        title: "Track".to_string(),
+        artist: "Artist".to_string(),
+        album: "Album".to_string(),
+        album_artwork: Some(Arc::new(AlbumArtworkFacts::from(album.as_ref()))),
+        year: 2024,
+        release_date: None,
+        date_added: None,
+        last_played: None,
+        play_count: None,
+        user_rating: None,
+        duration_seconds: 180,
+        favorite: false,
+        disc_number: 1,
+        track_number: 1,
+        image_ref: Some(ImageRef::new(image_id, None)),
+        local_artwork: None,
+        musicbrainz_recording_id: None,
+        musicbrainz_release_track_id: None,
+        source_path: None,
+        cue: None,
+        source_format: None,
+        comment: None,
+        skip_count: None,
+        bpm: None,
+        relations: TrackRelations::default(),
+    })
+}
+
+#[test]
+fn source_preparation_populates_disk_without_decoded_residency() {
+    let temporary = TempDir::new().expect("temporary artwork directory");
+    let images = Arc::new(StaticImages {
+        calls: AtomicUsize::new(0),
+        bytes: png_bytes(),
+    });
+    let source_id = SourceId::new("source-preparation-disk");
+    let source = SourceImages::testing(source_id.clone(), images.clone());
+    let artwork = Artwork::new(temporary.path(), runtime()).expect("artwork service starts");
+    let album = album_with_image("shared-album-image");
+    let track = track_with_artwork(Arc::clone(&album), "per-track-alias");
+    let source_artwork: Arc<[SourceArtwork]> = Arc::new([SourceArtwork::Native(
+        album.image_ref.clone().expect("album image"),
+    )]);
+
+    let preparation = artwork
+        .prepare_source_artwork(source.clone(), source_artwork, &|_, _| {}, &|| false)
+        .expect("prepare source artwork");
+    assert_eq!(preparation.ready, 1);
+    assert_eq!(images.calls.load(Ordering::Relaxed), 1);
+
+    let album_request = ArtworkRequest::new(
+        ArtworkBinding::album_artwork(&AlbumArtwork {
+            album,
+            representative_track: Some(track.clone()),
+        }),
+        256,
+        256,
+    );
+    let track_request = ArtworkRequest::new(ArtworkBinding::track(&track), 256, 256);
+    assert!(
+        artwork
+            .prepare(source.clone(), album_request.clone())
+            .ready
+            .is_none(),
+        "source preparation must not retain decoded images"
+    );
+    assert!(
+        artwork
+            .cache_only_file(&source_id, &album_request)
+            .is_some(),
+        "source preparation must leave a ready disk entry"
+    );
+
+    let album_ready = match finish(
+        prepare_and_request(&artwork, source.clone(), album_request)
+            .expect("request prepared album artwork"),
+    ) {
+        ArtworkOutcome::Ready(image) => image,
+        _ => panic!("prepared album artwork was not ready"),
+    };
+    let track_ready = artwork
+        .prepare(source, track_request)
+        .ready
+        .expect("decoded album artwork satisfies the Track binding");
+    assert!(Arc::ptr_eq(&album_ready, &track_ready));
+    assert_eq!(images.calls.load(Ordering::Relaxed), 1);
+}
+
+#[test]
+fn cached_fallback_does_not_bypass_an_available_album_primary() {
+    let temporary = TempDir::new().expect("temporary artwork directory");
+    let images = Arc::new(StaticImages {
+        calls: AtomicUsize::new(0),
+        bytes: png_bytes(),
+    });
+    let source = SourceImages::testing(SourceId::new("source-primary-order"), images.clone());
+    let artwork = Artwork::new(temporary.path(), runtime()).expect("artwork service starts");
+    let album = album_with_image("uncached-album-primary");
+    let track = track_with_artwork(Arc::clone(&album), "cached-track-fallback");
+    let fallback = SourceArtwork::Native(track.image_ref.clone().expect("Track image"));
+    let fallback_artwork: Arc<[SourceArtwork]> = Arc::new([fallback]);
+
+    artwork
+        .prepare_source_artwork(source.clone(), fallback_artwork, &|_, _| {}, &|| false)
+        .expect("prepare fallback artwork");
+
+    let track_request = ArtworkRequest::new(ArtworkBinding::track(&track), 256, 256);
+    assert!(
+        artwork
+            .prepare(source.clone(), track_request.clone())
+            .ready
+            .is_none()
+    );
+    let pending = prepare_and_request(&artwork, source, track_request)
+        .expect("request album-primary Track artwork");
+    wait_for_ready(pending);
+
+    assert_eq!(images.calls.load(Ordering::Relaxed), 2);
+}
+
+#[test]
+fn source_preparation_caches_ready_and_missing_images_without_a_second_fetch() {
+    let temporary = TempDir::new().expect("temporary artwork directory");
+    let images = Arc::new(MixedImages {
+        calls: AtomicUsize::new(0),
+        bytes: png_bytes(),
+    });
+    let source = SourceImages::testing(SourceId::new("source-preparation-cache"), images.clone());
+    let artwork = Artwork::new(temporary.path(), runtime()).expect("artwork service starts");
+    let facts: Arc<[SourceArtwork]> = Arc::new([
+        SourceArtwork::Native(ImageRef::new("ready-image", None)),
+        SourceArtwork::Native(ImageRef::new("missing-image", None)),
+    ]);
+
+    let first = artwork
+        .prepare_source_artwork(source.clone(), Arc::clone(&facts), &|_, _| {}, &|| false)
+        .expect("prepare source artwork");
+    let second = artwork
+        .prepare_source_artwork(source, facts, &|_, _| {}, &|| false)
+        .expect("reuse prepared source artwork");
+
+    assert_eq!(first.total, 2);
+    assert_eq!(first.ready, 1);
+    assert_eq!(first.missing, 1);
+    assert_eq!(first.failed, 0);
+    assert_eq!(second, first);
+    assert_eq!(images.calls.load(Ordering::Relaxed), 2);
+}
+
+#[test]
+fn cancelled_source_preparation_starts_no_image_work() {
+    let temporary = TempDir::new().expect("temporary artwork directory");
+    let images = Arc::new(StaticImages {
+        calls: AtomicUsize::new(0),
+        bytes: png_bytes(),
+    });
+    let source = SourceImages::testing(SourceId::new("source-preparation-cancel"), images.clone());
+    let artwork = Artwork::new(temporary.path(), runtime()).expect("artwork service starts");
+    let cancelled = AtomicBool::new(true);
+
+    let result = artwork.prepare_source_artwork(
+        source,
+        Arc::new([SourceArtwork::Native(ImageRef::new(
+            "cancelled-image",
+            None,
+        ))]),
+        &|_, _| {},
+        &|| cancelled.load(Ordering::Acquire),
+    );
+
+    assert!(matches!(result, Err(crate::ArtworkError::Cancelled)));
+    assert_eq!(images.calls.load(Ordering::Relaxed), 0);
+}
+
+#[async_trait(?Send)]
+impl TestImageSource for MissingImages {
+    async fn image(&self, _request: SourceImageRequest) -> SourceResult<ImageBytes> {
         self.calls.fetch_add(1, Ordering::Relaxed);
         Err(SourceError::NotFound)
     }
@@ -108,8 +352,8 @@ impl BlockingImages {
 }
 
 #[async_trait(?Send)]
-impl ImageProvider for BlockingImages {
-    async fn image_bytes(&self, _image_ref: &ImageRef, _size: u32) -> SourceResult<ImageBytes> {
+impl TestImageSource for BlockingImages {
+    async fn image(&self, _request: SourceImageRequest) -> SourceResult<ImageBytes> {
         let mut state = self
             .state
             .lock()
@@ -132,32 +376,118 @@ impl ImageProvider for BlockingImages {
 }
 
 #[test]
-fn duplicate_visible_requests_share_fetch_and_leave_no_terminal_projection() {
+fn source_preparation_streams_every_image_through_a_bounded_window() {
+    let temporary = TempDir::new().expect("temporary artwork directory");
+    let images = Arc::new(BlockingImages::default());
+    let source = SourceImages::testing(SourceId::new("bounded-source-preparation"), images.clone());
+    let total = super::pipeline::PREPARATION_WINDOW * 3 + 1;
+    let facts: Arc<[SourceArtwork]> = (0..total)
+        .map(|index| SourceArtwork::Native(ImageRef::new(format!("image-{index}"), None)))
+        .collect::<Vec<_>>()
+        .into();
+    let progress = Arc::new(Mutex::new(Vec::new()));
+    let artwork = Artwork::new(temporary.path(), runtime()).expect("artwork service starts");
+    let worker_artwork = artwork.clone();
+    let worker_progress = Arc::clone(&progress);
+    let preparation = thread::spawn(move || {
+        worker_artwork.prepare_source_artwork(
+            source,
+            facts,
+            &|completed, total| {
+                worker_progress
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .push((completed, total));
+            },
+            &|| false,
+        )
+    });
+
+    images.wait_started_count(super::pipeline::WORKERS);
+    let (preparation_interests, jobs) = artwork.pipeline.preparation_work();
+    assert_eq!(preparation_interests, super::pipeline::PREPARATION_WINDOW);
+    assert!(jobs <= super::pipeline::PREPARATION_WINDOW);
+    images.release();
+
+    let summary = preparation
+        .join()
+        .expect("preparation thread")
+        .expect("source preparation");
+    assert_eq!(summary.total, total);
+    assert_eq!(summary.ready, total);
+    assert_eq!(images.started_count(), total);
+    let progress = progress
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    assert_eq!(progress.len(), total);
+    assert_eq!(progress.first(), Some(&(1, total)));
+    assert_eq!(progress.last(), Some(&(total, total)));
+}
+
+#[test]
+fn cancelling_source_preparation_discards_the_unstarted_window() {
+    let temporary = TempDir::new().expect("temporary artwork directory");
+    let images = Arc::new(BlockingImages::default());
+    let source = SourceImages::testing(
+        SourceId::new("cancelled-source-preparation"),
+        images.clone(),
+    );
+    let facts: Arc<[SourceArtwork]> = (0..super::pipeline::PREPARATION_WINDOW * 3)
+        .map(|index| SourceArtwork::Native(ImageRef::new(format!("image-{index}"), None)))
+        .collect::<Vec<_>>()
+        .into();
+    let cancelled = Arc::new(AtomicBool::new(false));
+    let artwork = Artwork::new(temporary.path(), runtime()).expect("artwork service starts");
+    let worker_artwork = artwork.clone();
+    let worker_cancelled = Arc::clone(&cancelled);
+    let preparation = thread::spawn(move || {
+        worker_artwork.prepare_source_artwork(source, facts, &|_, _| {}, &|| {
+            worker_cancelled.load(Ordering::Acquire)
+        })
+    });
+
+    images.wait_started_count(super::pipeline::WORKERS);
+    cancelled.store(true, Ordering::Release);
+    let result = preparation.join().expect("preparation thread");
+    assert!(matches!(result, Err(crate::ArtworkError::Cancelled)));
+    let (preparation_interests, jobs) = artwork.pipeline.preparation_work();
+    assert_eq!(preparation_interests, 0);
+    assert!(jobs <= super::pipeline::WORKERS);
+    assert_eq!(images.started_count(), super::pipeline::WORKERS);
+    images.release();
+
+    let deadline = Instant::now() + Duration::from_secs(3);
+    while artwork.pipeline.preparation_work().1 != 0 {
+        assert!(
+            Instant::now() < deadline,
+            "cancelled artwork jobs did not finish"
+        );
+        thread::sleep(Duration::from_millis(1));
+    }
+}
+
+#[test]
+fn duplicate_visible_leases_share_one_fetch() {
     let temporary = TempDir::new().expect("temporary artwork directory");
     let runtime = runtime();
     let images = Arc::new(BlockingImages::default());
     let source_id = SourceId::new("source-one");
-    let source = SourceImages::new(source_id.clone(), images.clone());
+    let source = SourceImages::testing(source_id.clone(), images.clone());
     let request = request("cover-one");
-    let (artwork, events) =
-        Artwork::new(temporary.path(), runtime).expect("artwork service starts");
+    let artwork = Artwork::new(temporary.path(), runtime).expect("artwork service starts");
 
     let first = artwork
         .request_prepared(artwork.prepare(source.clone(), request.clone()))
-        .expect("first request")
-        .request_id;
+        .expect("first request");
     images.wait_started();
     let second = artwork
         .request_prepared(artwork.prepare(source, request.clone()))
-        .expect("second request")
-        .request_id;
+        .expect("second request");
     images.release();
-    let ready = wait_for_ready(&events, &[first, second]);
 
-    assert_eq!(ready, HashSet::from([first, second]));
+    wait_for_ready(first);
+    wait_for_ready(second);
     assert_eq!(images.started_count(), 1);
-    assert!(!artwork.has_pending_request(first));
-    assert!(!artwork.has_pending_request(second));
     let cached = artwork
         .cache_only_file(&source_id, &request)
         .expect("cache-only file");
@@ -165,37 +495,120 @@ fn duplicate_visible_requests_share_fetch_and_leave_no_terminal_projection() {
 }
 
 #[test]
-fn prepared_artwork_reports_only_shared_decoded_cache_hits() {
+fn different_bindings_share_their_first_album_candidate() {
+    let temporary = TempDir::new().expect("temporary artwork directory");
+    let images = Arc::new(BlockingImages::default());
+    let source = SourceImages::testing(
+        SourceId::new("source-shared-album-candidate"),
+        images.clone(),
+    );
+    let album = album_with_image("shared-album-candidate");
+    let track = track_with_artwork(Arc::clone(&album), "track-fallback");
+    let album_request = ArtworkRequest::new(ArtworkBinding::album(&album), 256, 256);
+    let track_request = ArtworkRequest::new(ArtworkBinding::track(&track), 256, 256);
+    assert_ne!(
+        album_request.binding.stable_identity(),
+        track_request.binding.stable_identity()
+    );
+    let artwork = Artwork::new(temporary.path(), runtime()).expect("artwork service starts");
+
+    let album_pending = prepare_and_request(&artwork, source.clone(), album_request)
+        .expect("album artwork request");
+    images.wait_started();
+    let track_pending =
+        prepare_and_request(&artwork, source, track_request).expect("track artwork request");
+    images.release();
+
+    wait_for_ready(album_pending);
+    wait_for_ready(track_pending);
+    assert_eq!(images.started_count(), 1);
+}
+
+#[test]
+fn prepared_artwork_reuses_a_decoded_result_while_its_consumer_owns_it() {
     let temporary = TempDir::new().expect("temporary artwork directory");
     let images = Arc::new(StaticImages {
         calls: AtomicUsize::new(0),
         bytes: png_bytes(),
     });
     let source_id = SourceId::new("source-prepared-ready");
-    let source = SourceImages::new(source_id.clone(), images.clone());
+    let source = SourceImages::testing(source_id.clone(), images.clone());
     let request = request("prepared-ready-cover");
-    let (artwork, events) =
-        Artwork::new(temporary.path(), runtime()).expect("artwork service starts");
+    let artwork = Artwork::new(temporary.path(), runtime()).expect("artwork service starts");
 
     let miss = artwork.prepare(source.clone(), request.clone());
     assert!(miss.ready.is_none());
     assert_eq!(images.calls.load(Ordering::Relaxed), 0);
 
-    let request_id = artwork
+    let pending = artwork
         .request_prepared(miss)
-        .expect("request prepared miss")
-        .request_id;
-    wait_for_ready(&events, &[request_id]);
+        .expect("request prepared miss");
+    let retained = match finish(pending) {
+        ArtworkOutcome::Ready(image) => image,
+        _ => panic!("prepared artwork was not ready"),
+    };
     assert_eq!(images.calls.load(Ordering::Relaxed), 1);
 
-    let hit = artwork.prepare(source, request.clone());
-    assert!(hit.ready.is_some());
+    let hit = artwork
+        .prepare(source.clone(), request.clone())
+        .ready
+        .expect("the live decoded result is reusable");
+    assert!(Arc::ptr_eq(&retained, &hit));
     assert_eq!(images.calls.load(Ordering::Relaxed), 1);
 
-    let (cold_artwork, _cold_events) =
+    drop(hit);
+    drop(retained);
+    assert!(
+        artwork.prepare(source, request.clone()).ready.is_none(),
+        "the artwork pipeline must not retain final decoded pixels"
+    );
+
+    let cold_artwork =
         Artwork::new(temporary.path(), runtime()).expect("cold artwork service starts");
     let filesystem_only = cold_artwork.prepare(SourceImages::cache_only(source_id), request);
     assert!(filesystem_only.ready.is_none());
+}
+
+#[test]
+fn dropping_the_final_decoded_consumer_keeps_only_the_disk_entry() {
+    let temporary = TempDir::new().expect("temporary artwork directory");
+    let images = Arc::new(StaticImages {
+        calls: AtomicUsize::new(0),
+        bytes: png_bytes(),
+    });
+    let source_id = SourceId::new("transient-decoded-source");
+    let source = SourceImages::testing(source_id.clone(), images.clone());
+    let request = request("transient-decoded-cover");
+    let artwork = Artwork::new(temporary.path(), runtime()).expect("artwork service starts");
+
+    let retained = match finish(
+        prepare_and_request(&artwork, source.clone(), request.clone())
+            .expect("decoded artwork request"),
+    ) {
+        ArtworkOutcome::Ready(image) => image,
+        _ => panic!("decoded artwork was not ready"),
+    };
+    let reused = artwork
+        .prepare(source.clone(), request.clone())
+        .ready
+        .expect("the live decoded result is indexed");
+    assert!(Arc::ptr_eq(&retained, &reused));
+    drop(reused);
+    drop(retained);
+
+    assert!(
+        artwork.prepare(source, request.clone()).ready.is_none(),
+        "dropping the final consumer releases decoded pixels"
+    );
+    assert!(
+        artwork.cache_only_file(&source_id, &request).is_some(),
+        "the normalized disk entry remains available"
+    );
+    wait_for_ready(
+        prepare_and_request(&artwork, SourceImages::cache_only(source_id), request)
+            .expect("decode the preserved disk entry"),
+    );
+    assert_eq!(images.calls.load(Ordering::Relaxed), 1);
 }
 
 #[test]
@@ -205,609 +618,95 @@ fn larger_decoded_cover_satisfies_a_smaller_request_without_another_fetch() {
         calls: AtomicUsize::new(0),
         bytes: png_bytes_at(800, 800),
     });
-    let source = SourceImages::new(
+    let source = SourceImages::testing(
         SourceId::new("source-reusable-decoded-size"),
         images.clone(),
     );
     let candidates = ArtworkBinding::from_native(Some(&ImageRef::new("shared-cover", None)));
     let large = ArtworkRequest::new(candidates.clone(), 256, 256);
     let small = ArtworkRequest::new(candidates, 96, 96);
-    let (artwork, events) =
-        Artwork::new(temporary.path(), runtime()).expect("artwork service starts");
+    let artwork = Artwork::new(temporary.path(), runtime()).expect("artwork service starts");
 
-    let request_id = artwork
+    let pending = artwork
         .request_prepared(artwork.prepare(source.clone(), large))
-        .expect("large artwork request")
-        .request_id;
-    wait_for_ready(&events, &[request_id]);
+        .expect("large artwork request");
+    let retained = match finish(pending) {
+        ArtworkOutcome::Ready(image) => image,
+        _ => panic!("large artwork was not ready"),
+    };
 
     let reused = artwork
         .prepare(source, small)
         .ready
         .expect("the decoded grid cover satisfies the row request");
+    assert!(Arc::ptr_eq(&retained, &reused));
     assert_eq!(reused.width(), 256);
     assert_eq!(reused.height(), 256);
     assert_eq!(images.calls.load(Ordering::Relaxed), 1);
 }
 
 #[test]
-fn prefetch_completion_populates_the_shared_decoded_cache_without_an_event() {
-    let temporary = TempDir::new().expect("temporary artwork directory");
-    let images = Arc::new(StaticImages {
-        calls: AtomicUsize::new(0),
-        bytes: png_bytes(),
-    });
-    let source = SourceImages::new(SourceId::new("source-prefetch-cache"), images.clone());
-    let request = request("prefetch-cache-cover");
-    let (artwork, events) =
-        Artwork::new(temporary.path(), runtime()).expect("artwork service starts");
-    assert!(
-        artwork
-            .prepare(source.clone(), request.clone())
-            .ready
-            .is_none()
-    );
-
-    let owner = artwork.allocate_prefetch_owner();
-    artwork.replace_prefetch(
-        owner,
-        PrefetchPriority::Viewport,
-        source.clone(),
-        vec![request.clone()],
-    );
-    wait_for_prepared_ready(&artwork, &source, &request);
-
-    assert_eq!(images.calls.load(Ordering::Relaxed), 1);
-    assert!(matches!(events.try_recv(), Err(TryRecvError::Empty)));
-}
-
-#[test]
-fn prefetch_coalesces_one_visual_target_to_its_largest_requested_size() {
+fn smaller_decoded_cover_does_not_satisfy_a_larger_request() {
     let temporary = TempDir::new().expect("temporary artwork directory");
     let images = Arc::new(StaticImages {
         calls: AtomicUsize::new(0),
         bytes: png_bytes_at(800, 800),
     });
-    let source = SourceImages::new(
-        SourceId::new("source-prefetch-coalesced-size"),
-        images.clone(),
-    );
-    let candidates = ArtworkBinding::from_native(Some(&ImageRef::new("coalesced-cover", None)));
-    let small = ArtworkRequest::new(candidates.clone(), 96, 48);
+    let source = SourceImages::testing(SourceId::new("source-size-upgrade"), images.clone());
+    let candidates = ArtworkBinding::from_native(Some(&ImageRef::new("shared-cover", None)));
+    let small = ArtworkRequest::new(candidates.clone(), 256, 48);
     let large = ArtworkRequest::new(candidates, 256, 256);
-    let (artwork, _events) =
-        Artwork::new(temporary.path(), runtime()).expect("artwork service starts");
+    let artwork = Artwork::new(temporary.path(), runtime()).expect("artwork service starts");
 
-    let owner = artwork.allocate_prefetch_owner();
-    artwork.replace_prefetch(
-        owner,
-        PrefetchPriority::Background,
-        source.clone(),
-        vec![small.clone(), large.clone()],
+    let small = match finish(
+        artwork
+            .request_prepared(artwork.prepare(source.clone(), small))
+            .expect("small artwork request"),
+    ) {
+        ArtworkOutcome::Ready(image) => image,
+        _ => panic!("small artwork was not ready"),
+    };
+    assert_eq!(small.width(), 48);
+    assert!(
+        artwork
+            .prepare(source.clone(), large.clone())
+            .ready
+            .is_none(),
+        "the small decode must not be presented as a large cover"
     );
-    wait_for_prepared_ready(&artwork, &source, &large);
 
-    assert_eq!(images.calls.load(Ordering::Relaxed), 1);
-    assert!(artwork.prepare(source, small).ready.is_some());
+    let large = match finish(
+        artwork
+            .request_prepared(artwork.prepare(source, large))
+            .expect("large artwork request"),
+    ) {
+        ArtworkOutcome::Ready(image) => image,
+        _ => panic!("large artwork was not ready"),
+    };
+    assert!(!Arc::ptr_eq(&small, &large));
+    assert_eq!(large.width(), 256);
+    assert_eq!(large.height(), 256);
+    assert_eq!(
+        images.calls.load(Ordering::Relaxed),
+        1,
+        "the normalized disk entry should satisfy the size upgrade"
+    );
 }
 
 #[test]
-fn demand_uses_the_worker_reserved_from_all_prefetch_lanes() {
-    let temporary = TempDir::new().expect("temporary artwork directory");
-    let blockers = Arc::new(BlockingImages::default());
-    let background_source = SourceImages::new(
-        SourceId::new("source-prefetch-priority-background"),
-        blockers.clone(),
-    );
-    let target = Arc::new(StaticImages {
-        calls: AtomicUsize::new(0),
-        bytes: png_bytes(),
-    });
-    let target_source = SourceImages::new(
-        SourceId::new("source-prefetch-priority-viewport"),
-        target.clone(),
-    );
-    let target_request = request("viewport-target");
-    let (artwork, _events) =
-        Artwork::new(temporary.path(), runtime()).expect("artwork service starts");
-
-    let background_owner = artwork.allocate_prefetch_owner();
-    let background = (0..super::pipeline::WORKERS)
-        .map(|index| request(&format!("background-priority-{index}")))
-        .collect();
-    artwork.replace_prefetch(
-        background_owner,
-        PrefetchPriority::Background,
-        background_source,
-        background,
-    );
-    blockers.wait_started_count(super::pipeline::WORKERS - 1);
-
-    let viewport_owner = artwork.allocate_prefetch_owner();
-    artwork.replace_prefetch(
-        viewport_owner,
-        PrefetchPriority::Viewport,
-        target_source.clone(),
-        vec![target_request.clone()],
-    );
-    thread::sleep(Duration::from_millis(50));
-    assert_eq!(target.calls.load(Ordering::Relaxed), 0);
-
-    let request_id = artwork
-        .request_prepared(artwork.prepare(target_source, target_request))
-        .expect("demand promotes the queued viewport request")
-        .request_id;
-    wait_for_ready(&_events, &[request_id]);
-
-    assert_eq!(target.calls.load(Ordering::Relaxed), 1);
-    assert_eq!(blockers.started_count(), super::pipeline::WORKERS - 1);
-    blockers.release();
-    blockers.wait_finished();
-}
-
-#[test]
-fn active_job_accounting_survives_prefetch_promotion_to_demand() {
-    let temporary = TempDir::new().expect("temporary artwork directory");
-    let promoted = Arc::new(BlockingImages::default());
-    let promoted_source = SourceImages::new(
-        SourceId::new("source-active-accounting-promoted"),
-        promoted.clone(),
-    );
-    let promoted_request = request("active-accounting-promoted");
-    let background = Arc::new(BlockingImages::default());
-    let background_source = SourceImages::new(
-        SourceId::new("source-active-accounting-background"),
-        background.clone(),
-    );
-    let viewport = Arc::new(StaticImages {
-        calls: AtomicUsize::new(0),
-        bytes: png_bytes(),
-    });
-    let viewport_source = SourceImages::new(
-        SourceId::new("source-active-accounting-viewport"),
-        viewport.clone(),
-    );
-    let viewport_request = request("active-accounting-viewport");
-    let demand = Arc::new(StaticImages {
-        calls: AtomicUsize::new(0),
-        bytes: png_bytes(),
-    });
-    let demand_source = SourceImages::new(
-        SourceId::new("source-active-accounting-demand"),
-        demand.clone(),
-    );
-    let (artwork, events) =
-        Artwork::new(temporary.path(), runtime()).expect("artwork service starts");
-
-    let promoted_owner = artwork.allocate_prefetch_owner();
-    artwork.replace_prefetch(
-        promoted_owner,
-        PrefetchPriority::Background,
-        promoted_source.clone(),
-        vec![promoted_request.clone()],
-    );
-    promoted.wait_started();
-    artwork
-        .request(promoted_source, promoted_request)
-        .expect("active prefetch is promoted to demand");
-
-    let background_owner = artwork.allocate_prefetch_owner();
-    artwork.replace_prefetch(
-        background_owner,
-        PrefetchPriority::Background,
-        background_source,
-        vec![
-            request("active-accounting-background-1"),
-            request("active-accounting-background-2"),
-        ],
-    );
-    background.wait_started_count(2);
-
-    let viewport_owner = artwork.allocate_prefetch_owner();
-    artwork.replace_prefetch(
-        viewport_owner,
-        PrefetchPriority::Viewport,
-        viewport_source.clone(),
-        vec![viewport_request.clone()],
-    );
-    thread::sleep(Duration::from_millis(50));
-    assert_eq!(viewport.calls.load(Ordering::Relaxed), 0);
-
-    let demand_id = artwork
-        .request(demand_source, request("active-accounting-demand"))
-        .expect("reserved worker accepts demand")
-        .request_id;
-    wait_for_ready(&events, &[demand_id]);
-    assert_eq!(demand.calls.load(Ordering::Relaxed), 1);
-
-    promoted.release();
-    background.release();
-    promoted.wait_finished();
-    background.wait_finished();
-    wait_for_prepared_ready(&artwork, &viewport_source, &viewport_request);
-}
-
-#[test]
-fn idle_prefetch_uses_one_worker_and_yields_to_route_warm_work() {
-    let temporary = TempDir::new().expect("temporary artwork directory");
-    let idle = Arc::new(BlockingImages::default());
-    let idle_source = SourceImages::new(SourceId::new("source-prefetch-idle"), idle.clone());
-    let route = Arc::new(StaticImages {
-        calls: AtomicUsize::new(0),
-        bytes: png_bytes(),
-    });
-    let route_source = SourceImages::new(
-        SourceId::new("source-prefetch-route-background"),
-        route.clone(),
-    );
-    let route_request = request("route-background-target");
-    let (artwork, _events) =
-        Artwork::new(temporary.path(), runtime()).expect("artwork service starts");
-
-    let idle_owner = artwork.allocate_prefetch_owner();
-    let idle_batch = (0..super::pipeline::WORKERS)
-        .map(|index| request(&format!("idle-prefetch-{index}")))
-        .collect();
-    artwork.replace_prefetch(idle_owner, PrefetchPriority::Idle, idle_source, idle_batch);
-    idle.wait_started();
-    thread::sleep(Duration::from_millis(50));
-    assert_eq!(idle.started_count(), 1);
-
-    let route_owner = artwork.allocate_prefetch_owner();
-    artwork.replace_prefetch(
-        route_owner,
-        PrefetchPriority::Background,
-        route_source.clone(),
-        vec![route_request.clone()],
-    );
-    wait_for_prepared_ready(&artwork, &route_source, &route_request);
-
-    assert_eq!(route.calls.load(Ordering::Relaxed), 1);
-    assert_eq!(idle.started_count(), 1);
-    artwork.clear_prefetch(idle_owner);
-    idle.release();
-    idle.wait_finished();
-}
-
-#[test]
-fn retry_rekeys_queued_external_work_before_it_can_fetch_twice() {
+fn dropping_a_pending_lease_cancels_its_pipeline_subscription() {
     let temporary = TempDir::new().expect("temporary artwork directory");
     let images = Arc::new(BlockingImages::default());
-    let source = SourceImages::new(
-        SourceId::new("source-prefetch-external-retry"),
-        images.clone(),
+    let source = SourceImages::testing(SourceId::new("source-cancel"), images.clone());
+    let artwork = Artwork::new(temporary.path(), runtime()).expect("artwork service starts");
+    let pending = pending_artwork(
+        prepare_and_request(&artwork, source, request("slow-cover")).expect("slow request"),
     );
-    let candidates = ArtworkBinding::album_artwork(&AlbumArtwork {
-        id: AlbumId::new("album-prefetch-external-retry"),
-        title: "Album".to_string(),
-        artist: "Artist".to_string(),
-        image_ref: Some(ImageRef::new("native-before-external", None)),
-        musicbrainz_album_id: None,
-        musicbrainz_release_group_id: None,
-    });
-    let request = ArtworkRequest::new(candidates, 96, 96);
-    let (artwork, _events) =
-        Artwork::new(temporary.path(), runtime()).expect("artwork service starts");
-
-    artwork.set_prefetch_paused(PrefetchPriority::Background, true);
-    let owner = artwork.allocate_prefetch_owner();
-    artwork.replace_prefetch(
-        owner,
-        PrefetchPriority::Background,
-        source.clone(),
-        vec![request.clone()],
-    );
-    artwork.retry_external().expect("retry external artwork");
-    artwork.set_prefetch_paused(PrefetchPriority::Background, false);
 
     images.wait_started();
-    images.release();
-    wait_for_prepared_ready(&artwork, &source, &request);
-    assert_eq!(images.started_count(), 1);
-}
-
-#[test]
-fn paused_prefetch_does_not_prevent_demand_from_starting() {
-    let temporary = TempDir::new().expect("temporary artwork directory");
-    let blockers = Arc::new(BlockingImages::default());
-    let prefetch_source =
-        SourceImages::new(SourceId::new("source-prefetch-paused"), blockers.clone());
-    let target = Arc::new(StaticImages {
-        calls: AtomicUsize::new(0),
-        bytes: png_bytes(),
-    });
-    let target_source = SourceImages::new(
-        SourceId::new("source-prefetch-paused-demand"),
-        target.clone(),
-    );
-    let (artwork, events) =
-        Artwork::new(temporary.path(), runtime()).expect("artwork service starts");
-
-    artwork.set_prefetch_paused(PrefetchPriority::Background, true);
-    let owner = artwork.allocate_prefetch_owner();
-    artwork.replace_prefetch(
-        owner,
-        PrefetchPriority::Background,
-        prefetch_source,
-        vec![request("paused-prefetch")],
-    );
-    let request_id = artwork
-        .request(target_source, request("demand-while-prefetch-paused"))
-        .expect("demand request while prefetch is paused")
-        .request_id;
-    wait_for_ready(&events, &[request_id]);
-
-    assert_eq!(target.calls.load(Ordering::Relaxed), 1);
-    assert_eq!(blockers.started_count(), 0);
-    artwork.set_prefetch_paused(PrefetchPriority::Background, false);
-    blockers.wait_started();
-    blockers.release();
-    blockers.wait_finished();
-}
-
-#[test]
-fn demand_promotes_and_reuses_a_matching_queued_prefetch_job() {
-    let temporary = TempDir::new().expect("temporary artwork directory");
-    let blockers = Arc::new(BlockingImages::default());
-    let blocking_source = SourceImages::new(
-        SourceId::new("source-prefetch-promotion-blockers"),
-        blockers.clone(),
-    );
-    let target = Arc::new(StaticImages {
-        calls: AtomicUsize::new(0),
-        bytes: png_bytes(),
-    });
-    let target_source = SourceImages::new(
-        SourceId::new("source-prefetch-promotion-target"),
-        target.clone(),
-    );
-    let target_request = request("promotion-target");
-    let (artwork, events) =
-        Artwork::new(temporary.path(), runtime()).expect("artwork service starts");
-
-    let blocker_owner = artwork.allocate_prefetch_owner();
-    let background = (0..super::pipeline::WORKERS)
-        .map(|index| request(&format!("promotion-blocker-{index}")))
-        .collect();
-    artwork.replace_prefetch(
-        blocker_owner,
-        PrefetchPriority::Background,
-        blocking_source,
-        background,
-    );
-    blockers.wait_started_count(super::pipeline::WORKERS - 1);
-
-    let target_owner = artwork.allocate_prefetch_owner();
-    artwork.replace_prefetch(
-        target_owner,
-        PrefetchPriority::Background,
-        target_source.clone(),
-        vec![target_request.clone()],
-    );
-    let request_id = artwork
-        .request_prepared(artwork.prepare(target_source, target_request))
-        .expect("promoted demand request")
-        .request_id;
-    wait_for_ready(&events, &[request_id]);
-
-    assert_eq!(target.calls.load(Ordering::Relaxed), 1);
-    assert_eq!(blockers.started_count(), super::pipeline::WORKERS - 1);
-    blockers.release();
-    blockers.wait_finished();
-}
-
-#[test]
-fn replacing_and_clearing_an_owner_drops_obsolete_queued_prefetch() {
-    let temporary = TempDir::new().expect("temporary artwork directory");
-    let blockers = Arc::new(BlockingImages::default());
-    let blocking_source = SourceImages::new(
-        SourceId::new("source-prefetch-replace-blockers"),
-        blockers.clone(),
-    );
-    let obsolete = Arc::new(StaticImages {
-        calls: AtomicUsize::new(0),
-        bytes: png_bytes(),
-    });
-    let obsolete_source = SourceImages::new(
-        SourceId::new("source-prefetch-replace-obsolete"),
-        obsolete.clone(),
-    );
-    let replacement = Arc::new(StaticImages {
-        calls: AtomicUsize::new(0),
-        bytes: png_bytes(),
-    });
-    let replacement_source = SourceImages::new(
-        SourceId::new("source-prefetch-replace-cleared"),
-        replacement.clone(),
-    );
-    let (artwork, _events) =
-        Artwork::new(temporary.path(), runtime()).expect("artwork service starts");
-
-    let blocker_owner = artwork.allocate_prefetch_owner();
-    let background = (0..super::pipeline::WORKERS - 1)
-        .map(|index| request(&format!("replace-blocker-{index}")))
-        .collect();
-    artwork.replace_prefetch(
-        blocker_owner,
-        PrefetchPriority::Background,
-        blocking_source,
-        background,
-    );
-    blockers.wait_started_count(super::pipeline::WORKERS - 1);
-
-    let owner = artwork.allocate_prefetch_owner();
-    artwork.replace_prefetch(
-        owner,
-        PrefetchPriority::Background,
-        obsolete_source,
-        vec![request("obsolete-prefetch")],
-    );
-    artwork.replace_prefetch(
-        owner,
-        PrefetchPriority::Background,
-        replacement_source,
-        vec![request("cleared-prefetch")],
-    );
-    artwork.clear_prefetch(owner);
-    blockers.release();
-    blockers.wait_finished();
-    thread::sleep(Duration::from_millis(100));
-
-    assert_eq!(obsolete.calls.load(Ordering::Relaxed), 0);
-    assert_eq!(replacement.calls.load(Ordering::Relaxed), 0);
-}
-
-#[test]
-fn clearing_viewport_ownership_keeps_a_shared_background_prefetch_queued() {
-    let temporary = TempDir::new().expect("temporary artwork directory");
-    let target = Arc::new(StaticImages {
-        calls: AtomicUsize::new(0),
-        bytes: png_bytes(),
-    });
-    let target_source = SourceImages::new(
-        SourceId::new("source-prefetch-shared-target"),
-        target.clone(),
-    );
-    let target_request = request("shared-priority-target");
-    let sentinel = Arc::new(StaticImages {
-        calls: AtomicUsize::new(0),
-        bytes: png_bytes(),
-    });
-    let sentinel_source = SourceImages::new(
-        SourceId::new("source-prefetch-viewport-sentinel"),
-        sentinel.clone(),
-    );
-    let sentinel_request = request("viewport-sentinel");
-    let (artwork, _events) =
-        Artwork::new(temporary.path(), runtime()).expect("artwork service starts");
-
-    artwork.set_prefetch_paused(PrefetchPriority::Viewport, true);
-    artwork.set_prefetch_paused(PrefetchPriority::Background, true);
-    let background_owner = artwork.allocate_prefetch_owner();
-    artwork.replace_prefetch(
-        background_owner,
-        PrefetchPriority::Background,
-        target_source.clone(),
-        vec![target_request.clone()],
-    );
-    let shared_viewport_owner = artwork.allocate_prefetch_owner();
-    artwork.replace_prefetch(
-        shared_viewport_owner,
-        PrefetchPriority::Viewport,
-        target_source.clone(),
-        vec![target_request.clone()],
-    );
-    let sentinel_owner = artwork.allocate_prefetch_owner();
-    artwork.replace_prefetch(
-        sentinel_owner,
-        PrefetchPriority::Viewport,
-        sentinel_source.clone(),
-        vec![sentinel_request.clone()],
-    );
-
-    artwork.clear_prefetch(shared_viewport_owner);
-    artwork.set_prefetch_paused(PrefetchPriority::Viewport, false);
-    wait_for_prepared_ready(&artwork, &sentinel_source, &sentinel_request);
-    assert_eq!(sentinel.calls.load(Ordering::Relaxed), 1);
-    assert_eq!(target.calls.load(Ordering::Relaxed), 0);
-
-    artwork.set_prefetch_paused(PrefetchPriority::Background, false);
-    wait_for_prepared_ready(&artwork, &target_source, &target_request);
-    assert_eq!(target.calls.load(Ordering::Relaxed), 1);
-}
-
-#[test]
-fn clearing_an_active_prefetch_keeps_its_completed_decode_reusable() {
-    let temporary = TempDir::new().expect("temporary artwork directory");
-    let images = Arc::new(BlockingImages::default());
-    let source = SourceImages::new(
-        SourceId::new("source-prefetch-clear-active"),
-        images.clone(),
-    );
-    let request = request("clear-active-target");
-    let (artwork, _events) =
-        Artwork::new(temporary.path(), runtime()).expect("artwork service starts");
-
-    let owner = artwork.allocate_prefetch_owner();
-    artwork.replace_prefetch(
-        owner,
-        PrefetchPriority::Viewport,
-        source.clone(),
-        vec![request.clone()],
-    );
-    images.wait_started();
-    artwork.clear_prefetch(owner);
+    drop(pending);
     images.release();
     images.wait_finished();
-
-    wait_for_prepared_ready(&artwork, &source, &request);
-    assert_eq!(images.started_count(), 1);
-}
-
-#[test]
-fn a_full_background_batch_cannot_block_new_demand() {
-    let temporary = TempDir::new().expect("temporary artwork directory");
-    let blockers = Arc::new(BlockingImages::default());
-    let background_source = SourceImages::new(
-        SourceId::new("source-prefetch-bounds-background"),
-        blockers.clone(),
-    );
-    let target = Arc::new(StaticImages {
-        calls: AtomicUsize::new(0),
-        bytes: png_bytes(),
-    });
-    let target_source = SourceImages::new(
-        SourceId::new("source-prefetch-bounds-demand"),
-        target.clone(),
-    );
-    let (artwork, events) =
-        Artwork::new(temporary.path(), runtime()).expect("artwork service starts");
-
-    let owner = artwork.allocate_prefetch_owner();
-    let background_requests = (0..320)
-        .map(|index| request(&format!("bounded-background-{index}")))
-        .collect::<Vec<_>>();
-    artwork.replace_prefetch(
-        owner,
-        PrefetchPriority::Background,
-        background_source.clone(),
-        background_requests.clone(),
-    );
-    blockers.wait_started_count(super::pipeline::WORKERS - 1);
-
-    let request_id = artwork
-        .request(target_source, request("bounded-demand"))
-        .expect("demand displaces queued background prefetch")
-        .request_id;
-    wait_for_ready(&events, &[request_id]);
-
-    assert_eq!(target.calls.load(Ordering::Relaxed), 1);
-    assert_eq!(blockers.started_count(), super::pipeline::WORKERS - 1);
-    blockers.release();
-    blockers.wait_started_count(320);
-    wait_for_all_prepared_ready(&artwork, &background_source, &background_requests);
-    assert_eq!(blockers.started_count(), 320);
-}
-
-#[test]
-fn cancel_drops_a_pending_binding_before_its_fetch_finishes() {
-    let temporary = TempDir::new().expect("temporary artwork directory");
-    let images = Arc::new(BlockingImages::default());
-    let source = SourceImages::new(SourceId::new("source-cancel"), images.clone());
-    let (artwork, events) =
-        Artwork::new(temporary.path(), runtime()).expect("artwork service starts");
-    let request_id = artwork
-        .request(source, request("slow-cover"))
-        .expect("slow request")
-        .request_id;
-
-    images.wait_started();
-    artwork.cancel(request_id);
-    images.release();
-    images.wait_finished();
-
-    assert!(!artwork.has_pending_request(request_id));
-    assert_no_terminal_event(&events, request_id);
 }
 
 #[test]
@@ -815,14 +714,12 @@ fn source_invalidation_rejects_an_in_flight_result_and_removes_its_file() {
     let temporary = TempDir::new().expect("temporary artwork directory");
     let images = Arc::new(BlockingImages::default());
     let source_id = SourceId::new("source-stale");
-    let source = SourceImages::new(source_id.clone(), images.clone());
+    let source = SourceImages::testing(source_id.clone(), images.clone());
     let request = request("stale-cover");
-    let (artwork, events) =
-        Artwork::new(temporary.path(), runtime()).expect("artwork service starts");
-    let request_id = artwork
-        .request(source, request.clone())
-        .expect("stale request")
-        .request_id;
+    let artwork = Artwork::new(temporary.path(), runtime()).expect("artwork service starts");
+    let pending = pending_artwork(
+        prepare_and_request(&artwork, source, request.clone()).expect("stale request"),
+    );
 
     images.wait_started();
     artwork
@@ -831,9 +728,11 @@ fn source_invalidation_rejects_an_in_flight_result_and_removes_its_file() {
     images.release();
     images.wait_finished();
 
-    assert!(!artwork.has_pending_request(request_id));
     assert!(artwork.cache_only_file(&source_id, &request).is_none());
-    assert_no_terminal_event(&events, request_id);
+    assert!(matches!(
+        runtime().block_on(pending.finish()),
+        ArtworkOutcome::Invalidated
+    ));
 }
 
 #[test]
@@ -841,7 +740,7 @@ fn binding_identity_separates_visual_changes_from_rerequest_changes() {
     let temporary = TempDir::new().expect("temporary artwork directory");
     let source_id = SourceId::new("source-identity");
     let candidates = ArtworkBinding::album_text("Artist", "Album");
-    let (artwork, _events) = Artwork::new(temporary.path(), runtime()).expect("artwork service");
+    let artwork = Artwork::new(temporary.path(), runtime()).expect("artwork service");
     let source = SourceImages::cache_only(source_id.clone());
     let base = ArtworkRequest::new(candidates.clone(), 96, 96)
         .with_external(ExternalPolicy::new(false, false, ""));
@@ -893,10 +792,38 @@ fn binding_identity_separates_visual_changes_from_rerequest_changes() {
         calls: AtomicUsize::new(0),
         bytes: png_bytes(),
     });
-    let fetchable_source = SourceImages::new(source_id, provider);
+    let fetchable_source = SourceImages::testing(source_id, provider);
     let fetchable_native = artwork.prepare(fetchable_source, native).identity;
     assert_eq!(cache_only_native.visual, fetchable_native.visual);
     assert_ne!(cache_only_native.request, fetchable_native.request);
+}
+
+#[test]
+fn larger_cached_cover_satisfies_a_smaller_request_without_another_fetch() {
+    let temporary = TempDir::new().expect("temporary artwork directory");
+    let images = Arc::new(StaticImages {
+        calls: AtomicUsize::new(0),
+        bytes: png_bytes_at(800, 800),
+    });
+    let source_id = SourceId::new("source-reusable-cached-size");
+    let source = SourceImages::testing(source_id, images.clone());
+    let candidates = ArtworkBinding::from_native(Some(&ImageRef::new("shared-cover", None)));
+    let large = ArtworkRequest::new(candidates.clone(), 256, 256);
+    let small = ArtworkRequest::new(candidates, 96, 96);
+    let artwork = Artwork::new(temporary.path(), runtime()).expect("artwork service starts");
+
+    wait_for_ready(
+        artwork
+            .request_prepared(artwork.prepare(source.clone(), large))
+            .expect("large artwork request"),
+    );
+    wait_for_ready(
+        artwork
+            .request_prepared(artwork.prepare(source, small))
+            .expect("small artwork request"),
+    );
+
+    assert_eq!(images.calls.load(Ordering::Relaxed), 1);
 }
 
 #[test]
@@ -908,18 +835,15 @@ fn provider_images_are_cached_at_each_requested_size() {
         bytes: png_bytes_at(800, 600),
     });
     let source_id = SourceId::new("source-sized-cache");
-    let source = SourceImages::new(source_id.clone(), images.clone());
+    let source = SourceImages::testing(source_id.clone(), images.clone());
     let candidates = ArtworkBinding::from_native(Some(&ImageRef::new("large-cover", None)));
-    let (artwork, events) =
-        Artwork::new(temporary.path(), runtime).expect("artwork service starts");
+    let artwork = Artwork::new(temporary.path(), runtime).expect("artwork service starts");
 
     for size in [96, 256, 512] {
         let request = ArtworkRequest::new(candidates.clone(), size, size);
-        let request_id = artwork
-            .request(source.clone(), request.clone())
-            .expect("sized request")
-            .request_id;
-        wait_for_ready(&events, &[request_id]);
+        let pending =
+            prepare_and_request(&artwork, source.clone(), request.clone()).expect("sized request");
+        wait_for_ready(pending);
         let path = artwork
             .cache_only_file(&source_id, &request)
             .expect("sized cache file");
@@ -940,48 +864,45 @@ fn cache_only_sources_are_scoped_and_do_not_create_native_misses() {
         calls: AtomicUsize::new(0),
         bytes: png_bytes(),
     });
-    let (seeder, seed_events) =
-        Artwork::new(temporary.path(), runtime()).expect("artwork service starts");
-    let seeded = seeder
-        .request(
-            SourceImages::new(source_id.clone(), seeded_images.clone()),
-            request.clone(),
-        )
-        .expect("seed source artwork")
-        .request_id;
-    wait_for_ready(&seed_events, &[seeded]);
+    let seeder = Artwork::new(temporary.path(), runtime()).expect("artwork service starts");
+    let seeded = prepare_and_request(
+        &seeder,
+        SourceImages::testing(source_id.clone(), seeded_images.clone()),
+        request.clone(),
+    )
+    .expect("seed source artwork");
+    wait_for_ready(seeded);
     assert_eq!(seeded_images.calls.load(Ordering::Relaxed), 1);
 
-    let (artwork, events) =
-        Artwork::new(temporary.path(), runtime()).expect("fresh artwork service starts");
-    let cached = artwork
-        .request(SourceImages::cache_only(source_id), request.clone())
-        .expect("request matching cached source")
-        .request_id;
-    wait_for_ready(&events, &[cached]);
+    let artwork = Artwork::new(temporary.path(), runtime()).expect("fresh artwork service starts");
+    let cached = prepare_and_request(
+        &artwork,
+        SourceImages::cache_only(source_id),
+        request.clone(),
+    )
+    .expect("request matching cached source");
+    wait_for_ready(cached);
 
     let other_source_id = SourceId::new("source-other");
-    let uncached = artwork
-        .request(
-            SourceImages::cache_only(other_source_id.clone()),
-            request.clone(),
-        )
-        .expect("request other cached source")
-        .request_id;
-    wait_for_missing(&events, uncached);
+    let uncached = prepare_and_request(
+        &artwork,
+        SourceImages::cache_only(other_source_id.clone()),
+        request.clone(),
+    )
+    .expect("request other cached source");
+    wait_for_missing(uncached);
 
     let other_images = Arc::new(StaticImages {
         calls: AtomicUsize::new(0),
         bytes: png_bytes(),
     });
-    let fetched = artwork
-        .request(
-            SourceImages::new(other_source_id, other_images.clone()),
-            request,
-        )
-        .expect("fetch after cache-only miss")
-        .request_id;
-    wait_for_ready(&events, &[fetched]);
+    let fetched = prepare_and_request(
+        &artwork,
+        SourceImages::testing(other_source_id, other_images.clone()),
+        request,
+    )
+    .expect("fetch after cache-only miss");
+    wait_for_ready(fetched);
     assert_eq!(other_images.calls.load(Ordering::Relaxed), 1);
 }
 
@@ -989,7 +910,7 @@ fn cache_only_sources_are_scoped_and_do_not_create_native_misses() {
 fn cancelled_queue_entries_do_not_strand_later_artwork() {
     let temporary = TempDir::new().expect("temporary artwork directory");
     let blockers = Arc::new(BlockingImages::default());
-    let blocking_source = SourceImages::new(
+    let blocking_source = SourceImages::testing(
         SourceId::new("source-cancelled-queue-blockers"),
         blockers.clone(),
     );
@@ -997,36 +918,40 @@ fn cancelled_queue_entries_do_not_strand_later_artwork() {
         calls: AtomicUsize::new(0),
         bytes: png_bytes(),
     });
-    let source = SourceImages::new(SourceId::new("source-cancelled-queue"), images.clone());
-    let (artwork, events) =
-        Artwork::new(temporary.path(), runtime()).expect("artwork service starts");
+    let source = SourceImages::testing(SourceId::new("source-cancelled-queue"), images.clone());
+    let artwork = Artwork::new(temporary.path(), runtime()).expect("artwork service starts");
 
+    let mut blocking = Vec::new();
     for index in 0..super::pipeline::WORKERS {
-        artwork
-            .request(
+        blocking.push(
+            prepare_and_request(
+                &artwork,
                 blocking_source.clone(),
                 request(&format!("blocking-cover-{index}")),
             )
-            .expect("blocking artwork request");
+            .expect("blocking artwork request"),
+        );
     }
     blockers.wait_started_count(super::pipeline::WORKERS);
 
-    let mut request_ids = Vec::new();
+    let mut pending = Vec::new();
     for index in 0..=super::pipeline::WORKERS {
-        request_ids.push(
-            artwork
-                .request(source.clone(), request(&format!("queue-cover-{index}")))
-                .expect("queued artwork request")
-                .request_id,
+        pending.push(
+            prepare_and_request(
+                &artwork,
+                source.clone(),
+                request(&format!("queue-cover-{index}")),
+            )
+            .expect("queued artwork request"),
         );
     }
-    for request_id in request_ids.iter().take(super::pipeline::WORKERS) {
-        artwork.cancel(*request_id);
+    for pending in pending.drain(..super::pipeline::WORKERS) {
+        drop(pending);
     }
     blockers.release();
 
-    let last = *request_ids.last().expect("last queued request");
-    wait_for_ready(&events, &[last]);
+    let last = pending.pop().expect("last queued request");
+    wait_for_ready(last);
     assert_eq!(images.calls.load(Ordering::Relaxed), 1);
 }
 
@@ -1037,31 +962,23 @@ fn terminal_missing_is_cached_until_the_source_is_invalidated() {
         calls: AtomicUsize::new(0),
     });
     let source_id = SourceId::new("source-missing");
-    let source = SourceImages::new(source_id.clone(), images.clone());
+    let source = SourceImages::testing(source_id.clone(), images.clone());
     let request = request("absent-cover");
-    let (artwork, events) =
-        Artwork::new(temporary.path(), runtime()).expect("artwork service starts");
+    let artwork = Artwork::new(temporary.path(), runtime()).expect("artwork service starts");
 
-    let first = artwork
-        .request(source.clone(), request.clone())
-        .expect("first missing request")
-        .request_id;
-    wait_for_missing(&events, first);
-    let second = artwork
-        .request(source.clone(), request.clone())
-        .expect("cached missing request")
-        .request_id;
-    wait_for_missing(&events, second);
+    let first = prepare_and_request(&artwork, source.clone(), request.clone())
+        .expect("first missing request");
+    wait_for_missing(first);
+    let second = prepare_and_request(&artwork, source.clone(), request.clone())
+        .expect("cached missing request");
+    wait_for_missing(second);
     assert_eq!(images.calls.load(Ordering::Relaxed), 1);
 
     artwork
         .invalidate_source(&source_id)
         .expect("source invalidation");
-    let third = artwork
-        .request(source, request)
-        .expect("request after invalidation")
-        .request_id;
-    wait_for_missing(&events, third);
+    let third = prepare_and_request(&artwork, source, request).expect("request after invalidation");
+    wait_for_missing(third);
     assert_eq!(images.calls.load(Ordering::Relaxed), 2);
 }
 
@@ -1079,23 +996,18 @@ fn disabled_external_policy_does_not_reuse_decoded_external_art() {
     let images = Arc::new(MissingImages {
         calls: AtomicUsize::new(0),
     });
-    let source = SourceImages::new(source_id, images.clone());
-    let (artwork, events) =
-        Artwork::new(temporary.path(), runtime()).expect("artwork service starts");
+    let source = SourceImages::testing(source_id, images.clone());
+    let artwork = Artwork::new(temporary.path(), runtime()).expect("artwork service starts");
     let allowed = ArtworkRequest::new(candidates.clone(), 96, 96)
         .with_external(ExternalPolicy::new(true, false, ""));
 
-    let ready = artwork
-        .request(source.clone(), allowed)
-        .expect("cached external request")
-        .request_id;
-    wait_for_ready(&events, &[ready]);
+    let ready =
+        prepare_and_request(&artwork, source.clone(), allowed).expect("cached external request");
+    wait_for_ready(ready);
 
-    let denied = artwork
-        .request(source, ArtworkRequest::new(candidates, 96, 96))
-        .expect("disabled external request")
-        .request_id;
-    wait_for_missing(&events, denied);
+    let denied = prepare_and_request(&artwork, source, ArtworkRequest::new(candidates, 96, 96))
+        .expect("disabled external request");
+    wait_for_missing(denied);
 
     assert_eq!(images.calls.load(Ordering::Relaxed), 0);
 }
@@ -1147,13 +1059,25 @@ fn request(id: &str) -> ArtworkRequest {
     ArtworkRequest::new(ArtworkBinding::from_native(Some(&image_ref)), 96, 96)
 }
 
-fn runtime() -> Arc<Runtime> {
-    Arc::new(
-        Builder::new_multi_thread()
-            .enable_all()
-            .build()
-            .expect("test Tokio runtime"),
-    )
+fn prepare_and_request(
+    artwork: &Artwork,
+    source: SourceImages,
+    request: ArtworkRequest,
+) -> Result<ArtworkLoad, crate::ArtworkError> {
+    artwork.request_prepared(artwork.prepare(source, request))
+}
+
+fn runtime() -> Handle {
+    static RUNTIME: OnceLock<Runtime> = OnceLock::new();
+    RUNTIME
+        .get_or_init(|| {
+            Builder::new_multi_thread()
+                .enable_all()
+                .build()
+                .expect("test Tokio runtime")
+        })
+        .handle()
+        .clone()
 }
 
 fn png_bytes() -> Vec<u8> {
@@ -1191,107 +1115,26 @@ fn exif_rotate_90() -> [u8; 36] {
     ]
 }
 
-fn wait_for_prepared_ready(artwork: &Artwork, source: &SourceImages, request: &ArtworkRequest) {
-    let deadline = Instant::now() + Duration::from_secs(3);
-    loop {
-        if artwork
-            .prepare(source.clone(), request.clone())
-            .ready
-            .is_some()
-        {
-            return;
-        }
-        assert!(
-            Instant::now() < deadline,
-            "prefetched artwork did not enter the decoded cache"
-        );
-        thread::sleep(Duration::from_millis(1));
+fn pending_artwork(load: ArtworkLoad) -> PendingArtwork {
+    match load {
+        ArtworkLoad::Pending(pending) => pending,
+        ArtworkLoad::Ready(_) => panic!("expected a pending artwork request"),
+        ArtworkLoad::Missing => panic!("expected a pending artwork request"),
     }
 }
 
-fn wait_for_all_prepared_ready(
-    artwork: &Artwork,
-    source: &SourceImages,
-    requests: &[ArtworkRequest],
-) {
-    let deadline = Instant::now() + Duration::from_secs(5);
-    loop {
-        if requests.iter().all(|request| {
-            artwork
-                .prepare(source.clone(), request.clone())
-                .ready
-                .is_some()
-        }) {
-            return;
-        }
-        assert!(
-            Instant::now() < deadline,
-            "the retained prefetch batch did not finish"
-        );
-        thread::sleep(Duration::from_millis(1));
+fn finish(load: ArtworkLoad) -> ArtworkOutcome {
+    match load {
+        ArtworkLoad::Ready(image) => ArtworkOutcome::Ready(image),
+        ArtworkLoad::Missing => ArtworkOutcome::Missing,
+        ArtworkLoad::Pending(pending) => runtime().block_on(pending.finish()),
     }
 }
 
-fn wait_for_ready(events: &Receiver<ArtworkEvent>, wanted: &[RequestId]) -> HashSet<RequestId> {
-    let mut ready = HashSet::new();
-    let deadline = Instant::now() + Duration::from_secs(3);
-    while ready.len() < wanted.len() {
-        let remaining = deadline.saturating_duration_since(Instant::now());
-        assert!(!remaining.is_zero(), "artwork requests did not finish");
-        let event = recv_with_timeout(events, remaining).expect("artwork result event");
-        if let ArtworkEvent::Changed(projection) = event
-            && wanted.contains(&projection.request_id)
-            && matches!(projection.readiness, Readiness::Ready(_))
-        {
-            ready.insert(projection.request_id);
-        }
-    }
-    ready
+fn wait_for_ready(load: ArtworkLoad) {
+    assert!(matches!(finish(load), ArtworkOutcome::Ready(_)));
 }
 
-fn wait_for_missing(events: &Receiver<ArtworkEvent>, wanted: RequestId) {
-    let deadline = Instant::now() + Duration::from_secs(3);
-    loop {
-        let remaining = deadline.saturating_duration_since(Instant::now());
-        assert!(
-            !remaining.is_zero(),
-            "missing artwork request did not finish"
-        );
-        let event = recv_with_timeout(events, remaining).expect("missing artwork event");
-        if let ArtworkEvent::Changed(projection) = event
-            && projection.request_id == wanted
-            && matches!(projection.readiness, Readiness::Missing)
-        {
-            return;
-        }
-    }
-}
-
-fn assert_no_terminal_event(events: &Receiver<ArtworkEvent>, request_id: RequestId) {
-    let deadline = Instant::now() + Duration::from_millis(150);
-    while let Ok(event) =
-        recv_with_timeout(events, deadline.saturating_duration_since(Instant::now()))
-    {
-        if let ArtworkEvent::Changed(projection) = event
-            && projection.request_id == request_id
-            && !matches!(projection.readiness, Readiness::Pending)
-        {
-            panic!("cancelled or invalidated request published a terminal event");
-        }
-        if Instant::now() >= deadline {
-            break;
-        }
-    }
-}
-
-fn recv_with_timeout<T>(receiver: &Receiver<T>, timeout: Duration) -> Result<T, TryRecvError> {
-    let deadline = Instant::now() + timeout;
-    loop {
-        match receiver.try_recv() {
-            Err(TryRecvError::Empty) if Instant::now() < deadline => {
-                thread::sleep(Duration::from_millis(1));
-            }
-            result => return result,
-        }
-    }
+fn wait_for_missing(load: ArtworkLoad) {
+    assert!(matches!(finish(load), ArtworkOutcome::Missing));
 }

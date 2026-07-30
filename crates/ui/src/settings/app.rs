@@ -1,21 +1,22 @@
+use std::path::PathBuf;
 use std::rc::Rc;
 
-use library::HomeBlockKind;
+use desktop_integration::Settings as RichPresenceSettings;
+use downloads::{DownloadQuality, DownloadRule};
+use library::{HomeBlockKind, SourceId};
 use localization::{default_language_preference, sanitize_language_preference};
-use metadata::Settings as MetadataSettings;
+use lyrics::Settings as LyricsSettings;
 use playback::{
     DEFAULT_AUTO_DJ_REFILL_THRESHOLD, MAX_AUTO_DJ_REFILL_THRESHOLD, MIN_AUTO_DJ_REFILL_THRESHOLD,
-    PlaybackSettings,
+    PlaybackSettings, RepeatMode,
 };
-use rich_presence::Settings as RichPresenceSettings;
-use scrobbling::Settings as ScrobblingSettings;
 use secrets::SecretStorageMode;
 use serde::{Deserialize, Serialize};
 
 use super::{
-    ExternalSiteLinkSettings, LayoutSettings, LibraryListKey, LibraryListSettings,
-    LibraryListSettingsEntry, SidebarSettings, ThemePreference, default_library_list_settings,
-    sanitized_window_size,
+    ContextMenuSettings, ExternalSiteLinkSettings, FolderViewSettings, LayoutSettings,
+    LibraryListKey, LibraryListSettings, LibraryListSettingsEntry, SidebarSettings,
+    ThemePreference, default_library_list_settings, sanitized_window_size,
 };
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -24,6 +25,8 @@ pub struct Settings {
     pub layout: LayoutSettings,
     #[serde(default)]
     pub sidebar: SidebarSettings,
+    #[serde(default)]
+    pub context_menu: ContextMenuSettings,
     pub theme_preference: ThemePreference,
     #[serde(default = "default_language_preference")]
     pub language: String,
@@ -38,11 +41,17 @@ pub struct Settings {
     #[serde(default = "legacy_secret_storage_mode")]
     pub secret_storage_mode: SecretStorageMode,
     #[serde(flatten)]
-    pub metadata: MetadataSettings,
+    pub lyrics: LyricsSettings,
+    #[serde(default = "default_true", rename = "external_metadata_enabled")]
+    pub external_album_lookup_enabled: bool,
     #[serde(default)]
     pub external_site_links: ExternalSiteLinkSettings,
     #[serde(default)]
     pub prefer_server_playlist_covers: bool,
+    #[serde(default = "default_true")]
+    pub show_downloaded_badges: bool,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub downloads: Vec<SourceDownloadSettings>,
     #[serde(default)]
     pub seekbar_waveform_enabled: bool,
     #[serde(default)]
@@ -58,9 +67,11 @@ pub struct Settings {
     #[serde(default)]
     pub lastfm_api_key: String,
     #[serde(default)]
-    pub scrobbling: ScrobblingSettings,
-    #[serde(default)]
     pub auto_dj_enabled: bool,
+    #[serde(default)]
+    pub shuffle_enabled: bool,
+    #[serde(default)]
+    pub repeat_mode: RepeatMode,
     #[serde(default = "default_auto_dj_refill_threshold")]
     pub auto_dj_refill_threshold: u8,
     #[serde(default)]
@@ -77,6 +88,8 @@ pub struct Settings {
     pub queue_lyrics_height: Option<i32>,
     #[serde(default)]
     pub library_lists: Vec<LibraryListSettingsEntry>,
+    #[serde(default, skip_serializing_if = "FolderViewSettings::is_default")]
+    pub folder_view: FolderViewSettings,
 }
 
 impl Default for Settings {
@@ -84,6 +97,7 @@ impl Default for Settings {
         Self {
             layout: LayoutSettings::default(),
             sidebar: SidebarSettings::default(),
+            context_menu: ContextMenuSettings::default(),
             theme_preference: ThemePreference::System,
             language: default_language_preference(),
             private_mode: false,
@@ -92,9 +106,12 @@ impl Default for Settings {
             release_notifications_enabled: true,
             release_notification_seen_version: None,
             secret_storage_mode: SecretStorageMode::default(),
-            metadata: MetadataSettings::default(),
+            lyrics: LyricsSettings::default(),
+            external_album_lookup_enabled: true,
             external_site_links: ExternalSiteLinkSettings::default(),
             prefer_server_playlist_covers: false,
+            show_downloaded_badges: true,
+            downloads: Vec::new(),
             seekbar_waveform_enabled: true,
             tray_enabled: false,
             exit_to_tray: false,
@@ -102,8 +119,9 @@ impl Default for Settings {
             type_to_search_enabled: true,
             rich_presence: RichPresenceSettings::default(),
             lastfm_api_key: String::new(),
-            scrobbling: ScrobblingSettings::default(),
             auto_dj_enabled: false,
+            shuffle_enabled: false,
+            repeat_mode: RepeatMode::Off,
             auto_dj_refill_threshold: DEFAULT_AUTO_DJ_REFILL_THRESHOLD,
             playback: PlaybackSettings::default(),
             home_blocks: default_home_blocks(),
@@ -112,6 +130,7 @@ impl Default for Settings {
             lyrics_panel_visible: true,
             queue_lyrics_height: None,
             library_lists: default_library_list_settings(),
+            folder_view: FolderViewSettings::default(),
         }
     }
 }
@@ -121,22 +140,21 @@ impl Settings {
         self.notifications_enabled
     }
 
-    pub fn allows_external_site_links(&self) -> bool {
-        self.external_site_links.enabled && !self.private_mode
+    pub fn shows_external_site_links(&self) -> bool {
+        self.external_site_links.enabled
     }
 
-    pub fn allows_release_update_check(&self) -> bool {
-        self.release_notifications_enabled && !self.private_mode
+    pub fn allows_external_album_lookup(&self) -> bool {
+        self.external_album_lookup_enabled && !self.private_mode
     }
 
     pub fn sanitize(&mut self) {
         self.rich_presence.sanitize();
         self.playback.sanitize();
-        self.metadata.sanitize();
+        self.lyrics.sanitize();
         self.auto_dj_refill_threshold = self
             .auto_dj_refill_threshold
             .clamp(MIN_AUTO_DJ_REFILL_THRESHOLD, MAX_AUTO_DJ_REFILL_THRESHOLD);
-        self.scrobbling.sanitize();
         self.lastfm_api_key = self.lastfm_api_key.trim().to_string();
         self.language = sanitize_language_preference(&self.language);
         self.release_notification_seen_version = self
@@ -147,6 +165,7 @@ impl Settings {
             .map(str::to_string);
         self.layout.sanitize();
         self.sidebar.sanitize();
+        self.context_menu.sanitize();
         if !self.tray_enabled {
             self.exit_to_tray = false;
             self.start_minimized = false;
@@ -161,6 +180,8 @@ impl Settings {
         }
         sanitize_home_blocks(&mut self.home_blocks);
         migrate_library_lists(&mut self.library_lists);
+        self.folder_view.sanitize();
+        sanitize_downloads(&mut self.downloads);
     }
 
     pub fn library_list(&self, key: LibraryListKey) -> LibraryListSettings {
@@ -170,14 +191,133 @@ impl Settings {
             .map(|entry| entry.settings.clone())
             .unwrap_or_else(|| LibraryListSettings::for_key(key))
     }
+
+    pub fn download_rules(&self, source_id: &SourceId) -> DownloadRules {
+        self.download_settings(source_id).rules
+    }
+
+    pub fn download_quality(&self, source_id: &SourceId) -> DownloadQuality {
+        self.download_settings(source_id).quality
+    }
+
+    pub fn download_directory(&self, source_id: &SourceId) -> Option<PathBuf> {
+        self.download_settings(source_id).directory
+    }
+
+    pub fn download_settings(&self, source_id: &SourceId) -> SourceDownloadSettings {
+        self.downloads
+            .iter()
+            .find(|entry| &entry.source_id == source_id)
+            .cloned()
+            .unwrap_or_else(|| SourceDownloadSettings {
+                source_id: source_id.clone(),
+                rules: DownloadRules::default(),
+                quality: DownloadQuality::Original,
+                directory: None,
+            })
+    }
+
+    pub fn set_download_rules(&mut self, source_id: SourceId, rules: DownloadRules) -> bool {
+        self.update_download_settings(source_id, |settings| settings.rules = rules)
+    }
+
+    pub fn set_download_quality(&mut self, source_id: SourceId, quality: DownloadQuality) -> bool {
+        self.update_download_settings(source_id, |settings| settings.quality = quality)
+    }
+
+    pub fn set_download_directory(
+        &mut self,
+        source_id: SourceId,
+        directory: Option<PathBuf>,
+    ) -> bool {
+        self.update_download_settings(source_id, |settings| settings.directory = directory)
+    }
+
+    fn update_download_settings(
+        &mut self,
+        source_id: SourceId,
+        update: impl FnOnce(&mut SourceDownloadSettings),
+    ) -> bool {
+        let previous = self.download_settings(&source_id);
+        let mut next = previous.clone();
+        update(&mut next);
+        if previous == next {
+            return false;
+        }
+        self.downloads.retain(|entry| entry.source_id != source_id);
+        if !next.is_default() {
+            self.downloads.push(next);
+            self.downloads
+                .sort_by(|left, right| left.source_id.cmp(&right.source_id));
+        }
+        true
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+pub struct DownloadRules {
+    #[serde(default)]
+    pub entire_library: bool,
+    #[serde(default)]
+    pub favorites: bool,
+    #[serde(default)]
+    pub all_playlists: bool,
+    #[serde(default)]
+    pub latest_five_albums: bool,
+}
+
+impl DownloadRules {
+    pub fn is_empty(self) -> bool {
+        !self.entire_library && !self.favorites && !self.all_playlists && !self.latest_five_albums
+    }
+
+    pub fn contains(self, rule: DownloadRule) -> bool {
+        match rule {
+            DownloadRule::EntireLibrary => self.entire_library,
+            DownloadRule::Favorites => self.favorites,
+            DownloadRule::AllPlaylists => self.all_playlists,
+            DownloadRule::LatestFiveAlbums => self.latest_five_albums,
+        }
+    }
+
+    pub fn set(&mut self, rule: DownloadRule, active: bool) {
+        match rule {
+            DownloadRule::EntireLibrary => self.entire_library = active,
+            DownloadRule::Favorites => self.favorites = active,
+            DownloadRule::AllPlaylists => self.all_playlists = active,
+            DownloadRule::LatestFiveAlbums => self.latest_five_albums = active,
+        }
+    }
+
+    pub fn active(self) -> impl Iterator<Item = DownloadRule> {
+        DownloadRule::ALL
+            .into_iter()
+            .filter(move |rule| self.contains(*rule))
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct SourceDownloadSettings {
+    pub source_id: SourceId,
+    #[serde(flatten)]
+    pub rules: DownloadRules,
+    #[serde(default)]
+    pub quality: DownloadQuality,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub directory: Option<PathBuf>,
+}
+
+impl SourceDownloadSettings {
+    fn is_default(&self) -> bool {
+        self.rules.is_empty()
+            && self.quality == DownloadQuality::Original
+            && self.directory.is_none()
+    }
 }
 
 pub trait SettingsPort {
     fn load(&self) -> Settings;
-    fn load_with_scrobbling_secrets(&self) -> Settings;
     fn save(&self, settings: &Settings) -> Result<Settings, String>;
-    fn save_with_secret_deletes(&self, settings: &Settings) -> Result<Settings, String>;
-    fn set_secret_backend(&self, mode: SecretStorageMode) -> Result<Settings, String>;
 }
 
 pub type SettingsHandle = Rc<dyn SettingsPort>;
@@ -247,4 +387,19 @@ fn migrate_library_lists(lists: &mut Vec<LibraryListSettingsEntry>) {
     for entry in lists {
         entry.settings.sanitize(entry.key);
     }
+}
+
+fn sanitize_downloads(downloads: &mut Vec<SourceDownloadSettings>) {
+    for entry in downloads.iter_mut() {
+        if entry
+            .directory
+            .as_ref()
+            .is_some_and(|path| path.as_os_str().is_empty())
+        {
+            entry.directory = None;
+        }
+    }
+    downloads.retain(|entry| !entry.is_default());
+    downloads.sort_by(|left, right| left.source_id.cmp(&right.source_id));
+    downloads.dedup_by(|left, right| left.source_id == right.source_id);
 }

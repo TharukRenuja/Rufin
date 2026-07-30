@@ -1,45 +1,23 @@
 use std::path::PathBuf;
 
-use library::{SourceId, StoredSource};
+use library::SourceId;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
-use crate::{SourceError, SourceResult, subsonic::SubsonicFlavor};
+use crate::{SourceError, SourceInputIdentity, SourceResult, subsonic::SubsonicFlavor};
 
+const SOURCE_FACTS_VERSION: u32 = 1;
+
+/// Credential-free source configuration persisted by Rufin Settings.
+///
+/// The provider payload is opaque outside Sources. Cache health never affects
+/// this value or its separately stored credential reference.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-pub struct SourceIdentity {
-    pub id: SourceId,
+pub struct SourceConfiguration {
+    pub source_id: SourceId,
     pub kind: String,
     pub name: String,
-    pub base_url: String,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct CredentialSourceConfig {
-    pub source: SourceIdentity,
-    pub user_id: String,
-    pub username: String,
-    pub trust_invalid_cert: bool,
-}
-
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-pub enum LibrarySourceSelection {
-    Local,
-    #[serde(alias = "Server")]
-    Source(SourceId),
-}
-
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-pub struct LocalLibraryFolder {
-    pub path: String,
-}
-
-#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
-pub struct LibrarySourceSettings {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub selected: Option<LibrarySourceSelection>,
-    #[serde(default)]
-    pub local_folders: Vec<LocalLibraryFolder>,
+    pub provider_payload: String,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -63,6 +41,7 @@ pub struct CredentialHostPreset {
 pub struct JellyfinSetupInput {
     pub credentials: CredentialHostInput,
     pub use_instant_mix: bool,
+    pub device_id: String,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -72,7 +51,6 @@ pub struct LocalFolderHostInput {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CredentialSettingsInput {
-    pub source_id: SourceId,
     pub name: String,
     pub base_url: String,
     pub username: String,
@@ -99,66 +77,140 @@ pub enum SourceSetupInput {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum SourceSettingsInput {
     Jellyfin(JellyfinSettingsInput),
-    Subsonic {
-        flavor: SubsonicFlavor,
-        credentials: CredentialSettingsInput,
+    Subsonic(CredentialSettingsInput),
+    Local { roots: Vec<PathBuf> },
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum EditableSource {
+    Credentials {
+        source_id: SourceId,
+        kind: String,
+        credentials: CredentialHostPreset,
+        jellyfin_use_instant_mix: Option<bool>,
+    },
+    Local {
+        source_id: SourceId,
+        roots: Vec<PathBuf>,
     },
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct EditableSource {
-    pub source_id: SourceId,
-    pub kind: String,
-    pub credentials: CredentialHostPreset,
-    pub jellyfin_use_instant_mix: Option<bool>,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct SourceLocalAccessInput {
-    pub source_id: SourceId,
-    pub root_path: PathBuf,
-    pub server_prefix: Option<String>,
-    pub local_prefix: Option<String>,
-}
-
-impl LibrarySourceSettings {
-    pub fn sanitize(&mut self) {
-        let mut seen = Vec::<String>::new();
-        self.local_folders.retain_mut(|folder| {
-            folder.path = folder.path.trim().to_string();
-            if folder.path.is_empty() || seen.iter().any(|path| path == &folder.path) {
-                return false;
-            }
-            seen.push(folder.path.clone());
-            true
-        });
+impl SourceConfiguration {
+    pub fn playlist_tracks_can_repeat(&self) -> bool {
+        self.kind != crate::jellyfin::JELLYFIN_SOURCE_ID
     }
-}
 
-impl CredentialSourceConfig {
-    pub(crate) fn from_stored_fields(
-        stored: &StoredSource,
-        base_url: String,
-        user_id: String,
-        username: String,
-        trust_invalid_cert: bool,
-    ) -> Self {
-        Self {
-            source: SourceIdentity {
-                id: stored.source_id.clone(),
-                kind: stored.kind.clone(),
-                name: stored.name.clone(),
-                base_url,
-            },
-            user_id,
-            username,
-            trust_invalid_cert,
+    /// Encode an already configured Local source without touching its folders.
+    ///
+    /// Released-settings migration uses this while a removable or network
+    /// filesystem may be offline. Ordinary Local opening validates access
+    /// later without changing the configured identity.
+    pub fn local(
+        source_id: SourceId,
+        name: impl Into<String>,
+        roots: Vec<PathBuf>,
+    ) -> SourceResult<Self> {
+        let roots = crate::local::configured_roots(roots)?;
+        Ok(encode_provider_payload(
+            source_id,
+            crate::local::LOCAL_SOURCE_ID,
+            name,
+            crate::local::LocalSourceConfig { roots }.into_payload(),
+        ))
+    }
+
+    /// Identify the source inputs that determine rebuildable canonical facts.
+    ///
+    /// Credentials and presentation settings do not participate, so Rufin can
+    /// validate an existing cache even when live source access is unavailable.
+    pub fn input_identity(&self) -> SourceResult<SourceInputIdentity> {
+        let mut digest = blake3::Hasher::new();
+        digest.update(b"rufin-source-input");
+        digest.update(&SOURCE_FACTS_VERSION.to_le_bytes());
+        digest_part(&mut digest, self.source_id.as_str().as_bytes());
+        digest_part(&mut digest, self.kind.as_bytes());
+        match self.kind.as_str() {
+            crate::local::LOCAL_SOURCE_ID => {
+                for root in crate::local::LocalSourceConfig::from_configuration(self)?.roots {
+                    digest_part(&mut digest, root.to_string_lossy().as_bytes());
+                }
+            }
+            crate::jellyfin::JELLYFIN_SOURCE_ID => {
+                let config = crate::jellyfin::JellyfinSourceConfig::from_configuration(self)?;
+                digest_part(&mut digest, config.user_id.as_bytes());
+            }
+            "navidrome" | "subsonic" => {
+                let config = crate::subsonic::SubsonicSourceConfig::from_configuration(self)?;
+                digest_part(&mut digest, config.username.as_bytes());
+            }
+            kind => {
+                return Err(SourceError::InvalidConfig(format!(
+                    "unknown source kind {kind}"
+                )));
+            }
+        }
+        Ok(SourceInputIdentity {
+            source_id: self.source_id.clone(),
+            version: SOURCE_FACTS_VERSION,
+            digest: *digest.finalize().as_bytes(),
+        })
+    }
+
+    /// Return the fields Rufin may present when editing this source.
+    ///
+    /// The provider payload remains opaque to Rufin and UI. Sources decodes it
+    /// here and accepts the corresponding edit through `Source::edit`.
+    pub fn editable(&self) -> SourceResult<EditableSource> {
+        match self.kind.as_str() {
+            crate::jellyfin::JELLYFIN_SOURCE_ID => {
+                let config = crate::jellyfin::JellyfinSourceConfig::from_configuration(self)?;
+                Ok(EditableSource::Credentials {
+                    source_id: self.source_id.clone(),
+                    kind: self.kind.clone(),
+                    credentials: CredentialHostPreset {
+                        server_name: self.name.clone(),
+                        server_url: config.base_url,
+                        username: config.username,
+                        trust_invalid_cert: config.trust_invalid_cert,
+                    },
+                    jellyfin_use_instant_mix: Some(config.use_instant_mix),
+                })
+            }
+            "navidrome" | "subsonic" => {
+                let config = crate::subsonic::SubsonicSourceConfig::from_configuration(self)?;
+                Ok(EditableSource::Credentials {
+                    source_id: self.source_id.clone(),
+                    kind: self.kind.clone(),
+                    credentials: CredentialHostPreset {
+                        server_name: self.name.clone(),
+                        server_url: config.base_url,
+                        username: config.username,
+                        trust_invalid_cert: config.trust_invalid_cert,
+                    },
+                    jellyfin_use_instant_mix: None,
+                })
+            }
+            crate::local::LOCAL_SOURCE_ID => {
+                let config = crate::local::LocalSourceConfig::from_configuration(self)?;
+                Ok(EditableSource::Local {
+                    source_id: self.source_id.clone(),
+                    roots: config.roots,
+                })
+            }
+            kind => Err(SourceError::InvalidConfig(format!(
+                "unknown source kind {kind}"
+            ))),
         }
     }
 }
 
+fn digest_part(digest: &mut blake3::Hasher, value: &[u8]) {
+    digest.update(&(value.len() as u64).to_le_bytes());
+    digest.update(value);
+}
+
 pub(crate) fn decode_provider_payload<T: DeserializeOwned>(
-    stored: &StoredSource,
+    stored: &SourceConfiguration,
 ) -> SourceResult<T> {
     serde_json::from_str(&stored.provider_payload)
         .map_err(|error| SourceError::InvalidConfig(error.to_string()))
@@ -174,161 +226,159 @@ pub(crate) fn require_payload_version(actual: u32, expected: u32) -> SourceResul
 }
 
 pub(crate) fn encode_provider_payload(
-    source: SourceIdentity,
+    source_id: SourceId,
+    kind: impl Into<String>,
+    name: impl Into<String>,
     provider_payload: serde_json::Value,
-) -> StoredSource {
-    StoredSource {
-        source_id: source.id,
-        kind: source.kind,
-        name: source.name,
+) -> SourceConfiguration {
+    SourceConfiguration {
+        source_id,
+        kind: kind.into(),
+        name: name.into(),
         provider_payload: provider_payload.to_string(),
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use library::{SourceId, StoredSource};
+    use library::SourceId;
 
     use super::*;
     use crate::jellyfin::JellyfinSourceConfig;
     use crate::local::LocalSourceConfig;
     use crate::subsonic::SubsonicSourceConfig;
 
-    fn migrated_source(kind: &str, base_url: &str) -> StoredSource {
-        StoredSource {
+    fn migrated_source(kind: &str, payload: serde_json::Value) -> SourceConfiguration {
+        SourceConfiguration {
             source_id: SourceId::new(format!("{kind}:server:test")),
             kind: kind.to_string(),
             name: "Test Source".to_string(),
-            provider_payload: serde_json::json!({
-                "version": 1,
-                "base_url": base_url,
-                "user_id": "account-id",
-                "username": "listener",
-                "trust_invalid_cert": true,
-                "use_jellyfin_instant_mix": true,
-            })
-            .to_string(),
+            provider_payload: payload.to_string(),
         }
     }
 
     #[test]
-    fn migrated_payload_decodes_and_round_trips_for_current_providers() {
-        let jellyfin = JellyfinSourceConfig::from_stored(&migrated_source(
+    fn provider_payloads_decode_the_credential_free_saved_shape() {
+        let jellyfin_stored = migrated_source(
             "jellyfin",
-            "https://jellyfin.example",
-        ))
-        .expect("Jellyfin migration payload");
-        assert_eq!(jellyfin.credentials.user_id, "account-id");
-        assert_eq!(jellyfin.credentials.username, "listener");
-        assert!(jellyfin.credentials.trust_invalid_cert);
+            serde_json::json!({
+                "version": 1,
+                "base_url": "https://jellyfin.example",
+                "user_id": "account-id",
+                "username": "listener",
+                "trust_invalid_cert": true,
+                "use_jellyfin_instant_mix": true,
+            }),
+        );
+        let jellyfin =
+            JellyfinSourceConfig::from_configuration(&jellyfin_stored).expect("Jellyfin payload");
+        assert_eq!(jellyfin.base_url, "https://jellyfin.example");
+        assert_eq!(jellyfin.user_id, "account-id");
+        assert_eq!(jellyfin.username, "listener");
+        assert!(jellyfin.trust_invalid_cert);
         assert!(jellyfin.use_instant_mix);
         assert_eq!(
-            JellyfinSourceConfig::from_stored(&jellyfin.clone().into_stored())
-                .expect("round-trip Jellyfin config"),
-            jellyfin
+            decode_provider_payload::<serde_json::Value>(&encode_provider_payload(
+                jellyfin_stored.source_id,
+                "jellyfin",
+                "Test Source",
+                jellyfin.clone().into_payload(),
+            ))
+            .expect("round-trip Jellyfin payload"),
+            jellyfin.into_payload(),
         );
 
-        let subsonic = SubsonicSourceConfig::from_stored(&migrated_source(
+        let subsonic_stored = migrated_source(
             "subsonic",
-            "https://subsonic.example",
-        ))
-        .expect("Subsonic migration payload");
-        assert_eq!(subsonic.credentials.user_id, "account-id");
-        assert_eq!(subsonic.credentials.username, "listener");
-        assert!(subsonic.credentials.trust_invalid_cert);
+            serde_json::json!({
+                "version": 1,
+                "base_url": "https://subsonic.example",
+                "user_id": "legacy-listener",
+                "trust_invalid_cert": true,
+            }),
+        );
+        let subsonic = SubsonicSourceConfig::from_configuration(&subsonic_stored)
+            .expect("OpenSubsonic payload");
+        assert_eq!(subsonic.base_url, "https://subsonic.example");
+        assert_eq!(subsonic.username, "legacy-listener");
+        assert!(subsonic.trust_invalid_cert);
+        let subsonic_payload = subsonic.clone().into_payload();
+        assert!(subsonic_payload.get("user_id").is_none());
         assert_eq!(
-            SubsonicSourceConfig::from_stored(&subsonic.clone().into_stored())
-                .expect("round-trip Subsonic config"),
-            subsonic
+            decode_provider_payload::<serde_json::Value>(&encode_provider_payload(
+                subsonic_stored.source_id,
+                "subsonic",
+                "Test Source",
+                subsonic_payload.clone(),
+            ))
+            .expect("round-trip OpenSubsonic payload"),
+            subsonic_payload,
         );
 
-        let local = LocalSourceConfig::from_stored(&migrated_source("local", "/music"))
-            .expect("Local migration payload");
-        assert_eq!(local.source.base_url, "/music");
+        let local_stored = migrated_source(
+            "local",
+            serde_json::json!({
+                "version": 1,
+                "roots": ["/music", "/archive"],
+            }),
+        );
+        let local = LocalSourceConfig::from_configuration(&local_stored).expect("Local payload");
         assert_eq!(
-            LocalSourceConfig::from_stored(&local.clone().into_stored())
-                .expect("round-trip Local config"),
-            local
+            local.roots,
+            vec![PathBuf::from("/music"), PathBuf::from("/archive")]
+        );
+        assert_eq!(
+            decode_provider_payload::<serde_json::Value>(&encode_provider_payload(
+                local_stored.source_id,
+                "local",
+                "Local",
+                local.clone().into_payload(),
+            ))
+            .expect("round-trip Local payload"),
+            local.into_payload(),
+        );
+    }
+
+    #[test]
+    fn legacy_single_local_root_decodes_without_creating_another_identity() {
+        let stored = migrated_source(
+            "local",
+            serde_json::json!({
+                "version": 1,
+                "base_url": "/music",
+            }),
+        );
+        assert_eq!(
+            LocalSourceConfig::from_configuration(&stored)
+                .expect("legacy Local payload")
+                .roots,
+            vec![PathBuf::from("/music")]
         );
     }
 
     #[test]
     fn unsupported_provider_payload_version_is_rejected() {
-        let mut stored = migrated_source("jellyfin", "https://music.example");
-        stored.provider_payload = serde_json::json!({
-            "version": 2,
-            "base_url": "https://music.example",
-            "user_id": "account-id",
-            "username": "listener",
-            "trust_invalid_cert": false,
-            "use_jellyfin_instant_mix": false,
-        })
-        .to_string();
+        let stored = migrated_source(
+            "jellyfin",
+            serde_json::json!({
+                "version": 2,
+                "base_url": "https://music.example",
+                "user_id": "account-id",
+                "username": "listener",
+                "trust_invalid_cert": false,
+                "use_jellyfin_instant_mix": false,
+            }),
+        );
 
-        let error =
-            JellyfinSourceConfig::from_stored(&stored).expect_err("unsupported payload version");
+        let error = JellyfinSourceConfig::from_configuration(&stored)
+            .expect_err("unsupported payload version");
         assert!(matches!(error, SourceError::InvalidConfig(_)));
     }
 
     #[test]
-    fn library_source_settings_sanitize_folders() {
-        let mut settings = LibrarySourceSettings {
-            selected: None,
-            local_folders: vec![
-                LocalLibraryFolder {
-                    path: " /music ".to_string(),
-                },
-                LocalLibraryFolder {
-                    path: "/music".to_string(),
-                },
-                LocalLibraryFolder {
-                    path: " ".to_string(),
-                },
-                LocalLibraryFolder {
-                    path: "/archive".to_string(),
-                },
-            ],
-        };
-
-        settings.sanitize();
-
-        assert_eq!(
-            settings.local_folders,
-            vec![
-                LocalLibraryFolder {
-                    path: "/music".to_string()
-                },
-                LocalLibraryFolder {
-                    path: "/archive".to_string()
-                }
-            ]
-        );
-    }
-
-    #[test]
-    fn library_source_settings_preserve_stored_shape_and_server_alias() {
-        let settings = serde_json::from_value::<LibrarySourceSettings>(serde_json::json!({
-            "selected": { "Server": "remote-source" },
-            "local_folders": [{ "path": "/music" }]
-        }))
-        .expect("deserialize legacy source selection");
-        assert_eq!(
-            settings.selected,
-            Some(LibrarySourceSelection::Source(SourceId::new(
-                "remote-source"
-            )))
-        );
-        assert_eq!(
-            serde_json::to_value(settings).expect("serialize source settings"),
-            serde_json::json!({
-                "selected": { "Source": "remote-source" },
-                "local_folders": [{ "path": "/music" }]
-            })
-        );
-        assert_eq!(
-            serde_json::to_value(LibrarySourceSettings::default())
-                .expect("serialize default source settings"),
-            serde_json::json!({ "local_folders": [] })
-        );
+    fn jellyfin_playlist_adds_do_not_offer_repeated_tracks() {
+        assert!(!migrated_source("jellyfin", serde_json::Value::Null).playlist_tracks_can_repeat());
+        assert!(migrated_source("subsonic", serde_json::Value::Null).playlist_tracks_can_repeat());
+        assert!(migrated_source("local", serde_json::Value::Null).playlist_tracks_can_repeat());
     }
 }

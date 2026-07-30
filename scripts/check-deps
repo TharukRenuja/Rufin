@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-cargo_native_crates=(adw glib gstreamer gstreamer-audio gtk)
+cargo_native_crates=(adw glib gstreamer gstreamer-audio gstreamer-pbutils gtk)
 nix_packages=(glib gtk4 libadwaita)
 nix_gstreamer_packages=(
   gstreamer
@@ -58,7 +58,7 @@ compare_lists() {
 verify_cargo_crates() {
   printf '%s\n' "${cargo_native_crates[@]}" > "$tmpdir/expected-cargo"
   sed -nE \
-    's/^[[:space:]]*(adw|gdk-pixbuf|glib|gstreamer|gstreamer-audio|gtk)(\.workspace)?[[:space:]]*=.*/\1/p' \
+    's/^[[:space:]]*(adw|gdk-pixbuf|glib|gstreamer|gstreamer-audio|gstreamer-pbutils|gtk)(\.workspace)?[[:space:]]*=.*/\1/p' \
     "$root"/crates/*/Cargo.toml > "$tmpdir/actual-cargo"
   compare_lists "Cargo native crates" "$tmpdir/expected-cargo" "$tmpdir/actual-cargo"
 }

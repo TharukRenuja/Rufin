@@ -42,31 +42,28 @@ jobs:
         id: select
         env:
           DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
-          RELEASE_EVENT_TAG: ${{ github.event.release.tag_name }}
           PUBLISH: ${{ inputs.publish }}
           REQUESTED_PACKAGE: ${{ inputs.package }}
           REQUESTED_TAG: ${{ inputs.release_tag }}
         run: |
           set -euo pipefail
 
-          if [[ "$GITHUB_EVENT_NAME" == "release" ]]; then
-            package="rufin-bin"
-            release_tag="$RELEASE_EVENT_TAG"
-          else
-            package="$REQUESTED_PACKAGE"
-            release_tag="$REQUESTED_TAG"
-          fi
+          package="$REQUESTED_PACKAGE"
+          release_tag="$REQUESTED_TAG"
 
           case "$package" in
             rufin-bin|rufin-git|both) ;;
             *) echo "Unknown package: $package" >&2; exit 1 ;;
           esac
 
-          if [[ "$package" == "rufin-bin" || "$package" == "both" ]]; then
-            if [[ ! "$release_tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([-.][0-9A-Za-z.-]+)?$ ]]; then
-              echo "rufin-bin requires a release tag such as v0.9.0" >&2
-              exit 1
-            fi
+          if [[ -n "$release_tag" && ! "$release_tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([-.][0-9A-Za-z.-]+)?$ ]]; then
+            echo "Release tag must look like vMAJOR.MINOR.PATCH" >&2
+            exit 1
+          fi
+
+          if [[ "$PUBLISH" == "true" && "$package" != "rufin-git" && -z "$release_tag" ]]; then
+            echo "Publishing rufin-bin requires a release tag" >&2
+            exit 1
           fi
 
           if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" && "$PUBLISH" == "true" && "$GITHUB_REF_NAME" != "$DEFAULT_BRANCH" ]]; then
@@ -91,9 +88,9 @@ jobs:
         run: pacman -Syu --noconfirm --needed base-devel git
 
       - name: Check out repository
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          ref: ${{ github.event_name == 'release' && needs.prepare.outputs.release_tag || github.ref }}
+          ref: ${{ needs.prepare.outputs.release_tag || github.sha }}
           fetch-depth: 0
           persist-credentials: false
 
@@ -119,22 +116,28 @@ jobs:
           install -d -o builder -g builder /home/builder/target "$GITHUB_WORKSPACE/dist"
           git config --global --add safe.directory "$GITHUB_WORKSPACE"
 
-      - name: Verify release tag and architecture
+      - name: Verify source and architecture
         env:
           RELEASE_TAG: ${{ needs.prepare.outputs.release_tag }}
         run: |
           set -euo pipefail
-          source_dir="/home/builder/rufin-source"
+          source_dir="$GITHUB_WORKSPACE"
           target="$(runuser -u builder -- rustc -vV | sed -n 's/^host: //p')"
-          runuser -u builder -- git -C "$GITHUB_WORKSPACE" worktree add --detach "$source_dir" "$RELEASE_TAG"
           runuser -u builder -- bash -lc "
             set -euo pipefail
             export PATH=/usr/local/sbin:/usr/local/bin:/usr/bin:/bin
             cd '$source_dir'
             cargo fetch --locked --target '$target'
-            CARGO_TARGET_DIR=/home/builder/target \
-              cargo run --frozen -p xtask -- verify release-tag '$RELEASE_TAG'
           "
+          if [[ -n "$RELEASE_TAG" ]]; then
+            runuser -u builder -- bash -lc "
+              set -euo pipefail
+              export PATH=/usr/local/sbin:/usr/local/bin:/usr/bin:/bin
+              cd '$source_dir'
+              CARGO_TARGET_DIR=/home/builder/target \
+                cargo run --frozen -p xtask -- verify release-tag '$RELEASE_TAG'
+            "
+          fi
           test "$(uname -m)" = "x86_64"
 
       - name: Build release payload
@@ -142,16 +145,18 @@ jobs:
           RELEASE_TAG: ${{ needs.prepare.outputs.release_tag }}
         run: |
           set -euo pipefail
-          source_dir="/home/builder/rufin-source"
-          version="${RELEASE_TAG#v}"
-          cargo_version="$(sed -n 's/^version = "\(.*\)"/\1/p' "$source_dir/Cargo.toml" | head -n 1)"
+          source_dir="$GITHUB_WORKSPACE"
+          version="$(sed -n 's/^version = "\(.*\)"/\1/p' "$source_dir/Cargo.toml" | head -n 1)"
           metainfo_version="$(
             sed -n 's/.*<release version="\([^"]*\)".*/\1/p' \
               "$source_dir/data/io.github.screwys.Rufin.metainfo.xml" |
               head -n 1
           )"
-          test "$cargo_version" = "$version"
           test "$metainfo_version" = "$version"
+          if [[ -n "$RELEASE_TAG" ]]; then
+            test "${RELEASE_TAG#v}" = "$version"
+          fi
+          echo "PACKAGE_VERSION=$version" >> "$GITHUB_ENV"
 
           staging="/home/builder/package-root"
           target_dir="/home/builder/target"
@@ -165,6 +170,10 @@ jobs:
 
           install -Dm755 "$target_dir/release/rufin" "$staging/usr/bin/rufin"
           strip --strip-unneeded "$staging/usr/bin/rufin"
+          install -Dm644 "$source_dir/data/japanese-readings.dic" \
+            "$staging/usr/share/rufin/japanese-readings.dic"
+          install -Dm644 "$source_dir/data/japanese-readings.LICENSE" \
+            "$staging/usr/share/licenses/rufin/japanese-readings.LICENSE"
           install -Dm644 "$source_dir/data/io.github.screwys.Rufin.desktop" \
             "$staging/usr/share/applications/io.github.screwys.Rufin.desktop"
           install -Dm644 "$source_dir/data/io.github.screwys.Rufin.metainfo.xml" \
@@ -206,11 +215,9 @@ jobs:
             usr
 
       - name: Render and build rufin-bin
-        env:
-          RELEASE_TAG: ${{ needs.prepare.outputs.release_tag }}
         run: |
           set -euo pipefail
-          asset_version="${RELEASE_TAG#v}"
+          asset_version="$PACKAGE_VERSION"
           pkgver="${asset_version//-/_}"
           output="$GITHUB_WORKSPACE/dist/aur-bin"
           archive="dist/rufin-${asset_version}-archlinux-x86_64.tar.zst"
@@ -244,9 +251,14 @@ jobs:
           bsdtar -xf "$pkgfile" -C "$pkgroot"
           test -x "$pkgroot/usr/bin/rufin"
           test -f "$pkgroot/usr/share/applications/io.github.screwys.Rufin.desktop"
+          test -f "$pkgroot/usr/share/licenses/rufin/japanese-readings.LICENSE"
           test -f "$pkgroot/usr/share/metainfo/io.github.screwys.Rufin.metainfo.xml"
+          test -f "$pkgroot/usr/share/rufin/japanese-readings.dic"
           pacman -U --noconfirm "$pkgfile"
-          rufin --help >/dev/null
+          bash scripts/create-media-verification-files /tmp/rufin-package-media
+          for media in /tmp/rufin-package-media/*; do
+            rufin --verify-media "$media"
+          done
           desktop-file-validate /usr/share/applications/io.github.screwys.Rufin.desktop
           appstreamcli validate --no-net /usr/share/metainfo/io.github.screwys.Rufin.metainfo.xml
           pacman -Rns --noconfirm rufin-bin
@@ -282,8 +294,9 @@ jobs:
         run: pacman -Syu --noconfirm --needed base-devel git
 
       - name: Check out repository
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
+          fetch-depth: 0
           persist-credentials: false
 
       - name: Install package dependencies
@@ -306,15 +319,25 @@ jobs:
           useradd -m builder
           chown -R builder:builder "$GITHUB_WORKSPACE"
           git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          runuser -u builder -- git -C "$GITHUB_WORKSPACE" branch --force ci-candidate HEAD
 
       - name: Build package
         run: |
+          candidate_commit="$(git -C "$GITHUB_WORKSPACE" rev-parse HEAD)"
           runuser -u builder -- bash -lc "
             set -euo pipefail
             export PATH=/usr/local/sbin:/usr/local/bin:/usr/bin:/bin
             cd '$GITHUB_WORKSPACE/packaging/aur/rufin-git'
             diff -u .SRCINFO <(makepkg --printsrcinfo)
-            makepkg --cleanbuild --clean --noconfirm --noprogressbar
+            sed -i \
+              's|git+https://github.com/screwys/Rufin.git|git+file://$GITHUB_WORKSPACE#branch=ci-candidate|' \
+              PKGBUILD
+            makepkg --cleanbuild --noconfirm --noprogressbar
+            test \"\$(git -C src/Rufin rev-parse HEAD)\" = '$candidate_commit'
+            sed -i \
+              's|git+file://$GITHUB_WORKSPACE#branch=ci-candidate|git+https://github.com/screwys/Rufin.git|' \
+              PKGBUILD
+            git diff --exit-code -I '^pkgver=' -- PKGBUILD
             makepkg --printsrcinfo > .SRCINFO
           "
 
@@ -327,9 +350,14 @@ jobs:
           bsdtar -xf "$pkgfile" -C "$pkgroot"
           test -x "$pkgroot/usr/bin/rufin"
           test -f "$pkgroot/usr/share/applications/io.github.screwys.Rufin.desktop"
+          test -f "$pkgroot/usr/share/licenses/rufin/japanese-readings.LICENSE"
           test -f "$pkgroot/usr/share/metainfo/io.github.screwys.Rufin.metainfo.xml"
+          test -f "$pkgroot/usr/share/rufin/japanese-readings.dic"
           pacman -U --noconfirm "$pkgfile"
-          rufin --help >/dev/null
+          bash scripts/create-media-verification-files /tmp/rufin-package-media
+          for media in /tmp/rufin-package-media/*; do
+            rufin --verify-media "$media"
+          done
           desktop-file-validate /usr/share/applications/io.github.screwys.Rufin.desktop
           appstreamcli validate --no-net /usr/share/metainfo/io.github.screwys.Rufin.metainfo.xml
           pacman -Rns --noconfirm rufin-git

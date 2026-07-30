@@ -1,6 +1,6 @@
 use std::{
-    cell::{Cell, RefCell},
-    rc::Rc,
+    cell::RefCell,
+    rc::{Rc, Weak},
 };
 
 use crate::layout::large_popup_content_width;
@@ -9,9 +9,9 @@ use crate::shell::Shell;
 use crate::shell::actions::text_button;
 use crate::shell::actions::{ADD_ICON, REMOVE_ICON};
 use ::library::{
-    SmartPlaylist, SmartPlaylistBuiltin, SmartPlaylistDefinition, SmartPlaylistMatchMode,
-    SmartPlaylistRule, SmartPlaylistRuleField, SmartPlaylistRuleGroup, SmartPlaylistRuleNode,
-    SmartPlaylistRuleOperator, SmartPlaylistRuleValue, SmartPlaylistSortField,
+    SmartPlaylist, SmartPlaylistBuiltin, SmartPlaylistDefinition, SmartPlaylistRule,
+    SmartPlaylistRuleField, SmartPlaylistRuleOperator, SmartPlaylistRuleValue,
+    SmartPlaylistSortField,
     smart_playlists::{self as smart_policy, SmartPlaylistRuleValueKind},
 };
 use adw::prelude::*;
@@ -20,7 +20,7 @@ use localization::{msgid, tr};
 const SMART_PLAYLIST_DIALOG_WIDTH: i32 = 700;
 const SMART_PLAYLIST_DIALOG_HEIGHT: i32 = 510;
 
-type RerenderSlot = Rc<RefCell<Option<Rc<dyn Fn()>>>>;
+type RerenderSlot = Rc<RefCell<Option<Weak<dyn Fn()>>>>;
 
 #[derive(Clone, Default)]
 struct RuleValueSuggestions {
@@ -31,9 +31,8 @@ struct RuleValueSuggestions {
 #[derive(Clone)]
 struct SmartPlaylistEditor {
     name: gtk::Entry,
-    mode: Rc<Cell<SmartPlaylistMatchMode>>,
-    rules: Rc<RefCell<Vec<SmartPlaylistRule>>>,
-    nested_root: Option<Rc<RefCell<SmartPlaylistRuleGroup>>>,
+    match_all: Rc<RefCell<Vec<SmartPlaylistRule>>>,
+    match_any: Rc<RefCell<Vec<SmartPlaylistRule>>>,
     sort: gtk::DropDown,
     descending: gtk::CheckButton,
     limit: gtk::Entry,
@@ -43,10 +42,10 @@ impl Shell {
     pub(crate) fn new_smart_playlist_dialog(self: &Rc<Self>) {
         let missing_defaults = self
             .library
-            .query
+            .selected
             .borrow()
-            .clone()
-            .and_then(|query| query.missing_builtin_smart_playlists().ok())
+            .as_ref()
+            .and_then(|selected| selected.loaded.missing_builtin_smart_playlists().ok())
             .unwrap_or_default();
         let value_suggestions = self.smart_playlist_rule_value_suggestions();
         let editor = smart_playlist_editor(None, None);
@@ -68,34 +67,40 @@ impl Shell {
         connect_editor_name_validation(&create, &editor);
 
         {
-            let dialog = dialog.clone();
+            let dialog = dialog.downgrade();
             cancel.connect_clicked(move |_| {
-                dialog.close();
+                if let Some(dialog) = dialog.upgrade() {
+                    dialog.close();
+                }
             });
         }
 
-        let library = self.products.library.clone();
+        let smart_playlists = self.products.smart_playlists.clone();
         if let Some(restore) = restore {
-            let library = library.clone();
-            let dialog = dialog.clone();
+            let smart_playlists = smart_playlists.clone();
+            let dialog = dialog.downgrade();
             restore.connect_clicked(move |_| {
                 if let Some(default_dropdown) = default_dropdown.as_ref() {
                     let selected = default_dropdown.selected() as usize;
                     if let Some(builtin) = missing_defaults.get(selected).copied() {
-                        library.restore_builtin_smart_playlist(builtin);
+                        smart_playlists.restore_builtin(builtin);
                     }
                 }
-                dialog.close();
+                if let Some(dialog) = dialog.upgrade() {
+                    dialog.close();
+                }
             });
         }
         {
-            let dialog = dialog.clone();
+            let dialog = dialog.downgrade();
             create.connect_clicked(move |_| {
                 let Some((name, definition)) = editor.definition() else {
                     return;
                 };
-                library.save_smart_playlist(name, definition);
-                dialog.close();
+                smart_playlists.create(name, definition);
+                if let Some(dialog) = dialog.upgrade() {
+                    dialog.close();
+                }
             });
         }
         present_light_dismiss_dialog(&dialog, &self.chrome.window);
@@ -117,22 +122,26 @@ impl Shell {
         connect_editor_name_validation(&save, &editor);
 
         {
-            let dialog = dialog.clone();
+            let dialog = dialog.downgrade();
             cancel.connect_clicked(move |_| {
-                dialog.close();
+                if let Some(dialog) = dialog.upgrade() {
+                    dialog.close();
+                }
             });
         }
 
-        let library = self.products.library.clone();
+        let smart_playlists = self.products.smart_playlists.clone();
         let playlist_id = playlist.id.clone();
         {
-            let dialog = dialog.clone();
+            let dialog = dialog.downgrade();
             save.connect_clicked(move |_| {
                 let Some((name, definition)) = editor.definition() else {
                     return;
                 };
-                library.update_smart_playlist(playlist_id.clone(), name, definition);
-                dialog.close();
+                smart_playlists.update(playlist_id.clone(), name, definition);
+                if let Some(dialog) = dialog.upgrade() {
+                    dialog.close();
+                }
             });
         }
         present_light_dismiss_dialog(&dialog, &self.chrome.window);
@@ -143,10 +152,10 @@ impl Shell {
     fn smart_playlist_rule_value_suggestions(&self) -> RuleValueSuggestions {
         let (genres, moods) = self
             .library
-            .query
+            .selected
             .borrow()
-            .clone()
-            .and_then(|query| query.smart_playlist_rule_value_suggestions().ok())
+            .as_ref()
+            .and_then(|selected| selected.loaded.smart_playlist_rule_value_suggestions().ok())
             .unwrap_or_default();
         RuleValueSuggestions { genres, moods }
     }
@@ -165,23 +174,6 @@ impl RuleValueSuggestions {
 impl SmartPlaylistEditor {
     fn definition(&self) -> Option<(String, SmartPlaylistDefinition)> {
         let name = playlist_name(&self.name.text())?;
-        let mut root = if let Some(nested_root) = &self.nested_root {
-            let mut root = nested_root.borrow().clone();
-            root.mode = self.mode.get();
-            root
-        } else {
-            SmartPlaylistRuleGroup {
-                mode: self.mode.get(),
-                rules: self
-                    .rules
-                    .borrow()
-                    .iter()
-                    .cloned()
-                    .map(SmartPlaylistRuleNode::Rule)
-                    .collect(),
-            }
-        };
-        smart_policy::normalize_root(&mut root);
         let limit = self
             .limit
             .text()
@@ -193,15 +185,14 @@ impl SmartPlaylistEditor {
             .get(self.sort.selected() as usize)
             .copied()
             .unwrap_or(SmartPlaylistSortField::Title);
-        Some((
-            name,
-            SmartPlaylistDefinition {
-                root,
-                sort_field,
-                descending: self.descending.is_active(),
-                limit,
-            },
-        ))
+        let definition = SmartPlaylistDefinition {
+            match_all: self.match_all.borrow().clone(),
+            match_any: self.match_any.borrow().clone(),
+            sort_field,
+            descending: self.descending.is_active(),
+            limit,
+        };
+        Some((name, definition))
     }
 }
 
@@ -228,19 +219,10 @@ fn smart_playlist_editor(
     if let Some(value) = definition.limit {
         limit.set_text(&value.to_string());
     }
-    let (rules, nested_root) = match smart_policy::flat_rules(&definition.root) {
-        Some(rules) => (rules, None),
-        None => (
-            Vec::new(),
-            Some(Rc::new(RefCell::new(definition.root.clone()))),
-        ),
-    };
-
     SmartPlaylistEditor {
         name: name_entry,
-        mode: Rc::new(Cell::new(definition.root.mode)),
-        rules: Rc::new(RefCell::new(rules)),
-        nested_root,
+        match_all: Rc::new(RefCell::new(definition.match_all)),
+        match_any: Rc::new(RefCell::new(definition.match_any)),
         sort,
         descending,
         limit,
@@ -278,15 +260,7 @@ fn smart_playlist_editor_content(
 
     content.append(&editor.name);
 
-    let match_dropdown = match_mode_dropdown(editor.mode.get());
-    {
-        let mode = Rc::clone(&editor.mode);
-        match_dropdown.connect_selected_notify(move |dropdown| {
-            mode.set(match_mode_from_index(dropdown.selected()));
-        });
-    }
     let settings = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-    settings.append(&labeled_control("Match", &match_dropdown));
     settings.append(&labeled_control("Sort", &editor.sort));
     settings.append(&editor.descending);
     settings.append(&labeled_control("Limit", &editor.limit));
@@ -297,29 +271,36 @@ fn smart_playlist_editor_content(
     let value_suggestions = Rc::new(value_suggestions);
     let rerender_slot: RerenderSlot = Rc::new(RefCell::new(None));
     let rerender: Rc<dyn Fn()> = {
-        let rules = rules.clone();
-        let editor_rules = Rc::clone(&editor.rules);
+        let rules = rules.downgrade();
+        let match_all = Rc::clone(&editor.match_all);
+        let match_any = Rc::clone(&editor.match_any);
         let value_suggestions = Rc::clone(&value_suggestions);
         let rerender_slot = Rc::clone(&rerender_slot);
-        let has_nested_rules = editor.nested_root.is_some();
         Rc::new(move || {
+            let Some(rules) = rules.upgrade() else {
+                return;
+            };
             clear_box(&rules);
-            if has_nested_rules {
-                append_nested_rules_fallback(&rules);
-            } else {
-                let Some(rerender) = rerender_slot.borrow().as_ref().cloned() else {
-                    return;
-                };
-                append_rule_list(
-                    &rules,
-                    Rc::clone(&editor_rules),
-                    Rc::clone(&value_suggestions),
-                    rerender,
-                );
-            }
+            let Some(rerender) = rerender_slot.borrow().as_ref().and_then(Weak::upgrade) else {
+                return;
+            };
+            append_rule_list(
+                &rules,
+                "All",
+                Rc::clone(&match_all),
+                Rc::clone(&value_suggestions),
+                Rc::clone(&rerender),
+            );
+            append_rule_list(
+                &rules,
+                "Any",
+                Rc::clone(&match_any),
+                Rc::clone(&value_suggestions),
+                rerender,
+            );
         })
     };
-    *rerender_slot.borrow_mut() = Some(Rc::clone(&rerender));
+    *rerender_slot.borrow_mut() = Some(Rc::downgrade(&rerender));
     rerender();
     content.append(&rules);
 
@@ -332,6 +313,7 @@ fn smart_playlist_editor_content(
 
 fn append_rule_list(
     parent: &gtk::Box,
+    title: &'static str,
     rules: Rc<RefCell<Vec<SmartPlaylistRule>>>,
     value_suggestions: Rc<RuleValueSuggestions>,
     rerender: Rc<dyn Fn()>,
@@ -345,7 +327,11 @@ fn append_rule_list(
     box_.set_margin_end(10);
 
     let header = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-    header.set_halign(gtk::Align::End);
+    header.set_hexpand(true);
+    let title = gtk::Label::new(Some(&tr(title)));
+    title.set_xalign(0.0);
+    title.set_hexpand(true);
+    header.append(&title);
 
     let add_rule = text_button(ADD_ICON, "Add Rule");
     {
@@ -373,24 +359,6 @@ fn append_rule_list(
         );
     }
 
-    frame.set_child(Some(&box_));
-    parent.append(&frame);
-}
-
-fn append_nested_rules_fallback(parent: &gtk::Box) {
-    let frame = gtk::Frame::new(None);
-    frame.set_hexpand(true);
-    let box_ = gtk::Box::new(gtk::Orientation::Vertical, 8);
-    box_.set_margin_top(10);
-    box_.set_margin_bottom(10);
-    box_.set_margin_start(10);
-    box_.set_margin_end(10);
-    let label = gtk::Label::new(Some(&tr(
-        "This playlist uses nested rule groups. Rule editing is unavailable in this editor.",
-    )));
-    label.set_wrap(true);
-    label.set_xalign(0.0);
-    box_.append(&label);
     frame.set_child(Some(&box_));
     parent.append(&frame);
 }
@@ -596,20 +564,22 @@ fn connect_number_range(
     min_spin: gtk::SpinButton,
     max_spin: gtk::SpinButton,
 ) {
-    let min_for_update = min_spin.clone();
-    let max_for_update = max_spin.clone();
-    let update = move || {
-        if let Some(rule) = rules.borrow_mut().get_mut(index) {
-            rule.value = Some(SmartPlaylistRuleValue::NumberRange {
-                min: i64::from(min_for_update.value_as_int()),
-                max: i64::from(max_for_update.value_as_int()),
-            });
-        }
-    };
-    let update = Rc::new(update);
-    let update_min = Rc::clone(&update);
-    min_spin.connect_value_changed(move |_| update_min());
-    max_spin.connect_value_changed(move |_| update());
+    let max_for_min = max_spin.downgrade();
+    let min_rules = Rc::clone(&rules);
+    min_spin.connect_value_changed(move |min_spin| {
+        let Some(max_spin) = max_for_min.upgrade() else {
+            return;
+        };
+        update_number_range(&min_rules, index, min_spin, &max_spin);
+    });
+
+    let min_for_max = min_spin.downgrade();
+    max_spin.connect_value_changed(move |max_spin| {
+        let Some(min_spin) = min_for_max.upgrade() else {
+            return;
+        };
+        update_number_range(&rules, index, &min_spin, max_spin);
+    });
 }
 
 fn connect_date_range(
@@ -618,20 +588,50 @@ fn connect_date_range(
     start: gtk::Entry,
     end: gtk::Entry,
 ) {
-    let start_for_update = start.clone();
-    let end_for_update = end.clone();
-    let update = move || {
-        if let Some(rule) = rules.borrow_mut().get_mut(index) {
-            rule.value = Some(SmartPlaylistRuleValue::DateRange {
-                start: start_for_update.text().to_string(),
-                end: end_for_update.text().to_string(),
-            });
-        }
-    };
-    let update = Rc::new(update);
-    let update_start = Rc::clone(&update);
-    start.connect_changed(move |_| update_start());
-    end.connect_changed(move |_| update());
+    let end_for_start = end.downgrade();
+    let start_rules = Rc::clone(&rules);
+    start.connect_changed(move |start| {
+        let Some(end) = end_for_start.upgrade() else {
+            return;
+        };
+        update_date_range(&start_rules, index, start, &end);
+    });
+
+    let start_for_end = start.downgrade();
+    end.connect_changed(move |end| {
+        let Some(start) = start_for_end.upgrade() else {
+            return;
+        };
+        update_date_range(&rules, index, &start, end);
+    });
+}
+
+fn update_number_range(
+    rules: &Rc<RefCell<Vec<SmartPlaylistRule>>>,
+    index: usize,
+    min_spin: &gtk::SpinButton,
+    max_spin: &gtk::SpinButton,
+) {
+    if let Some(rule) = rules.borrow_mut().get_mut(index) {
+        rule.value = Some(SmartPlaylistRuleValue::NumberRange {
+            min: i64::from(min_spin.value_as_int()),
+            max: i64::from(max_spin.value_as_int()),
+        });
+    }
+}
+
+fn update_date_range(
+    rules: &Rc<RefCell<Vec<SmartPlaylistRule>>>,
+    index: usize,
+    start: &gtk::Entry,
+    end: &gtk::Entry,
+) {
+    if let Some(rule) = rules.borrow_mut().get_mut(index) {
+        rule.value = Some(SmartPlaylistRuleValue::DateRange {
+            start: start.text().to_string(),
+            end: end.text().to_string(),
+        });
+    }
 }
 
 fn rule_value_labels(suggestions: &[String], rule: &SmartPlaylistRule) -> (Vec<String>, usize) {
@@ -690,24 +690,6 @@ fn remove_rule(
         }
     }
     after_change();
-}
-
-fn match_mode_dropdown(mode: SmartPlaylistMatchMode) -> gtk::DropDown {
-    dropdown_from_titles(
-        &[msgid("All"), msgid("Any")],
-        match mode {
-            SmartPlaylistMatchMode::All => 0,
-            SmartPlaylistMatchMode::Any => 1,
-        },
-    )
-}
-
-fn match_mode_from_index(index: u32) -> SmartPlaylistMatchMode {
-    if index == 1 {
-        SmartPlaylistMatchMode::Any
-    } else {
-        SmartPlaylistMatchMode::All
-    }
 }
 
 fn field_labels() -> Vec<String> {
@@ -935,12 +917,13 @@ fn sync_editor_button_enabled(button: &gtk::Button, editor: &SmartPlaylistEditor
 }
 
 fn connect_editor_name_validation(button: &gtk::Button, editor: &SmartPlaylistEditor) {
-    let button = button.clone();
-    let editor = editor.clone();
-    editor
-        .name
-        .clone()
-        .connect_changed(move |_| sync_editor_button_enabled(&button, &editor));
+    let button = button.downgrade();
+    editor.name.connect_changed(move |name| {
+        let Some(button) = button.upgrade() else {
+            return;
+        };
+        button.set_sensitive(playlist_name(&name.text()).is_some());
+    });
 }
 
 #[cfg(test)]
@@ -949,9 +932,8 @@ mod tests {
 
     use super::{change_rule_operator, remove_rule};
     use ::library::{
-        SmartPlaylistMatchMode, SmartPlaylistRule, SmartPlaylistRuleField, SmartPlaylistRuleGroup,
-        SmartPlaylistRuleNode, SmartPlaylistRuleOperator, SmartPlaylistRuleValue,
-        smart_playlists as smart_policy,
+        SmartPlaylistRule, SmartPlaylistRuleField, SmartPlaylistRuleOperator,
+        SmartPlaylistRuleValue,
     };
 
     #[test]
@@ -1005,39 +987,5 @@ mod tests {
         let rules = rules.borrow();
         assert_eq!(rules.len(), 1);
         assert_eq!(rules[0].field, SmartPlaylistRuleField::Genre);
-    }
-
-    #[test]
-    fn new_return_rules() {
-        let group = SmartPlaylistRuleGroup {
-            mode: SmartPlaylistMatchMode::All,
-            rules: vec![SmartPlaylistRuleNode::Rule(SmartPlaylistRule {
-                field: SmartPlaylistRuleField::Title,
-                operator: SmartPlaylistRuleOperator::Contains,
-                value: Some(SmartPlaylistRuleValue::Text("needle".to_string())),
-            })],
-        };
-
-        let rules = smart_policy::flat_rules(&group).expect("top-level rules are flat");
-
-        assert_eq!(rules.len(), 1);
-        assert_eq!(rules[0].field, SmartPlaylistRuleField::Title);
-    }
-
-    #[test]
-    fn new_reject_fallback() {
-        let group = SmartPlaylistRuleGroup {
-            mode: SmartPlaylistMatchMode::All,
-            rules: vec![SmartPlaylistRuleNode::Group(SmartPlaylistRuleGroup {
-                mode: SmartPlaylistMatchMode::Any,
-                rules: vec![SmartPlaylistRuleNode::Rule(SmartPlaylistRule {
-                    field: SmartPlaylistRuleField::Genre,
-                    operator: SmartPlaylistRuleOperator::Contains,
-                    value: Some(SmartPlaylistRuleValue::Text("rock".to_string())),
-                })],
-            })],
-        };
-
-        assert!(smart_policy::flat_rules(&group).is_none());
     }
 }

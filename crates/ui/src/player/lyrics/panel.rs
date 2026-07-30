@@ -2,9 +2,8 @@ use super::search::{
     LyricsSearchDialog, clear_list_box, lyrics_result_subtitle_markup, lyrics_result_title_markup,
     lyrics_search_response_matches_query, lyrics_search_result_has_content, submit_lyrics_search,
 };
-use super::state::lyrics_loading_matches_current;
 use super::view::LyricsPane;
-use crate::player::state::current_playback_media_key;
+use crate::player::state::{current_playback_media_id, current_playback_track_id};
 use crate::preferences::dialogs::popup::present_light_dismiss_dialog;
 use crate::shell::Shell;
 use crate::shell::actions::icon_button;
@@ -12,7 +11,7 @@ use adw::prelude::*;
 use gtk::glib;
 use localization::result_count_text;
 use localization::tr;
-use metadata::{Lyrics, LyricsSearchResult};
+use lyrics::{LyricsSearchResult, release_japanese_reader};
 use std::cell::RefCell;
 use std::path::PathBuf;
 use std::rc::Rc;
@@ -21,16 +20,61 @@ use tracing::debug;
 
 const LYRICS_SEARCH_DEBOUNCE_MILLIS: u64 = 600;
 
+fn take_dirty_lyrics_pane(dirty: &std::cell::Cell<bool>, visible: bool) -> bool {
+    visible && dirty.replace(false)
+}
+
 impl Shell {
     pub(crate) fn render_lyrics_panel(self: &Rc<Self>) {
-        self.request_auto_lyrics_if_needed();
-        self.render_lyrics_pane(&self.right_panel.lyrics_pane);
-        self.render_lyrics_pane(&self.player_view.fullscreen_player.lyrics_pane);
+        self.mark_lyrics_panes_dirty();
+        self.render_lyrics_contents();
         self.update_lyrics_highlight();
     }
-    pub(crate) fn render_lyrics_pane(self: &Rc<Self>, pane: &LyricsPane) {
+
+    pub(crate) fn render_lyrics_presentation(self: &Rc<Self>) {
+        self.mark_lyrics_panes_dirty();
+        self.render_lyrics_contents();
+        self.refocus_current_lyrics_highlight();
+    }
+
+    pub(crate) fn sync_visible_lyrics_surfaces(self: &Rc<Self>) {
+        self.render_lyrics_contents();
+        self.refocus_current_lyrics_highlight();
+        self.update_lyrics_highlight();
+    }
+
+    fn mark_lyrics_panes_dirty(&self) {
+        self.lyrics.right_pane_dirty.set(true);
+        self.lyrics.fullscreen_pane_dirty.set(true);
+    }
+
+    fn render_lyrics_contents(self: &Rc<Self>) {
+        let local_readings_enabled = {
+            let settings = self.settings.current.borrow();
+            settings.lyrics.show_furigana || settings.lyrics.show_romanization
+        };
+        if !local_readings_enabled {
+            release_japanese_reader();
+        }
+        self.request_auto_lyrics_if_needed();
+        if take_dirty_lyrics_pane(
+            &self.lyrics.right_pane_dirty,
+            self.right_lyrics_surface_visible(),
+        ) {
+            self.render_lyrics_pane(&self.right_panel.lyrics_pane);
+        }
+        if take_dirty_lyrics_pane(
+            &self.lyrics.fullscreen_pane_dirty,
+            self.fullscreen_lyrics_surface_visible(),
+        ) {
+            self.render_lyrics_pane(&self.player_view.fullscreen_player.lyrics_pane);
+        }
+    }
+
+    fn render_lyrics_pane(self: &Rc<Self>, pane: &LyricsPane) {
         let settings = self.settings.current.borrow();
-        let current_media = current_playback_media_key(&self.playback.player.borrow());
+        let current_media = current_playback_media_id(&self.playback.player.borrow());
+        let current_track_id = current_playback_track_id(&self.playback.player.borrow());
         let has_current_track = current_media.is_some();
         let (search_label, search_enabled) = if settings.private_mode {
             (tr("Private mode is on"), false)
@@ -39,20 +83,19 @@ impl Shell {
         } else {
             (tr("No track playing"), false)
         };
-        let lyrics = self.lyrics.current.borrow();
-        let loading = lyrics_loading_matches_current(
-            current_media.as_ref(),
-            self.lyrics.loading_media.borrow().as_ref(),
-            lyrics.as_ref(),
-        );
-        let clear_auto_search_enabled = current_media.as_ref().is_some_and(|key| {
-            settings.metadata.can_suppress_auto_lyrics(
-                settings.private_mode,
-                &key.track_id,
-                lyrics.as_ref(),
-            )
+        let lyrics = self.visible_lyrics();
+        let pronunciation = self.visible_lyrics_pronunciation();
+        let lyrics_origin = self.visible_lyrics_origin();
+        let loading = self.current_lyrics_loading();
+        let clear_auto_search_enabled = current_track_id.as_ref().is_some_and(|track_id| {
+            settings
+                .lyrics
+                .can_suppress_auto_lyrics(settings.private_mode, track_id, lyrics_origin)
         });
         let lyrics_available = lyrics.is_some();
+        let show_furigana = settings.lyrics.show_furigana;
+        let show_romanization = settings.lyrics.show_romanization;
+        let word_by_word_highlighting = settings.lyrics.word_by_word_highlighting;
         drop(settings);
         pane.set_save_action(&tr("Save Lyrics"), lyrics_available);
         pane.set_search_action(&search_label, search_enabled);
@@ -72,8 +115,16 @@ impl Shell {
         let seek: Rc<dyn Fn(u64)> = Rc::new(move |position_millis| {
             seek_shell.seek_to_lyrics_position(position_millis);
         });
-        pane.set_content(lyrics.as_ref(), loading, empty_status, seek);
-        drop(lyrics);
+        pane.set_content(
+            lyrics.as_deref(),
+            pronunciation.as_deref(),
+            show_furigana,
+            show_romanization,
+            word_by_word_highlighting,
+            loading,
+            empty_status,
+            seek,
+        );
     }
 
     pub(crate) fn present_current_lyrics_save_dialog(self: &Rc<Self>) {
@@ -86,12 +137,12 @@ impl Shell {
         else {
             return;
         };
-        let Some(media_key) = current_playback_media_key(&self.playback.player.borrow()) else {
+        let Some(media_id) = current_playback_media_id(&self.playback.player.borrow()) else {
             return;
         };
-        let Some(lyrics) = self.lyrics.current.borrow().clone() else {
+        if self.visible_lyrics().is_none() {
             return;
-        };
+        }
         let offset_millis = self.lyrics.offset_millis.get();
         let shell = Rc::clone(self);
         gtk::glib::spawn_future_local(async move {
@@ -108,7 +159,7 @@ impl Shell {
             shell
                 .products
                 .lyrics
-                .save_current(media_key, lyrics, offset_millis, path);
+                .save_current(media_id, offset_millis, path);
         });
     }
     pub(crate) fn present_lyrics_search_dialog(self: &Rc<Self>) {
@@ -127,7 +178,7 @@ impl Shell {
         else {
             return;
         };
-        let Some(media_key) = current_playback_media_key(&self.playback.player.borrow()) else {
+        let Some(media_id) = current_playback_media_id(&self.playback.player.borrow()) else {
             return;
         };
         if self.settings.current.borrow().private_mode {
@@ -195,7 +246,7 @@ impl Shell {
             .build();
         let search_dialog = LyricsSearchDialog {
             dialog: dialog.clone(),
-            media_key,
+            media_id,
             artist_entry: artist_entry.clone(),
             title_entry: title_entry.clone(),
             search_debounce_source: Rc::new(RefCell::new(None)),
@@ -213,9 +264,11 @@ impl Shell {
             close_shell.lyrics.search_dialog.borrow_mut().take();
         });
 
-        let close_dialog = dialog.clone();
+        let close_dialog = dialog.downgrade();
         close_button.connect_clicked(move |_| {
-            close_dialog.close();
+            if let Some(dialog) = close_dialog.upgrade() {
+                dialog.close();
+            }
         });
 
         let search_shell = Rc::clone(self);
@@ -234,7 +287,7 @@ impl Shell {
     }
     pub(crate) fn apply_lyrics_search_results(
         self: &Rc<Self>,
-        media_key: playback::MediaKey,
+        media_id: playback::CurrentMediaId,
         artist_name: String,
         track_name: String,
         results: Vec<LyricsSearchResult>,
@@ -242,10 +295,10 @@ impl Shell {
         let Some(dialog) = self.lyrics.search_dialog.borrow().clone() else {
             return;
         };
-        if dialog.media_key != media_key {
+        if dialog.media_id != media_id {
             debug!(
-                dialog_track_id = %dialog.media_key.track_id,
-                response_track_id = %media_key.track_id,
+                dialog_occurrence = %dialog.media_id.occurrence,
+                response_occurrence = %media_id.occurrence,
                 "ignored lyric search response for another track"
             );
             return;
@@ -281,12 +334,12 @@ impl Shell {
         dialog
             .status
             .set_text(&result_count_text(results.len() as u64));
-        self.render_lyrics_search_result_rows(&dialog, &media_key, &results);
+        self.render_lyrics_search_result_rows(&dialog, &media_id, &results);
     }
     fn render_lyrics_search_result_rows(
         self: &Rc<Self>,
         dialog: &LyricsSearchDialog,
-        media_key: &playback::MediaKey,
+        media_id: &playback::CurrentMediaId,
         results: &[LyricsSearchResult],
     ) {
         let mut current_provider = None;
@@ -316,24 +369,24 @@ impl Shell {
 
             if has_content {
                 let preview_shell = Rc::clone(self);
-                let preview_media = media_key.clone();
+                let preview_media = media_id.clone();
                 let preview_result = result.clone();
                 row.connect_activated(move |_| {
                     preview_shell
                         .products
                         .lyrics
-                        .preview_search_result(preview_media.clone(), preview_result.clone());
+                        .preview(preview_media.clone(), preview_result.clone());
                     if let Some(dialog) = preview_shell.lyrics.search_dialog.borrow().as_ref() {
                         dialog.status.set_text(&tr("Searching..."));
                     }
                 });
             }
             let save_shell = Rc::clone(self);
-            let save_media = media_key.clone();
+            let save_media = media_id.clone();
             let save_result = result.clone();
             button.connect_clicked(move |_| {
                 let shell = Rc::clone(&save_shell);
-                let media_key = save_media.clone();
+                let media_id = save_media.clone();
                 let result = save_result.clone();
                 gtk::glib::spawn_future_local(async move {
                     let dialog = gtk::FileDialog::builder()
@@ -349,10 +402,7 @@ impl Shell {
                     if let Some(dialog) = shell.lyrics.search_dialog.borrow().as_ref() {
                         dialog.status.set_text(&tr("Searching..."));
                     }
-                    shell
-                        .products
-                        .lyrics
-                        .save_search_result(media_key, result, path);
+                    shell.products.lyrics.save_result(media_id, result, path);
                 });
             });
             dialog.list.append(&row);
@@ -360,7 +410,7 @@ impl Shell {
     }
     pub(crate) fn apply_lyrics_search_failed(
         self: &Rc<Self>,
-        media_key: playback::MediaKey,
+        media_id: playback::CurrentMediaId,
         artist_name: String,
         track_name: String,
         error: String,
@@ -368,10 +418,10 @@ impl Shell {
         let Some(dialog) = self.lyrics.search_dialog.borrow().clone() else {
             return;
         };
-        if dialog.media_key != media_key {
+        if dialog.media_id != media_id {
             debug!(
-                dialog_track_id = %dialog.media_key.track_id,
-                response_track_id = %media_key.track_id,
+                dialog_occurrence = %dialog.media_id.occurrence,
+                response_occurrence = %media_id.occurrence,
                 "ignored lyric search failure for another track"
             );
             return;
@@ -432,15 +482,9 @@ impl Shell {
         clear_list_box(&dialog.list);
         dialog.status.set_text(&tr("Ready"));
     }
-    pub(crate) fn apply_lyrics_saved(
-        self: &Rc<Self>,
-        media_key: playback::MediaKey,
-        path: PathBuf,
-        lyrics: Lyrics,
-    ) {
-        self.apply_loaded_lyrics_for_media(media_key.clone(), Some(lyrics));
+    pub(crate) fn apply_lyrics_saved(&self, media_id: playback::CurrentMediaId, path: PathBuf) {
         if let Some(dialog) = self.lyrics.search_dialog.borrow().as_ref()
-            && dialog.media_key == media_key
+            && dialog.media_id == media_id
         {
             dialog
                 .status
@@ -449,10 +493,23 @@ impl Shell {
             self.show_notice_toast(&format!("{} {}", tr("Saved to"), path.display()));
         }
     }
-    pub(crate) fn apply_lyrics_file_saved(&self, media_key: playback::MediaKey, path: PathBuf) {
-        if current_playback_media_key(&self.playback.player.borrow()).as_ref() == Some(&media_key) {
-            self.show_notice_toast(&format!("{} {}", tr("Saved to"), path.display()));
-        }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::cell::Cell;
+
+    use super::take_dirty_lyrics_pane;
+
+    #[test]
+    fn hidden_lyrics_panes_keep_pending_content_without_rebuilding_on_every_open() {
+        let dirty = Cell::new(true);
+
+        assert!(!take_dirty_lyrics_pane(&dirty, false));
+        assert!(dirty.get());
+        assert!(take_dirty_lyrics_pane(&dirty, true));
+        assert!(!dirty.get());
+        assert!(!take_dirty_lyrics_pane(&dirty, true));
     }
 }
 

@@ -1,11 +1,9 @@
 use std::sync::Arc;
 
-use library::SourceId;
+use library::{SourceId, Track};
 
 use crate::sequence::{OccurrenceId, RepeatMode, Sequence, SequenceEntry};
-use crate::{PlaybackSession, RunId, TransportStatus};
-
-pub const MAX_QUEUE_PAGE_SIZE: usize = 100;
+use crate::{PlaybackSession, Provenance, RunId, SourceSessionEpoch, TransportStatus};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct QueuePageQuery {
@@ -15,7 +13,6 @@ pub struct QueuePageQuery {
 #[derive(Clone, Debug, Eq, PartialEq)]
 enum QueuePageQueryKind {
     Current,
-    At { start: usize },
     Search { text: String },
 }
 
@@ -23,12 +20,6 @@ impl QueuePageQuery {
     pub fn current() -> Self {
         Self {
             kind: QueuePageQueryKind::Current,
-        }
-    }
-
-    pub fn at(start: usize) -> Self {
-        Self {
-            kind: QueuePageQueryKind::At { start },
         }
     }
 
@@ -53,7 +44,7 @@ impl QueuePageQuery {
     pub fn search_text(&self) -> Option<&str> {
         match &self.kind {
             QueuePageQueryKind::Search { text } => Some(text),
-            QueuePageQueryKind::Current | QueuePageQueryKind::At { .. } => None,
+            QueuePageQueryKind::Current => None,
         }
     }
 }
@@ -77,36 +68,51 @@ pub struct QueuePageRow {
 pub struct QueuePage {
     pub revision: u64,
     pub query: QueuePageQuery,
-    pub start: usize,
     pub total: usize,
     pub current_absolute_index: Option<usize>,
     pub rows: Vec<QueuePageRow>,
 }
 
-impl QueuePage {
-    pub fn previous_query(&self) -> Option<QueuePageQuery> {
-        (!self.query.is_filtered() && self.start != 0)
-            .then(|| QueuePageQuery::at(self.start.saturating_sub(MAX_QUEUE_PAGE_SIZE)))
-    }
+#[derive(Clone, Debug, PartialEq)]
+pub struct CurrentMedia {
+    pub id: CurrentMediaId,
+    pub track: Track,
+    pub provenance: Provenance,
+}
 
-    pub fn next_query(&self) -> Option<QueuePageQuery> {
-        (!self.query.is_filtered()
-            && !self.rows.is_empty()
-            && self.start + self.rows.len() < self.total)
-            .then(|| QueuePageQuery::at(self.start + self.rows.len()))
-    }
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub struct CurrentMediaId {
+    pub source_id: SourceId,
+    pub source_session_epoch: SourceSessionEpoch,
+    pub run: Option<RunId>,
+    pub occurrence: OccurrenceId,
 }
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct TransportView {
     pub source_id: SourceId,
-    pub run: Option<RunId>,
-    pub current: Option<Arc<SequenceEntry>>,
+    pub current: Option<Arc<CurrentMedia>>,
     pub state: TransportStatus,
+    pub desired_playing: bool,
     pub position_millis: u64,
     pub duration_millis: u64,
     pub buffering_percent: Option<u8>,
     pub error: Option<String>,
+}
+
+impl TransportView {
+    pub fn effective_state(&self) -> TransportStatus {
+        effective_transport_state(self.state, self.desired_playing)
+    }
+}
+
+fn effective_transport_state(state: TransportStatus, desired_playing: bool) -> TransportStatus {
+    match state {
+        TransportStatus::Stopped | TransportStatus::Failed => state,
+        _ if !desired_playing => TransportStatus::Paused,
+        TransportStatus::Paused => TransportStatus::Buffering,
+        state => state,
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -129,7 +135,6 @@ pub struct PlaybackView {
 #[derive(Clone, Debug, PartialEq)]
 pub enum PlaybackNotice {
     RunStarted(RunId),
-    MediaChanged(crate::MediaChanged),
     PositionDiscontinuity(crate::PositionDiscontinuity),
     Visualizer { run: RunId, levels: Vec<f64> },
 }
@@ -139,12 +144,6 @@ pub struct PlaybackProjection {
     pub view: PlaybackView,
     pub queue_page: Option<QueuePage>,
     pub notices: Vec<PlaybackNotice>,
-}
-
-#[derive(Clone, Debug, Default, PartialEq)]
-pub struct WaveformProjection {
-    pub key: Option<String>,
-    pub peaks: Option<Arc<Vec<(f64, f64)>>>,
 }
 
 impl Sequence {
@@ -163,22 +162,13 @@ impl Sequence {
 
     pub fn page(&self, query: QueuePageQuery) -> QueuePage {
         let total = self.entries().len();
-        let start = match query.kind {
-            QueuePageQueryKind::Current => self
-                .selected_index()
-                .map(|index| index.saturating_sub(20))
-                .unwrap_or_default(),
-            QueuePageQueryKind::At { start } => start,
-            QueuePageQueryKind::Search { .. } => 0,
-        }
-        .min(total);
         let rows = match &query.kind {
-            QueuePageQueryKind::Current | QueuePageQueryKind::At { .. } => self.entries()[start..]
+            QueuePageQueryKind::Current => self
+                .entries()
                 .iter()
-                .take(MAX_QUEUE_PAGE_SIZE)
                 .enumerate()
-                .map(|(offset, entry)| QueuePageRow {
-                    absolute_index: start + offset,
+                .map(|(absolute_index, entry)| QueuePageRow {
+                    absolute_index,
                     entry: Arc::new(entry.clone()),
                 })
                 .collect(),
@@ -187,7 +177,6 @@ impl Sequence {
                 .iter()
                 .enumerate()
                 .filter(|(_, entry)| queue_entry_matches_search(entry, text))
-                .take(MAX_QUEUE_PAGE_SIZE)
                 .map(|(absolute_index, entry)| QueuePageRow {
                     absolute_index,
                     entry: Arc::new(entry.clone()),
@@ -197,7 +186,6 @@ impl Sequence {
         QueuePage {
             revision: self.revision(),
             query,
-            start,
             total,
             current_absolute_index: self.selected_index(),
             rows,
@@ -224,9 +212,20 @@ impl PlaybackSession {
             queue: sequence.summary(),
             transport: TransportView {
                 source_id: sequence.source_id().clone(),
-                run: self.current_run(),
-                current: sequence.selected().cloned().map(Arc::new),
+                current: sequence.selected().map(|entry| {
+                    Arc::new(CurrentMedia {
+                        id: CurrentMediaId {
+                            source_id: sequence.source_id().clone(),
+                            source_session_epoch: self.source_session_epoch(),
+                            run: self.current_run(),
+                            occurrence: entry.occurrence.clone(),
+                        },
+                        track: entry.track.clone(),
+                        provenance: entry.provenance.clone(),
+                    })
+                }),
                 state: self.status(),
+                desired_playing: self.desired_playing(),
                 position_millis: self.position_millis(),
                 duration_millis: self.duration_millis(),
                 buffering_percent: self.buffering_percent(),
@@ -252,7 +251,27 @@ mod tests {
     use crate::sequence::{Batch, BatchItem, Placement, Provenance};
 
     #[test]
-    fn queue_pages_are_bounded_without_truncating_the_sequence() {
+    fn effective_transport_state_follows_play_pause_intent_before_backend_confirmation() {
+        assert_eq!(
+            effective_transport_state(TransportStatus::Playing, false),
+            TransportStatus::Paused
+        );
+        assert_eq!(
+            effective_transport_state(TransportStatus::Paused, true),
+            TransportStatus::Buffering
+        );
+        assert_eq!(
+            effective_transport_state(TransportStatus::Stopped, true),
+            TransportStatus::Stopped
+        );
+        assert_eq!(
+            effective_transport_state(TransportStatus::Failed, true),
+            TransportStatus::Failed
+        );
+    }
+
+    #[test]
+    fn queue_view_exposes_the_complete_sequence() {
         let mut sequence = Sequence::new(SourceId::fake(1));
         sequence
             .apply_batch(
@@ -267,24 +286,10 @@ mod tests {
 
         let page = sequence.current_page();
         assert_eq!(sequence.entries().len(), 219);
-        assert_eq!(page.start, 130);
-        assert_eq!(page.rows.len(), 89);
+        assert_eq!(page.rows.len(), 219);
         assert_eq!(page.current_absolute_index, Some(150));
-        assert_eq!(
-            sequence.page(QueuePageQuery::at(0)).rows.len(),
-            MAX_QUEUE_PAGE_SIZE
-        );
-        let middle = sequence.page(QueuePageQuery::at(100));
-        let following = sequence.page(middle.next_query().expect("following page"));
-        assert_eq!(following.start, 200);
-        assert_eq!(following.rows.len(), 19);
-        assert_eq!(
-            following.rows.first().map(|row| row.absolute_index),
-            Some(200)
-        );
-        let preceding = sequence.page(middle.previous_query().expect("preceding page"));
-        assert_eq!(preceding.start, 0);
-        assert_eq!(preceding.rows.len(), MAX_QUEUE_PAGE_SIZE);
+        assert_eq!(page.rows.first().map(|row| row.absolute_index), Some(0));
+        assert_eq!(page.rows.last().map(|row| row.absolute_index), Some(218));
 
         let summary = sequence.summary();
         assert_eq!(summary.total, 219);
@@ -293,7 +298,7 @@ mod tests {
     }
 
     #[test]
-    fn queue_search_scans_the_full_sequence_case_insensitively_and_stays_bounded() {
+    fn queue_search_scans_the_full_sequence_case_insensitively() {
         let mut sequence = Sequence::new(SourceId::fake(1));
         sequence
             .apply_batch(
@@ -315,23 +320,19 @@ mod tests {
         let page = sequence.page(QueuePageQuery::search("  nEeDlE "));
 
         assert_eq!(page.total, 300);
-        assert_eq!(page.rows.len(), MAX_QUEUE_PAGE_SIZE);
+        assert_eq!(page.rows.len(), 150);
         assert_eq!(page.rows.first().map(|row| row.absolute_index), Some(150));
-        assert_eq!(page.rows.last().map(|row| row.absolute_index), Some(249));
-        assert!(page.previous_query().is_none());
-        assert!(page.next_query().is_none());
+        assert_eq!(page.rows.last().map(|row| row.absolute_index), Some(299));
     }
 
     fn track(number: u32) -> Track {
-        Track {
+        Track::new(library::TrackData {
             id: TrackId::fake(number),
-            album_id: AlbumId::fake(1),
+            album_id: Some(AlbumId::fake(1)),
             title: format!("Track {number}"),
             artist: "Artist".to_string(),
-            artist_id: None,
-            artist_credits: Vec::new(),
-            album_artist_credits: Vec::new(),
             album: "Album".to_string(),
+            album_artwork: None,
             year: 2026,
             release_date: None,
             date_added: None,
@@ -343,16 +344,16 @@ mod tests {
             disc_number: 1,
             track_number: number as u16,
             image_ref: None,
-            album_artwork: None,
-            genres: Vec::new(),
+            local_artwork: None,
             musicbrainz_recording_id: None,
             musicbrainz_release_track_id: None,
-            local_path: None,
+            source_path: None,
+            cue: None,
             source_format: None,
             comment: None,
             skip_count: None,
             bpm: None,
-            moods: Vec::new(),
-        }
+            relations: library::TrackRelations::default(),
+        })
     }
 }

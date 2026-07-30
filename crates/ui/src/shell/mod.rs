@@ -1,7 +1,9 @@
 pub(crate) mod build;
 pub(crate) mod chrome;
+mod diagnostics;
 pub(crate) mod layout;
 pub(crate) mod navigation;
+use crate::downloads::DownloadsState;
 use crate::favorites::FavoriteState;
 use crate::player::PlayerDesktopWidgets;
 use crate::player::desktop::DesktopState;
@@ -10,11 +12,11 @@ use crate::player::queue::QueueState;
 use crate::player::right_panel::RightPanelWidgets;
 use crate::player::state::PlaybackState;
 use crate::preferences::PreferencesState;
-use crate::preferences::persistence::SettingsState;
 use crate::preferences::source::SourceState;
 use crate::routes::LibraryState;
 use crate::routes::playlist_picker::PlaylistPickerState;
-use crate::runtime::ProductHandles;
+use crate::runtime::{DiagnosticsHandle, ProductHandles};
+use crate::settings::SettingsState;
 use actions::ControlFeedbackState;
 use chrome::WindowChrome;
 use cover::ArtworkState;
@@ -32,12 +34,10 @@ mod route_position;
 mod startup;
 mod window_state;
 
-#[cfg(test)]
-pub(crate) mod shell_tests;
-
 use route::RouteViewport;
 
 pub(crate) struct Shell {
+    pub(crate) diagnostics: DiagnosticsHandle,
     pub(crate) settings: SettingsState,
     pub(crate) navigation: NavigationState,
     pub(crate) library: LibraryState,
@@ -48,6 +48,7 @@ pub(crate) struct Shell {
     pub(crate) lyrics: LyricsState,
     pub(crate) preferences: PreferencesState,
     pub(crate) playlist_picker: PlaylistPickerState,
+    pub(crate) downloads: DownloadsState,
     pub(crate) control_feedback: ControlFeedbackState,
     localization: LocalizationState,
     pub(crate) desktop: DesktopState,

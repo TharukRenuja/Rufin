@@ -7,7 +7,7 @@ use adw::prelude::*;
 use artwork::ArtworkBinding;
 use gtk::glib;
 use playback::{
-    EQUALIZER_BAND_COUNT, EqualizerSettings, PlaybackView, SequenceEntry, TransportStatus,
+    CurrentMedia, EQUALIZER_BAND_COUNT, EqualizerSettings, PlaybackView, TransportStatus,
 };
 
 use crate::layout::allocation_owner;
@@ -24,7 +24,7 @@ use super::equalizer::{
     build_equalizer_preset_dropdown, connect_equalizer_scale_commit, equalizer_band_label_parts,
     equalizer_band_title, equalizer_default_preset_bands, equalizer_preset_bands,
     equalizer_preset_name_at, equalizer_preset_position, equalizer_selected_preset,
-    install_equalizer_scroll,
+    install_equalizer_scroll, relocalize_equalizer_preset_dropdown,
 };
 use super::icons::lyrics_icon_area;
 use super::lyrics::LyricsPane;
@@ -78,7 +78,7 @@ pub(crate) fn fullscreen_playback_refresh(
         || previous.transport.current != next.transport.current
     {
         FullscreenPlaybackRefresh::Static
-    } else if previous.transport.state != next.transport.state {
+    } else if previous.transport.effective_state() != next.transport.effective_state() {
         FullscreenPlaybackRefresh::Visualizer
     } else {
         FullscreenPlaybackRefresh::None
@@ -1011,9 +1011,15 @@ pub(crate) fn connect_fullscreen_player_controls(shell: &Rc<Shell>) {
             }
             match stack.visible_child_name().as_deref() {
                 Some("queue") => queue_tab_shell.schedule_queue_panel_render(),
-                Some("lyrics") => queue_tab_shell.refresh_fullscreen_lyrics_position(),
+                Some("lyrics") => {
+                    queue_tab_shell.sync_visible_lyrics_surfaces();
+                    queue_tab_shell.refresh_fullscreen_lyrics_position();
+                }
                 Some("equalizer") => queue_tab_shell.refresh_fullscreen_player_layout(),
                 _ => {}
+            }
+            if stack.visible_child_name().as_deref() != Some("lyrics") {
+                queue_tab_shell.update_lyrics_highlight();
             }
             queue_tab_shell.sync_fullscreen_visualizer_state();
             if stack.visible_child_name().as_deref() == Some("visualizer") {
@@ -1091,6 +1097,12 @@ pub(crate) fn connect_fullscreen_player_controls(shell: &Rc<Shell>) {
         });
 }
 
+fn while_equalizer_syncing(syncing: &Cell<bool>, update: impl FnOnce()) {
+    syncing.set(true);
+    update();
+    syncing.set(false);
+}
+
 impl Shell {
     pub(crate) fn open_fullscreen_player(self: &Rc<Self>) {
         let Some(player) = self.playback.player.borrow().clone() else {
@@ -1146,6 +1158,7 @@ impl Shell {
             .as_deref()
             == Some("lyrics")
         {
+            self.sync_visible_lyrics_surfaces();
             let lyrics_shell = Rc::clone(self);
             glib::timeout_add_local_once(
                 Duration::from_millis(u64::from(FULLSCREEN_PLAYER_OPEN_TRANSITION_MS)),
@@ -1164,6 +1177,7 @@ impl Shell {
         }
         self.animate_fullscreen_player(false);
         self.sync_fullscreen_visualizer_state();
+        self.update_lyrics_highlight();
     }
 
     pub(crate) fn toggle_fullscreen_player(self: &Rc<Self>) {
@@ -1175,9 +1189,14 @@ impl Shell {
     }
 
     pub(crate) fn relocalize_fullscreen_player_controls(&self) {
-        self.sync_fullscreen_equalizer_preset_label(
-            &self.settings.current.borrow().playback.equalizer,
-        );
+        let selected = {
+            let settings = self.settings.current.borrow();
+            equalizer_preset_position(&equalizer_selected_preset(&settings.playback.equalizer))
+        };
+        let fullscreen = &self.player_view.fullscreen_player;
+        while_equalizer_syncing(&fullscreen.equalizer_syncing, || {
+            relocalize_equalizer_preset_dropdown(&fullscreen.equalizer_preset_dropdown, selected);
+        });
     }
 
     pub(crate) fn update_fullscreen_player(self: &Rc<Self>) {
@@ -1386,7 +1405,7 @@ impl Shell {
                 .as_ref()
                 .is_some_and(|player| {
                     matches!(
-                        player.transport.state,
+                        player.transport.effective_state(),
                         TransportStatus::Playing | TransportStatus::Buffering
                     )
                 });
@@ -1518,12 +1537,12 @@ impl Shell {
         {
             return;
         }
-        let lyrics = self.lyrics.current.borrow();
+        let lyrics = self.visible_lyrics();
         self.player_view
             .fullscreen_player
             .lyrics_pane
             .refocus_highlight(
-                lyrics.as_ref(),
+                lyrics.as_deref(),
                 self.lyrics_position_millis(self.current_position_millis()),
             );
     }
@@ -1633,7 +1652,7 @@ impl Shell {
         fullscreen_artwork_size_for(width, height)
     }
 
-    fn clear_fullscreen_player_cover(self: &Rc<Self>) {
+    pub(crate) fn clear_fullscreen_player_cover(self: &Rc<Self>) {
         self.clear_artwork_tile(&self.player_view.fullscreen_player.cover);
     }
 
@@ -1771,7 +1790,7 @@ fn update_fullscreen_meta_row(row: &gtk::FlowBox, parts: &[String]) {
 }
 
 fn fullscreen_player_entry_meta_parts(
-    entry: Option<&SequenceEntry>,
+    entry: Option<&CurrentMedia>,
     source_label: Option<&str>,
 ) -> Vec<String> {
     let Some(entry) = entry else {
@@ -1780,12 +1799,12 @@ fn fullscreen_player_entry_meta_parts(
     fullscreen_player_meta_parts(entry.track.year, source_label)
 }
 
-fn fullscreen_player_fast_meta_parts(entry: Option<&SequenceEntry>) -> Vec<String> {
+fn fullscreen_player_fast_meta_parts(entry: Option<&CurrentMedia>) -> Vec<String> {
     let source_label = entry.and_then(queue_entry_source_label);
     fullscreen_player_entry_meta_parts(entry, source_label.as_deref())
 }
 
-fn queue_entry_source_label(entry: &SequenceEntry) -> Option<String> {
+fn queue_entry_source_label(entry: &CurrentMedia) -> Option<String> {
     entry
         .track
         .source_format
@@ -1794,7 +1813,7 @@ fn queue_entry_source_label(entry: &SequenceEntry) -> Option<String> {
         .or_else(|| {
             entry
                 .track
-                .local_path
+                .source_path
                 .as_deref()
                 .and_then(audio_source_label_from_path)
         })
@@ -1856,6 +1875,33 @@ fn fullscreen_equalizer_compact_for(width: i32, height: i32) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use std::cell::{Cell, RefCell};
+    use std::sync::Arc;
+
+    use library::SourceId;
+    use playback::{
+        ControlsView, CurrentMedia, CurrentMediaId, OccurrenceId, PlaybackView, Provenance,
+        QueueSummaryView, RepeatMode, RunId, SourceSessionEpoch, TransportStatus, TransportView,
+    };
+
+    use super::FullscreenPlaybackRefresh;
+
+    #[test]
+    fn locale_equalizer_sync_does_not_reenter_settings() {
+        let syncing = Cell::new(false);
+        let settings = RefCell::new(false);
+        let current_settings = settings.borrow();
+
+        super::while_equalizer_syncing(&syncing, || {
+            if !syncing.get() {
+                *settings.borrow_mut() = true;
+            }
+        });
+
+        assert!(!*current_settings);
+        assert!(!syncing.get());
+    }
+
     #[test]
     fn fullscreen_use_duration() {
         assert_eq!(
@@ -1902,5 +1948,99 @@ mod tests {
         assert!(fit.band_width < super::FULLSCREEN_EQUALIZER_MAX_BAND_WIDTH);
         assert!(fit.scale_height < super::FULLSCREEN_EQUALIZER_MAX_SCALE_HEIGHT);
         assert!(fit.show_right_levels);
+    }
+
+    #[test]
+    fn fullscreen_refresh_ignores_position_ticks_but_replaces_current_media() {
+        let source_id = SourceId::fake(1);
+        let previous = playback_view(
+            source_id.clone(),
+            Some(current_media("Current", source_id.clone())),
+            TransportStatus::Playing,
+            1_000,
+        );
+
+        let mut position_tick = previous.clone();
+        position_tick.transport.position_millis = 1_500;
+        assert_eq!(
+            super::fullscreen_playback_refresh(Some(&previous), &position_tick),
+            FullscreenPlaybackRefresh::None
+        );
+
+        let mut state_change = previous.clone();
+        state_change.transport.state = TransportStatus::Paused;
+        state_change.transport.desired_playing = false;
+        assert_eq!(
+            super::fullscreen_playback_refresh(Some(&previous), &state_change),
+            FullscreenPlaybackRefresh::Visualizer
+        );
+
+        let mut current_change = previous.clone();
+        current_change.transport.current = Some(Arc::new(current_media("Next", source_id.clone())));
+        assert_eq!(
+            super::fullscreen_playback_refresh(Some(&previous), &current_change),
+            FullscreenPlaybackRefresh::Static
+        );
+
+        let mut source_change = previous.clone();
+        source_change.transport.source_id = SourceId::fake(2);
+        assert_eq!(
+            super::fullscreen_playback_refresh(Some(&previous), &source_change),
+            FullscreenPlaybackRefresh::Static
+        );
+    }
+
+    fn current_media(title: &str, source_id: SourceId) -> CurrentMedia {
+        CurrentMedia {
+            id: CurrentMediaId {
+                source_id,
+                source_session_epoch: SourceSessionEpoch::new(1),
+                run: Some(RunId::new(1)),
+                occurrence: OccurrenceId::new(format!("queue:{title}")),
+            },
+            track: crate::test_support::track(1, title),
+            provenance: Provenance::Manual,
+        }
+    }
+
+    fn playback_view(
+        source_id: SourceId,
+        current: Option<CurrentMedia>,
+        state: TransportStatus,
+        position_millis: u64,
+    ) -> PlaybackView {
+        let current_occurrence = current.as_ref().map(|media| media.id.occurrence.clone());
+        PlaybackView {
+            queue: QueueSummaryView {
+                revision: 1,
+                total: usize::from(current.is_some()),
+                current_occurrence,
+                current_index: current.as_ref().map(|_| 0),
+                next_occurrence: None,
+            },
+            transport: TransportView {
+                source_id,
+                current: current.map(Arc::new),
+                state,
+                desired_playing: matches!(
+                    state,
+                    TransportStatus::Resolving
+                        | TransportStatus::Buffering
+                        | TransportStatus::Playing
+                ),
+                position_millis,
+                duration_millis: 180_000,
+                buffering_percent: None,
+                error: None,
+            },
+            controls: ControlsView {
+                repeat_mode: RepeatMode::Off,
+                shuffle_enabled: false,
+                auto_dj_enabled: false,
+                volume: 1.0,
+                muted: false,
+                audio_output: None,
+            },
+        }
     }
 }

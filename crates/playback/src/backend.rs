@@ -1,5 +1,4 @@
 use crate::{EqualizerSettings, PlaybackSettings, ReplayGainMode};
-use sources::StreamDescriptor;
 use thiserror::Error;
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -31,18 +30,33 @@ pub struct SourceWindow {
 pub struct PreparedStream {
     uri: String,
     redacted_uri: String,
+    trust_invalid_certificate: bool,
     window: Option<SourceWindow>,
 }
 
 impl PreparedStream {
     pub fn new(uri: impl Into<String>) -> Self {
-        let descriptor = StreamDescriptor::new(uri);
-        Self::from(descriptor)
+        let uri = uri.into();
+        Self {
+            redacted_uri: redact_sensitive_uri(&uri),
+            uri,
+            trust_invalid_certificate: false,
+            window: None,
+        }
     }
 
     pub fn with_redacted(uri: impl Into<String>, redacted_uri: impl Into<String>) -> Self {
-        let descriptor = StreamDescriptor::with_redacted(uri, redacted_uri);
-        Self::from(descriptor)
+        Self {
+            uri: uri.into(),
+            redacted_uri: redacted_uri.into(),
+            trust_invalid_certificate: false,
+            window: None,
+        }
+    }
+
+    pub fn with_trust_invalid_certificate(mut self, trust: bool) -> Self {
+        self.trust_invalid_certificate = trust;
+        self
     }
 
     pub fn with_source_window(mut self, start_millis: u64, end_millis: u64) -> Self {
@@ -63,6 +77,10 @@ impl PreparedStream {
         &self.redacted_uri
     }
 
+    pub fn trust_invalid_certificate(&self) -> bool {
+        self.trust_invalid_certificate
+    }
+
     pub fn source_start_millis(&self) -> u64 {
         self.window
             .as_ref()
@@ -79,22 +97,6 @@ impl PreparedStream {
     }
 }
 
-impl From<StreamDescriptor> for PreparedStream {
-    fn from(descriptor: StreamDescriptor) -> Self {
-        let window = descriptor
-            .source_end_millis()
-            .map(|end_millis| SourceWindow {
-                start_millis: descriptor.source_start_millis(),
-                end_millis,
-            });
-        Self {
-            uri: descriptor.uri().to_string(),
-            redacted_uri: descriptor.redacted_uri().to_string(),
-            window,
-        }
-    }
-}
-
 impl std::fmt::Debug for PreparedStream {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter
@@ -103,6 +105,28 @@ impl std::fmt::Debug for PreparedStream {
             .field("window", &self.window)
             .finish()
     }
+}
+
+fn redact_sensitive_uri(uri: &str) -> String {
+    let Some((base, query)) = uri.split_once('?') else {
+        return uri.to_string();
+    };
+    let query = query
+        .split('&')
+        .map(|pair| {
+            let Some((key, value)) = pair.split_once('=') else {
+                return pair.to_string();
+            };
+            let lower = key.to_ascii_lowercase();
+            if lower.contains("token") || lower.contains("key") {
+                format!("{key}=<redacted>")
+            } else {
+                format!("{key}={value}")
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("&");
+    format!("{base}?{query}")
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -301,6 +325,10 @@ impl BackendFailure {
 pub trait PlaybackBackend: Send {
     fn send(&mut self, command: BackendCommand) -> Result<(), BackendError>;
     fn drain_events(&mut self) -> Vec<BackendEvent>;
+
+    fn shutdown(&mut self) -> Result<(), BackendError> {
+        Ok(())
+    }
 }
 
 #[cfg(test)]

@@ -275,7 +275,7 @@ fn audio_output_row(
     row.set_child(Some(&content));
 
     let row_shell = Rc::clone(shell);
-    let row_popover = popover.clone();
+    let row_popover = popover.downgrade();
     let on_selected = on_selected.cloned();
     row.connect_clicked(move |_| {
         let selected = id.clone();
@@ -285,7 +285,9 @@ fn audio_output_row(
         if let Some(on_selected) = on_selected.as_ref() {
             on_selected(selected, title.clone());
         }
-        row_popover.popdown();
+        if let Some(popover) = row_popover.upgrade() {
+            popover.popdown();
+        }
     });
     row
 }

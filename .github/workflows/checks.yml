@@ -22,7 +22,6 @@ jobs:
     name: Changes
     runs-on: ubuntu-latest
     outputs:
-      aur_release_tag: ${{ steps.classify.outputs.aur_release_tag }}
       aur_required: ${{ steps.classify.outputs.aur_required }}
       container_required: ${{ steps.classify.outputs.container_required }}
       current_nix_required: ${{ steps.classify.outputs.current_nix_required }}
@@ -36,7 +35,7 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           fetch-depth: 0
           persist-credentials: false
@@ -53,7 +52,6 @@ jobs:
 
           if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]]; then
             {
-              echo "aur_release_tag=$(git describe --tags --abbrev=0 --match 'v[0-9]*')"
               echo "aur_required=true"
               echo "container_required=true"
               echo "current_nix_required=true"
@@ -165,7 +163,7 @@ jobs:
             esac
 
             case "$path" in
-              Cargo.lock|Cargo.toml|crates/*/Cargo.toml|flake.lock|flake.nix|scripts/rust-cache-command)
+              .github/workflows/checks.yml|Cargo.lock|Cargo.toml|crates/*/Cargo.toml|flake.lock|flake.nix|scripts/rust-cache-command)
                 rust_cache_required=true
                 ;;
             esac
@@ -183,9 +181,7 @@ jobs:
 
           printf 'Changed paths:\n'
           printf '  %s\n' "${changed_paths[@]}"
-          aur_release_tag="$(git describe --tags --abbrev=0 --match 'v[0-9]*')"
           {
-            echo "aur_release_tag=$aur_release_tag"
             echo "aur_required=$aur_required"
             echo "container_required=$container_required"
             echo "current_nix_required=$current_nix_required"
@@ -224,7 +220,6 @@ jobs:
     uses: ./.github/workflows/aur-build.yml
     with:
       package: both
-      release_tag: ${{ needs.changes.outputs.aur_release_tag }}
       publish: false
 
   rpm-package:
@@ -254,7 +249,7 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
 
@@ -283,7 +278,7 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
 
@@ -351,9 +346,11 @@ jobs:
           bash scripts/retry-nix nix --accept-flake-config develop "${{ steps.nix-environment.outputs.target }}" --command \
             bash -c 'nextest_jobs="${NEXTEST_JOBS:-4}"; if [[ ! "$nextest_jobs" =~ ^[1-9][0-9]*$ ]]; then echo "NEXTEST_JOBS must be a positive integer." >&2; exit 1; fi; if command -v cargo-nextest >/dev/null 2>&1; then cargo nextest run --workspace --locked --test-threads "$nextest_jobs"; else echo "cargo-nextest is unavailable; falling back to cargo test." >&2; cargo test --workspace --locked --lib --bins --tests --benches --examples; fi'
 
-      - name: Warm Rust test cache
+      - name: Warm Rust build cache
         if: github.event_name == 'push'
         run: |
+          bash scripts/retry-nix nix --accept-flake-config develop "${{ steps.nix-environment.outputs.target }}" --command \
+            cargo check --workspace --all-targets --locked
           bash scripts/retry-nix nix --accept-flake-config develop "${{ steps.nix-environment.outputs.target }}" --command \
             cargo test --workspace --locked --no-run --lib --bins --tests --benches --examples
 
@@ -368,12 +365,12 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
 
       - name: Check Rust dependency policy
-        uses: EmbarkStudios/cargo-deny-action@bb137d7af7e4fb67e5f82a49c4fce4fad40782fe # v2.0.20
+        uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
         with:
           arguments: --locked
           command: check

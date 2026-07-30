@@ -11,10 +11,13 @@ readme.workspace = true
 publish.workspace = true
 
 [dependencies]
-async-trait.workspace = true
+async-channel.workspace = true
 base64.workspace = true
+blake3.workspace = true
 futures-util.workspace = true
 getrandom.workspace = true
+gstreamer-pbutils = { workspace = true, features = ["v1_26"] }
+if-addrs.workspace = true
 library.workspace = true
 lofty.workspace = true
 md5.workspace = true
@@ -23,8 +26,9 @@ percent-encoding.workspace = true
 reqwest = { workspace = true, features = ["json"] }
 serde.workspace = true
 serde_json.workspace = true
+serde_path_to_error.workspace = true
 thiserror.workspace = true
-tokio = { workspace = true, features = ["rt-multi-thread", "macros", "sync", "time"] }
+tokio = { workspace = true, features = ["fs", "io-util", "rt-multi-thread", "macros", "sync", "time"] }
 tokio-tungstenite.workspace = true
 tracing.workspace = true
 url.workspace = true

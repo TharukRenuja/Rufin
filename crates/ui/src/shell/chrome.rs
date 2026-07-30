@@ -17,9 +17,13 @@ pub(crate) struct WindowChrome {
     pub(crate) toast_overlay: adw::ToastOverlay,
     pub(crate) quick_toast_overlay: adw::ToastOverlay,
     pub(super) control_feedback_label: gtk::Label,
+    pub(crate) operation_feedback: gtk::Box,
+    pub(crate) operation_feedback_artwork: gtk::Box,
+    pub(crate) operation_feedback_title: gtk::Label,
+    pub(crate) operation_feedback_subtitle: gtk::Label,
+    pub(crate) operation_feedback_close: gtk::Button,
     pub(super) root_stack: gtk::Stack,
     pub(crate) app_root_overlay: gtk::Overlay,
-    pub(super) app_root: gtk::Box,
     pub(crate) app_content_stack: gtk::Stack,
     pub(super) login_host: gtk::Box,
     pub(super) startup_loading_host: gtk::Box,
@@ -146,6 +150,7 @@ pub(super) fn build_content_chrome(
 
 fn configure_right_split(right_split: &gtk::Paned) {
     right_split.add_css_class("right-pane-split");
+    right_split.set_focusable(false);
     // Rufin owns the four-pixel input target. A non-wide GtkPaned adds a
     // hidden six-pixel pointer gutter on both sides of its separator, which
     // would leave a second resize owner underneath the shell gesture.

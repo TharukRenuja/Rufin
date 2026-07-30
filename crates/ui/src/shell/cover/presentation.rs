@@ -1,9 +1,5 @@
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::{SystemTime, UNIX_EPOCH};
-
 use adw::prelude::*;
 
-static HOME_SHOWCASE_COUNTER: AtomicU64 = AtomicU64::new(0);
 const SHOWCASE_PALETTE_CLASSES: [&str; 16] = [
     "seeded-gradient-palette-0",
     "seeded-gradient-palette-1",
@@ -27,17 +23,6 @@ pub(crate) fn stable_seed(value: &str) -> u32 {
     value.bytes().fold(0x811c_9dc5, |hash, byte| {
         hash.wrapping_mul(16_777_619) ^ u32::from(byte)
     })
-}
-
-pub(crate) fn next_home_showcase_seed() -> u64 {
-    let counter = HOME_SHOWCASE_COUNTER
-        .fetch_add(1, Ordering::Relaxed)
-        .wrapping_add(1);
-    let time_seed = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_nanos() as u64)
-        .unwrap_or_else(|_| stable_seed("home-showcase") as u64);
-    time_seed.rotate_left(17) ^ counter.wrapping_mul(0x9e37_79b9_7f4a_7c15)
 }
 
 pub(crate) fn add_album_seed_gradient_class(widget: &impl IsA<gtk::Widget>, seed: u32) {

@@ -14,7 +14,6 @@ publish.workspace = true
 library.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-sources.workspace = true
 thiserror.workspace = true
 
 [lints]

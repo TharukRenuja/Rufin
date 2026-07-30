@@ -3,8 +3,16 @@ use std::{cell::Cell, rc::Rc};
 use adw::prelude::*;
 use artwork::ArtworkBinding;
 
-use super::{ArtworkTile, GRID_COVER_SIZE};
+use super::{ArtworkTile, LARGE_COVER_SIZE, MEDIUM_COVER_SIZE, cover_fetch_size_for_display};
 use crate::shell::Shell;
+
+fn elastic_cover_fetch_size(artwork_count: usize, mosaic_fetch_size: u32) -> u32 {
+    if artwork_count == 1 {
+        LARGE_COVER_SIZE
+    } else {
+        mosaic_fetch_size
+    }
+}
 
 #[derive(Clone)]
 pub(crate) struct CoverGroupProjection {
@@ -13,6 +21,7 @@ pub(crate) struct CoverGroupProjection {
     grid: gtk::Grid,
     quadrants: Rc<Vec<ArtworkTile>>,
     size: Rc<Cell<i32>>,
+    render_size: i32,
     fetch_size: u32,
 }
 
@@ -22,7 +31,6 @@ impl CoverGroupProjection {
     }
 
     pub(crate) fn replace(&self, shell: &Rc<Shell>, artwork: &[ArtworkBinding], seed: u32) {
-        let size = self.size.get();
         if artwork.len() <= 1 {
             for tile in self.quadrants.iter() {
                 shell.clear_artwork_tile(tile);
@@ -31,7 +39,7 @@ impl CoverGroupProjection {
                 &self.single,
                 artwork.first().cloned().unwrap_or_else(ArtworkBinding::new),
                 seed,
-                size,
+                self.render_size,
                 self.fetch_size,
             );
             self.root.set_visible_child_name("single");
@@ -39,7 +47,7 @@ impl CoverGroupProjection {
         }
 
         shell.clear_artwork_tile(&self.single);
-        let cell_size = (size / 2).max(1);
+        let cell_size = (self.render_size / 2).max(1);
         for (index, tile) in self.quadrants.iter().enumerate() {
             shell.bind_artwork_tile(
                 tile,
@@ -73,8 +81,10 @@ impl Shell {
         artwork: &[ArtworkBinding],
         seed: u32,
         size: i32,
-        fetch_size: u32,
+        render_size: i32,
     ) -> CoverGroupProjection {
+        let render_size = render_size.max(1);
+        let fetch_size = cover_fetch_size_for_display(render_size);
         let root = gtk::Stack::new();
         root.set_size_request(size, size);
         root.set_hexpand(false);
@@ -114,6 +124,7 @@ impl Shell {
             grid,
             quadrants,
             size: Rc::new(Cell::new(size)),
+            render_size,
             fetch_size,
         };
         projection.replace(self, artwork, seed);
@@ -128,7 +139,13 @@ impl Shell {
     ) -> (gtk::Widget, ArtworkTile) {
         let tile = ArtworkTile::new_elastic_square(seed);
         let widget = tile.widget();
-        self.bind_artwork_tile(&tile, candidates, seed, GRID_COVER_SIZE as i32, fetch_size);
+        self.bind_artwork_tile(
+            &tile,
+            candidates,
+            seed,
+            MEDIUM_COVER_SIZE as i32,
+            fetch_size,
+        );
         (widget, tile)
     }
 
@@ -160,8 +177,9 @@ impl Shell {
         self: &Rc<Self>,
         artwork: &[ArtworkBinding],
         seed: u32,
-        fetch_size: u32,
+        mosaic_fetch_size: u32,
     ) -> gtk::Widget {
+        let fetch_size = elastic_cover_fetch_size(artwork.len(), mosaic_fetch_size);
         match artwork.len() {
             0 => {
                 self.elastic_cover_tile_for_candidates(ArtworkBinding::new(), seed, fetch_size)
@@ -196,5 +214,23 @@ impl Shell {
                 grid.upcast()
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::elastic_cover_fetch_size;
+    use crate::shell::cover::{LARGE_COVER_SIZE, THUMB_COVER_SIZE};
+
+    #[test]
+    fn a_single_elastic_grid_cover_uses_the_large_fetch_size() {
+        assert_eq!(
+            elastic_cover_fetch_size(1, THUMB_COVER_SIZE),
+            LARGE_COVER_SIZE
+        );
+        assert_eq!(
+            elastic_cover_fetch_size(4, THUMB_COVER_SIZE),
+            THUMB_COVER_SIZE
+        );
     }
 }

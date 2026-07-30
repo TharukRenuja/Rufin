@@ -14,7 +14,7 @@ pub(crate) struct ArtworkTile {
     known_missing: Rc<Cell<bool>>,
     artwork_id: Rc<RefCell<Option<artwork::ArtworkVisualIdentity>>>,
     request_key: Rc<RefCell<Option<artwork::ArtworkRequestIdentity>>>,
-    artwork_request_id: Rc<Cell<Option<artwork::RequestId>>>,
+    artwork_request: Rc<RefCell<Option<glib::JoinHandle<()>>>>,
     generation: Rc<Cell<u64>>,
     binding_active: Rc<Cell<bool>>,
     cleanup_hook_installed: Rc<Cell<bool>>,
@@ -30,7 +30,7 @@ pub(crate) struct ArtworkTileWeak {
     known_missing: Rc<Cell<bool>>,
     artwork_id: Rc<RefCell<Option<artwork::ArtworkVisualIdentity>>>,
     request_key: Rc<RefCell<Option<artwork::ArtworkRequestIdentity>>>,
-    artwork_request_id: Rc<Cell<Option<artwork::RequestId>>>,
+    artwork_request: Rc<RefCell<Option<glib::JoinHandle<()>>>>,
     generation: Rc<Cell<u64>>,
     binding_active: Rc<Cell<bool>>,
     cleanup_hook_installed: Rc<Cell<bool>>,
@@ -93,7 +93,7 @@ impl ArtworkTile {
         let known_missing = Rc::new(Cell::new(false));
         let artwork_id = Rc::new(RefCell::new(None::<artwork::ArtworkVisualIdentity>));
         let request_key = Rc::new(RefCell::new(None::<artwork::ArtworkRequestIdentity>));
-        let artwork_request_id = Rc::new(Cell::new(None));
+        let artwork_request = Rc::new(RefCell::new(None));
         let generation = Rc::new(Cell::new(0));
         let binding_active = Rc::new(Cell::new(false));
         let cleanup_hook_installed = Rc::new(Cell::new(false));
@@ -107,7 +107,7 @@ impl ArtworkTile {
             known_missing,
             artwork_id,
             request_key,
-            artwork_request_id,
+            artwork_request,
             generation,
             binding_active,
             cleanup_hook_installed,
@@ -132,7 +132,7 @@ impl ArtworkTile {
             known_missing: Rc::clone(&self.known_missing),
             artwork_id: Rc::clone(&self.artwork_id),
             request_key: Rc::clone(&self.request_key),
-            artwork_request_id: Rc::clone(&self.artwork_request_id),
+            artwork_request: Rc::clone(&self.artwork_request),
             generation: Rc::clone(&self.generation),
             binding_active: Rc::clone(&self.binding_active),
             cleanup_hook_installed: Rc::clone(&self.cleanup_hook_installed),
@@ -141,26 +141,25 @@ impl ArtworkTile {
 
     pub(super) fn install_cleanup_hook_once<F>(&self, cleanup: F)
     where
-        F: FnOnce(usize, Option<artwork::RequestId>) + 'static,
+        F: FnOnce(usize) + 'static,
     {
         if self.cleanup_hook_installed.replace(true) {
             return;
         }
 
         let identity = self.identity();
-        let artwork_request_id = Rc::clone(&self.artwork_request_id);
+        let artwork_request = Rc::clone(&self.artwork_request);
         let binding_active = Rc::clone(&self.binding_active);
         let cleanup = RefCell::new(Some(cleanup));
         self.area.connect_destroy(move |_| {
             binding_active.set(false);
+            if let Some(request) = artwork_request.borrow_mut().take() {
+                request.abort();
+            }
             if let Some(cleanup) = cleanup.borrow_mut().take() {
-                cleanup(identity, artwork_request_id.take());
+                cleanup(identity);
             }
         });
-    }
-
-    pub(super) fn is_current_generation(&self, generation: u64) -> bool {
-        self.generation.get() == generation
     }
 
     fn advance_generation(&self) {
@@ -203,20 +202,18 @@ impl ArtworkTile {
         }
     }
 
-    pub(super) fn artwork_request_id(&self) -> Option<artwork::RequestId> {
-        self.artwork_request_id.get()
+    pub(super) fn has_artwork_request(&self) -> bool {
+        self.artwork_request.borrow().is_some()
     }
 
-    pub(super) fn replace_artwork_request_id(
-        &self,
-        request_id: artwork::RequestId,
-    ) -> Option<artwork::RequestId> {
-        self.artwork_request_id.replace(Some(request_id))
+    pub(super) fn replace_artwork_request(&self, request: glib::JoinHandle<()>) {
+        self.cancel_artwork_request();
+        self.artwork_request.replace(Some(request));
     }
 
-    pub(super) fn clear_artwork_request_id(&self, request_id: artwork::RequestId) {
-        if self.artwork_request_id.get() == Some(request_id) {
-            self.artwork_request_id.set(None);
+    pub(super) fn cancel_artwork_request(&self) {
+        if let Some(request) = self.artwork_request.borrow_mut().take() {
+            request.abort();
         }
     }
 
@@ -359,7 +356,7 @@ impl ArtworkTileWeak {
             known_missing: Rc::clone(&self.known_missing),
             artwork_id: Rc::clone(&self.artwork_id),
             request_key: Rc::clone(&self.request_key),
-            artwork_request_id: Rc::clone(&self.artwork_request_id),
+            artwork_request: Rc::clone(&self.artwork_request),
             generation: Rc::clone(&self.generation),
             binding_active: Rc::clone(&self.binding_active),
             cleanup_hook_installed: Rc::clone(&self.cleanup_hook_installed),

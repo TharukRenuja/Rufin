@@ -52,7 +52,7 @@ jobs:
           fi
 
       - name: Check out repository
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           ref: ${{ inputs.ref }}
           fetch-depth: 0
@@ -132,6 +132,10 @@ jobs:
         shell: msys2 {0}
         run: cargo run --locked -p xtask -- verify package-layout dist/windows/Rufin /
 
+      - name: Create media verification files
+        shell: msys2 {0}
+        run: bash scripts/create-media-verification-files "$RUNNER_TEMP/rufin-package-media"
+
       - name: Install Inno Setup
         shell: pwsh
         run: choco install innosetup --no-progress -y
@@ -190,35 +194,39 @@ jobs:
           $runtimeStdout = Join-Path $env:RUNNER_TEMP "rufin-runtime.out"
           $runtimeStderr = Join-Path $env:RUNNER_TEMP "rufin-runtime.err"
           $previousPath = $env:PATH
+          $previousPluginPath = $env:GST_PLUGIN_SYSTEM_PATH_1_0
           try {
             $env:PATH = "$installDir;$env:PATH"
-            $runtimeProcess = Start-Process `
-              -FilePath $installedExe `
-              -ArgumentList "--help" `
-              -WorkingDirectory $installDir `
-              -RedirectStandardOutput $runtimeStdout `
-              -RedirectStandardError $runtimeStderr `
-              -PassThru
-            if (-not $runtimeProcess.WaitForExit(30000)) {
-              Stop-Process -Id $runtimeProcess.Id -Force
-              throw "Installed Rufin executable check timed out"
+            $env:GST_PLUGIN_SYSTEM_PATH_1_0 = Join-Path $installDir "lib\gstreamer-1.0"
+            $mediaDirectory = Join-Path $env:RUNNER_TEMP "rufin-package-media"
+            foreach ($media in Get-ChildItem -LiteralPath $mediaDirectory -File) {
+              $runtimeProcess = Start-Process `
+                -FilePath $installedExe `
+                -ArgumentList @("--verify-media", $media.FullName) `
+                -WorkingDirectory $installDir `
+                -RedirectStandardOutput $runtimeStdout `
+                -RedirectStandardError $runtimeStderr `
+                -PassThru
+              if (-not $runtimeProcess.WaitForExit(30000)) {
+                Stop-Process -Id $runtimeProcess.Id -Force
+                throw "Installed Rufin media check timed out: $($media.Name)"
+              }
+              if ($runtimeProcess.ExitCode -ne 0) {
+                throw "Installed Rufin could not read $($media.Name)"
+              }
             }
           } catch {
             Get-ChildItem $installDir | Select-Object Name, Length
             throw "Installed Rufin executable failed to start: $_"
           } finally {
             $env:PATH = $previousPath
+            $env:GST_PLUGIN_SYSTEM_PATH_1_0 = $previousPluginPath
           }
           foreach ($runtimeLog in @($runtimeStdout, $runtimeStderr)) {
             if ((Test-Path $runtimeLog) -and (Get-Item $runtimeLog).Length -gt 0) {
               Get-Content $runtimeLog
             }
           }
-          if ($runtimeProcess.ExitCode -ne 0) {
-            Get-ChildItem $installDir | Select-Object Name, Length
-            throw "Installed Rufin executable exited with code $($runtimeProcess.ExitCode)"
-          }
-
       - name: Upload workflow artifact
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:

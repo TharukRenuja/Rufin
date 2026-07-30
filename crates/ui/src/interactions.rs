@@ -1,77 +1,190 @@
-use std::cell::{Cell, RefCell};
+use std::cell::RefCell;
 use std::rc::Rc;
-use std::time::Duration;
 
 use adw::prelude::*;
 use gtk::{gio, glib};
 
-use crate::favorites::{FAVORITE_ADD_ICON, FAVORITE_REMOVE_ICON};
 use localization::tr;
 
-use crate::shell::actions::{PLAY_ICON, PLAY_LATER_ICON, PLAY_NEXT_ICON, REMOVE_ICON};
+use crate::settings::{ContextMenuItem, ContextMenuSettings};
+use crate::shell::Shell;
+use crate::shell::actions::{PLAY_ICON, PLAY_LATER_ICON, PLAY_NEXT_ICON};
 
 const CONTEXT_MENU_PLAYLIST_MAX_HEIGHT: i32 = 320;
 const CONTEXT_MENU_PLAYLIST_MIN_WIDTH: i32 = 380;
-const CONTEXT_SUBMENU_CLOSE_DELAY_MS: u64 = 120;
+const NATIVE_MENU_SELECTION_CLASS: &str = "rufin-menu-selection";
+const NATIVE_MENU_SELECTED_CLASS: &str = "rufin-menu-selected";
 
 pub(crate) const ADD_TO_PLAYLIST_ICON: &str = "rufin-route-playlists-symbolic";
 pub(crate) const ALBUM_ICON: &str = "rufin-route-albums-symbolic";
 pub(crate) const ARTIST_ICON: &str = "rufin-route-artists-symbolic";
+pub(crate) const DOWNLOAD_ICON: &str = "folder-download-symbolic";
 pub(crate) const RADIO_ICON: &str = "rufin-audio-radio-symbolic";
 
 type ContextMenuOpen = Rc<dyn Fn(&gtk::Widget, Option<(f64, f64)>)>;
 
-thread_local! {
-    static OPEN_CONTEXT_SUBMENU: RefCell<Option<gtk::Popover>> = const { RefCell::new(None) };
+pub(crate) fn connect_transient_entry_focus_dismissal(shell: &Shell) {
+    install_focus_dismissal(
+        &shell.chrome.window,
+        vec![
+            shell.right_panel.queue_search.clone().upcast(),
+            shell.right_panel.lyrics_pane.focus_dismiss_target(),
+            shell
+                .player_view
+                .fullscreen_player
+                .lyrics_pane
+                .focus_dismiss_target(),
+        ],
+    );
+}
+
+fn install_focus_dismissal(window: &adw::ApplicationWindow, targets: Vec<gtk::Widget>) {
+    let click_root = window.clone();
+    let click = gtk::GestureClick::new();
+    click.set_button(0);
+    click.set_propagation_phase(gtk::PropagationPhase::Capture);
+    click.connect_pressed(move |gesture, _, x, y| {
+        gesture.set_state(gtk::EventSequenceState::Denied);
+        let Some(focus) = gtk::prelude::RootExt::focus(&click_root) else {
+            return;
+        };
+        let Some(target) = targets
+            .iter()
+            .find(|target| target.has_focus() || focus.is_ancestor(*target))
+        else {
+            return;
+        };
+        if target.compute_bounds(&click_root).is_none_or(|bounds| {
+            bounds.contains_point(&gtk::graphene::Point::new(x as f32, y as f32))
+        }) {
+            return;
+        }
+        if let Some(root) = target.root() {
+            root.set_focus(None::<&gtk::Widget>);
+        }
+    });
+    window.add_controller(click);
 }
 
 pub(crate) struct ContextMenuSurface {
     target: gtk::Widget,
     group_name: &'static str,
-    popover: gtk::Popover,
+    menu: gio::Menu,
+    popover: gtk::PopoverMenu,
     actions: gio::SimpleActionGroup,
+    entries: RefCell<Vec<ContextMenuEntry<gio::MenuItem>>>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum ContextMenuEntry<T> {
+    Configurable(ContextMenuItem, T),
+    Fixed(T),
 }
 
 impl ContextMenuSurface {
     pub(crate) fn new(
         target: &gtk::Widget,
         group_name: &'static str,
-        css_class: &str,
         position: Option<(f64, f64)>,
-        child: &impl IsA<gtk::Widget>,
     ) -> Self {
+        let menu = gio::Menu::new();
         Self {
             target: target.clone(),
             group_name,
-            popover: context_popover(target, css_class, position, child),
+            popover: context_popover(target, position, &menu),
+            menu,
             actions: gio::SimpleActionGroup::new(),
+            entries: RefCell::new(Vec::new()),
         }
     }
 
-    pub(crate) fn popover(&self) -> &gtk::Popover {
+    pub(crate) fn popover(&self) -> &gtk::PopoverMenu {
         &self.popover
+    }
+
+    pub(crate) fn append_fixed_action(&self, label: &str, action: &str, icon_name: &str) {
+        self.entries
+            .borrow_mut()
+            .push(ContextMenuEntry::Fixed(menu_action_item(
+                &tr(label),
+                &format!("{}.{}", self.group_name, action),
+                icon_name,
+            )));
+    }
+
+    pub(crate) fn append_configurable_action(
+        &self,
+        item: ContextMenuItem,
+        label: &str,
+        action: &str,
+        icon_name: &str,
+    ) {
+        self.entries
+            .borrow_mut()
+            .push(ContextMenuEntry::Configurable(
+                item,
+                menu_action_item(
+                    &tr(label),
+                    &format!("{}.{}", self.group_name, action),
+                    icon_name,
+                ),
+            ));
+    }
+
+    pub(crate) fn append_configurable_submenu(
+        &self,
+        setting: ContextMenuItem,
+        label: &str,
+        submenu: &gio::Menu,
+        icon_name: &str,
+    ) {
+        let item = gio::MenuItem::new_submenu(Some(&tr(label)), submenu);
+        item.set_icon(&gio::ThemedIcon::new(icon_name));
+        self.entries
+            .borrow_mut()
+            .push(ContextMenuEntry::Configurable(setting, item));
     }
 
     pub(crate) fn add_action(&self, name: &str, run: impl Fn() + 'static) {
         let action = gio::SimpleAction::new(name, None);
         let popover = self.popover.downgrade();
         action.connect_activate(move |_, _| {
-            popdown_current_context_submenu();
             if let Some(popover) = popover.upgrade() {
-                popover.popdown();
+                popdown_native_menu(&popover);
             }
             run();
         });
         self.actions.add_action(&action);
     }
 
-    pub(crate) fn popup(self) {
+    pub(crate) fn popup(self, settings: &ContextMenuSettings) {
+        for item in resolve_context_menu_entries(self.entries.into_inner(), settings) {
+            self.menu.append_item(&item);
+        }
+        if self.menu.n_items() == 0 {
+            self.popover.unparent();
+            return;
+        }
         self.target
             .insert_action_group(self.group_name, Some(&self.actions));
+        show_native_menu_icons(&self.popover);
+        keep_parent_grab_for_nested_native_menus(&self.popover);
+        let unmap_handler = Rc::new(RefCell::new(Some(popdown_on_anchor_unmap(
+            &self.target,
+            &self.popover,
+        ))));
+        let target = self.target.downgrade();
         self.popover.connect_closed(move |popover| {
+            popdown_nested_native_menus_from(popover.upcast_ref());
             let popover = popover.clone();
+            let target = target.clone();
+            let unmap_handler = Rc::clone(&unmap_handler);
             glib::idle_add_local_once(move || {
-                popdown_current_context_submenu();
+                if let (Some(target), Some(handler)) =
+                    (target.upgrade(), unmap_handler.borrow_mut().take())
+                {
+                    target.disconnect(handler);
+                }
                 popover.unparent();
             });
         });
@@ -79,9 +192,113 @@ impl ContextMenuSurface {
     }
 }
 
-pub(crate) fn context_menu_box() -> gtk::Box {
-    gtk::Box::new(gtk::Orientation::Vertical, 0)
+fn resolve_context_menu_entries<T>(
+    entries: Vec<ContextMenuEntry<T>>,
+    settings: &ContextMenuSettings,
+) -> Vec<T> {
+    fn append_segment<T>(
+        resolved: &mut Vec<T>,
+        segment: &mut Vec<(ContextMenuItem, T)>,
+        settings: &ContextMenuSettings,
+    ) {
+        segment.retain(|(item, _)| settings.is_visible(*item));
+        segment.sort_by_key(|(item, _)| settings.position(*item));
+        resolved.extend(segment.drain(..).map(|(_, value)| value));
+    }
+
+    let mut resolved = Vec::with_capacity(entries.len());
+    let mut segment = Vec::new();
+    for entry in entries {
+        match entry {
+            ContextMenuEntry::Configurable(item, value) => segment.push((item, value)),
+            ContextMenuEntry::Fixed(value) => {
+                append_segment(&mut resolved, &mut segment, settings);
+                resolved.push(value);
+            }
+        }
+    }
+    append_segment(&mut resolved, &mut segment, settings);
+    resolved
 }
+
+#[cfg(test)]
+mod context_menu_tests {
+    use super::{ContextMenuEntry, resolve_context_menu_entries};
+    use crate::settings::{ContextMenuItem, ContextMenuItemSettings, ContextMenuSettings};
+
+    fn settings(order: &[(ContextMenuItem, bool)]) -> ContextMenuSettings {
+        ContextMenuSettings {
+            items: order
+                .iter()
+                .map(|(item, visible)| ContextMenuItemSettings {
+                    item: *item,
+                    visible: *visible,
+                })
+                .collect(),
+        }
+    }
+
+    #[test]
+    fn configurable_items_follow_saved_order_and_visibility() {
+        let settings = settings(&[
+            (ContextMenuItem::Download, true),
+            (ContextMenuItem::Play, false),
+            (ContextMenuItem::Favorites, true),
+        ]);
+        let entries = vec![
+            ContextMenuEntry::Configurable(ContextMenuItem::Play, "play"),
+            ContextMenuEntry::Configurable(ContextMenuItem::Favorites, "favorite"),
+            ContextMenuEntry::Configurable(ContextMenuItem::Download, "download"),
+        ];
+
+        assert_eq!(
+            resolve_context_menu_entries(entries, &settings),
+            ["download", "favorite"]
+        );
+    }
+
+    #[test]
+    fn fixed_items_anchor_configurable_segments() {
+        let settings = settings(&[
+            (ContextMenuItem::Download, true),
+            (ContextMenuItem::Play, true),
+            (ContextMenuItem::Favorites, true),
+        ]);
+        let entries = vec![
+            ContextMenuEntry::Configurable(ContextMenuItem::Play, "play"),
+            ContextMenuEntry::Configurable(ContextMenuItem::Favorites, "favorite"),
+            ContextMenuEntry::Fixed("remove"),
+            ContextMenuEntry::Configurable(ContextMenuItem::Download, "download"),
+        ];
+
+        assert_eq!(
+            resolve_context_menu_entries(entries, &settings),
+            ["play", "favorite", "remove", "download"]
+        );
+    }
+
+    #[test]
+    fn hidden_configurable_items_can_resolve_to_an_empty_menu() {
+        let settings = settings(&[(ContextMenuItem::Play, false)]);
+        let entries = vec![ContextMenuEntry::Configurable(
+            ContextMenuItem::Play,
+            "play",
+        )];
+
+        assert!(resolve_context_menu_entries(entries, &settings).is_empty());
+    }
+}
+
+fn menu_action_item(label: &str, action: &str, icon_name: &str) -> gio::MenuItem {
+    let item = gio::MenuItem::new(Some(label), Some(action));
+    item.set_icon(&gio::ThemedIcon::new(icon_name));
+    item
+}
+
+fn append_menu_action(menu: &gio::Menu, label: &str, action: &str, icon_name: &str) {
+    menu.append_item(&menu_action_item(&tr(label), action, icon_name));
+}
+
 pub(crate) fn context_menu_scroll_page(child: &impl IsA<gtk::Widget>) -> gtk::ScrolledWindow {
     let scroller = gtk::ScrolledWindow::new();
     scroller.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
@@ -99,7 +316,7 @@ pub(crate) fn close_context_surface(widget: &impl IsA<gtk::Widget>) {
         .ancestor(gtk::Popover::static_type())
         .and_then(|widget| widget.downcast::<gtk::Popover>().ok())
     {
-        popover.popdown();
+        popdown_popover(&popover);
         return;
     }
     if let Some(dialog) = widget
@@ -110,246 +327,215 @@ pub(crate) fn close_context_surface(widget: &impl IsA<gtk::Widget>) {
         dialog.close();
     }
 }
-pub(crate) fn context_menu_action(label: &str, action: &str, icon_name: &str) -> gtk::Button {
-    context_menu_action_with_label(&tr(label), action, icon_name)
-}
-fn context_menu_action_with_label(label: &str, action: &str, icon_name: &str) -> gtk::Button {
-    let button = context_menu_button(label, icon_name);
-    button.set_action_name(Some(action));
-    button
-}
-pub(crate) fn context_menu_submenu_action(
-    label: &str,
-    action: &str,
-    icon_name: &str,
-    submenu: &impl IsA<gtk::Widget>,
-) -> gtk::Button {
-    let button = context_menu_disclosure_button(&tr(label), icon_name);
-    button.set_action_name(Some(action));
-
-    let popover = gtk::Popover::new();
-    popover.add_css_class("context-submenu");
-    popover.set_autohide(false);
-    popover.set_has_arrow(false);
-    popover.set_position(gtk::PositionType::Right);
-    popover.set_child(Some(submenu));
-    popover.set_parent(&button);
-
-    let button_hovered = Rc::new(Cell::new(false));
-    let submenu_hovered = Rc::new(Cell::new(false));
-
-    let motion = gtk::EventControllerMotion::new();
-    let popover_for_enter = popover.clone();
-    let button_hovered_for_enter = Rc::clone(&button_hovered);
-    motion.connect_enter(move |_, _, _| {
-        button_hovered_for_enter.set(true);
-        popup_context_submenu(&popover_for_enter);
-    });
-    let popover_for_leave = popover.clone();
-    let button_hovered_for_leave = Rc::clone(&button_hovered);
-    let submenu_hovered_for_leave = Rc::clone(&submenu_hovered);
-    motion.connect_leave(move |_| {
-        button_hovered_for_leave.set(false);
-        schedule_context_submenu_popdown(
-            &popover_for_leave,
-            Rc::clone(&button_hovered_for_leave),
-            Rc::clone(&submenu_hovered_for_leave),
-        );
-    });
-    button.add_controller(motion);
-
-    let submenu_motion = gtk::EventControllerMotion::new();
-    let submenu_hovered_for_enter = Rc::clone(&submenu_hovered);
-    submenu_motion.connect_enter(move |_, _, _| {
-        submenu_hovered_for_enter.set(true);
-    });
-    let popover_for_leave = popover.downgrade();
-    let button_hovered_for_leave = Rc::clone(&button_hovered);
-    let submenu_hovered_for_leave = Rc::clone(&submenu_hovered);
-    submenu_motion.connect_leave(move |_| {
-        submenu_hovered_for_leave.set(false);
-        if let Some(popover) = popover_for_leave.upgrade() {
-            schedule_context_submenu_popdown(
-                &popover,
-                Rc::clone(&button_hovered_for_leave),
-                Rc::clone(&submenu_hovered_for_leave),
-            );
-        }
-    });
-    popover.add_controller(submenu_motion);
-
-    button.connect_unrealize(move |_| {
-        forget_context_submenu(&popover);
-        popover.unparent();
-    });
-    button
-}
-pub(crate) fn radio_context_submenu(group: &str) -> gtk::Box {
-    let menu = context_menu_box();
-    menu.append(&context_menu_action(
-        "Play",
-        &format!("{group}.play-radio"),
-        PLAY_ICON,
-    ));
-    menu.append(&context_menu_action(
+pub(crate) fn radio_context_submenu(group: &str) -> gio::Menu {
+    let menu = gio::Menu::new();
+    append_menu_action(&menu, "Play", &format!("{group}.play-radio"), PLAY_ICON);
+    append_menu_action(
+        &menu,
         "Play Next",
         &format!("{group}.play-radio-next"),
         PLAY_NEXT_ICON,
-    ));
-    menu.append(&context_menu_action(
+    );
+    append_menu_action(
+        &menu,
         "Play Later",
         &format!("{group}.play-radio-last"),
         PLAY_LATER_ICON,
-    ));
+    );
     menu
 }
+
+pub(crate) fn show_native_menu_icons(popover: &gtk::PopoverMenu) {
+    show_native_menu_icons_from(popover.upcast_ref());
+}
+
+pub(crate) fn replace_native_menu_checkmarks(popover: &gtk::PopoverMenu) {
+    replace_native_menu_checkmarks_from(popover.upcast_ref());
+}
+
+pub(crate) fn keep_parent_grab_for_nested_native_menus(popover: &gtk::PopoverMenu) {
+    keep_parent_grab_for_nested_native_menus_from(popover.upcast_ref());
+}
+
+pub(crate) fn popdown_native_menu(popover: &gtk::PopoverMenu) {
+    popdown_nested_native_menus_from(popover.upcast_ref());
+    popover.popdown();
+}
+
+pub(crate) fn popdown_on_anchor_unmap(
+    anchor: &impl IsA<gtk::Widget>,
+    popover: &impl IsA<gtk::Popover>,
+) -> glib::SignalHandlerId {
+    let popover = popover.as_ref().downgrade();
+    anchor.as_ref().connect_unmap(move |_| {
+        if let Some(popover) = popover.upgrade() {
+            popdown_popover(&popover);
+        }
+    })
+}
+
+fn popdown_popover(popover: &gtk::Popover) {
+    if let Ok(menu) = popover.clone().downcast::<gtk::PopoverMenu>() {
+        popdown_native_menu(&menu);
+    } else {
+        popover.popdown();
+    }
+}
+
+fn popdown_nested_native_menus_from(container: &gtk::Widget) {
+    let mut child = container.first_child();
+    while let Some(widget) = child {
+        child = widget.next_sibling();
+
+        if widget.type_().name() == "GtkModelButton"
+            && let Some(nested_popover) = widget
+                .property::<Option<gtk::Popover>>("popover")
+                .and_then(|popover| popover.downcast::<gtk::PopoverMenu>().ok())
+        {
+            popdown_native_menu(&nested_popover);
+        }
+        popdown_nested_native_menus_from(&widget);
+    }
+}
+
+fn keep_parent_grab_for_nested_native_menus_from(container: &gtk::Widget) {
+    let mut child = container.first_child();
+    while let Some(widget) = child {
+        child = widget.next_sibling();
+
+        if widget.type_().name() == "GtkModelButton"
+            && let Some(nested_popover) = widget
+                .property::<Option<gtk::Popover>>("popover")
+                .and_then(|popover| popover.downcast::<gtk::PopoverMenu>().ok())
+        {
+            // GTK can lose the parent's input grab when an autohide child closes.
+            nested_popover.set_autohide(false);
+            let nested_popover = nested_popover.downgrade();
+            widget.connect_unmap(move |_| {
+                if let Some(nested_popover) = nested_popover.upgrade() {
+                    popdown_native_menu(&nested_popover);
+                }
+            });
+        }
+        keep_parent_grab_for_nested_native_menus_from(&widget);
+    }
+}
+
+fn replace_native_menu_checkmarks_from(container: &gtk::Widget) {
+    let mut child = container.first_child();
+    while let Some(widget) = child {
+        child = widget.next_sibling();
+
+        if widget.type_().name() == "GtkModelButton" {
+            if generated_menu_button_has_starting_space(&widget) {
+                hide_native_menu_indicator_box(&widget);
+            }
+            if generated_menu_button_is_selection(&widget) {
+                style_native_menu_selection(&widget);
+            }
+            if let Some(nested_popover) = widget
+                .property::<Option<gtk::Popover>>("popover")
+                .and_then(|popover| popover.downcast::<gtk::PopoverMenu>().ok())
+            {
+                replace_native_menu_checkmarks(&nested_popover);
+            }
+        }
+        replace_native_menu_checkmarks_from(&widget);
+    }
+}
+
+fn generated_menu_button_has_starting_space(widget: &gtk::Widget) -> bool {
+    let role = widget.property_value("role");
+    glib::EnumValue::from_value(&role).is_some_and(|(_, role)| role.nick() != "title")
+}
+
+fn generated_menu_button_is_selection(widget: &gtk::Widget) -> bool {
+    if widget.type_().name() != "GtkModelButton" {
+        return false;
+    }
+
+    let role = widget.property_value("role");
+    glib::EnumValue::from_value(&role)
+        .is_some_and(|(_, role)| matches!(role.nick(), "check" | "radio"))
+}
+
+fn style_native_menu_selection(button: &gtk::Widget) {
+    if button.has_css_class(NATIVE_MENU_SELECTION_CLASS) {
+        return;
+    }
+    button.add_css_class(NATIVE_MENU_SELECTION_CLASS);
+
+    update_native_menu_selection(button);
+    button.connect_notify_local(Some("active"), |button, _| {
+        update_native_menu_selection(button);
+    });
+}
+
+fn hide_native_menu_indicator_box(button: &gtk::Widget) {
+    let mut child = button.first_child();
+    while let Some(widget) = child {
+        child = widget.next_sibling();
+        if widget.type_().name() == "GtkBox" {
+            widget.set_visible(false);
+            break;
+        }
+    }
+}
+
+fn update_native_menu_selection(button: &gtk::Widget) {
+    if button.property::<bool>("active") {
+        button.add_css_class(NATIVE_MENU_SELECTED_CLASS);
+    } else {
+        button.remove_css_class(NATIVE_MENU_SELECTED_CLASS);
+    }
+}
+
+fn show_native_menu_icons_from(container: &gtk::Widget) {
+    let mut child = container.first_child();
+    while let Some(widget) = child {
+        child = widget.next_sibling();
+
+        if widget.type_().name() == "GtkModelButton" {
+            show_native_menu_button_icon(&widget);
+            if let Some(nested_popover) = widget
+                .property::<Option<gtk::Popover>>("popover")
+                .and_then(|popover| popover.downcast::<gtk::PopoverMenu>().ok())
+            {
+                show_native_menu_icons(&nested_popover);
+            }
+        }
+        show_native_menu_icons_from(&widget);
+    }
+}
+
+fn show_native_menu_button_icon(button: &gtk::Widget) {
+    let mut child = button.first_child();
+    while let Some(widget) = child {
+        child = widget.next_sibling();
+
+        if let Ok(image) = widget.clone().downcast::<gtk::Image>() {
+            image.set_visible(true);
+            image.set_margin_end(8);
+        } else if let Ok(label) = widget.downcast::<gtk::Label>() {
+            label.set_hexpand(true);
+        }
+    }
+}
+
 fn context_popover(
     target: &gtk::Widget,
-    css_class: &str,
     position: Option<(f64, f64)>,
-    child: &impl IsA<gtk::Widget>,
-) -> gtk::Popover {
-    let popover = gtk::Popover::new();
+    menu: &gio::Menu,
+) -> gtk::PopoverMenu {
+    let popover = gtk::PopoverMenu::from_model_full(menu, gtk::PopoverMenuFlags::NESTED);
     popover.set_autohide(true);
-    popover.add_css_class(css_class);
     popover.set_has_arrow(false);
     popover.set_position(gtk::PositionType::Bottom);
     popover.set_parent(target);
-    popover.set_child(Some(child));
     if let Some((x, y)) = position {
-        popover.add_css_class("context-menu-opening");
         popover.set_pointing_to(Some(&gtk::gdk::Rectangle::new(x as i32, y as i32, 1, 1)));
     }
-    let motion = gtk::EventControllerMotion::new();
-    let popover_for_motion = popover.downgrade();
-    motion.connect_motion(move |_, _, _| {
-        if let Some(popover) = popover_for_motion.upgrade() {
-            popover.remove_css_class("context-menu-opening");
-        }
-    });
-    popover.add_controller(motion);
     popover
-}
-pub(crate) fn context_menu_button(label: &str, icon_name: &str) -> gtk::Button {
-    let row = context_menu_button_content(label, icon_name);
-    let button = gtk::Button::builder()
-        .child(&row)
-        .tooltip_text(label)
-        .halign(gtk::Align::Fill)
-        .hexpand(true)
-        .build();
-    button.add_css_class("flat");
-    button.add_css_class("context-menu-button");
-    button
-}
-fn context_menu_disclosure_button(label: &str, icon_name: &str) -> gtk::Button {
-    let row = context_menu_button_content(label, icon_name);
-    let arrow = gtk::Image::from_icon_name("go-next-symbolic");
-    arrow.add_css_class("context-submenu-arrow");
-    arrow.set_pixel_size(14);
-    row.append(&arrow);
-
-    let button = gtk::Button::builder()
-        .child(&row)
-        .tooltip_text(label)
-        .halign(gtk::Align::Fill)
-        .hexpand(true)
-        .build();
-    button.add_css_class("flat");
-    button.add_css_class("context-menu-button");
-    button
-}
-fn context_menu_button_content(label: &str, icon_name: &str) -> gtk::Box {
-    let row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-    row.set_halign(gtk::Align::Fill);
-    row.set_hexpand(true);
-
-    let icon = context_menu_icon(icon_name);
-    row.append(&icon);
-
-    let text = gtk::Label::new(Some(label));
-    text.set_xalign(0.0);
-    text.set_hexpand(true);
-    text.set_ellipsize(gtk::pango::EllipsizeMode::End);
-    row.append(&text);
-    row
-}
-fn context_menu_icon(icon_name: &str) -> gtk::Widget {
-    let icon = {
-        let image = gtk::Image::from_icon_name(icon_name);
-        let pixel_size = if icon_name == PLAY_ICON {
-            12
-        } else if icon_name == ADD_TO_PLAYLIST_ICON {
-            16
-        } else if matches!(
-            icon_name,
-            PLAY_NEXT_ICON
-                | PLAY_LATER_ICON
-                | ARTIST_ICON
-                | ALBUM_ICON
-                | RADIO_ICON
-                | FAVORITE_ADD_ICON
-                | FAVORITE_REMOVE_ICON
-                | REMOVE_ICON
-        ) {
-            20
-        } else {
-            18
-        };
-        image.set_pixel_size(pixel_size);
-        image.upcast::<gtk::Widget>()
-    };
-    icon.add_css_class("context-menu-icon");
-    icon.set_size_request(20, 20);
-    icon.set_halign(gtk::Align::Center);
-    icon.set_valign(gtk::Align::Center);
-    icon
-}
-fn popup_context_submenu(popover: &gtk::Popover) {
-    OPEN_CONTEXT_SUBMENU.with(|current| {
-        let previous = current.borrow().clone();
-        if let Some(previous) = previous
-            && previous != *popover
-        {
-            previous.popdown();
-        }
-        *current.borrow_mut() = Some(popover.clone());
-    });
-    popover.popup();
-}
-fn schedule_context_submenu_popdown(
-    popover: &gtk::Popover,
-    button_hovered: Rc<Cell<bool>>,
-    submenu_hovered: Rc<Cell<bool>>,
-) {
-    let popover = popover.clone();
-    glib::timeout_add_local_once(
-        Duration::from_millis(CONTEXT_SUBMENU_CLOSE_DELAY_MS),
-        move || {
-            if !button_hovered.get() && !submenu_hovered.get() {
-                forget_context_submenu(&popover);
-                popover.popdown();
-            }
-        },
-    );
-}
-fn popdown_current_context_submenu() {
-    OPEN_CONTEXT_SUBMENU.with(|current| {
-        if let Some(popover) = current.borrow_mut().take() {
-            popover.popdown();
-        }
-    });
-}
-fn forget_context_submenu(popover: &gtk::Popover) {
-    OPEN_CONTEXT_SUBMENU.with(|current| {
-        let is_current = current
-            .borrow()
-            .as_ref()
-            .is_some_and(|current| current == popover);
-        if is_current {
-            current.borrow_mut().take();
-        }
-    });
 }
 
 pub(crate) fn install_context_menu_openers(target: &impl IsA<gtk::Widget>, open: ContextMenuOpen) {
@@ -378,21 +564,6 @@ pub(crate) fn install_context_menu_openers(target: &impl IsA<gtk::Widget>, open:
         }
     });
     target.add_controller(press);
-
-    let target_weak = target.downgrade();
-    let key = gtk::EventControllerKey::new();
-    key.connect_key_pressed(move |_, key, _, state| {
-        let opens_menu = key == gtk::gdk::Key::Menu
-            || (key == gtk::gdk::Key::F10 && state.contains(gtk::gdk::ModifierType::SHIFT_MASK));
-        if !opens_menu {
-            return glib::Propagation::Proceed;
-        }
-        if let Some(target) = target_weak.upgrade() {
-            open(&target, None);
-        }
-        glib::Propagation::Stop
-    });
-    target.add_controller(key);
 }
 
 pub(crate) fn add_link_hover(target: &gtk::Widget, label: &gtk::Label, text: &str) {
@@ -479,4 +650,20 @@ pub(crate) fn add_widget_click(target: &gtk::Widget, callback: impl Fn() + 'stat
         }
     });
     target.add_controller(click);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn native_menu_actions_store_their_icon() {
+        let item = menu_action_item("Play", "track.play", PLAY_ICON);
+        let serialized = item
+            .attribute_value("icon", None)
+            .expect("menu item should have an icon");
+        let icon = gio::Icon::deserialize(&serialized).expect("menu icon should deserialize");
+
+        assert!(icon.equal(Some(&gio::ThemedIcon::new(PLAY_ICON))));
+    }
 }

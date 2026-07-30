@@ -1,29 +1,54 @@
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 
-mod controller;
+mod album_release;
+mod app;
+mod diagnostics;
+mod paths;
+mod playback;
+mod radio;
+mod release_update;
+mod schema30_migration;
+mod scrobbling;
 mod settings;
-mod source_setup;
+mod source;
+mod waveform;
 
-pub(crate) use settings::StoredSettings;
-
+use std::env;
+use std::ffi::OsStr;
+use std::io::{self, Write};
+use std::path::PathBuf;
 use std::process::ExitCode;
 use tracing::info;
-use tracing_subscriber::{EnvFilter, fmt};
 
 fn main() -> ExitCode {
-    init_tracing();
+    if let Some(result) = verify_media_argument() {
+        return result;
+    }
+    let diagnostics = diagnostics::Diagnostics::install(paths::state_dir());
     info!("starting Rufin native shell");
 
-    ui::run_application(controller::runtime_inputs)
+    ui::run_application(move || app::runtime_inputs(diagnostics))
 }
 
-fn init_tracing() {
-    let mut filter = EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| EnvFilter::new("rufin=info,rufin_app=info,playback=info"));
-    if std::env::var("RUST_LOG").map_or(true, |value| !value.contains("lofty"))
-        && let Ok(directive) = "lofty=error".parse()
-    {
-        filter = filter.add_directive(directive);
+fn verify_media_argument() -> Option<ExitCode> {
+    let mut arguments = env::args_os().skip(1);
+    if arguments.next().as_deref() != Some(OsStr::new("--verify-media")) {
+        return None;
     }
-    fmt().with_env_filter(filter).compact().init();
+    let result = (|| {
+        let path = PathBuf::from(arguments.next().ok_or("Usage: rufin --verify-media PATH")?);
+        if arguments.next().is_some() {
+            return Err("Usage: rufin --verify-media PATH".to_string());
+        }
+        sources::verify_local_media_file(&path).map_err(|error| error.to_string())?;
+        playback_gstreamer::verify_audio_file(&path)?;
+        Ok(())
+    })();
+    match result {
+        Ok(()) => Some(ExitCode::SUCCESS),
+        Err(error) => {
+            let _ = writeln!(io::stderr().lock(), "{error}");
+            Some(ExitCode::FAILURE)
+        }
+    }
 }

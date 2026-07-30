@@ -1,9 +1,8 @@
 use std::rc::Rc;
 
-use ::library::{Genre, GenreId};
+use ::library::{GenreId, GenreSummary};
 use adw::prelude::*;
-use playback::{QueuePlacement, RandomPlayRequest};
-use sources::{PlayedFilter, RandomTrackDomain};
+use playback::{PlayedFilter, QueuePlacement, RandomPlayRequest};
 
 use crate::preferences::dialogs::popup::present_light_dismiss_dialog;
 use localization::tr;
@@ -29,23 +28,21 @@ struct RandomPlayControls {
     max_year: gtk::SpinButton,
     genre: gtk::DropDown,
     played_filter: gtk::DropDown,
-    domain: RandomTrackDomain,
 }
 
 pub(super) fn present_random_play_dialog(shell: &Rc<Shell>) {
-    let genres = shell
-        .library
-        .query
-        .borrow()
-        .clone()
-        .and_then(|query| {
-            let total = query.genres_page(0, 1).ok()?.total;
-            query.genres_page(0, total).ok().map(|page| page.items)
-        })
-        .unwrap_or_default();
-    let Some(domain) = shell.products.playback.radio.random_track_domain() else {
+    let Some(selected) = shell.library.selected.borrow().clone() else {
         return;
     };
+    let genres = selected
+        .loaded
+        .genres(selected.music_folder_id.as_ref())
+        .unwrap_or_default();
+    let played_filters = [
+        PlayedFilter::All,
+        PlayedFilter::Unplayed,
+        PlayedFilter::Played,
+    ];
 
     let toolbar = adw::ToolbarView::new();
     let header = adw::HeaderBar::new();
@@ -66,22 +63,12 @@ pub(super) fn present_random_play_dialog(shell: &Rc<Shell>) {
         max_year_enabled: gtk::CheckButton::new(),
         max_year: count_spinner(DEFAULT_MAX_YEAR, MIN_YEAR, MAX_YEAR),
         genre: genre_dropdown(&genres),
-        played_filter: played_filter_dropdown(domain.played_filters()),
-        domain,
+        played_filter: played_filter_dropdown(&played_filters),
     };
     controls.min_year.set_sensitive(false);
     controls.max_year.set_sensitive(false);
-    controls
-        .min_year_enabled
-        .set_sensitive(domain.allows_year_range());
-    controls
-        .max_year_enabled
-        .set_sensitive(domain.allows_year_range());
-    controls.genre.set_sensitive(domain.allows_genre());
-    if domain.allows_year_range() {
-        connect_year_toggle(&controls.min_year_enabled, &controls.min_year);
-        connect_year_toggle(&controls.max_year_enabled, &controls.max_year);
-    }
+    connect_year_toggle(&controls.min_year_enabled, &controls.min_year);
+    connect_year_toggle(&controls.max_year_enabled, &controls.max_year);
 
     content.append(&control_row(&tr("Number of songs"), &controls.limit));
     content.append(&optional_control_row(
@@ -157,10 +144,10 @@ fn connect_year_toggle(check: &gtk::CheckButton, spinner: &gtk::SpinButton) {
     });
 }
 
-fn genre_dropdown(genres: &[Genre]) -> gtk::DropDown {
+fn genre_dropdown(genres: &[GenreSummary]) -> gtk::DropDown {
     let mut labels = Vec::with_capacity(genres.len() + 1);
     labels.push(tr("Any genre"));
-    labels.extend(genres.iter().map(|genre| genre.name.clone()));
+    labels.extend(genres.iter().map(|genre| genre.genre.name.clone()));
     let refs = labels.iter().map(String::as_str).collect::<Vec<_>>();
     let model = gtk::StringList::new(&refs);
     let dropdown = gtk::DropDown::new(Some(model), None::<gtk::Expression>);
@@ -216,71 +203,59 @@ fn connect_action(
     shell: &Rc<Shell>,
     dialog: &adw::Dialog,
     controls: &RandomPlayControls,
-    genres: &[Genre],
+    genres: &[GenreSummary],
     placement: QueuePlacement,
 ) {
     let radio = shell.products.playback.radio.clone();
-    let dialog = dialog.clone();
+    let dialog = dialog.downgrade();
     let controls = controls.clone();
     let genres = genres.to_vec();
     button.connect_clicked(move |_| {
         if let Some(request) = request_from_controls(&controls, &genres, placement) {
             radio.play_random(request);
-            dialog.close();
+            if let Some(dialog) = dialog.upgrade() {
+                dialog.close();
+            }
         }
     });
 }
 
 fn request_from_controls(
     controls: &RandomPlayControls,
-    genres: &[Genre],
+    genres: &[GenreSummary],
     placement: QueuePlacement,
 ) -> Option<RandomPlayRequest> {
-    let (genre_id, genre_name) = if controls.domain.allows_genre() {
-        selected_genre(genres, controls.genre.selected())
-    } else {
-        (None, None)
-    };
-    let played_filter = controls
-        .domain
-        .played_filters()
-        .get(controls.played_filter.selected() as usize)
-        .copied()?;
+    let (genre_id, genre_name) = selected_genre(genres, controls.genre.selected());
+    let played_filter = [
+        PlayedFilter::All,
+        PlayedFilter::Unplayed,
+        PlayedFilter::Played,
+    ]
+    .get(controls.played_filter.selected() as usize)
+    .copied()?;
     Some(RandomPlayRequest {
         placement,
         limit: controls.limit.value_as_int().clamp(1, 500) as usize,
         min_year: controls
-            .domain
-            .allows_year_range()
-            .then(|| {
-                controls
-                    .min_year_enabled
-                    .is_active()
-                    .then(|| controls.min_year.value_as_int().clamp(1850, 2050) as u16)
-            })
-            .flatten(),
+            .min_year_enabled
+            .is_active()
+            .then(|| controls.min_year.value_as_int().clamp(1850, 2050) as u16),
         max_year: controls
-            .domain
-            .allows_year_range()
-            .then(|| {
-                controls
-                    .max_year_enabled
-                    .is_active()
-                    .then(|| controls.max_year.value_as_int().clamp(1850, 2050) as u16)
-            })
-            .flatten(),
+            .max_year_enabled
+            .is_active()
+            .then(|| controls.max_year.value_as_int().clamp(1850, 2050) as u16),
         genre_id,
         genre_name,
         played_filter,
     })
 }
 
-fn selected_genre(genres: &[Genre], selected: u32) -> (Option<GenreId>, Option<String>) {
+fn selected_genre(genres: &[GenreSummary], selected: u32) -> (Option<GenreId>, Option<String>) {
     if selected == gtk::INVALID_LIST_POSITION || selected == 0 {
         return (None, None);
     }
     let Some(genre) = genres.get((selected - 1) as usize) else {
         return (None, None);
     };
-    (Some(genre.id.clone()), Some(genre.name.clone()))
+    (Some(genre.genre.id.clone()), Some(genre.genre.name.clone()))
 }

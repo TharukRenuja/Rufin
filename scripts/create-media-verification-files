@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [[ $# -ne 1 ]]; then
+  echo "Usage: scripts/create-media-verification-files OUTPUT_DIRECTORY" >&2
+  exit 1
+fi
+
+output_directory="$1"
+mkdir -p "$output_directory"
+
+gst-launch-1.0 -q \
+  audiotestsrc num-buffers=20 ! audioconvert ! vorbisenc ! matroskamux ! \
+  filesink location="$output_directory/package-check.mka"
+gst-launch-1.0 -q \
+  audiotestsrc num-buffers=20 ! audioconvert ! avenc_wmav2 ! asfmux ! \
+  filesink location="$output_directory/package-check.wma"
+
+test -s "$output_directory/package-check.mka"
+test -s "$output_directory/package-check.wma"

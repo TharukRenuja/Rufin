@@ -33,39 +33,21 @@ Rufin's crates try to follow a product ownership model. The goal is to separate 
 
 | Crate | What it is for |
 | :--- | :--- |
-| `artwork` | artwork selection and caching |
-| `library` | library items are defined and stored here |
-| `library-sync` | changes from sources are gathered and applied to the library |
+| `album-lookup` | external album release and cover lookups |
+| `artwork` | artwork selection, loading, and caching |
+| `desktop-integration` | MPRIS, notifications, the tray, and Discord RPC |
+| `downloads` | server track downloads and download management |
+| `library` | music items, listening activity, and the database |
 | `localization` | translation tooling and locales |
-| `metadata` | lyrics handling and metadata enrichment |
+| `lyrics` | lyrics fetching, selection, and state |
 | `playback` | playback behavior and the queue |
 | `playback-gstreamer` | the GStreamer playback backend |
-| `rich-presence` | RPC backend |
-| `rufin` | starts Rufin and connects the crates |
-| `scrobbling` | scrobbling rules and service integrations |
+| `rufin` | app startup, settings persistence, and crate composition |
+| `scrobbling` | scrobbling services|
 | `secrets` | storage for credentials and service keys |
-| `sources` | source clients and their specific configurations live here |
-| `ui` | GTK bindings, navigation, and desktop integrations |
-| `xtask` | development tooling that we use through just commands; binary packages do not use this crate |
-
-For example, a large expansion such as adding a new source can be roughly done with this shape:
-
-```text
-crates/sources/src/new_source/
-├── mod.rs
-├── client.rs
-├── source_impl.rs
-└── tests.rs
-```
-Then:
-
-- `crates/sources/src/lib.rs` needs `pub mod new_source;`
-- `crates/sources/src/config.rs` needs connection fields
-- `crates/rufin/src/source_setup/mod.rs` register the source
-- `crates/ui/src/preferences/source/login.rs` add it to the connection screen
-
-This adds a new source without building new library, syncing, playback, secrets, or new menus from scratch.
-
+| `sources` | source-specific operations |
+| `ui` | GTK views and navigation|
+| `xtask` | development and packaging commands |
 
 ## Development commands
 

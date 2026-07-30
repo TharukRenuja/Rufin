@@ -1,8 +1,4 @@
-use std::{
-    cell::Cell,
-    rc::Rc,
-    time::{Duration, Instant},
-};
+use std::{cell::Cell, rc::Rc};
 
 use crate::{
     LayoutProfile, LayoutSettings, LeftSidebarMode, MAX_RIGHT_SIDEBAR_WIDTH,
@@ -10,7 +6,7 @@ use crate::{
 };
 use adw::prelude::*;
 use gtk::glib;
-use tracing::{debug, info};
+use tracing::debug;
 
 use super::Shell;
 
@@ -26,10 +22,6 @@ pub(crate) const WINDOW_CHROME_MARGIN_END: i32 = 8;
 pub(crate) const MIN_RESTORED_WINDOW_HEIGHT: i32 = MIN_APP_WINDOW_HEIGHT;
 const LEFT_SIDEBAR_COLLAPSE_DETENT: i32 = crate::MIN_LEFT_SIDEBAR_WIDTH - 40;
 const LEFT_SIDEBAR_EXPAND_DETENT: i32 = crate::MIN_LEFT_SIDEBAR_WIDTH;
-const SIDEBAR_KEY_STEP: i32 = 10;
-const SIDEBAR_KEY_PAGE_STEP: i32 = 50;
-const RESIZE_DIAGNOSTIC_INTERVAL: Duration = Duration::from_millis(100);
-
 type ShellAllocationCallback = Rc<dyn Fn(i32, i32)>;
 
 mod shell_allocation_owner_imp {
@@ -119,16 +111,17 @@ impl ShellAllocationOwner {
         owner
     }
 
-    fn set_callbacks(
-        &self,
-        before_allocate: impl Fn(i32, i32) + 'static,
-        after_allocate: impl Fn(i32, i32) + 'static,
-    ) {
+    fn set_before_allocate(&self, before_allocate: impl Fn(i32, i32) + 'static) {
         use gtk::subclass::prelude::ObjectSubclassIsExt;
 
         self.imp()
             .before_allocate
             .replace(Some(Rc::new(before_allocate) as ShellAllocationCallback));
+    }
+
+    fn set_after_allocate(&self, after_allocate: impl Fn(i32, i32) + 'static) {
+        use gtk::subclass::prelude::ObjectSubclassIsExt;
+
         self.imp()
             .after_allocate
             .replace(Some(Rc::new(after_allocate) as ShellAllocationCallback));
@@ -145,9 +138,6 @@ pub(super) struct ShellLayoutState {
     pub(super) owner: ShellAllocationOwner,
     left_drag_preview: Cell<Option<LeftSidebarDragPreview>>,
     right_drag_width: Cell<Option<i32>>,
-    last_resolved: Cell<Option<ResolvedLayout>>,
-    last_allocation_log: Cell<Option<Instant>>,
-    post_allocation_log_pending: Cell<bool>,
 }
 
 impl ShellLayoutState {
@@ -156,29 +146,8 @@ impl ShellLayoutState {
             owner: ShellAllocationOwner::new(root_stack),
             left_drag_preview: Cell::new(None),
             right_drag_width: Cell::new(None),
-            last_resolved: Cell::new(None),
-            last_allocation_log: Cell::new(None),
-            post_allocation_log_pending: Cell::new(false),
         }
     }
-}
-
-fn diagnostics_flag_enabled(name: &str) -> bool {
-    matches!(
-        std::env::var(name)
-            .unwrap_or_default()
-            .to_ascii_lowercase()
-            .as_str(),
-        "1" | "true" | "yes" | "on"
-    )
-}
-
-fn layout_diagnostics_enabled() -> bool {
-    diagnostics_flag_enabled("RUFIN_DEBUG_LAYOUT")
-}
-
-fn resize_diagnostics_enabled() -> bool {
-    diagnostics_flag_enabled("RUFIN_RESIZE_DEBUG")
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -352,27 +321,6 @@ fn resolve_layout_with_drag_previews(
     resolve_layout(&settings, window_width)
 }
 
-fn right_sidebar_width_after_key(current_width: i32, scroll: gtk::ScrollType) -> Option<i32> {
-    let requested = match scroll {
-        gtk::ScrollType::StepBackward | gtk::ScrollType::StepUp | gtk::ScrollType::StepLeft => {
-            current_width.saturating_add(SIDEBAR_KEY_STEP)
-        }
-        gtk::ScrollType::StepForward | gtk::ScrollType::StepDown | gtk::ScrollType::StepRight => {
-            current_width.saturating_sub(SIDEBAR_KEY_STEP)
-        }
-        gtk::ScrollType::PageBackward | gtk::ScrollType::PageUp | gtk::ScrollType::PageLeft => {
-            current_width.saturating_add(SIDEBAR_KEY_PAGE_STEP)
-        }
-        gtk::ScrollType::PageForward | gtk::ScrollType::PageDown | gtk::ScrollType::PageRight => {
-            current_width.saturating_sub(SIDEBAR_KEY_PAGE_STEP)
-        }
-        gtk::ScrollType::Start => MAX_RIGHT_SIDEBAR_WIDTH,
-        gtk::ScrollType::End => MIN_RIGHT_SIDEBAR_WIDTH,
-        _ => return None,
-    };
-    Some(requested.clamp(MIN_RIGHT_SIDEBAR_WIDTH, MAX_RIGHT_SIDEBAR_WIDTH))
-}
-
 fn right_sidebar_width_after_drag_update(
     settings: &LayoutSettings,
     window_width: i32,
@@ -412,59 +360,6 @@ pub(crate) fn route_content_width(shell: &Shell) -> i32 {
 }
 
 impl Shell {
-    fn log_layout_snapshot(&self, stage: &'static str) {
-        if !layout_diagnostics_enabled() && !resize_diagnostics_enabled() {
-            return;
-        }
-        if self.right_panel.right_split.width() <= 1 && self.route_viewport.route_host.width() <= 1
-        {
-            return;
-        }
-
-        let route = self
-            .navigation
-            .routes
-            .try_borrow()
-            .ok()
-            .map(|routes| routes.current().clone());
-        let active_surface = self.route_viewport.route_host.visible_child();
-        let route_chain = active_surface
-            .as_ref()
-            .map(widget_width_chain)
-            .unwrap_or_default();
-        let main_child_width = self
-            .right_panel
-            .right_split
-            .start_child()
-            .map_or(0, |child| child.width());
-        let right_child_width = self
-            .right_panel
-            .right_split
-            .end_child()
-            .map_or(0, |child| child.width());
-        info!(
-            stage,
-            ?route,
-            window_width = self.layout_width(),
-            root_stack_width = self.chrome.root_stack.width(),
-            app_root_width = self.chrome.app_root.width(),
-            split_width = self.right_panel.right_split.width(),
-            split_position = self.right_panel.right_split.position(),
-            split_max_position = self.right_panel.right_split.max_position(),
-            main_child_width,
-            right_child_width,
-            right_panel_slot_visible = self.right_panel.right_panel_slot.is_visible(),
-            right_panel_slot_width = self.right_panel.right_panel_slot.width(),
-            right_panel_width = self.right_panel.root.width(),
-            route_host_width = self.route_viewport.route_host.width(),
-            active_surface_width = active_surface.as_ref().map_or(0, gtk::Widget::width),
-            left_sidebar = ?self.left_sidebar_mode(),
-            right_sidebar_visible = self.right_sidebar_visible(),
-            %route_chain,
-            "layout snapshot"
-        );
-    }
-
     pub(crate) fn left_sidebar_mode(&self) -> ResolvedLeftSidebarMode {
         if !self.navigation_view.split_view.is_collapsed() {
             ResolvedLeftSidebarMode::Full
@@ -487,11 +382,7 @@ impl Shell {
         self.layout_state.owner.queue_allocate();
     }
 
-    fn apply_layout_allocation(self: &Rc<Self>, width: i32, height: i32) {
-        // Startup visibility belongs to this allocation owner. Commit a ready
-        // route before choosing and allocating the Stack child so the reveal
-        // never depends on a second allocation request from inside this one.
-        self.try_reveal_startup_route_for_allocation(width);
+    fn apply_layout_allocation(self: &Rc<Self>, width: i32, _height: i32) {
         let settings = self.settings.current.borrow().layout.clone();
         let left_drag_preview = self.layout_state.left_drag_preview.get();
         let right_drag_width = self.layout_state.right_drag_width.get();
@@ -501,49 +392,16 @@ impl Shell {
             left_drag_preview,
             right_drag_width,
         );
-        let previous_resolved = self.layout_state.last_resolved.replace(Some(resolved));
-        let resolved_changed = previous_resolved != Some(resolved);
-        let presentation_changed = previous_resolved.is_none_or(|previous| {
-            previous.profile != resolved.profile
-                || previous.left_sidebar != resolved.left_sidebar
-                || previous.right_sidebar != resolved.right_sidebar
-        });
-        let diagnostics_enabled = layout_diagnostics_enabled() || resize_diagnostics_enabled();
-        let now = Instant::now();
-        let log_due = self
-            .layout_state
-            .last_allocation_log
-            .get()
-            .is_none_or(|previous| now.duration_since(previous) >= RESIZE_DIAGNOSTIC_INTERVAL);
-        if diagnostics_enabled && resolved_changed && (presentation_changed || log_due) {
-            self.layout_state.last_allocation_log.set(Some(now));
-            self.layout_state.post_allocation_log_pending.set(true);
-            info!(
-                allocation_width = width,
-                allocation_height = height,
-                ?left_drag_preview,
-                right_drag_width,
-                ?resolved,
-                "resolved shell layout before child allocation"
-            );
-        }
         self.apply_resolved_layout_for_allocation(resolved);
-    }
-
-    fn finish_layout_allocation(self: &Rc<Self>) {
-        if self.layout_state.post_allocation_log_pending.replace(false) {
-            self.log_layout_snapshot("shell_allocation_complete");
-        }
     }
 
     fn apply_resolved_layout_for_allocation(self: &Rc<Self>, resolved: ResolvedLayout) {
         let login_active = self.source.login_screen_active();
-        let startup_loading_active =
-            startup_loading_screen_active(login_active, self.startup.route_revealed.get());
+        let presentation = root_presentation(login_active, self.startup.route_revealed.get());
         let previous_left = self.left_sidebar_mode();
         let previous_right_visible = self.right_sidebar_visible();
 
-        let app_active = !login_active && !startup_loading_active;
+        let app_active = presentation.app_active;
         let full_sidebar = resolved.left_sidebar == ResolvedLeftSidebarMode::Full;
         let hidden_sidebar = resolved.left_sidebar == ResolvedLeftSidebarMode::Hidden;
         let overlay_sidebar_width = if hidden_sidebar {
@@ -560,18 +418,17 @@ impl Shell {
             self.refresh_fullscreen_player_layout();
         }
 
-        let root_page = if login_active {
-            "login"
-        } else if startup_loading_active {
-            "startup-loading"
-        } else {
-            "app"
-        };
         let root_changed =
-            self.chrome.root_stack.visible_child_name().as_deref() != Some(root_page);
+            self.chrome.root_stack.visible_child_name().as_deref() != Some(presentation.root_page);
         if root_changed {
-            self.chrome.root_stack.set_visible_child_name(root_page);
+            self.chrome
+                .root_stack
+                .set_visible_child_name(presentation.root_page);
         }
+        set_widget_visible(
+            &self.chrome.startup_loading_host,
+            presentation.startup_loading,
+        );
         if self
             .chrome
             .app_content_stack
@@ -634,6 +491,14 @@ impl Shell {
         if right_visibility_changed || previous_right_visible != right_visible {
             self.sync_library_toolbar_end_margin();
             self.update_right_panel_button();
+            let lyrics_shell = Rc::clone(self);
+            glib::idle_add_local_once(move || {
+                if lyrics_shell.right_lyrics_surface_visible() {
+                    lyrics_shell.sync_visible_lyrics_surfaces();
+                } else {
+                    lyrics_shell.update_lyrics_highlight();
+                }
+            });
         }
         if player_visibility_changed || root_changed {
             self.update_lyrics_panel_button();
@@ -719,11 +584,6 @@ impl Shell {
         }
     }
 
-    fn current_left_sidebar_width(&self) -> i32 {
-        resolve_layout(&self.settings.current.borrow().layout, self.layout_width())
-            .left_sidebar_width
-    }
-
     fn current_right_sidebar_width(&self) -> i32 {
         let split = &self.right_panel.right_split;
         let allocated_width = split
@@ -769,6 +629,21 @@ pub(crate) fn startup_loading_screen_active(
     !login_active && !startup_route_revealed
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct RootPresentation {
+    root_page: &'static str,
+    app_active: bool,
+    startup_loading: bool,
+}
+
+fn root_presentation(login_active: bool, startup_route_revealed: bool) -> RootPresentation {
+    RootPresentation {
+        root_page: if login_active { "login" } else { "app" },
+        app_active: !login_active,
+        startup_loading: startup_loading_screen_active(login_active, startup_route_revealed),
+    }
+}
+
 fn connect_left_sidebar_resize(shell: &Rc<Shell>) {
     let start_width = Rc::new(Cell::new(COMPACT_RAIL_WIDTH));
     let start_mode = Rc::new(Cell::new(LeftSidebarMode::Compact));
@@ -803,7 +678,6 @@ fn connect_left_sidebar_resize(shell: &Rc<Shell>) {
 
         drag_active.set(true);
         gesture.set_state(gtk::EventSequenceState::Claimed);
-        handle.grab_focus();
         let width = resolve_layout(
             &drag_shell.settings.current.borrow().layout,
             drag_shell.layout_width(),
@@ -884,34 +758,6 @@ fn connect_left_sidebar_resize(shell: &Rc<Shell>) {
         .parent()
         .expect("left resize handle must be mounted in its stable overlay")
         .add_controller(drag);
-
-    let key = gtk::EventControllerKey::new();
-    let key_shell = Rc::clone(shell);
-    key.connect_key_pressed(move |_, key, _, _| {
-        let mode = key_shell.left_sidebar_mode();
-        match (key, mode) {
-            (gtk::gdk::Key::Left, ResolvedLeftSidebarMode::Full) => {
-                let width = key_shell.current_left_sidebar_width();
-                if width <= crate::MIN_LEFT_SIDEBAR_WIDTH {
-                    key_shell.set_active_left_sidebar_mode(LeftSidebarMode::Compact);
-                } else {
-                    key_shell.save_preferred_left_sidebar_width(width - SIDEBAR_KEY_STEP);
-                    key_shell.update_layout();
-                }
-            }
-            (gtk::gdk::Key::Right, ResolvedLeftSidebarMode::Compact) => {
-                key_shell.set_active_left_sidebar_mode(LeftSidebarMode::Full);
-            }
-            (gtk::gdk::Key::Right, ResolvedLeftSidebarMode::Full) => {
-                let width = key_shell.current_left_sidebar_width();
-                key_shell.save_preferred_left_sidebar_width(width + SIDEBAR_KEY_STEP);
-                key_shell.update_layout();
-            }
-            _ => return glib::Propagation::Proceed,
-        }
-        glib::Propagation::Stop
-    });
-    shell.navigation_view.left_resize_handle.add_controller(key);
 }
 
 fn left_sidebar_drag_changed(
@@ -936,22 +782,6 @@ fn connect_right_sidebar_resize(shell: &Rc<Shell>) {
                 &position_shell.right_panel.right_resize_handle,
                 split.position(),
             );
-        });
-
-    let key_shell = Rc::clone(shell);
-    shell
-        .right_panel
-        .right_split
-        .connect_move_handle(move |_, scroll| {
-            if key_shell.right_sidebar_visible()
-                && let Some(width) =
-                    right_sidebar_width_after_key(key_shell.current_right_sidebar_width(), scroll)
-            {
-                key_shell.layout_state.right_drag_width.set(None);
-                key_shell.save_preferred_right_sidebar_width(width);
-                key_shell.update_layout();
-            }
-            true
         });
 
     let drag = gtk::GestureDrag::new();
@@ -1069,20 +899,19 @@ fn right_sidebar_handle_hit(start: f64, width: i32, x: f64) -> bool {
 }
 
 fn connect_layout_allocation_owner(shell: &Rc<Shell>) {
+    let owner = shell.layout_state.owner.clone();
     let before_shell = Rc::downgrade(shell);
+    owner.set_before_allocate(move |width, height| {
+        if let Some(shell) = before_shell.upgrade() {
+            shell.apply_layout_allocation(width, height);
+        }
+    });
     let after_shell = Rc::downgrade(shell);
-    shell.layout_state.owner.set_callbacks(
-        move |width, height| {
-            if let Some(shell) = before_shell.upgrade() {
-                shell.apply_layout_allocation(width, height);
-            }
-        },
-        move |_, _| {
-            if let Some(shell) = after_shell.upgrade() {
-                shell.finish_layout_allocation();
-            }
-        },
-    );
+    owner.set_after_allocate(move |width, _| {
+        if let Some(shell) = after_shell.upgrade() {
+            shell.finish_startup_route_allocation(width);
+        }
+    });
 }
 
 pub(super) fn connect_shell_layout(shell: &Rc<Shell>) {
@@ -1091,21 +920,39 @@ pub(super) fn connect_shell_layout(shell: &Rc<Shell>) {
     connect_right_sidebar_resize(shell);
 }
 
-fn widget_width_chain(widget: &gtk::Widget) -> String {
-    let mut parts = Vec::new();
-    let mut current = Some(widget.clone());
-    while let Some(widget) = current {
-        parts.push(format!("{}:{}", widget.type_().name(), widget.width()));
-        current = widget.parent();
-    }
-    parts.join(" <- ")
-}
-
 #[cfg(test)]
 mod tests {
     use crate::{LayoutSettings, LeftSidebarMode, RightSidebarMode};
 
     use super::*;
+
+    #[test]
+    fn preparing_library_keeps_the_app_allocated_under_the_overlay() {
+        assert_eq!(
+            root_presentation(false, false),
+            RootPresentation {
+                root_page: "app",
+                app_active: true,
+                startup_loading: true,
+            }
+        );
+        assert_eq!(
+            root_presentation(false, true),
+            RootPresentation {
+                root_page: "app",
+                app_active: true,
+                startup_loading: false,
+            }
+        );
+        assert_eq!(
+            root_presentation(true, false),
+            RootPresentation {
+                root_page: "login",
+                app_active: false,
+                startup_loading: false,
+            }
+        );
+    }
 
     #[test]
     fn layout_shrinks_then_hides_right_sidebar_without_changing_preference() {
@@ -1390,38 +1237,6 @@ mod tests {
     }
 
     #[test]
-    fn right_sidebar_keyboard_actions_share_the_drag_width_limits() {
-        assert_eq!(
-            right_sidebar_width_after_key(300, gtk::ScrollType::StepLeft),
-            Some(310)
-        );
-        assert_eq!(
-            right_sidebar_width_after_key(300, gtk::ScrollType::StepRight),
-            Some(290)
-        );
-        assert_eq!(
-            right_sidebar_width_after_key(480, gtk::ScrollType::PageLeft),
-            Some(MAX_RIGHT_SIDEBAR_WIDTH)
-        );
-        assert_eq!(
-            right_sidebar_width_after_key(270, gtk::ScrollType::PageRight),
-            Some(MIN_RIGHT_SIDEBAR_WIDTH)
-        );
-        assert_eq!(
-            right_sidebar_width_after_key(300, gtk::ScrollType::Start),
-            Some(MAX_RIGHT_SIDEBAR_WIDTH)
-        );
-        assert_eq!(
-            right_sidebar_width_after_key(300, gtk::ScrollType::End),
-            Some(MIN_RIGHT_SIDEBAR_WIDTH)
-        );
-        assert_eq!(
-            right_sidebar_width_after_key(300, gtk::ScrollType::Jump),
-            None
-        );
-    }
-
-    #[test]
     fn no_op_left_drag_does_not_commit_an_automatic_fallback_width() {
         assert!(!left_sidebar_drag_changed(
             LeftSidebarMode::Full,
@@ -1452,12 +1267,14 @@ mod tests {
         };
         settings.default_profile.right_sidebar = RightSidebarMode::Hidden;
 
-        let shrunk = resolve_layout(&settings, 701);
-        let compact = resolve_layout(&settings, 625);
+        let minimum_full_window_width =
+            MIN_APP_WINDOW_WIDTH + LEFT_PANE_SEPARATOR_WIDTH + MIN_LEFT_SIDEBAR_WIDTH;
+        let shrunk = resolve_layout(&settings, minimum_full_window_width);
+        let compact = resolve_layout(&settings, minimum_full_window_width - 1);
         let hidden = resolve_layout(&settings, 505);
 
         assert_eq!(shrunk.left_sidebar, ResolvedLeftSidebarMode::Full);
-        assert_eq!(shrunk.left_sidebar_width, 250);
+        assert_eq!(shrunk.left_sidebar_width, MIN_LEFT_SIDEBAR_WIDTH);
         assert_eq!(shrunk.main_width, MIN_APP_WINDOW_WIDTH);
         assert_eq!(compact.left_sidebar, ResolvedLeftSidebarMode::Compact);
         assert_eq!(compact.left_sidebar_width, COMPACT_RAIL_WIDTH);

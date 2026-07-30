@@ -1,803 +1,791 @@
-use super::*;
-use crate::{
-    FolderBrowser, GeneratedTrackProvider, ImageProvider, MusicFolderProvider, MusicSource,
-    PlaylistDeleter, RandomTrackProvider, StreamQuality, StreamResolver,
-};
-use std::time::Duration;
+use std::collections::BTreeMap;
+
+use library::CandidateBatch;
 use wiremock::matchers::{method, path, query_param};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
+use super::*;
+use crate::StreamQuality;
+use crate::source::{BatchEmitter, SourceReadProgress};
+
+fn account(base_url: &str, username: &str) -> SubsonicSourceConfig {
+    SubsonicSourceConfig {
+        base_url: base_url.to_string(),
+        username: username.to_string(),
+        trust_invalid_cert: false,
+    }
+}
+
+#[test]
+fn account_identity_normalizes_rest_endpoint_without_merging_users_or_servers() {
+    assert!(
+        account("https://music.example", "listener")
+            .same_account(&account("https://music.example/rest/", "listener"))
+            .expect("REST endpoint comparison")
+    );
+    assert!(
+        !account("https://music.example", "listener")
+            .same_account(&account("https://other.example", "listener"))
+            .expect("server comparison")
+    );
+    assert!(
+        !account("https://music.example", "listener")
+            .same_account(&account("https://music.example", "other"))
+            .expect("account comparison")
+    );
+}
+
+fn provider(server: &MockServer) -> SubsonicSource {
+    let configuration = crate::config::encode_provider_payload(
+        SourceId::new("subsonic:server:test"),
+        SubsonicFlavor::Subsonic.source_id(),
+        "OpenSubsonic",
+        SubsonicSourceConfig {
+            base_url: server.uri(),
+            username: "listener".to_string(),
+            trust_invalid_cert: false,
+        }
+        .into_payload(),
+    );
+    open(&configuration, Some("fixed-salt:fixed-token".to_string()))
+        .expect("open OpenSubsonic provider")
+}
+
+fn saved_configuration(
+    server: &MockServer,
+    name: &str,
+    trust_invalid_cert: bool,
+) -> SourceConfiguration {
+    crate::config::encode_provider_payload(
+        SourceId::new("configured:navidrome"),
+        SubsonicFlavor::Navidrome.source_id(),
+        name,
+        SubsonicSourceConfig {
+            base_url: server.uri(),
+            username: "Listener".to_string(),
+            trust_invalid_cert,
+        }
+        .into_payload(),
+    )
+}
+
+fn settings_input(
+    server: &MockServer,
+    name: &str,
+    password: &str,
+    trust_invalid_cert: bool,
+) -> CredentialSettingsInput {
+    CredentialSettingsInput {
+        name: name.to_string(),
+        base_url: server.uri(),
+        username: "Listener".to_string(),
+        password: password.to_string(),
+        trust_invalid_cert,
+    }
+}
+
 #[tokio::test]
-async fn scan_count_is_a_lightweight_change_signal() {
+async fn search3_returns_artist_album_and_track_results_in_one_query() {
     let server = MockServer::start().await;
     Mock::given(method("GET"))
-        .and(path("/rest/getScanStatus.view"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
-            "subsonic-response": {
-                "status": "ok",
-                "version": "1.16.1",
-                "scanStatus": { "scanning": false, "count": 9 }
-            }
-        })))
+        .and(path("/rest/search3.view"))
+        .and(query_param("query", "apple"))
+        .and(query_param("artistCount", "7"))
+        .and(query_param("artistOffset", "0"))
+        .and(query_param("albumCount", "7"))
+        .and(query_param("albumOffset", "0"))
+        .and(query_param("songCount", "7"))
+        .and(query_param("songOffset", "0"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(envelope(serde_json::json!({
+                "searchResult3": {
+                    "artist": [{
+                        "id": "external-artist",
+                        "name": "Apple Trees",
+                        "coverArt": "artist-cover"
+                    }],
+                    "album": [{
+                        "id": "external-album",
+                        "name": "Green Fields",
+                        "artist": "Apple Trees",
+                        "coverArt": "album-cover"
+                    }],
+                    "song": [{
+                        "id": "external-track",
+                        "title": "Orchard Walk",
+                        "album": "Green Fields",
+                        "artist": "Apple Trees",
+                        "coverArt": "track-cover"
+                    }]
+                }
+            }))),
+        )
+        .expect(1)
         .mount(&server)
         .await;
-    let provider = provider(&server);
+    let source = provider(&server);
+
+    let results = source
+        .search(&library::SearchRequest::with_limit("apple", 7))
+        .await
+        .expect("search OpenSubsonic");
 
     assert_eq!(
-        provider.probe().await.expect("first probe"),
-        LibraryProbeResult::Unknown
+        results.artists[0].id.as_str(),
+        "subsonic:artist:external-artist"
     );
     assert_eq!(
-        provider.probe().await.expect("unchanged probe"),
-        LibraryProbeResult::Unchanged
+        results.albums[0].id.as_str(),
+        "subsonic:album:external-album"
     );
-    provider
-        .scan_probe
-        .lock()
-        .expect("scan probe")
-        .last_idle_count = Some(8);
     assert_eq!(
-        provider.probe().await.expect("changed probe"),
-        LibraryProbeResult::Changed
+        results.tracks[0].id.as_str(),
+        "subsonic:track:external-track"
     );
+    assert_eq!(
+        results.tracks[0]
+            .image_ref
+            .as_ref()
+            .expect("Track cover")
+            .item_id,
+        "subsonic:cover:track-cover"
+    );
+}
 
-    provider.scan_probe.lock().expect("scan probe").saw_busy = true;
+#[test]
+fn structured_lyrics_keep_independent_roles_and_karaoke_cues() {
+    let body = serde_json::from_value::<StructuredLyricsBody>(serde_json::json!({
+        "lyricsList": {
+            "structuredLyrics": [
+                {
+                    "lang": "kor",
+                    "synced": true,
+                    "kind": "main",
+                    "line": [{"value": "눈을", "start": 1000}],
+                    "agents": [{"id": "lead", "role": "main", "name": "Lead"}],
+                    "cueLine": [{
+                        "index": 0,
+                        "start": 1000,
+                        "end": 2000,
+                        "value": "눈을",
+                        "agentId": "lead",
+                        "cue": [
+                            {"value": "눈", "start": 1000, "end": 1400, "byteStart": 0, "byteEnd": 2},
+                            {"value": "을", "start": 1400, "end": 2000, "byteStart": 3, "byteEnd": 5}
+                        ]
+                    }]
+                },
+                {
+                    "lang": "eng",
+                    "synced": false,
+                    "kind": "translation",
+                    "line": [{"value": "eyes"}]
+                },
+                {
+                    "lang": "ko-Latn",
+                    "synced": false,
+                    "kind": "pronunciation",
+                    "line": [{"value": "nuneul"}]
+                }
+            ]
+        }
+    }))
+    .expect("structured lyrics response");
+
+    let lyrics = native_lyrics_from_structured(body.lyrics_list.structured_lyrics);
+
+    assert_eq!(lyrics.documents.len(), 3);
+    assert_eq!(lyrics.documents[0].role, NativeLyricsRole::Original);
+    assert_eq!(lyrics.documents[1].role, NativeLyricsRole::Translation);
+    assert_eq!(lyrics.documents[1].language.as_deref(), Some("eng"));
+    assert_eq!(lyrics.documents[2].role, NativeLyricsRole::Pronunciation);
     assert_eq!(
-        provider.probe().await.expect("completed scan"),
-        LibraryProbeResult::Changed
+        lyrics.documents[0].lines[0].cue_lines[0].cues[1].byte_end_exclusive,
+        6
+    );
+    assert_eq!(
+        lyrics.documents[0].agents[0].role,
+        NativeLyricAgentRole::Main
     );
 }
 
 #[tokio::test]
-async fn login_map_session() {
+async fn lyrics_requests_enhanced_v2_only_when_the_server_advertises_it() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/rest/getOpenSubsonicExtensions.view"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(envelope(serde_json::json!({
+                "openSubsonicExtensions": [{"name": "songLyrics", "versions": [1, 2]}]
+            }))),
+        )
+        .expect(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/rest/getLyricsBySongId.view"))
+        .and(query_param("id", "song-one"))
+        .and(query_param("enhanced", "true"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(envelope(serde_json::json!({
+                "lyricsList": {
+                    "structuredLyrics": [{
+                        "lang": "eng",
+                        "synced": false,
+                        "kind": "translation",
+                        "line": [{"value": "Translated"}]
+                    }]
+                }
+            }))),
+        )
+        .expect(1)
+        .mount(&server)
+        .await;
+    let source = provider(&server);
+
+    let lyrics = source
+        .lyrics(
+            &TrackId::new("subsonic:track:song-one"),
+            LyricsSearch::ServerOnly,
+        )
+        .await
+        .expect("enhanced lyrics")
+        .expect("lyrics");
+
+    assert_eq!(lyrics.documents[0].role, NativeLyricsRole::Translation);
+}
+
+fn envelope(body: serde_json::Value) -> serde_json::Value {
+    let mut response = serde_json::json!({
+        "status": "ok",
+        "version": "1.16.1"
+    });
+    let response = response.as_object_mut().expect("response object");
+    response.extend(body.as_object().expect("body object").clone());
+    serde_json::json!({ "subsonic-response": response })
+}
+
+#[tokio::test]
+async fn qualified_play_reports_the_original_start_time() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/rest/scrobble.view"))
+        .and(query_param("id", "song-one"))
+        .and(query_param("submission", "true"))
+        .and(query_param("time", "1700000000000"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(envelope(serde_json::json!({}))))
+        .expect(1)
+        .mount(&server)
+        .await;
+    let source = provider(&server);
+
+    source
+        .report_playback(PlaybackReport {
+            kind: PlaybackReportKind::QualifiedPlay,
+            track_id: TrackId::new("subsonic:track:song-one"),
+            started_at_unix_seconds: 1_700_000_000,
+            position_seconds: 90,
+            paused: false,
+            muted: false,
+            volume_percent: 100,
+            shuffle: false,
+            repeat_one: false,
+            repeat_all: false,
+            failed: false,
+        })
+        .await
+        .expect("qualified OpenSubsonic play");
+}
+
+#[tokio::test]
+async fn home_refresh_reads_exactly_one_requested_subsonic_section() {
+    let server = MockServer::start().await;
+    let cases = [
+        (SourceHomeSectionKind::MostPlayed, "frequent", "album-most"),
+        (SourceHomeSectionKind::NewlyAdded, "newest", "album-new"),
+        (
+            SourceHomeSectionKind::RecentlyPlayed,
+            "recent",
+            "album-recent",
+        ),
+        (
+            SourceHomeSectionKind::RecentlyReleased,
+            "byYear",
+            "album-released",
+        ),
+    ];
+    for (_, list_type, id) in cases {
+        let mut mock = Mock::given(method("GET"))
+            .and(path("/rest/getAlbumList2.view"))
+            .and(query_param("type", list_type))
+            .and(query_param(
+                "size",
+                library::HOME_SECTION_ITEM_LIMIT.to_string(),
+            ));
+        if list_type == "byYear" {
+            mock = mock
+                .and(query_param("fromYear", current_year().to_string()))
+                .and(query_param("toYear", "0"));
+        }
+        mock.respond_with(
+            ResponseTemplate::new(200).set_body_json(envelope(serde_json::json!({
+                "albumList2": {
+                    "album": [{
+                        "id": id,
+                        "name": id,
+                        "artist": "Artist"
+                    }]
+                }
+            }))),
+        )
+        .expect(1)
+        .mount(&server)
+        .await;
+    }
+    let source = provider(&server);
+
+    for (kind, _, id) in cases {
+        let section = source
+            .read_home_section(kind)
+            .await
+            .expect("read one OpenSubsonic Home section");
+        assert_eq!(section.kind, kind);
+        assert_eq!(
+            section.items,
+            vec![HomeItemId::Album(AlbumId::new(source.id("album", id)))]
+        );
+    }
+}
+
+#[tokio::test]
+async fn identity_normalizes_rest_url_and_uses_the_canonical_user() {
     let server = MockServer::start().await;
     Mock::given(method("GET"))
         .and(path("/rest/getUser.view"))
-        .and(query_param("u", "demo"))
-        .and(query_param("username", "demo"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
-            "subsonic-response": {
-                "status": "ok",
-                "version": "1.16.1",
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(envelope(serde_json::json!({
                 "type": "Navidrome",
-                "user": { "username": "demo" }
-            }
-        })))
+                "user": { "username": "Canonical Listener" }
+            }))),
+        )
+        .expect(3)
         .mount(&server)
         .await;
 
-    let session = SubsonicSource::login(SubsonicLoginRequest {
-        base_url: server.uri(),
-        username: "demo".to_string(),
-        password: "pw".to_string(),
-        trust_invalid_cert: false,
-        flavor: SubsonicFlavor::Navidrome,
-    })
-    .await
-    .expect("login");
+    let mut ids = Vec::new();
+    for base_url in [
+        server.uri(),
+        format!("{}/", server.uri()),
+        format!("{}/rest/", server.uri()),
+    ] {
+        let connected = connect(
+            SubsonicFlavor::Navidrome,
+            CredentialHostInput {
+                server_name: None,
+                server_url: base_url,
+                username: "submitted-name".to_string(),
+                password: "secret".to_string(),
+                trust_invalid_cert: false,
+            },
+        )
+        .await
+        .expect("connect OpenSubsonic provider");
+        let (configuration, source, credential) = connected.into_parts();
+        let config = SubsonicSourceConfig::from_configuration(&configuration)
+            .expect("OpenSubsonic configuration");
+        assert_eq!(config.username, "Canonical Listener");
+        assert_eq!(config.base_url, server.uri());
+        ids.push(configuration.source_id.clone());
 
-    assert!(session.source.id.as_str().starts_with("navidrome:server:"));
-    assert_eq!(session.source.kind, "navidrome");
-    assert_eq!(session.source.name, "Navidrome");
-    assert_eq!(session.username, "demo");
-    assert!(session.credential.contains(':'));
-    assert!(!session.credential.contains("pw"));
+        assert_eq!(source.source_id(), &configuration.source_id);
+        assert!(
+            !credential
+                .as_deref()
+                .expect("saved OpenSubsonic credential")
+                .contains("secret")
+        );
+        open(&configuration, credential).expect("reopen OpenSubsonic provider");
+    }
+
+    assert!(ids.windows(2).all(|ids| ids[0] == ids[1]));
+    assert_eq!(
+        stable_source_id(
+            "navidrome",
+            &format!("{}/rest/", server.uri()),
+            "Canonical Listener"
+        ),
+        ids[0]
+            .as_str()
+            .strip_prefix("navidrome:server:")
+            .expect("Navidrome source ID")
+    );
 }
+
 #[tokio::test]
-async fn albums_map_subsonic_album_list() {
+async fn name_only_edit_updates_configuration_without_contacting_opensubsonic() {
+    let server = MockServer::start().await;
+    let current = saved_configuration(&server, "Before", false);
+    let input = settings_input(&server, "After", "", false);
+
+    let SourceEditResult::ConfigurationOnly(configuration) = edit(
+        current.clone(),
+        Some("saved-salt:saved-token".to_string()),
+        input,
+    )
+    .await
+    .expect("name-only OpenSubsonic edit") else {
+        panic!("a name-only edit must not reopen OpenSubsonic");
+    };
+
+    assert_eq!(configuration.source_id, current.source_id);
+    assert_eq!(configuration.name, "After");
+}
+
+#[tokio::test]
+async fn password_backed_same_account_edit_keeps_the_configured_opensubsonic_source() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/rest/getUser.view"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(envelope(serde_json::json!({
+                "type": "Navidrome",
+                "user": { "username": "Listener" }
+            }))),
+        )
+        .expect(1)
+        .mount(&server)
+        .await;
+    let current = saved_configuration(&server, "Before", false);
+    let input = settings_input(&server, "After", "new-password", false);
+
+    let SourceEditResult::SameAccount(connected) = edit(
+        current.clone(),
+        Some("old-salt:old-token".to_string()),
+        input,
+    )
+    .await
+    .expect("same-account OpenSubsonic edit") else {
+        panic!("the authenticated account must retain the configured source");
+    };
+
+    let (configuration, source, credential) = connected.into_parts();
+    assert_eq!(configuration.source_id, current.source_id);
+    assert_eq!(source.source_id(), &configuration.source_id);
+    assert_ne!(credential.as_deref(), Some("old-salt:old-token"));
+}
+
+#[tokio::test]
+async fn password_backed_different_account_edit_returns_a_new_opensubsonic_source() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/rest/getUser.view"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(envelope(serde_json::json!({
+                "type": "Navidrome",
+                "user": { "username": "Other Listener" }
+            }))),
+        )
+        .expect(1)
+        .mount(&server)
+        .await;
+    let current = saved_configuration(&server, "Before", false);
+    let mut input = settings_input(&server, "After", "new-password", false);
+    input.username = "Other Listener".to_string();
+
+    let SourceEditResult::DifferentAccount(connected) = edit(
+        current.clone(),
+        Some("old-salt:old-token".to_string()),
+        input,
+    )
+    .await
+    .expect("different-account OpenSubsonic edit") else {
+        panic!("a different canonical account must create a new source");
+    };
+
+    let (configuration, source, credential) = connected.into_parts();
+    assert_ne!(configuration.source_id, current.source_id);
+    assert_eq!(
+        configuration.source_id.as_str(),
+        format!(
+            "navidrome:server:{}",
+            stable_source_id(
+                "navidrome",
+                &format!("{}/rest/", server.uri()),
+                "Other Listener"
+            )
+        )
+    );
+    assert_eq!(source.source_id(), &configuration.source_id);
+    assert_ne!(credential.as_deref(), Some("old-salt:old-token"));
+}
+
+#[tokio::test]
+async fn trust_only_edit_reopens_opensubsonic_from_the_saved_credential_without_network() {
+    let server = MockServer::start().await;
+    let current = saved_configuration(&server, "Before", false);
+    let input = settings_input(&server, "Before", "", true);
+
+    let SourceEditResult::SameAccount(connected) = edit(
+        current.clone(),
+        Some("saved-salt:saved-token".to_string()),
+        input,
+    )
+    .await
+    .expect("trust-only OpenSubsonic edit") else {
+        panic!("a trust-only edit must reopen the saved OpenSubsonic source");
+    };
+
+    let (configuration, source, credential) = connected.into_parts();
+    assert_eq!(configuration.source_id, current.source_id);
+    assert!(
+        SubsonicSourceConfig::from_configuration(&configuration)
+            .expect("OpenSubsonic configuration")
+            .trust_invalid_cert
+    );
+    assert_eq!(source.source_id(), &current.source_id);
+    assert_eq!(credential, None);
+}
+
+#[tokio::test]
+async fn complete_acquisition_pages_through_server_caps_and_uses_album_cover_identity() {
     let server = MockServer::start().await;
     Mock::given(method("GET"))
         .and(path("/rest/getAlbumList2.view"))
         .and(query_param("type", "alphabeticalByName"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
-            "subsonic-response": {
-                "status": "ok",
-                "version": "1.16.1",
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(envelope(serde_json::json!({
                 "albumList2": {
                     "album": [{
                         "id": "album-one",
                         "name": "Blue Rooms",
                         "artist": "Astral Kin",
-                        "artistId": "artist-one",
-                        "songCount": 8,
-                        "duration": 1800,
-                        "year": 2024,
-                        "genre": "Ambient",
-                        "releaseTypes": ["album", "ep", "album"],
-                        "isCompilation": false,
-                        "musicBrainzId": "mb-album-one",
-                        "coverArt": "cover-one",
-                        "created": "2024-03-02T09:10:11Z",
-                        "played": "2024-04-02T09:10:11Z",
-                        "playCount": 12,
-                        "userRating": 5,
-                        "starred": "2024-01-01T00:00:00Z"
+                        "coverArt": "album-cover"
                     }]
                 }
-            }
-        })))
-        .mount(&server)
-        .await;
-    let provider = provider(&server);
-
-    let page = provider
-        .albums(PagedRequest::new(0, 50))
-        .await
-        .expect("albums");
-
-    assert_eq!(page.items[0].id.as_str(), "subsonic:album:album-one");
-    assert_eq!(page.items[0].title, "Blue Rooms");
-    assert_eq!(
-        page.items[0].artist_id.as_ref().map(ArtistId::as_str),
-        Some("subsonic:artist:artist-one")
-    );
-    assert_eq!(
-        page.items[0]
-            .image_ref
-            .as_ref()
-            .map(|image| image.item_id.as_str()),
-        Some("subsonic:cover:cover-one")
-    );
-    assert_eq!(page.items[0].release_date.as_deref(), Some("2024-01-01"));
-    assert_eq!(page.items[0].date_added.as_deref(), Some("2024-03-02"));
-    assert_eq!(
-        page.items[0].last_played.as_deref(),
-        Some("2024-04-02T09:10:11Z")
-    );
-    assert_eq!(page.items[0].play_count, Some(12));
-    assert_eq!(page.items[0].user_rating, Some(5));
-    assert_eq!(page.items[0].release_types, vec!["album", "ep"]);
-    assert_eq!(page.items[0].is_compilation, Some(false));
-    assert_eq!(
-        page.items[0].musicbrainz_album_id.as_deref(),
-        Some("mb-album-one")
-    );
-    assert!(page.items[0].favorite);
-}
-#[tokio::test]
-async fn album_map_meta() {
-    let server = MockServer::start().await;
-    Mock::given(method("GET"))
-        .and(path("/rest/getAlbum.view"))
-        .and(query_param("id", "album-one"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
-            "subsonic-response": {
-                "status": "ok",
-                "version": "1.16.1",
-                "album": {
-                    "id": "album-one",
-                    "name": "Blue Rooms",
-                    "artist": "Astral Kin",
-                    "artistId": "artist-one",
-                    "songCount": 1,
-                    "duration": 210,
-                    "year": 2024,
-                    "song": [{
-                        "id": "track-one",
-                        "albumId": "album-one",
-                        "title": "First Motion",
-                        "artist": "Astral Kin",
-                        "artistId": "artist-one",
-                        "album": "Blue Rooms",
-                        "year": 2024,
-                        "duration": 210,
-                        "discNumber": 1,
-                        "track": 1,
-                        "comment": "Warm note",
-                        "created": "2024-03-03T09:10:11Z",
-                        "played": "2024-04-03T09:10:11Z",
-                        "playCount": 7,
-                        "userRating": 4
-                    }]
-                }
-            }
-        })))
-        .mount(&server)
-        .await;
-    let provider = provider(&server);
-
-    let detail = provider
-        .album_detail(&AlbumId::new("subsonic:album:album-one"))
-        .await
-        .expect("detail");
-
-    assert_eq!(detail.tracks[0].id.as_str(), "subsonic:track:track-one");
-    assert_eq!(detail.tracks[0].release_date.as_deref(), Some("2024-01-01"));
-    assert_eq!(detail.tracks[0].date_added.as_deref(), Some("2024-03-03"));
-    assert_eq!(
-        detail.tracks[0].last_played.as_deref(),
-        Some("2024-04-03T09:10:11Z")
-    );
-    assert_eq!(detail.tracks[0].play_count, Some(7));
-    assert_eq!(detail.tracks[0].user_rating, Some(4));
-    assert_eq!(detail.tracks[0].comment.as_deref(), Some("Warm note"));
-}
-#[tokio::test]
-async fn random_filter_song() {
-    let server = MockServer::start().await;
-    Mock::given(method("GET"))
-        .and(path("/rest/getRandomSongs.view"))
-        .and(query_param("size", "37"))
-        .and(query_param("fromYear", "1999"))
-        .and(query_param("toYear", "2001"))
-        .and(query_param("genre", "Ambient"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
-            "subsonic-response": {
-                "status": "ok",
-                "version": "1.16.1",
-                "randomSongs": {
-                    "song": [{
-                        "id": "track-one",
-                        "albumId": "album-one",
-                        "title": "First Motion",
-                        "artist": "Astral Kin",
-                        "album": "Blue Rooms",
-                        "year": 2000,
-                        "duration": 210,
-                        "genre": "Ambient"
-                    }]
-                }
-            }
-        })))
-        .mount(&server)
-        .await;
-    let provider = provider(&server);
-
-    let tracks = provider
-        .random_tracks(RandomTrackRequest {
-            limit: 37,
-            min_year: Some(1999),
-            max_year: Some(2001),
-            genre_id: Some(GenreId::new("subsonic:genre:ambient")),
-            genre_name: Some("Ambient".to_string()),
-            played_filter: PlayedFilter::All,
-        })
-        .await
-        .expect("random tracks");
-
-    assert_eq!(tracks.len(), 1);
-    assert_eq!(tracks[0].id.as_str(), "subsonic:track:track-one");
-    assert_eq!(tracks[0].genres, vec!["Ambient".to_string()]);
-}
-#[tokio::test]
-async fn random_filter_subsonic() {
-    let server = MockServer::start().await;
-    let provider = provider(&server);
-
-    let error = provider
-        .random_tracks(RandomTrackRequest {
-            limit: 10,
-            min_year: None,
-            max_year: None,
-            genre_id: None,
-            genre_name: None,
-            played_filter: PlayedFilter::Played,
-        })
-        .await
-        .expect_err("unsupported played filter");
-
-    assert!(matches!(error, SourceError::InvalidRequest(_)));
-}
-
-#[tokio::test]
-async fn generated_track_radio_uses_similar_songs() {
-    let server = MockServer::start().await;
-    Mock::given(method("GET"))
-        .and(path("/rest/getSimilarSongs.view"))
-        .and(query_param("id", "track-one"))
-        .and(query_param("count", "4"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
-            "subsonic-response": {
-                "status": "ok",
-                "version": "1.16.1",
-                "similarSongs": {
-                    "song": [{
-                        "id": "track-two",
-                        "albumId": "album-one",
-                        "title": "Second Motion",
-                        "artist": "Astral Kin",
-                        "album": "Blue Rooms",
-                        "duration": 180
-                    }]
-                }
-            }
-        })))
-        .expect(1)
-        .mount(&server)
-        .await;
-    let provider = provider(&server);
-
-    let tracks = provider
-        .generated_tracks(GeneratedTracksRequest {
-            seed: GeneratedTrackSeed::Track(TrackId::new("subsonic:track:track-one")),
-            limit: 4,
-            strategy: crate::GeneratedTrackStrategy::SourceDefault,
-        })
-        .await
-        .expect("generated tracks");
-
-    assert_eq!(tracks.len(), 1);
-    assert_eq!(tracks[0].id.as_str(), "subsonic:track:track-two");
-}
-
-#[tokio::test]
-async fn generated_artist_radio_uses_similar_songs2() {
-    let server = MockServer::start().await;
-    Mock::given(method("GET"))
-        .and(path("/rest/getSimilarSongs2.view"))
-        .and(query_param("id", "artist-one"))
-        .and(query_param("count", "4"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
-            "subsonic-response": {
-                "status": "ok",
-                "version": "1.16.1",
-                "similarSongs2": {
-                    "song": [{
-                        "id": "track-two",
-                        "albumId": "album-one",
-                        "title": "Second Motion",
-                        "artist": "Astral Kin",
-                        "album": "Blue Rooms",
-                        "duration": 180
-                    }]
-                }
-            }
-        })))
-        .expect(1)
-        .mount(&server)
-        .await;
-    let provider = provider(&server);
-
-    let tracks = provider
-        .generated_tracks(GeneratedTracksRequest {
-            seed: GeneratedTrackSeed::Artist(ArtistId::new("subsonic:artist:artist-one")),
-            limit: 4,
-            strategy: crate::GeneratedTrackStrategy::SourceDefault,
-        })
-        .await
-        .expect("generated tracks");
-
-    assert_eq!(tracks.len(), 1);
-    assert_eq!(tracks[0].id.as_str(), "subsonic:track:track-two");
-}
-
-#[tokio::test]
-async fn generated_playlist_radio_uses_first_playlist_track() {
-    let server = MockServer::start().await;
-    Mock::given(method("GET"))
-        .and(path("/rest/getPlaylist.view"))
-        .and(query_param("id", "playlist-one"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
-            "subsonic-response": {
-                "status": "ok",
-                "version": "1.16.1",
-                "playlist": {
-                    "id": "playlist-one",
-                    "name": "Late Set",
-                    "songCount": 1,
-                    "entry": [{
-                        "id": "track-one",
-                        "albumId": "album-one",
-                        "title": "First Motion",
-                        "artist": "Astral Kin",
-                        "album": "Blue Rooms",
-                        "duration": 210
-                    }]
-                }
-            }
-        })))
-        .expect(1)
-        .mount(&server)
-        .await;
-    Mock::given(method("GET"))
-        .and(path("/rest/getSimilarSongs.view"))
-        .and(query_param("id", "track-one"))
-        .and(query_param("count", "4"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
-            "subsonic-response": {
-                "status": "ok",
-                "version": "1.16.1",
-                "similarSongs": {
-                    "song": [{
-                        "id": "track-two",
-                        "albumId": "album-one",
-                        "title": "Second Motion",
-                        "artist": "Astral Kin",
-                        "album": "Blue Rooms",
-                        "duration": 180
-                    }]
-                }
-            }
-        })))
-        .expect(1)
-        .mount(&server)
-        .await;
-    let provider = provider(&server);
-
-    let tracks = provider
-        .generated_tracks(GeneratedTracksRequest {
-            seed: GeneratedTrackSeed::Playlist(library::PlaylistId::new(
-                "subsonic:playlist:playlist-one",
-            )),
-            limit: 4,
-            strategy: crate::GeneratedTrackStrategy::SourceDefault,
-        })
-        .await
-        .expect("generated tracks");
-
-    assert_eq!(tracks.len(), 1);
-    assert_eq!(tracks[0].id.as_str(), "subsonic:track:track-two");
-}
-
-#[tokio::test]
-async fn stream_url_redacts_subsonic_credentials() {
-    let server = MockServer::start().await;
-    let provider = provider(&server);
-
-    let stream = provider
-        .resolve_stream(&StreamRequest::original(TrackId::new(
-            "subsonic:track:track-one",
-        )))
-        .await
-        .expect("stream");
-
-    assert!(stream.uri().contains("t=token"));
-    assert!(stream.redacted_uri().contains("t=%3Credacted%3E"));
-    assert!(!stream.redacted_uri().contains("token"));
-}
-#[tokio::test]
-async fn stream_include_limited() {
-    let server = MockServer::start().await;
-    let provider = provider(&server);
-
-    let stream = provider
-        .resolve_stream(&StreamRequest::new(
-            TrackId::new("subsonic:track:track-one"),
-            StreamQuality::MaxBitrateKbps(192),
-        ))
-        .await
-        .expect("stream");
-
-    assert!(stream.uri().contains("maxBitRate=192"));
-    assert!(stream.redacted_uri().contains("maxBitRate=192"));
-    assert!(!stream.redacted_uri().contains("token"));
-}
-#[tokio::test]
-async fn image_bytes_fetch_cover_art() {
-    let server = MockServer::start().await;
-    Mock::given(method("GET"))
-        .and(path("/rest/getCoverArt.view"))
-        .and(query_param("id", "cover-one"))
-        .and(query_param("size", "256"))
-        .respond_with(
-            ResponseTemplate::new(200)
-                .insert_header("content-type", "image/jpeg")
-                .set_body_bytes(vec![1_u8, 2, 3]),
+            }))),
         )
-        .mount(&server)
-        .await;
-    let provider = provider(&server);
-
-    let image = provider
-        .image_bytes(&ImageRef::new("subsonic:cover:cover-one", None), 256)
-        .await
-        .expect("image bytes");
-
-    assert_eq!(image.bytes, vec![1, 2, 3]);
-    assert_eq!(image.content_type.as_deref(), Some("image/jpeg"));
-}
-#[tokio::test]
-async fn subsonic_delete_playlist() {
-    let server = MockServer::start().await;
-    Mock::given(method("GET"))
-        .and(path("/rest/deletePlaylist.view"))
-        .and(query_param("id", "playlist-one"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
-            "subsonic-response": {
-                "status": "ok",
-                "version": "1.16.1"
-            }
-        })))
         .expect(1)
         .mount(&server)
         .await;
-    let provider = provider(&server);
-
-    provider
-        .delete_playlist(&PlaylistId::new("subsonic:playlist:playlist-one"))
-        .await
-        .expect("delete playlist");
-}
-#[tokio::test]
-async fn image_bytes_rejects_oversized_response() {
-    let server = MockServer::start().await;
-    Mock::given(method("GET"))
-        .and(path("/rest/getCoverArt.view"))
-        .and(query_param("id", "cover-one"))
-        .respond_with(
-            ResponseTemplate::new(200).set_body_bytes(vec![0_u8; SUBSONIC_IMAGE_MAX_BYTES + 1]),
-        )
-        .mount(&server)
-        .await;
-    let provider = provider(&server);
-
-    let error = provider
-        .image_bytes(&ImageRef::new("subsonic:cover:cover-one", None), 256)
-        .await
-        .expect_err("oversized image");
-
-    assert!(
-        error
-            .to_string()
-            .contains("Subsonic image response exceeded")
-    );
-}
-#[tokio::test]
-async fn json_reads_reject_oversized_response() {
-    let server = MockServer::start().await;
-    Mock::given(method("GET"))
-        .and(path("/rest/getAlbumList2.view"))
-        .and(query_param("type", "alphabeticalByName"))
-        .respond_with(
-            ResponseTemplate::new(200).set_body_bytes(vec![b' '; SUBSONIC_JSON_MAX_BYTES + 1]),
-        )
-        .mount(&server)
-        .await;
-    let provider = provider(&server);
-
-    let error = provider
-        .albums(PagedRequest::new(0, 1))
-        .await
-        .expect_err("oversized JSON");
-
-    assert!(
-        error
-            .to_string()
-            .contains("Subsonic JSON response exceeded")
-    );
-}
-#[tokio::test]
-async fn subsonic_map_error() {
-    let server = MockServer::start().await;
-    Mock::given(method("GET"))
-        .and(path("/rest/getUser.view"))
-        .respond_with(
-            ResponseTemplate::new(200)
-                .set_delay(Duration::from_millis(200))
-                .set_body_json(serde_json::json!({
-                    "subsonic-response": {
-                        "status": "ok",
-                        "version": "1.16.1",
-                        "user": { "username": "demo" }
-                    }
-                })),
-        )
-        .mount(&server)
-        .await;
-    let base_url = normalize_base_url(&server.uri()).expect("base url");
-    let credential = SubsonicCredential::from_password("secret");
-    let mut url = endpoint(&base_url, "getUser").expect("endpoint");
-    url.query_pairs_mut()
-        .extend_pairs(credential.common_query("demo", &[("username", "demo")]));
-    let client =
-        build_client_with_timeouts(false, Duration::from_secs(1), Duration::from_millis(20))
-            .expect("client");
-
-    let error = subsonic_json::<AuthenticateBody>(client.get(url))
-        .await
-        .expect_err("timeout");
-
-    assert!(matches!(error, SourceError::Network(_)));
-    assert!(!format!("{error:?}").contains(&credential.salt));
-    assert!(!format!("{error:?}").contains(&credential.token));
-    assert!(!error.to_string().contains(&credential.salt));
-    assert!(!error.to_string().contains(&credential.token));
-}
-#[tokio::test]
-async fn music_load_folders() {
-    let server = MockServer::start().await;
-    Mock::given(method("GET"))
-        .and(path("/rest/getMusicFolders.view"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
-            "subsonic-response": {
-                "status": "ok",
-                "version": "1.16.1",
-                "musicFolders": {
-                    "musicFolder": [
-                        { "id": 1, "name": "Music" }
-                    ]
-                }
-            }
-        })))
-        .mount(&server)
-        .await;
-    let provider = provider(&server);
-
-    let folders = provider.music_folders().await.expect("folders");
-
-    assert_eq!(folders.len(), 1);
-    assert_eq!(folders[0].id.as_str(), "subsonic:music-folder:1");
-    assert_eq!(folders[0].name, "Music");
-}
-
-#[tokio::test]
-async fn artist_collections_share_one_complete_response() {
-    let server = MockServer::start().await;
-    let artists = (0..501)
-        .map(|index| {
-            serde_json::json!({
-                "id": format!("artist-{index}"),
-                "name": format!("Artist {index}")
-            })
-        })
-        .collect::<Vec<_>>();
-    Mock::given(method("GET"))
-        .and(path("/rest/getArtists.view"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
-            "subsonic-response": {
-                "status": "ok",
-                "version": "1.16.1",
-                "artists": {
-                    "index": [{
-                        "name": "A",
-                        "artist": artists
-                    }]
-                }
-            }
-        })))
-        .expect(1)
-        .mount(&server)
-        .await;
-    let provider = provider(&server);
-
-    let collections = provider
-        .artist_collections()
-        .await
-        .expect("artist collections");
-
-    assert_eq!(collections.artists.len(), 501);
-    assert_eq!(collections.album_artists.len(), 501);
-    assert_eq!(collections.artists, collections.album_artists);
-}
-
-#[tokio::test]
-async fn in_track_id() {
-    let server = MockServer::start().await;
     Mock::given(method("GET"))
         .and(path("/rest/search3.view"))
-        .and(query_param("musicFolderId", "1"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
-            "subsonic-response": {
-                "status": "ok",
-                "version": "1.16.1",
+        .and(query_param("songCount", "20000"))
+        .and(query_param("songOffset", "0"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(envelope(serde_json::json!({
                 "searchResult3": {
                     "song": [{
                         "id": "track-one",
-                        "title": "First Motion",
-                        "album": "Blue Rooms",
                         "albumId": "album-one",
+                        "album": "Blue Rooms",
                         "artist": "Astral Kin",
-                        "artistId": "artist-one",
-                        "duration": 210
+                        "title": "First",
+                        "coverArt": "track-alias-one"
+                    }, {
+                        "id": "track-two",
+                        "albumId": "album-one",
+                        "album": "Blue Rooms",
+                        "artist": "Astral Kin",
+                        "title": "Second",
+                        "coverArt": "track-alias-two"
                     }]
                 }
-            }
-        })))
+            }))),
+        )
+        .expect(1)
         .mount(&server)
         .await;
-    let provider = provider(&server);
-
-    let page = provider
-        .track_ids_in_music_folder(
-            &MusicFolderId::new("subsonic:music-folder:1"),
-            PagedRequest::new(0, 50),
+    Mock::given(method("GET"))
+        .and(path("/rest/search3.view"))
+        .and(query_param("songCount", "20000"))
+        .and(query_param("songOffset", "2"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(envelope(serde_json::json!({
+                "searchResult3": {
+                    "song": [{
+                        "id": "standalone",
+                        "album": "Loose",
+                        "artist": "Astral Kin",
+                        "title": "Loose Track",
+                        "coverArt": "standalone-cover"
+                    }]
+                }
+            }))),
+        )
+        .expect(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/rest/search3.view"))
+        .and(query_param("songCount", "20000"))
+        .and(query_param("songOffset", "3"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(envelope(serde_json::json!({
+                "searchResult3": {
+                    "song": []
+                }
+            }))),
+        )
+        .expect(1)
+        .mount(&server)
+        .await;
+    let source = provider(&server);
+    let mut batches = Vec::new();
+    let mut accept = |batch| {
+        batches.push(batch);
+        true
+    };
+    let mut emitter = BatchEmitter::new(&mut accept);
+    let progress = |_: SourceReadProgress| {};
+    let album_images = source
+        .emit_albums(&mut emitter, &mut BTreeMap::new(), &progress, &|| false)
+        .await
+        .expect("read Albums");
+    source
+        .emit_tracks(
+            &[],
+            &album_images,
+            &mut emitter,
+            &mut BTreeMap::new(),
+            &progress,
+            &|| false,
         )
         .await
-        .expect("tracks");
+        .expect("read Tracks");
+    drop(emitter);
+    let tracks = batches
+        .into_iter()
+        .filter_map(|batch| match batch {
+            CandidateBatch::Tracks(tracks) => Some(tracks),
+            _ => None,
+        })
+        .flatten()
+        .collect::<Vec<_>>();
 
-    assert_eq!(page.items[0].as_str(), "subsonic:track:track-one");
-}
-#[tokio::test]
-async fn root_use_folder() {
-    let server = MockServer::start().await;
-    Mock::given(method("GET"))
-        .and(path("/rest/getIndexes.view"))
-        .and(query_param("musicFolderId", "1"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
-            "subsonic-response": {
-                "status": "ok",
-                "version": "1.16.1",
-                "indexes": {
-                    "index": [
-                        {
-                            "name": "A",
-                            "artist": [
-                                { "id": "folder-one", "name": "Albums" }
-                            ]
-                        }
-                    ]
-                }
-            }
-        })))
-        .mount(&server)
-        .await;
-    let provider = provider(&server);
-
-    let detail = provider
-        .folder(None, Some(&MusicFolderId::new("subsonic:music-folder:1")))
-        .await
-        .expect("folder root");
-
-    assert_eq!(detail.parent_id, None);
-    assert_eq!(detail.folders[0].id.as_str(), "subsonic:folder:folder-one");
-    assert_eq!(detail.folders[0].name, "Albums");
-    assert!(detail.tracks.is_empty());
-}
-#[tokio::test]
-async fn folder_track_folders() {
-    let server = MockServer::start().await;
-    Mock::given(method("GET"))
-        .and(path("/rest/getMusicDirectory.view"))
-        .and(query_param("id", "folder-one"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
-            "subsonic-response": {
-                "status": "ok",
-                "version": "1.16.1",
-                "directory": {
-                    "id": "folder-one",
-                    "name": "Albums",
-                    "parent": "root",
-                    "child": [
-                        {
-                            "id": "child-folder",
-                            "title": "Live",
-                            "isDir": true
-                        },
-                        {
-                            "id": "track-two",
-                            "title": "Second Motion",
-                            "album": "Blue Rooms",
-                            "albumId": "album-one",
-                            "artist": "Astral Kin",
-                            "artistId": "artist-one",
-                            "duration": 180,
-                            "isDir": false
-                        }
-                    ]
-                }
-            }
-        })))
-        .mount(&server)
-        .await;
-    let provider = provider(&server);
-
-    let detail = provider
-        .folder(Some(&FolderId::new("subsonic:folder:folder-one")), None)
-        .await
-        .expect("nested folder");
-
-    assert_eq!(detail.folder.name, "Albums");
+    assert_eq!(tracks.len(), 3);
     assert_eq!(
-        detail.parent_id.as_ref().map(|id| id.as_str()),
-        Some("subsonic:folder:root")
+        tracks[0]
+            .image_ref
+            .as_ref()
+            .map(|image| image.item_id.as_str()),
+        Some("subsonic:cover:album-cover")
     );
     assert_eq!(
-        detail.folders[0].id.as_str(),
-        "subsonic:folder:child-folder"
+        tracks[1]
+            .image_ref
+            .as_ref()
+            .map(|image| image.item_id.as_str()),
+        Some("subsonic:cover:album-cover")
     );
-    assert_eq!(detail.tracks[0].id.as_str(), "subsonic:track:track-two");
+    assert_eq!(
+        tracks[2]
+            .image_ref
+            .as_ref()
+            .map(|image| image.item_id.as_str()),
+        Some("subsonic:cover:standalone-cover")
+    );
 }
-fn provider(server: &MockServer) -> SubsonicSource {
-    SubsonicSource::from_configured_session(SubsonicConfiguredSession {
-        source: SourceIdentity {
-            id: SourceId::new("subsonic:server:test"),
-            kind: "subsonic".to_string(),
-            name: "Subsonic".to_string(),
+
+#[tokio::test]
+async fn scan_freshness_compares_only_a_completed_accepted_marker() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/rest/getScanStatus.view"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(envelope(serde_json::json!({
+                "scanStatus": {
+                    "scanning": false,
+                    "count": 42,
+                    "folderCount": 3,
+                    "lastScan": "2026-07-24T12:00:00Z"
+                }
+            }))),
+        )
+        .expect(2)
+        .mount(&server)
+        .await;
+    let source = provider(&server);
+
+    let changed = source
+        .check_freshness(None)
+        .await
+        .expect("first freshness check");
+    let crate::SourceFreshness::Changed(marker) = changed else {
+        panic!("first completed scan must require a refresh");
+    };
+    assert_eq!(
+        source
+            .check_freshness(Some(&marker))
+            .await
+            .expect("second freshness check"),
+        crate::SourceFreshness::Unchanged
+    );
+}
+
+#[tokio::test]
+async fn scan_freshness_uses_counts_when_last_scan_is_absent() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/rest/getScanStatus.view"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(envelope(serde_json::json!({
+                "scanStatus": {
+                    "scanning": false,
+                    "count": 42,
+                    "folderCount": 3
+                }
+            }))),
+        )
+        .expect(2)
+        .mount(&server)
+        .await;
+    let source = provider(&server);
+
+    let changed = source
+        .check_freshness(None)
+        .await
+        .expect("first freshness check");
+    let crate::SourceFreshness::Changed(marker) = changed else {
+        panic!("the first completed marker must require a refresh");
+    };
+    assert_eq!(
+        source
+            .check_freshness(Some(&marker))
+            .await
+            .expect("second freshness check"),
+        crate::SourceFreshness::Unchanged
+    );
+}
+
+#[tokio::test]
+async fn stream_description_keeps_auth_for_playback_and_redacts_it_for_logs() {
+    let server = MockServer::start().await;
+    let configuration = crate::config::encode_provider_payload(
+        SourceId::new("subsonic:server:test"),
+        SubsonicFlavor::Subsonic.source_id(),
+        "OpenSubsonic",
+        SubsonicSourceConfig {
             base_url: server.uri(),
-        },
-        username: "demo".to_string(),
-        trust_invalid_cert: false,
-        credential: "salt:token".to_string(),
-    })
-    .expect("provider")
+            username: "listener".to_string(),
+            trust_invalid_cert: true,
+        }
+        .into_payload(),
+    );
+    let source = open(&configuration, Some("fixed-salt:fixed-token".to_string()))
+        .expect("open OpenSubsonic provider");
+    let stream = source
+        .resolve_stream(&StreamRequest::new(
+            TrackId::new("subsonic:track:one"),
+            StreamQuality::MaxBitrateKbps(320),
+        ))
+        .await
+        .expect("resolve stream");
+
+    assert!(stream.uri().contains("s=fixed-salt"));
+    assert!(stream.uri().contains("t=fixed-token"));
+    assert!(stream.uri().contains("maxBitRate=320"));
+    assert!(!stream.redacted_uri().contains("fixed-salt"));
+    assert!(!stream.redacted_uri().contains("fixed-token"));
+    assert!(stream.redacted_uri().contains("maxBitRate=320"));
+    assert!(stream.trust_invalid_certificate());
 }

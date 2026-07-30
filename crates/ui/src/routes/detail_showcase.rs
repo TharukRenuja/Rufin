@@ -3,37 +3,91 @@ use std::{
     rc::Rc,
 };
 
-use ::library::{Album, Artist, Track};
+use ::library::{Album, Artist};
 use adw::prelude::*;
 use artwork::ArtworkBinding;
 use tracing::warn;
 
-use crate::interactions::RADIO_ICON;
 use crate::interactions::add_widget_click;
 use crate::layout::width_allocation_owner;
 use crate::localization::bind_label_text_with;
 use crate::shell::Shell;
 use crate::shell::actions::{ActionButtonVariant, configure_action_button, icon_button};
 use crate::shell::actions::{PLAY_LATER_ICON, PLAY_NEXT_ICON, REMOVE_ICON};
-use crate::shell::cover::cover_fetch_size_for_display;
 use crate::shell::cover::presentation::add_album_seed_gradient_class;
-use crate::shell::cover::{ArtworkTile, CoverGroupProjection};
+use crate::shell::cover::{
+    ArtworkTile, CoverGroupProjection, LARGE_COVER_SIZE, cover_fetch_size_for_display,
+};
 use localization::{msgid, tr};
 
 use super::detail_links::{DetailEntityKind, DetailExternalLink, server_entity_link};
-use super::route_layout::detail_showcase_cover_only;
+use super::route_layout::{detail_showcase_cover_only, detail_showcase_cover_size};
+use super::routes::TrackListProjection;
 
 const DETAIL_HEADER_SPACING: i32 = 18;
+const RADIO_ICON: &str = "rufin-audio-radio-symbolic";
 
 pub(crate) struct MediaDetailShowcase {
     pub(crate) route_class: &'static str,
     pub(crate) seed: u32,
     pub(crate) initial_width: i32,
     pub(crate) cover: DetailCoverProjection,
-    pub(crate) external_links: Option<gtk::Widget>,
-    pub(crate) external_links_class: Option<&'static str>,
+    pub(crate) external_links: DetailExternalLinksProjection,
     pub(crate) text_stack: gtk::Widget,
     pub(crate) actions: gtk::Widget,
+}
+
+#[derive(Clone)]
+pub(crate) struct DetailExternalLinksProjection {
+    root: gtk::Box,
+    cover_only: Rc<Cell<bool>>,
+}
+
+impl DetailExternalLinksProjection {
+    pub(crate) fn new(class: Option<&'static str>, links: Option<gtk::Widget>) -> Self {
+        let root = gtk::Box::new(gtk::Orientation::Vertical, 6);
+        if let Some(class) = class {
+            root.add_css_class(class);
+        }
+        root.set_halign(gtk::Align::Center);
+        let projection = Self {
+            root,
+            cover_only: Rc::new(Cell::new(false)),
+        };
+        projection.replace(links);
+        projection
+    }
+
+    fn widget(&self) -> gtk::Widget {
+        self.root.clone().upcast()
+    }
+
+    pub(crate) fn replace(&self, links: Option<gtk::Widget>) {
+        while let Some(child) = self.root.first_child() {
+            self.root.remove(&child);
+        }
+        if let Some(links) = links {
+            links.set_halign(gtk::Align::Center);
+            self.root.append(&links);
+        }
+        self.apply_visibility();
+    }
+
+    fn set_cover_only(&self, cover_only: bool) {
+        self.cover_only.set(cover_only);
+        self.apply_visibility();
+    }
+
+    fn apply_visibility(&self) {
+        let has_links = self.root.first_child().is_some();
+        let cover_only = self.cover_only.get();
+        let visible = detail_external_links_visible(has_links, cover_only);
+        self.root.set_visible(visible);
+    }
+}
+
+fn detail_external_links_visible(has_links: bool, cover_only: bool) -> bool {
+    has_links && !cover_only
 }
 
 pub(crate) struct CollectionDetailShowcase {
@@ -70,19 +124,7 @@ pub(crate) fn media_detail_showcase(shell: &Rc<Shell>, config: MediaDetailShowca
     let cover_column = gtk::Box::new(gtk::Orientation::Vertical, 8);
     cover_column.set_halign(gtk::Align::Start);
     cover_column.append(&config.cover.button());
-
-    let link_stack = gtk::Box::new(gtk::Orientation::Vertical, 6);
-    if let Some(class) = config.external_links_class {
-        link_stack.add_css_class(class);
-    }
-    link_stack.set_halign(gtk::Align::Center);
-    if let Some(external_links) = config.external_links {
-        external_links.set_halign(gtk::Align::Center);
-        link_stack.append(&external_links);
-    }
-    if link_stack.first_child().is_some() {
-        cover_column.append(&link_stack);
-    }
+    cover_column.append(&config.external_links.widget());
     body.append(&cover_column);
 
     let metadata = gtk::Box::new(gtk::Orientation::Vertical, 10);
@@ -101,7 +143,7 @@ pub(crate) fn media_detail_showcase(shell: &Rc<Shell>, config: MediaDetailShowca
         header: header.clone(),
         cover_column,
         cover: config.cover,
-        link_stack,
+        external_links: config.external_links,
         metadata,
     };
     presentation.apply_viewport_width(config.initial_width);
@@ -121,7 +163,7 @@ struct MediaShowcasePresentation {
     header: gtk::Box,
     cover_column: gtk::Box,
     cover: DetailCoverProjection,
-    link_stack: gtk::Box,
+    external_links: DetailExternalLinksProjection,
     metadata: gtk::Box,
 }
 
@@ -132,7 +174,7 @@ impl MediaShowcasePresentation {
         }
         let cover_only = detail_showcase_cover_only(width);
         update_tiny_detail_showcase(&self.header, width);
-        self.link_stack.set_visible(!cover_only);
+        self.external_links.set_cover_only(cover_only);
         self.metadata.set_visible(!cover_only);
     }
 
@@ -327,56 +369,31 @@ pub(crate) fn detail_radio_button() -> gtk::Button {
     button
 }
 
-pub(crate) fn append_track_query_batch_queue_actions(
+pub(crate) fn append_loaded_batch_queue_actions(
     actions: &gtk::Box,
     controller: &playback::QueueHandle,
-    tracks: Rc<dyn Fn() -> Vec<Track>>,
+    tracks: &TrackListProjection,
+    context_id: String,
 ) {
-    let play_next = detail_action_button(PLAY_NEXT_ICON, "Next");
-    let next_controller = controller.clone();
-    let next_tracks = Rc::clone(&tracks);
-    play_next.connect_clicked(move |_| {
-        for track in next_tracks().into_iter().rev() {
-            next_controller.play_next(track);
-        }
-    });
-    actions.append(&play_next);
-
-    let play_later = detail_action_button(PLAY_LATER_ICON, "Play Later");
-    let later_controller = controller.clone();
-    play_later.connect_clicked(move |_| later_controller.play_last(tracks()));
-    actions.append(&play_later);
-}
-
-pub(crate) fn append_loaded_context_batch_queue_actions(
-    actions: &gtk::Box,
-    controller: &playback::QueueHandle,
-    descriptor: ::library::play_context::PlayContextDescriptor,
-    tracks: Rc<dyn Fn() -> std::sync::Arc<Vec<Track>>>,
-) {
-    let play_next = detail_action_button(PLAY_NEXT_ICON, "Next");
-    let next_controller = controller.clone();
-    let next_descriptor = descriptor.clone();
-    let next_tracks = Rc::clone(&tracks);
-    play_next.connect_clicked(move |_| {
-        next_controller.play_context(playback::ContextPlayRequest::loaded(
-            next_descriptor.clone(),
-            playback::QueuePlacement::Next,
-            next_tracks(),
-        ));
-    });
-    actions.append(&play_next);
-
-    let play_later = detail_action_button(PLAY_LATER_ICON, "Play Later");
-    let later_controller = controller.clone();
-    play_later.connect_clicked(move |_| {
-        later_controller.play_context(playback::ContextPlayRequest::loaded(
-            descriptor.clone(),
+    for (icon, label, placement) in [
+        (PLAY_NEXT_ICON, "Next", playback::QueuePlacement::Next),
+        (
+            PLAY_LATER_ICON,
+            "Play Later",
             playback::QueuePlacement::Last,
-            tracks(),
-        ));
-    });
-    actions.append(&play_later);
+        ),
+    ] {
+        let button = detail_action_button(icon, label);
+        let controller = controller.clone();
+        let tracks = tracks.clone();
+        let context_id = context_id.clone();
+        button.connect_clicked(move |_| {
+            if let Some(request) = tracks.source_play_request(placement, &context_id, false) {
+                controller.play_loaded(request);
+            }
+        });
+        actions.append(&button);
+    }
 }
 
 pub(crate) fn detail_title_label(text: &str) -> gtk::Label {
@@ -445,27 +462,16 @@ pub(crate) fn detail_action_row() -> gtk::Box {
 pub(crate) struct DetailCoverProjection {
     button: gtk::Button,
     tile: ArtworkTile,
+    size: Rc<Cell<i32>>,
     candidates: Rc<RefCell<ArtworkBinding>>,
     seed: Rc<Cell<u32>>,
-    size: Rc<Cell<i32>>,
+    render_size: i32,
+    fetch_size: u32,
 }
 
 impl DetailCoverProjection {
     pub(crate) fn button(&self) -> gtk::Button {
         self.button.clone()
-    }
-
-    pub(crate) fn replace(&self, shell: &Rc<Shell>, candidates: ArtworkBinding, seed: u32) {
-        *self.candidates.borrow_mut() = candidates.clone();
-        self.seed.set(seed);
-        let size = self.size.get();
-        shell.bind_artwork_tile(
-            &self.tile,
-            candidates,
-            seed,
-            size,
-            cover_fetch_size_for_display(size),
-        );
     }
 
     pub(crate) fn resize(&self, size: i32) {
@@ -476,6 +482,12 @@ impl DetailCoverProjection {
         self.button.set_size_request(size, size);
         self.tile.set_square_size(size);
     }
+
+    pub(crate) fn replace(&self, shell: &Rc<Shell>, binding: ArtworkBinding, seed: u32) {
+        self.candidates.replace(binding.clone());
+        self.seed.set(seed);
+        shell.bind_artwork_tile(&self.tile, binding, seed, self.render_size, self.fetch_size);
+    }
 }
 
 pub(crate) fn detail_cover_projection(
@@ -483,11 +495,12 @@ pub(crate) fn detail_cover_projection(
     candidates: ArtworkBinding,
     seed: u32,
     size: i32,
-    fetch_size: u32,
     cover_class: &str,
 ) -> DetailCoverProjection {
+    let render_size = detail_cover_render_size();
+    let fetch_size = LARGE_COVER_SIZE;
     let tile = ArtworkTile::new_sized(size, size, seed);
-    shell.bind_artwork_tile(&tile, candidates.clone(), seed, size, fetch_size);
+    shell.bind_artwork_tile(&tile, candidates.clone(), seed, render_size, fetch_size);
     let cover = tile.widget();
     cover.add_css_class("detail-showcase-cover");
     cover.add_css_class(cover_class);
@@ -512,10 +525,16 @@ pub(crate) fn detail_cover_projection(
     DetailCoverProjection {
         button,
         tile,
+        size: Rc::new(Cell::new(size)),
         candidates,
         seed,
-        size: Rc::new(Cell::new(size)),
+        render_size,
+        fetch_size,
     }
+}
+
+fn detail_cover_render_size() -> i32 {
+    detail_showcase_cover_size(i32::MAX)
 }
 
 impl Shell {
@@ -623,7 +642,7 @@ pub(crate) fn fit_detail_text(label: &gtk::Label, text: &str) {
 pub(crate) fn album_external_links(shell: &Rc<Shell>, album: &Album) -> Option<gtk::Widget> {
     let settings = shell.settings.current.borrow();
     let link_settings = &settings.external_site_links;
-    if !settings.allows_external_site_links() {
+    if !settings.shows_external_site_links() {
         return None;
     }
 
@@ -662,14 +681,10 @@ pub(crate) fn album_external_links(shell: &Rc<Shell>, album: &Album) -> Option<g
     row.first_child().is_some().then(|| row.upcast())
 }
 
-pub(crate) fn artist_external_links(
-    shell: &Rc<Shell>,
-    artist: &Artist,
-    tracks: &[Track],
-) -> Option<gtk::Widget> {
+pub(crate) fn artist_external_links(shell: &Rc<Shell>, artist: &Artist) -> Option<gtk::Widget> {
     let settings = shell.settings.current.borrow();
     let link_settings = &settings.external_site_links;
-    if !settings.allows_external_site_links() {
+    if !settings.shows_external_site_links() {
         return None;
     }
 
@@ -685,7 +700,7 @@ pub(crate) fn artist_external_links(
         ));
     }
     if link_settings.musicbrainz
-        && let Some(url) = musicbrainz_artist_url(artist, tracks)
+        && let Some(url) = musicbrainz_artist_url(artist)
     {
         row.append(&detail_external_link_button(
             shell,
@@ -775,19 +790,10 @@ fn musicbrainz_album_url(album: &Album) -> Option<String> {
     Some(format!("https://musicbrainz.org/release/{release_id}"))
 }
 
-fn musicbrainz_artist_url(artist: &Artist, tracks: &[Track]) -> Option<String> {
-    let artist_id = tracks
-        .iter()
-        .flat_map(|track| {
-            track
-                .artist_credits
-                .iter()
-                .chain(track.album_artist_credits.iter())
-        })
-        .find(|credit| {
-            credit.id == artist.id || credit.name.eq_ignore_ascii_case(artist.name.as_str())
-        })
-        .and_then(|credit| credit.musicbrainz_artist_id.as_deref())
+fn musicbrainz_artist_url(artist: &Artist) -> Option<String> {
+    let artist_id = artist
+        .musicbrainz_artist_id
+        .as_deref()
         .and_then(clean_url_label)?;
     Some(format!("https://musicbrainz.org/artist/{artist_id}"))
 }
@@ -797,9 +803,24 @@ fn server_entity_url(
     kind: DetailEntityKind,
     entity_id: &str,
 ) -> Option<DetailExternalLink> {
-    let library = shell.source.presentation.borrow();
-    let server = library.source.as_ref()?;
-    server_entity_link(server, kind, entity_id)
+    let source_id = shell
+        .library
+        .selected
+        .borrow()
+        .as_ref()
+        .map(|selected| selected.source_id.clone())?;
+    let source = shell
+        .products
+        .source
+        .configured_source(&source_id)
+        .ok()
+        .flatten()?;
+    server_entity_link(
+        &source.source.kind,
+        &source.credentials.server_url,
+        kind,
+        entity_id,
+    )
 }
 
 fn clean_url_label(value: &str) -> Option<&str> {
@@ -825,9 +846,27 @@ fn percent_encode_path_segment(value: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use ::library::{Album, AlbumId};
+    use super::{
+        detail_cover_render_size, detail_external_links_visible, full_artwork_size,
+        lastfm_album_url, lastfm_artist_url, musicbrainz_album_url,
+    };
+    use crate::routes::route_layout::detail_showcase_cover_size;
 
-    use super::{full_artwork_size, lastfm_album_url, lastfm_artist_url, musicbrainz_album_url};
+    #[test]
+    fn responsive_detail_artwork_covers_every_presented_size() {
+        let render_size = detail_cover_render_size();
+        for width in 1..=1_200 {
+            assert!(detail_showcase_cover_size(width) <= render_size);
+        }
+    }
+
+    #[test]
+    fn detail_external_links_need_content_and_metadata_space() {
+        assert!(!detail_external_links_visible(false, false));
+        assert!(!detail_external_links_visible(false, true));
+        assert!(!detail_external_links_visible(true, true));
+        assert!(detail_external_links_visible(true, false));
+    }
 
     #[test]
     fn full_artwork_size_fits_window() {
@@ -850,30 +889,9 @@ mod tests {
 
     #[test]
     fn musicbrainz_album_url_prefers_release_group() {
-        let mut album = Album {
-            id: AlbumId::fake(1),
-            title: "Album".to_string(),
-            artist: "Artist".to_string(),
-            artist_id: None,
-            album_artist_credits: Vec::new(),
-            artist_credits: Vec::new(),
-            year: 2026,
-            release_date: None,
-            date_added: None,
-            last_played: None,
-            play_count: None,
-            user_rating: None,
-            track_count: 1,
-            duration_seconds: 60,
-            favorite: false,
-            color_seed: 1,
-            image_ref: None,
-            genres: Vec::new(),
-            release_types: Vec::new(),
-            is_compilation: None,
-            musicbrainz_album_id: Some("release-one".to_string()),
-            musicbrainz_release_group_id: Some("group-one".to_string()),
-        };
+        let mut album = crate::test_support::album(1, "Album");
+        album.musicbrainz_album_id = Some("release-one".to_string());
+        album.musicbrainz_release_group_id = Some("group-one".to_string());
 
         assert_eq!(
             musicbrainz_album_url(&album).as_deref(),

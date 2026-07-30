@@ -55,9 +55,9 @@ debug *args:
     set -- {{ args }}; \
     if [[ "${1:-}" == "flatpak" ]]; then \
         shift; \
-        flatpak run --env=RUST_LOG="${RUST_LOG:-rufin=debug,warn}" io.github.screwys.Rufin "$@" 2>&1; \
+        flatpak run --env=RUST_LOG="${RUST_LOG:-debug}" io.github.screwys.Rufin "$@" 2>&1; \
     else \
-        cargo run --locked -p rufin -- "$@"; \
+        RUST_LOG="${RUST_LOG:-debug}" cargo run --locked -p rufin -- "$@"; \
     fi
 
 fmt:

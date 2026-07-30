@@ -1,7 +1,122 @@
 use std::fmt;
 
-use library::{AlbumId, ArtistId, GenreId, PlaylistId, TrackId};
+use library::{GenreId, RadioSeed, TrackId};
 use serde::{Deserialize, Serialize};
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum TrackMetadataField {
+    Title,
+    Artist,
+    Album,
+    AlbumArtist,
+    TrackNumber,
+    DiscNumber,
+    Year,
+    Genre,
+    Comment,
+    Bpm,
+    Artwork,
+}
+
+/// Metadata fields an opened source can write for one exact track.
+///
+/// The source owns this decision because a Local file format and a remote
+/// server may expose different write paths. A missing value means the track
+/// menu must not offer metadata editing.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TrackMetadataEditing {
+    fields: Vec<TrackMetadataField>,
+}
+
+impl TrackMetadataEditing {
+    pub fn fields(&self) -> &[TrackMetadataField] {
+        &self.fields
+    }
+
+    pub fn includes(&self, field: TrackMetadataField) -> bool {
+        self.fields.contains(&field)
+    }
+
+    pub(crate) fn new(fields: Vec<TrackMetadataField>) -> Self {
+        Self { fields }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum LyricsSearch {
+    ServerOnly,
+    ServerThenRemote,
+    RemoteThenServer,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum NativeLyricsOrigin {
+    Server,
+    Remote,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct NativeLyricLine {
+    pub text: String,
+    pub start_millis: Option<u64>,
+    pub end_millis: Option<u64>,
+    pub cue_lines: Vec<NativeLyricCueLine>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct NativeLyricCueLine {
+    pub text: String,
+    pub start_millis: Option<u64>,
+    pub end_millis: Option<u64>,
+    pub agent_id: Option<String>,
+    pub cues: Vec<NativeLyricCue>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct NativeLyricCue {
+    pub text: String,
+    pub start_millis: u64,
+    pub end_millis: Option<u64>,
+    pub byte_start: usize,
+    pub byte_end_exclusive: usize,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum NativeLyricsRole {
+    Original,
+    Translation,
+    Pronunciation,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum NativeLyricAgentRole {
+    Main,
+    Voice,
+    Background,
+    Group,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct NativeLyricAgent {
+    pub id: String,
+    pub role: NativeLyricAgentRole,
+    pub name: Option<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct NativeLyricsDocument {
+    pub role: NativeLyricsRole,
+    pub language: Option<String>,
+    pub offset_millis: i64,
+    pub lines: Vec<NativeLyricLine>,
+    pub agents: Vec<NativeLyricAgent>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct NativeLyrics {
+    pub origin: NativeLyricsOrigin,
+    pub documents: Vec<NativeLyricsDocument>,
+}
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
 pub enum PlayedFilter {
@@ -9,15 +124,6 @@ pub enum PlayedFilter {
     All,
     Unplayed,
     Played,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
-pub enum SourcePlaylistOperation {
-    Rename,
-    Delete,
-    AddTracks,
-    RemoveEntries,
-    ReorderEntries,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -34,119 +140,10 @@ pub struct RandomTrackRequest {
     pub played_filter: PlayedFilter,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct RandomTrackDomain {
-    played_filters: &'static [PlayedFilter],
-    year_range: bool,
-    genre: bool,
-}
-
-impl RandomTrackDomain {
-    pub const fn new(
-        played_filters: &'static [PlayedFilter],
-        year_range: bool,
-        genre: bool,
-    ) -> Self {
-        Self {
-            played_filters,
-            year_range,
-            genre,
-        }
-    }
-
-    pub const fn played_filters(self) -> &'static [PlayedFilter] {
-        self.played_filters
-    }
-
-    pub const fn allows_year_range(self) -> bool {
-        self.year_range
-    }
-
-    pub const fn allows_genre(self) -> bool {
-        self.genre
-    }
-
-    pub fn validate(self, request: &RandomTrackRequest) -> Result<(), &'static str> {
-        if !self.played_filters.contains(&request.played_filter) {
-            return Err("the selected play-history filter is not available for this source");
-        }
-        if !self.year_range && (request.min_year.is_some() || request.max_year.is_some()) {
-            return Err("year filtering is not available for this source");
-        }
-        if !self.genre && (request.genre_id.is_some() || request.genre_name.is_some()) {
-            return Err("genre filtering is not available for this source");
-        }
-        if request
-            .min_year
-            .zip(request.max_year)
-            .is_some_and(|(minimum, maximum)| minimum > maximum)
-        {
-            return Err("minimum year cannot be greater than maximum year");
-        }
-        Ok(())
-    }
-}
-
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
-pub enum GeneratedTrackStrategy {
-    #[default]
-    SourceDefault,
-    SimilarFirst,
-    MixOnly,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
-pub enum GeneratedTrackSeed {
-    Track(TrackId),
-    Album(AlbumId),
-    Artist(ArtistId),
-    Genre {
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        id: Option<GenreId>,
-        name: String,
-    },
-    Playlist(PlaylistId),
-}
-
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, Serialize, Deserialize)]
-pub enum GeneratedTrackSeedKind {
-    Track,
-    Album,
-    Artist,
-    Genre,
-    Playlist,
-}
-
-impl GeneratedTrackSeed {
-    pub const fn kind(&self) -> GeneratedTrackSeedKind {
-        match self {
-            Self::Track(_) => GeneratedTrackSeedKind::Track,
-            Self::Album(_) => GeneratedTrackSeedKind::Album,
-            Self::Artist(_) => GeneratedTrackSeedKind::Artist,
-            Self::Genre { .. } => GeneratedTrackSeedKind::Genre,
-            Self::Playlist(_) => GeneratedTrackSeedKind::Playlist,
-        }
-    }
-}
-
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct GeneratedTracksRequest {
-    pub seed: GeneratedTrackSeed,
+    pub seed: RadioSeed,
     pub limit: usize,
-    #[serde(default)]
-    pub strategy: GeneratedTrackStrategy,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
-pub struct PagedRequest {
-    pub offset: usize,
-    pub limit: usize,
-}
-
-impl PagedRequest {
-    pub fn new(offset: usize, limit: usize) -> Self {
-        Self { offset, limit }
-    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -167,6 +164,7 @@ pub enum PlaybackReportKind {
 pub struct PlaybackReport {
     pub kind: PlaybackReportKind,
     pub track_id: TrackId,
+    pub started_at_unix_seconds: i64,
     pub position_seconds: u32,
     pub paused: bool,
     pub muted: bool,
@@ -216,6 +214,7 @@ impl StreamRequest {
 pub struct StreamDescriptor {
     uri: String,
     redacted_uri: String,
+    trust_invalid_certificate: bool,
     source_start_millis: Option<u64>,
     source_end_millis: Option<u64>,
 }
@@ -227,6 +226,7 @@ impl StreamDescriptor {
         Self {
             uri,
             redacted_uri,
+            trust_invalid_certificate: false,
             source_start_millis: None,
             source_end_millis: None,
         }
@@ -236,9 +236,15 @@ impl StreamDescriptor {
         Self {
             uri: uri.into(),
             redacted_uri: redacted_uri.into(),
+            trust_invalid_certificate: false,
             source_start_millis: None,
             source_end_millis: None,
         }
+    }
+
+    pub fn with_trust_invalid_certificate(mut self, trust: bool) -> Self {
+        self.trust_invalid_certificate = trust;
+        self
     }
 
     pub fn with_source_window(mut self, start_millis: u64, end_millis: u64) -> Self {
@@ -255,6 +261,10 @@ impl StreamDescriptor {
 
     pub fn redacted_uri(&self) -> &str {
         &self.redacted_uri
+    }
+
+    pub fn trust_invalid_certificate(&self) -> bool {
+        self.trust_invalid_certificate
     }
 
     pub fn source_start_millis(&self) -> u64 {

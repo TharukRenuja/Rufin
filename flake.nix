@@ -34,6 +34,8 @@
                 ./README.md
                 ./crates
                 ./data/icons/hicolor
+                ./data/japanese-readings.dic
+                ./data/japanese-readings.LICENSE
                 ./data/io.github.screwys.Rufin.desktop
                 ./data/io.github.screwys.Rufin.metainfo.xml
               ];
@@ -79,6 +81,10 @@
             SSL_CERT_FILE = "${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt";
 
             postInstall = ''
+              install -Dm644 data/japanese-readings.dic \
+                "$out/share/rufin/japanese-readings.dic"
+              install -Dm644 data/japanese-readings.LICENSE \
+                "$out/share/licenses/rufin/japanese-readings.LICENSE"
               install -Dm644 data/io.github.screwys.Rufin.desktop \
                 "$out/share/applications/io.github.screwys.Rufin.desktop"
               substituteInPlace "$out/share/applications/io.github.screwys.Rufin.desktop" \

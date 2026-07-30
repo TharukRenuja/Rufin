@@ -1,16 +1,18 @@
 use std::rc::Rc;
 
-use ::library::{Track, play_context::PlayContextDescriptor};
+use ::library::TrackList;
 use adw::prelude::*;
 use artwork::ArtworkBinding;
 
 use crate::LibraryListKey;
 use crate::shell::Shell;
-use crate::shell::cover::{CoverGroupProjection, GRID_COVER_SIZE};
+use crate::shell::actions::PLAY_ICON;
+use crate::shell::cover::CoverGroupProjection;
 
 use super::collections::library_route_inset;
 use super::detail_showcase::{
-    CollectionDetailShowcase, DetailSummaryProjection, collection_detail_showcase,
+    CollectionDetailShowcase, DetailSummaryProjection, append_loaded_batch_queue_actions,
+    collection_detail_showcase, detail_primary_action_button,
 };
 use super::playlist_detail::playlist_cover_size;
 use super::route_layout::{
@@ -19,8 +21,7 @@ use super::route_layout::{
 };
 use super::route_shell::LibraryToolbarProjection;
 use super::routes::{SearchableTrackOptions, TrackListProjection};
-
-pub(crate) const GROUPED_DETAIL_COVER_FETCH_SIZE: u32 = GRID_COVER_SIZE;
+use super::track_model::PreparedTrackProjection;
 
 pub(crate) struct GroupedDetailData {
     pub(super) key: LibraryListKey,
@@ -30,54 +31,25 @@ pub(crate) struct GroupedDetailData {
     pub(super) seed: u32,
     pub(super) summary_items: Vec<(&'static str, String)>,
     pub(super) actions: Option<gtk::Widget>,
-    pub(super) tracks: Vec<Track>,
+    pub(super) tracks: TrackList,
     pub(super) table_context: &'static str,
-    pub(super) source_descriptor: Option<PlayContextDescriptor>,
+    pub(super) playback_context: String,
 }
 
 #[derive(Clone)]
 pub(crate) struct GroupedDetailView {
     root: gtk::Widget,
     title: gtk::Label,
-    summary: DetailSummaryProjection,
-    cover: CoverGroupProjection,
-    track_stack: gtk::Stack,
     tracks: TrackListProjection,
+    track_stack: gtk::Stack,
     toolbar: LibraryToolbarProjection,
+    cover: CoverGroupProjection,
+    summary: DetailSummaryProjection,
 }
 
 impl GroupedDetailView {
     pub(crate) fn widget(&self) -> gtk::Widget {
         self.root.clone()
-    }
-
-    pub(crate) fn replace(
-        &self,
-        shell: &Rc<Shell>,
-        title: &str,
-        summary_items: &[(&str, String)],
-        artwork: &[ArtworkBinding],
-        seed: u32,
-        tracks: Vec<Track>,
-    ) {
-        self.title.set_text(title);
-        self.summary.replace(summary_items);
-        self.cover.replace(shell, artwork, seed);
-        self.tracks.replace(tracks);
-        self.track_stack
-            .set_visible_child_name(if self.tracks.source_is_empty() {
-                "empty"
-            } else {
-                "tracks"
-            });
-    }
-
-    pub(crate) fn bind_summary_text_with(&self, index: usize, text: impl Fn() -> String + 'static) {
-        self.summary.bind_text_with(index, text);
-    }
-
-    pub(crate) fn source_tracks(&self) -> std::sync::Arc<Vec<Track>> {
-        self.tracks.source_tracks()
     }
 
     pub(crate) fn apply_library_list_settings(
@@ -87,6 +59,57 @@ impl GroupedDetailView {
     ) {
         self.tracks.apply_library_list_settings(key, settings);
         self.toolbar.apply(key, settings);
+    }
+
+    pub(crate) fn bind_summary_text_with(&self, index: usize, text: impl Fn() -> String + 'static) {
+        self.summary.bind_text_with(index, text);
+    }
+
+    pub(crate) fn tracks(&self) -> &TrackListProjection {
+        &self.tracks
+    }
+
+    pub(crate) fn item_navigation(&self) -> crate::shell::route::MountedRouteItemNavigation {
+        self.tracks.item_navigation()
+    }
+
+    pub(crate) fn replace_prepared(
+        &self,
+        shell: &Rc<Shell>,
+        title: &str,
+        artwork: &[ArtworkBinding],
+        seed: u32,
+        summary_items: &[(&str, String)],
+        tracks: PreparedTrackProjection,
+    ) -> bool {
+        if !self.tracks.replace_prepared(tracks) {
+            return false;
+        }
+        self.replace_facts(shell, title, artwork, seed, summary_items);
+        self.sync_track_stack();
+        true
+    }
+
+    fn replace_facts(
+        &self,
+        shell: &Rc<Shell>,
+        title: &str,
+        artwork: &[ArtworkBinding],
+        seed: u32,
+        summary_items: &[(&str, String)],
+    ) {
+        self.title.set_text(title);
+        self.cover.replace(shell, artwork, seed);
+        self.summary.replace(summary_items);
+    }
+
+    fn sync_track_stack(&self) {
+        self.track_stack
+            .set_visible_child_name(if self.tracks.source_is_empty() {
+                "empty"
+            } else {
+                "tracks"
+            });
     }
 }
 
@@ -105,7 +128,7 @@ impl Shell {
             actions,
             tracks,
             table_context,
-            source_descriptor,
+            playback_context,
         } = data;
         let content_width = detail_route_inner_width(self, PRIMARY_ROUTE_MARGIN_START);
         let cover_size = playlist_cover_size(content_width);
@@ -121,7 +144,7 @@ impl Shell {
             &artwork,
             seed,
             cover_size,
-            GROUPED_DETAIL_COVER_FETCH_SIZE,
+            playlist_cover_size(i32::MAX),
         );
         let title_label = gtk::Label::new(Some(&title));
         title_label.add_css_class("detail-title");
@@ -156,8 +179,7 @@ impl Shell {
             key,
             SearchableTrackOptions {
                 on_visible_count_changed: None,
-                source_descriptor,
-                favorites_only: false,
+                context_id: playback_context,
                 content_inset: PRIMARY_ROUTE_HORIZONTAL_INSET,
                 fixed_layout: None,
             },
@@ -192,11 +214,37 @@ impl Shell {
         GroupedDetailView {
             root: wrapper.upcast(),
             title: title_label,
-            summary,
-            cover,
-            track_stack,
             tracks: track_projection,
+            track_stack,
             toolbar,
+            cover,
+            summary,
         }
+    }
+
+    pub(crate) fn install_grouped_detail_actions(
+        self: &Rc<Self>,
+        actions: &gtk::Box,
+        tracks: &TrackListProjection,
+        context_id: String,
+    ) {
+        let play = detail_primary_action_button(PLAY_ICON, "Play");
+        let controller = self.products.playback.queue.clone();
+        let play_tracks = tracks.clone();
+        let play_context = context_id.clone();
+        play.connect_clicked(move |_| {
+            if let Some(request) =
+                play_tracks.source_play_request(playback::QueuePlacement::Now, &play_context, true)
+            {
+                controller.play_loaded(request);
+            }
+        });
+        actions.append(&play);
+        append_loaded_batch_queue_actions(
+            actions,
+            &self.products.playback.queue,
+            tracks,
+            context_id,
+        );
     }
 }

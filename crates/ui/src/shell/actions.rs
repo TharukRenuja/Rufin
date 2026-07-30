@@ -4,6 +4,7 @@ use adw::prelude::*;
 use gtk::{gio, glib};
 
 use crate::localization::{bind_widget_accessible_label, bind_widget_tooltip};
+use crate::preferences::source::selector::install_source_menu_actions;
 use crate::preferences::{
     dialogs::popup::present_light_dismiss_dialog, present_preferences_dialog,
 };
@@ -37,18 +38,16 @@ pub(crate) struct ControlFeedbackState {
     pub(crate) generation: Rc<Cell<u64>>,
 }
 
-pub(crate) fn connect_shell_actions(
-    shell: &Rc<Shell>,
-    normal_main_menu: gtk::Button,
-    compact_main_menu: gtk::Button,
-) {
+pub(crate) fn connect_shell_actions(shell: &Rc<Shell>) {
     install_window_actions(shell);
     navigation::install_mouse_history_buttons(shell);
-    install_main_menu_shortcut(shell, normal_main_menu, compact_main_menu);
+    install_main_menu_shortcut(shell);
     layout::connect_shell_layout(shell);
 }
 
 pub(crate) fn install_window_actions(shell: &Rc<Shell>) {
+    install_source_menu_actions(shell);
+
     let go_back = gio::SimpleAction::new("go-back", None);
     let go_back_shell = Rc::clone(shell);
     go_back.connect_activate(move |_, _| go_back_shell.go_back());
@@ -64,6 +63,13 @@ pub(crate) fn install_window_actions(shell: &Rc<Shell>) {
     preferences.connect_activate(move |_, _| present_preferences_dialog(&preferences_shell));
     shell.chrome.window.add_action(&preferences);
 
+    let troubleshooting = gio::SimpleAction::new("troubleshooting", None);
+    let troubleshooting_shell = Rc::clone(shell);
+    troubleshooting.connect_activate(move |_, _| {
+        super::diagnostics::present_diagnostics(&troubleshooting_shell);
+    });
+    shell.chrome.window.add_action(&troubleshooting);
+
     let toggle_left_sidebar = gio::SimpleAction::new("toggle-left-sidebar", None);
     let toggle_left_sidebar_shell = Rc::clone(shell);
     toggle_left_sidebar.connect_activate(move |_, _| {
@@ -76,6 +82,13 @@ pub(crate) fn install_window_actions(shell: &Rc<Shell>) {
     toggle_private_mode.connect_activate(move |_, _| {
         let enabled = !private_mode_shell.settings.current.borrow().private_mode;
         private_mode_shell.set_private_mode(enabled);
+        if private_mode_shell.settings.current.borrow().private_mode == enabled {
+            private_mode_shell.show_control_feedback_toast(if enabled {
+                tr("Private mode is on")
+            } else {
+                tr("Private mode is off")
+            });
+        }
     });
     shell.chrome.window.add_action(&toggle_private_mode);
 
@@ -99,6 +112,29 @@ pub(crate) fn install_window_actions(shell: &Rc<Shell>) {
         let transport = shell.products.playback.transport.clone();
         move || transport.play_pause()
     });
+    let navigate_sidebar =
+        gio::SimpleAction::new("navigate-sidebar", Some(glib::VariantTy::UINT32));
+    let navigate_shell = Rc::clone(shell);
+    navigate_sidebar.connect_activate(move |_, parameter| {
+        let Some(position) = parameter.and_then(|position| position.get::<u32>()) else {
+            return;
+        };
+        if let Some(route) =
+            navigation::sidebar_route_at_position(&navigate_shell, position as usize)
+        {
+            navigate_shell.navigate(route);
+        }
+    });
+    shell.chrome.window.add_action(&navigate_sidebar);
+    for position in 1..=9 {
+        let target = (position as u32).to_variant();
+        let action_name = gio::Action::print_detailed_name("win.navigate-sidebar", Some(&target));
+        let accelerator = format!("<Control>{position}");
+        shell
+            .chrome
+            .application
+            .set_accels_for_action(&action_name, &[&accelerator]);
+    }
     add_window_action(shell, "previous-track", &["<Control>b"], {
         let transport = shell.products.playback.transport.clone();
         move || transport.previous()
@@ -187,11 +223,7 @@ pub(crate) fn install_window_actions(shell: &Rc<Shell>) {
         .set_accels_for_action("win.toggle-fullscreen", &["F11"]);
 }
 
-pub(crate) fn install_main_menu_shortcut(
-    shell: &Rc<Shell>,
-    normal_main_menu: gtk::Button,
-    compact_main_menu: gtk::Button,
-) {
+pub(crate) fn install_main_menu_shortcut(shell: &Rc<Shell>) {
     let key_controller = gtk::EventControllerKey::new();
     let shortcut_shell = Rc::clone(shell);
     key_controller.connect_key_pressed(move |_, key, _, state| {
@@ -199,15 +231,15 @@ pub(crate) fn install_main_menu_shortcut(
             match shortcut_shell.left_sidebar_mode() {
                 ResolvedLeftSidebarMode::Compact => {
                     navigation::popup_primary_menu(
+                        &shortcut_shell,
                         &shortcut_shell.navigation_view.compact_main_menu.popover,
                     );
-                    compact_main_menu.grab_focus();
                 }
                 _ => {
                     navigation::popup_primary_menu(
+                        &shortcut_shell,
                         &shortcut_shell.navigation_view.normal_main_menu.popover,
                     );
-                    normal_main_menu.grab_focus();
                 }
             }
             glib::Propagation::Stop
@@ -353,6 +385,14 @@ fn show_shortcuts_dialog(shell: &Shell) {
         "Forward <Alt>Right",
     ));
     section.add(adw::ShortcutsItem::new(&tr("Menu"), "F10"));
+    section.add(adw::ShortcutsItem::new(
+        &tr("Sidebar route by position"),
+        "<Control>1...9",
+    ));
+    section.add(adw::ShortcutsItem::new(
+        &tr("Navigate page items"),
+        "Up Down Left Right",
+    ));
     section.add(adw::ShortcutsItem::from_action(
         &tr("Search"),
         "win.focus-search",
@@ -380,9 +420,9 @@ fn show_shortcuts_dialog(shell: &Shell) {
     dialog.add(section);
 
     let section = adw::ShortcutsSection::new(Some(&tr("Playback")));
-    section.add(adw::ShortcutsItem::from_action(
+    section.add(adw::ShortcutsItem::new(
         &tr("Play/Pause"),
-        "win.play-pause",
+        "space <Control>space",
     ));
     section.add(adw::ShortcutsItem::from_action(
         &tr("Previous"),
@@ -448,6 +488,7 @@ fn show_about_dialog(shell: &Shell) {
             "Thank you for trying out Rufin! If you have problems or suggestions, please open an issue in Github.",
         ))
         .build();
+    dialog.add_link(&tr("Support"), "https://github.com/sponsors/screwys");
     present_light_dismiss_dialog(&dialog, &shell.chrome.window);
 }
 

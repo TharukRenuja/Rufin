@@ -15,8 +15,9 @@ use crate::localization::{
 };
 use crate::preferences::dialogs::popup::present_light_dismiss_dialog;
 use crate::shell::Shell;
-use crate::shell::actions::{ADD_ICON, MORE_ICON, icon_button, sort_order_icon};
+use crate::shell::actions::{ADD_ICON, MORE_ICON, sort_order_icon};
 use crate::shell::layout::WINDOW_CHROME_MARGIN_END;
+use crate::shell::route::{MountedRoute, MountedRouteItemNavigation, MountedRouteResume};
 use crate::{
     LibraryField, LibraryLayout, LibraryListKey, LibraryListSettings, available_sort_fields,
 };
@@ -48,14 +49,18 @@ pub(crate) struct LibraryPageShellOptions {
     pub(crate) empty: bool,
     pub(crate) empty_body: &'static str,
     pub(crate) search: gtk::SearchEntry,
+    pub(crate) has_visible_results: Rc<dyn Fn() -> bool>,
     pub(crate) content: gtk::Widget,
 }
 
 #[derive(Clone)]
 pub(crate) struct LibraryPageShell {
     widget: gtk::Widget,
-    stack: gtk::Stack,
+    contents: gtk::Stack,
     toolbar: LibraryToolbarProjection,
+    search: gtk::SearchEntry,
+    has_visible_results: Rc<dyn Fn() -> bool>,
+    source_empty: Rc<Cell<bool>>,
 }
 
 impl LibraryPageShell {
@@ -63,9 +68,12 @@ impl LibraryPageShell {
         self.widget.clone()
     }
 
-    pub(crate) fn set_empty(&self, empty: bool) {
-        self.stack
-            .set_visible_child_name(if empty { "empty" } else { "content" });
+    pub(crate) fn mounted_route(
+        &self,
+        resume: MountedRouteResume,
+        item_navigation: MountedRouteItemNavigation,
+    ) -> MountedRoute {
+        MountedRoute::new(self.widget(), resume).with_item_navigation(item_navigation)
     }
 
     pub(crate) fn apply_library_list_settings(
@@ -75,12 +83,26 @@ impl LibraryPageShell {
     ) {
         self.toolbar.apply(key, settings);
     }
+
+    pub(crate) fn set_empty(&self, empty: bool) {
+        self.source_empty.set(empty);
+        self.sync_content_state();
+    }
+
+    fn sync_content_state(&self) {
+        self.contents.set_visible_child_name(library_page_child(
+            self.source_empty.get(),
+            self.search.text().as_str(),
+            (self.has_visible_results)(),
+        ));
+    }
 }
 
 #[derive(Clone)]
 pub(crate) struct LibraryToolbarProjection {
     key: LibraryListKey,
     widget: gtk::Widget,
+    controls: gtk::Box,
     sort_dropdown: gtk::DropDown,
     direction: gtk::Button,
     layout: gtk::Button,
@@ -126,6 +148,7 @@ impl Shell {
             empty,
             empty_body,
             search,
+            has_visible_results,
             content,
         } = options;
         let wrapper = gtk::Box::new(gtk::Orientation::Vertical, 14);
@@ -135,6 +158,7 @@ impl Shell {
         wrapper.set_hexpand(true);
         wrapper.set_vexpand(true);
         let toolbar = self.library_toolbar_projection(key, search.clone());
+        self.set_current_library_toolbar_controls(&toolbar.controls);
         wrapper.append(&library_route_inset(toolbar.widget()));
         self.set_route_search(Some(search.clone()));
 
@@ -145,15 +169,32 @@ impl Shell {
             &library_route_inset(self.route_empty_view(empty_body)),
             Some("empty"),
         );
+        stack.add_named(
+            &library_route_inset(self.route_empty_view(msgid(r"No results ¯\_(°╭╮°)_/¯"))),
+            Some("search-empty"),
+        );
         stack.add_named(&content, Some("content"));
-        stack.set_visible_child_name(if empty { "empty" } else { "content" });
+        stack.set_visible_child_name(library_page_child(
+            empty,
+            search.text().as_str(),
+            has_visible_results(),
+        ));
         wrapper.append(&stack);
 
-        LibraryPageShell {
+        let source_empty = Rc::new(Cell::new(empty));
+        let page_shell = LibraryPageShell {
             widget: wrapper.upcast(),
-            stack,
+            contents: stack,
             toolbar,
-        }
+            search: search.clone(),
+            has_visible_results,
+            source_empty,
+        };
+        let search_shell = page_shell.clone();
+        search.connect_search_changed(move |_| {
+            search_shell.sync_content_state();
+        });
+        page_shell
     }
 
     pub(crate) fn set_route_search(&self, search: Option<gtk::SearchEntry>) {
@@ -171,7 +212,7 @@ impl Shell {
     }
 
     pub(crate) fn focus_current_route_search(&self) {
-        if !self.route_search_accepts_focus() {
+        if !self.route_keyboard_available() {
             return;
         }
         let search = self.route_viewport.route_search.borrow().as_ref().cloned();
@@ -190,19 +231,43 @@ impl Shell {
         }
     }
 
-    fn route_search_accepts_focus(&self) -> bool {
+    fn route_keyboard_available(&self) -> bool {
         !self.source.login_screen_active()
             && !self.fullscreen_player_visible()
-            && self.preferences.dialog.borrow().is_none()
-            && self.source.add_server.borrow().is_none()
-            && self.lyrics.search_dialog.borrow().is_none()
+            && !self.transient_route_input_active()
     }
 
-    pub(crate) fn connect_type_to_search(self: &Rc<Self>) {
+    fn playback_keyboard_available(&self) -> bool {
+        !self.source.login_screen_active() && !self.transient_route_input_active()
+    }
+
+    fn transient_route_input_active(&self) -> bool {
+        self.preferences.active_dialog().is_some()
+            || self.source.add_server.borrow().is_some()
+            || self.lyrics.search_dialog.borrow().is_some()
+    }
+
+    pub(crate) fn connect_route_keyboard(self: &Rc<Self>) {
         let key = gtk::EventControllerKey::new();
         key.set_propagation_phase(gtk::PropagationPhase::Capture);
         let shell = Rc::clone(self);
         key.connect_key_pressed(move |_, key, _, state| {
+            let current_focus = GtkWindowExt::focus(&shell.chrome.window);
+            if key_has_no_shortcut_modifiers(state) {
+                if key == gtk::gdk::Key::space
+                    && shell.playback_keyboard_available()
+                    && !focus_blocks_play_pause(current_focus.as_ref())
+                {
+                    shell.products.playback.transport.play_pause();
+                    return glib::Propagation::Stop;
+                }
+                if shell.route_keyboard_available()
+                    && !focus_blocks_page_navigation(current_focus.as_ref())
+                    && let Some(direction) = page_navigation_direction(key)
+                {
+                    return shell.navigate_current_route_items(direction);
+                }
+            }
             let Some(search) = shell.route_viewport.route_search.borrow().as_ref().cloned() else {
                 return glib::Propagation::Proceed;
             };
@@ -213,7 +278,7 @@ impl Shell {
                 .as_ref()
                 .cloned();
             if !shell.settings.current.borrow().type_to_search_enabled
-                || !shell.route_search_accepts_focus()
+                || !shell.route_keyboard_available()
                 || key_should_bypass_type_to_search(state)
                 || focus_blocks_type_to_search(
                     GtkWindowExt::focus(&shell.chrome.window).as_ref(),
@@ -265,13 +330,11 @@ impl Shell {
             gtk::Orientation::Horizontal,
             LIBRARY_TOOLBAR_CONTROL_SPACING,
         );
-        self.set_current_library_toolbar_controls(&controls);
         let command_button = match key {
             LibraryListKey::Playlists => {
                 let create = gtk::Button::new();
                 set_library_command_button_content(&create, false, ADD_ICON, "New Playlist");
                 bind_widget_tooltip(&create, "New Playlist");
-                create.set_sensitive(self.products.library.playlist_creation_supported());
                 let shell = Rc::clone(self);
                 create.connect_clicked(move |_| shell.new_playlist_dialog());
                 controls.append(&create);
@@ -393,6 +456,7 @@ impl Shell {
         LibraryToolbarProjection {
             key,
             widget,
+            controls,
             sort_dropdown,
             direction,
             layout,
@@ -424,8 +488,6 @@ impl Shell {
         let header = adw::HeaderBar::new();
         let title = adw::WindowTitle::new(&tr("Customize display"), &tr(key.title()));
         header.set_title_widget(Some(&title));
-        let reset = icon_button("view-refresh-symbolic", "Reset display");
-        header.pack_end(&reset);
         toolbar.add_top_bar(&header);
 
         let content = gtk::Box::new(gtk::Orientation::Vertical, 18);
@@ -438,15 +500,24 @@ impl Shell {
             .title(tr("Layout"))
             .description(tr("Choose the current page layout."))
             .build();
+        let reset = gtk::Button::with_label(&tr("Reset"));
+        reset.add_css_class("destructive-action");
+        reset.set_valign(gtk::Align::End);
+        reset.set_margin_end(16);
+        bind_widget_tooltip(&reset, msgid("Reset to defaults"));
+        layout_group.set_header_suffix(Some(&reset));
         let layout_row = adw::ActionRow::builder().title(tr("View")).build();
         let layout_buttons = Rc::new(RefCell::new(
             Vec::<(LibraryLayout, gtk::ToggleButton)>::new(),
         ));
         let layout_box = gtk::Box::new(gtk::Orientation::Horizontal, 0);
         layout_box.add_css_class("linked");
+        layout_box.add_css_class("preference-selection-buttons");
+        layout_box.set_valign(gtk::Align::Center);
         let mut first_button: Option<gtk::ToggleButton> = None;
         for layout in supported_layouts(key) {
             let button = gtk::ToggleButton::new();
+            button.add_css_class("preference-selection-button");
             button.set_child(Some(&layout_button_content(layout)));
             button.set_tooltip_text(Some(&tr(layout_title(layout))));
             if let Some(first) = &first_button {
@@ -470,7 +541,7 @@ impl Shell {
             let shell = Rc::clone(self);
             let fields_group = fields_group.clone();
             let rows = Rc::clone(&rows);
-            let layout_buttons = Rc::clone(&layout_buttons);
+            let layout_buttons = Rc::downgrade(&layout_buttons);
             let layout = *layout;
             button.connect_toggled(move |button| {
                 if !button.is_active()
@@ -481,7 +552,9 @@ impl Shell {
                 shell.update_library_list_settings(key, |settings| {
                     settings.layout = layout;
                 });
-                sync_layout_buttons(&layout_buttons, layout);
+                if let Some(layout_buttons) = layout_buttons.upgrade() {
+                    sync_layout_buttons(&layout_buttons, layout);
+                }
                 populate_library_field_rows(&shell, key, &fields_group, &rows);
             });
         }
@@ -520,11 +593,60 @@ impl Shell {
     }
 }
 
+fn library_page_child(source_empty: bool, query: &str, has_visible_results: bool) -> &'static str {
+    if source_empty {
+        "empty"
+    } else if !query.trim().is_empty() && !has_visible_results {
+        "search-empty"
+    } else {
+        "content"
+    }
+}
+
+#[cfg(test)]
+mod search_empty_tests {
+    use super::library_page_child;
+
+    #[test]
+    fn library_page_only_shows_search_empty_for_an_unmatched_query() {
+        assert_eq!(library_page_child(false, "missing", false), "search-empty");
+        assert_eq!(library_page_child(false, "", false), "content");
+        assert_eq!(library_page_child(false, "found", true), "content");
+        assert_eq!(library_page_child(true, "missing", false), "empty");
+    }
+}
+
 fn library_sort_title(key: LibraryListKey, field: LibraryField) -> &'static str {
     if key == LibraryListKey::PlaylistTracks && field == LibraryField::RowIndex {
         msgid("Playlist order")
     } else {
         field.title()
+    }
+}
+
+pub(super) fn restore_single_click_activation_on_primary_press<T>(
+    target: &T,
+    restore: impl Fn(&T) + 'static,
+) where
+    T: IsA<gtk::Widget> + Clone + 'static,
+{
+    let pointer = gtk::GestureClick::new();
+    pointer.set_button(gtk::gdk::BUTTON_PRIMARY);
+    pointer.set_propagation_phase(gtk::PropagationPhase::Capture);
+    let restore = weak_target_callback(target, restore);
+    pointer.connect_pressed(move |_, _, _, _| restore());
+    target.add_controller(pointer);
+}
+
+fn weak_target_callback<T>(target: &T, callback: impl Fn(&T) + 'static) -> impl Fn() + 'static
+where
+    T: glib::object::ObjectType,
+{
+    let weak_target = target.downgrade();
+    move || {
+        if let Some(target) = weak_target.upgrade() {
+            callback(&target);
+        }
     }
 }
 
@@ -538,15 +660,58 @@ fn key_should_bypass_type_to_search(state: gtk::gdk::ModifierType) -> bool {
     )
 }
 
+fn key_has_no_shortcut_modifiers(state: gtk::gdk::ModifierType) -> bool {
+    !state.intersects(
+        gtk::gdk::ModifierType::SHIFT_MASK
+            | gtk::gdk::ModifierType::ALT_MASK
+            | gtk::gdk::ModifierType::CONTROL_MASK
+            | gtk::gdk::ModifierType::SUPER_MASK
+            | gtk::gdk::ModifierType::HYPER_MASK
+            | gtk::gdk::ModifierType::META_MASK,
+    )
+}
+
+fn page_navigation_direction(key: gtk::gdk::Key) -> Option<gtk::DirectionType> {
+    match key {
+        gtk::gdk::Key::Up => Some(gtk::DirectionType::Up),
+        gtk::gdk::Key::Down => Some(gtk::DirectionType::Down),
+        gtk::gdk::Key::Left => Some(gtk::DirectionType::Left),
+        gtk::gdk::Key::Right => Some(gtk::DirectionType::Right),
+        _ => None,
+    }
+}
+
+fn focus_blocks_play_pause(focus: Option<&gtk::Widget>) -> bool {
+    focus.is_some_and(|focus| focus_is_text_input(focus) || focus_is_in_dialog(focus))
+}
+
+fn focus_blocks_page_navigation(focus: Option<&gtk::Widget>) -> bool {
+    focus.is_some_and(|focus| {
+        focus_is_in_dialog(focus)
+            || focus_is_text_input(focus)
+            || focus.is::<gtk::Range>()
+            || focus.ancestor(gtk::Range::static_type()).is_some()
+            || focus.is::<gtk::DropDown>()
+            || focus.ancestor(gtk::DropDown::static_type()).is_some()
+    })
+}
+
+fn focus_is_in_dialog(focus: &gtk::Widget) -> bool {
+    focus.is::<adw::Dialog>() || focus.ancestor(adw::Dialog::static_type()).is_some()
+}
+
+fn focus_is_text_input(focus: &gtk::Widget) -> bool {
+    focus.is::<gtk::Editable>()
+        || focus.is::<gtk::TextView>()
+        || focus.ancestor(gtk::Editable::static_type()).is_some()
+        || focus.ancestor(gtk::TextView::static_type()).is_some()
+}
+
 fn focus_blocks_type_to_search(focus: Option<&gtk::Widget>, search: &gtk::SearchEntry) -> bool {
     let Some(focus) = focus else {
         return false;
     };
-    focus.is_ancestor(search)
-        || focus.is::<gtk::Editable>()
-        || focus.is::<gtk::TextView>()
-        || focus.ancestor(gtk::Editable::static_type()).is_some()
-        || focus.ancestor(gtk::TextView::static_type()).is_some()
+    focus.is_ancestor(search) || focus_is_text_input(focus) || focus_is_in_dialog(focus)
 }
 
 fn library_toolbar_compact_for_width(width: i32) -> bool {
@@ -632,4 +797,35 @@ pub(crate) fn non_propagating_width_scroller() -> gtk::ScrolledWindow {
     clip.set_hexpand(true);
     clip.set_halign(gtk::Align::Fill);
     clip
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{cell::Cell, rc::Rc};
+
+    use adw::prelude::*;
+
+    use super::weak_target_callback;
+
+    #[test]
+    fn weak_target_callback_does_not_retain_its_target() {
+        let target = gtk::gio::SimpleAction::new("target", None);
+        let weak_target = target.downgrade();
+        let calls = Rc::new(Cell::new(0));
+        let callback_calls = Rc::clone(&calls);
+        let callback = weak_target_callback(&target, move |_| {
+            callback_calls.set(callback_calls.get() + 1);
+        });
+
+        callback();
+        assert_eq!(calls.get(), 1);
+        drop(target);
+        callback();
+
+        assert!(
+            weak_target.upgrade().is_none(),
+            "the callback must not retain its target"
+        );
+        assert_eq!(calls.get(), 1);
+    }
 }

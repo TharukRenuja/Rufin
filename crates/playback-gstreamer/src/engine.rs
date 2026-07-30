@@ -1,7 +1,7 @@
-#[cfg(test)]
-use super::analysis::visualizer_pipeline_is_live;
-use super::analysis::{VisualizerAnalyzer, VisualizerTap};
 use super::pipeline::{AboutToFinishAction, PlayerPipeline, SourceClock};
+#[cfg(test)]
+use super::waveform::visualizer_pipeline_is_live;
+use super::waveform::{VisualizerAnalyzer, VisualizerTap};
 use super::*;
 use std::collections::HashMap;
 use std::sync::mpsc::{SyncSender, sync_channel};
@@ -80,8 +80,9 @@ fn telemetry_key(event: &BackendEvent) -> Option<(RunId, TelemetryKind)> {
 }
 
 pub struct GStreamerPlaybackBackend {
-    commands: Sender<BackendCommand>,
+    commands: Option<Sender<BackendCommand>>,
     events: Arc<Mutex<EventMailbox>>,
+    thread: Option<thread::JoinHandle<()>>,
 }
 impl GStreamerPlaybackBackend {
     pub fn new() -> Result<Self, BackendError> {
@@ -89,26 +90,54 @@ impl GStreamerPlaybackBackend {
         let events = Arc::new(Mutex::new(EventMailbox::default()));
         let thread_events = Arc::clone(&events);
         let (ready_sender, ready_receiver) = sync_channel(1);
-        thread::Builder::new()
+        let thread = thread::Builder::new()
             .name("rufin-gstreamer-playback".to_string())
             .spawn(move || run_gstreamer_thread(receiver, thread_events, ready_sender))
             .map_err(|error| BackendError::Backend(error.to_string()))?;
         match ready_receiver.recv() {
-            Ok(Ok(())) => Ok(Self { commands, events }),
-            Ok(Err(error)) => Err(BackendError::Backend(error)),
-            Err(_) => Err(BackendError::ChannelClosed),
+            Ok(Ok(())) => Ok(Self {
+                commands: Some(commands),
+                events,
+                thread: Some(thread),
+            }),
+            Ok(Err(error)) => {
+                let _ = thread.join();
+                Err(BackendError::Backend(error))
+            }
+            Err(_) => {
+                let _ = thread.join();
+                Err(BackendError::ChannelClosed)
+            }
         }
     }
 }
 impl PlaybackBackend for GStreamerPlaybackBackend {
     fn send(&mut self, command: BackendCommand) -> Result<(), BackendError> {
         self.commands
+            .as_ref()
+            .ok_or(BackendError::ChannelClosed)?
             .send(command)
             .map_err(|_| BackendError::ChannelClosed)
     }
 
     fn drain_events(&mut self) -> Vec<BackendEvent> {
         lock_recover(&self.events).drain()
+    }
+
+    fn shutdown(&mut self) -> Result<(), BackendError> {
+        self.commands.take();
+        let Some(thread) = self.thread.take() else {
+            return Ok(());
+        };
+        thread
+            .join()
+            .map_err(|_| BackendError::Backend("GStreamer playback worker panicked".to_string()))
+    }
+}
+
+impl Drop for GStreamerPlaybackBackend {
+    fn drop(&mut self) {
+        let _ = self.shutdown();
     }
 }
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -830,7 +859,7 @@ impl GstEngine {
                 uri = %item.stream.redacted_uri(),
                 "preloading late gapless next stream"
             );
-            self.active_pipeline().set_uri(item.stream.uri())?;
+            self.active_pipeline().set_stream(&item.stream)?;
         }
         self.prepare_incoming(&next)
     }
@@ -843,7 +872,7 @@ impl GstEngine {
                 run = %current.run,
                 "cleared pending gapless next stream"
             );
-            if let Err(error) = self.pipeline_for_slot(slot).set_uri(current.stream.uri()) {
+            if let Err(error) = self.pipeline_for_slot(slot).set_stream(&current.stream) {
                 warn!(
                     %error,
                     run = %current.run,
@@ -1041,6 +1070,9 @@ impl GstEngine {
                 }
                 self.handle_stream_start();
             }
+            MessageView::Tag(tag) if self.is_active_slot(slot) => {
+                self.log_stream_diagnostics(slot, &tag.tags());
+            }
             MessageView::DurationChanged(_) if self.is_active_slot(slot) => {
                 if self.pending_seek.is_none()
                     && let Some(duration) = self.active_pipeline().duration()
@@ -1109,6 +1141,38 @@ impl GstEngine {
             }
             _ => {}
         }
+    }
+
+    fn log_stream_diagnostics(&self, slot: Slot, tags: &gst::TagListRef) {
+        let codec = tags
+            .get::<gst::tags::AudioCodec>()
+            .map(|value| value.get().to_string())
+            .or_else(|| {
+                tags.get::<gst::tags::Codec>()
+                    .map(|value| value.get().to_string())
+            })
+            .or_else(|| {
+                tags.get::<gst::tags::ContainerFormat>()
+                    .map(|value| value.get().to_string())
+            });
+        let bitrate = tags
+            .get::<gst::tags::Bitrate>()
+            .map(|value| value.get())
+            .or_else(|| {
+                tags.get::<gst::tags::NominalBitrate>()
+                    .map(|value| value.get())
+            })
+            .map(|bits_per_second| bits_per_second / 1_000);
+        if codec.is_none() && bitrate.is_none() {
+            return;
+        }
+        let run = self.run_for_slot(slot).or_else(|| self.timing_run_id());
+        debug!(
+            run = run.map(RunId::get).unwrap_or_default(),
+            codec = codec.as_deref().unwrap_or("unknown"),
+            reported_bitrate_kbps = bitrate,
+            "received GStreamer stream metadata"
+        );
     }
 
     fn handle_transition_error(&mut self, slot: Slot, error: &str) -> bool {
@@ -2125,6 +2189,7 @@ fn run_gstreamer_thread(
 pub(super) fn handle_about_to_finish(
     pipeline: &gst::Element,
     shared: &Arc<Mutex<SharedBackendState>>,
+    trust_invalid_certificate: &AtomicBool,
     slot: Slot,
     id: PipelineId,
 ) {
@@ -2137,6 +2202,8 @@ pub(super) fn handle_about_to_finish(
                 uri = %next.stream.redacted_uri(),
                 "preloading gapless next stream"
             );
+            trust_invalid_certificate
+                .store(next.stream.trust_invalid_certificate(), Ordering::SeqCst);
             pipeline.set_property("uri", next.stream.uri());
         }
         AboutToFinishAction::Ignore => {}

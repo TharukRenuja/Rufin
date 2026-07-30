@@ -15,6 +15,9 @@ impl Shell {
         }
     }
     pub(crate) fn schedule_next_lyrics_highlight(self: &Rc<Self>, position_millis: u64) {
+        if !self.lyrics_surface_visible() {
+            return;
+        }
         let playing = self
             .playback
             .player
@@ -25,7 +28,7 @@ impl Shell {
             return;
         }
 
-        let Some(next_position_millis) = self.lyrics.current.borrow().as_ref().and_then(|lyrics| {
+        let Some(next_position_millis) = self.visible_lyrics().as_ref().and_then(|lyrics| {
             next_lyrics_line_start_after(
                 &lyrics.lines,
                 self.lyrics_position_millis(position_millis),

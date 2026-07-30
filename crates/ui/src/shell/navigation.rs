@@ -1,15 +1,34 @@
 use std::{cell::RefCell, rc::Rc};
 
-use crate::SidebarRouteItem;
-use crate::preferences::source::selector::{SourceSelector, update_source_selector};
+use crate::interactions::{
+    install_context_menu_openers, keep_parent_grab_for_nested_native_menus, popdown_native_menu,
+    popdown_on_anchor_unmap, replace_native_menu_checkmarks, show_native_menu_icons,
+};
+use crate::preferences::source::selector::source_submenu;
+use crate::routes::collection_context::{
+    present_album_context_menu, present_artist_context_menu, present_genre_context_menu,
+    present_playlist_context_menu, present_smart_playlist_context_menu,
+};
+use crate::routes::collections::PlaybackTarget;
+use crate::routes::library_fields::smart_playlist_display_name;
 use crate::routes::route::Route;
+use crate::{SidebarPin, SidebarRouteItem, format_duration_units};
 use adw::prelude::*;
-use gtk::glib;
+use artwork::ArtworkBinding;
+use gtk::{gio, glib};
+use library::{
+    AcceptedLibraryChange, AlbumSummary, ArtistSummary, GenreSummary, PlaylistSummary,
+    SmartPlaylistSummary,
+};
+use playback::QueuePlacement;
 
 use super::{
-    Shell, chrome,
+    Shell,
+    actions::{PLAY_ICON, PLAY_LATER_ICON, PLAY_NEXT_ICON, icon_button},
+    chrome,
+    cover::presentation::stable_seed,
     layout::{COMPACT_RAIL_WIDTH, ResolvedLeftSidebarMode},
-    route::RouteStack,
+    route::{RouteStack, route_current_track},
 };
 use localization::{msgid, tr};
 
@@ -21,11 +40,11 @@ const MOUSE_FORWARD_BUTTON: u32 = 9;
 const ROUTE_ICON_PREFIX: &str = "rufin-route-";
 const COMPACT_RAIL_LABEL_WIDTH: i32 = COMPACT_RAIL_WIDTH - 8;
 const COMPACT_RAIL_LABEL_WIDTH_CHARS: i32 = 8;
-const PRIMARY_MENU_POPOVER_WIDTH: i32 = 236;
-const PRIMARY_MENU_POPOVER_ANCHOR_Y: i32 = 148;
 const NAV_SELECTED_CLASS: &str = "selected";
 const NAV_ROUTE_HOME_CLASS: &str = "nav-route-home";
+const NAV_ROUTE_SEARCH_CLASS: &str = "nav-route-search";
 const NAV_ROUTE_FAVORITES_CLASS: &str = "nav-route-favorites";
+const NAV_ROUTE_HISTORY_CLASS: &str = "nav-route-history";
 const NAV_ROUTE_ALBUMS_CLASS: &str = "nav-route-albums";
 const NAV_ROUTE_TRACKS_CLASS: &str = "nav-route-tracks";
 const NAV_ROUTE_ARTISTS_CLASS: &str = "nav-route-artists";
@@ -35,16 +54,30 @@ const NAV_ROUTE_MOODS_CLASS: &str = "nav-route-moods";
 const NAV_ROUTE_FOLDERS_CLASS: &str = "nav-route-folders";
 const NAV_ROUTE_PLAYLISTS_CLASS: &str = "nav-route-playlists";
 const NAV_ROUTE_SMART_PLAYLISTS_CLASS: &str = "nav-route-smart-playlists";
-const NAV_ROUTE_ICONS: [(&str, &str, &str); 11] = [
+const SIDEBAR_PIN_ROW_CLASS: &str = "sidebar-pin-row";
+const SIDEBAR_PIN_PLAYING_CLASS: &str = "playing";
+const SIDEBAR_PIN_COVER_SIZE: i32 = 40;
+const PRIMARY_MENU_CLASS: &str = "rufin-primary-menu";
+const NAV_ROUTE_ICONS: [(&str, &str, &str); 13] = [
     (
         NAV_ROUTE_HOME_CLASS,
         "rufin-route-home-symbolic",
         "rufin-route-home-selected-symbolic",
     ),
     (
+        NAV_ROUTE_SEARCH_CLASS,
+        "rufin-route-search-symbolic",
+        "rufin-route-search-selected-symbolic",
+    ),
+    (
         NAV_ROUTE_FAVORITES_CLASS,
         "rufin-route-favorites-symbolic",
         "rufin-route-favorites-selected-symbolic",
+    ),
+    (
+        NAV_ROUTE_HISTORY_CLASS,
+        "rufin-route-history-symbolic",
+        "rufin-route-history-selected-symbolic",
     ),
     (
         NAV_ROUTE_ALBUMS_CLASS,
@@ -99,8 +132,9 @@ pub(crate) struct NavigationState {
 
 pub(super) struct PrimaryMenuWidgets {
     pub(super) button: gtk::Button,
-    pub(super) popover: RefCell<Option<gtk::Popover>>,
+    pub(super) popover: RefCell<Option<gtk::PopoverMenu>>,
     pub(super) click_handler: RefCell<Option<glib::SignalHandlerId>>,
+    pub(super) unmap_handler: RefCell<Option<glib::SignalHandlerId>>,
 }
 
 pub(crate) struct NavigationWidgets {
@@ -111,7 +145,6 @@ pub(crate) struct NavigationWidgets {
     pub(super) tiny_nav_button: gtk::Button,
     pub(super) normal_nav: gtk::Box,
     pub(super) compact_nav: gtk::Box,
-    pub(crate) server_selector: SourceSelector,
     pub(super) normal_main_menu: PrimaryMenuWidgets,
     pub(super) compact_main_menu: PrimaryMenuWidgets,
 }
@@ -122,9 +155,9 @@ pub(super) fn build_normal_navigation(shell: &Rc<Shell>) {
         .normal_nav
         .append(&primary_menu_button(
             &shell.navigation_view.normal_main_menu.button,
-            &shell.navigation_view.server_selector.normal_button,
             &shell.navigation_view.normal_main_menu.popover,
             &shell.navigation_view.normal_main_menu.click_handler,
+            &shell.navigation_view.normal_main_menu.unmap_handler,
             shell,
             false,
         ));
@@ -137,6 +170,7 @@ pub(super) fn build_normal_navigation(shell: &Rc<Shell>) {
             false,
         ));
     }
+    append_sidebar_pins(shell);
 
     shell.navigation_view.normal_nav.append(&sidebar_spacer());
 }
@@ -147,9 +181,9 @@ pub(super) fn build_compact_navigation(shell: &Rc<Shell>) {
         .compact_nav
         .append(&primary_menu_button(
             &shell.navigation_view.compact_main_menu.button,
-            &shell.navigation_view.server_selector.compact_button,
             &shell.navigation_view.compact_main_menu.popover,
             &shell.navigation_view.compact_main_menu.click_handler,
+            &shell.navigation_view.compact_main_menu.unmap_handler,
             shell,
             true,
         ));
@@ -169,8 +203,8 @@ pub(super) fn rebuild_navigation(shell: &Rc<Shell>) {
     clear_box(&shell.navigation_view.compact_nav);
     build_normal_navigation(shell);
     build_compact_navigation(shell);
-    update_source_selector(shell);
     update_navigation_selection(shell.as_ref());
+    update_sidebar_pin_playback(shell.as_ref());
 }
 
 impl Shell {
@@ -178,19 +212,130 @@ impl Shell {
         rebuild_navigation(self);
         self.update_layout();
     }
+
+    pub(crate) fn sidebar_pins_changed(&self, change: &AcceptedLibraryChange) -> bool {
+        let selected_source_id = self
+            .library
+            .selected
+            .borrow()
+            .as_ref()
+            .map(|selected| selected.source_id.clone());
+        let Some(selected_source_id) = selected_source_id else {
+            return false;
+        };
+        let sidebar = &self.settings.current.borrow().sidebar;
+        sidebar.pins_visible
+            && sidebar
+                .pins
+                .iter()
+                .filter(|pin| pin.source_id() == &selected_source_id)
+                .any(|pin| sidebar_pin_changed(pin, change))
+    }
+
+    pub(crate) fn set_sidebar_pin(self: &Rc<Self>, pin: SidebarPin, pinned: bool) {
+        if self
+            .update_app_settings("Pins setting", |settings| {
+                settings.sidebar.set_pinned(pin, pinned)
+            })
+            .is_some()
+        {
+            self.rebuild_sidebar_navigation();
+        }
+    }
+}
+
+fn sidebar_pin_changed(pin: &SidebarPin, change: &AcceptedLibraryChange) -> bool {
+    match pin {
+        SidebarPin::Album { album_id, .. } => change.albums.contains(album_id),
+        SidebarPin::Artist { artist_id, .. } => {
+            change.artists.contains(artist_id) || change.artist_releases.contains(artist_id)
+        }
+        SidebarPin::Genre { genre_id, .. } => change.genres.contains(genre_id),
+        SidebarPin::Playlist { playlist_id, .. } => change.playlists.contains(playlist_id),
+        SidebarPin::SmartPlaylist { playlist_id, .. } => {
+            change.smart_playlists.contains(playlist_id)
+        }
+    }
 }
 
 pub(super) fn update_navigation_selection(shell: &Shell) {
-    let active_route_class = nav_route_class(shell.navigation.routes.borrow().current());
-    update_navigation_selection_in(&shell.navigation_view.normal_nav, active_route_class);
-    update_navigation_selection_in(&shell.navigation_view.compact_nav, active_route_class);
+    let active_route = shell.navigation.routes.borrow().current().clone();
+    update_navigation_selection_in(&shell.navigation_view.normal_nav, &active_route);
+    update_navigation_selection_in(&shell.navigation_view.compact_nav, &active_route);
+}
+
+pub(crate) fn update_sidebar_pin_playback(shell: &Shell) {
+    let selected_source_id = shell
+        .library
+        .selected
+        .borrow()
+        .as_ref()
+        .map(|selected| selected.source_id.clone());
+    let current = route_current_track(shell.playback.player.borrow().as_ref());
+    let playback_context_id = current
+        .as_ref()
+        .zip(selected_source_id.as_ref())
+        .filter(|(current, source_id)| &current.source_id == *source_id)
+        .and_then(|(current, _)| current.context.as_ref())
+        .map(|context| context.context_id.as_str());
+
+    let mut pin_rows = Vec::new();
+    let mut child = shell.navigation_view.normal_nav.first_child();
+    while let Some(widget) = child {
+        child = widget.next_sibling();
+        if !widget.has_css_class(SIDEBAR_PIN_ROW_CLASS) {
+            continue;
+        }
+        let pin_context_id = widget
+            .widget_name()
+            .strip_prefix("sidebar-pin-")
+            .map(str::to_string);
+        if let Some(pin_context_id) = pin_context_id {
+            pin_rows.push((widget, pin_context_id));
+        }
+    }
+    let playing_index = playback_context_id.and_then(|playback_context_id| {
+        pin_rows
+            .iter()
+            .enumerate()
+            .filter(|(_, (_, pin_context_id))| {
+                sidebar_pin_context_matches(pin_context_id, playback_context_id)
+            })
+            .max_by_key(|(_, (_, pin_context_id))| {
+                (
+                    pin_context_id.as_str() == playback_context_id,
+                    pin_context_id.len(),
+                )
+            })
+            .map(|(index, _)| index)
+    });
+    for (index, (widget, _)) in pin_rows.into_iter().enumerate() {
+        if playing_index == Some(index) {
+            widget.add_css_class(SIDEBAR_PIN_PLAYING_CLASS);
+        } else {
+            widget.remove_css_class(SIDEBAR_PIN_PLAYING_CLASS);
+        }
+    }
+}
+
+fn sidebar_pin_context_matches(pin_context_id: &str, playback_context_id: &str) -> bool {
+    playback_context_id == pin_context_id
+        || if pin_context_id.starts_with("playlist:") {
+            playback_context_id
+                .strip_prefix(pin_context_id)
+                .is_some_and(|suffix| suffix.starts_with(':'))
+        } else {
+            playback_context_id
+                .strip_prefix(pin_context_id)
+                .is_some_and(|suffix| suffix.starts_with('|'))
+        }
 }
 
 pub(super) fn relocalize_primary_menu_button(
     button: &gtk::Button,
-    source_button: &gtk::Button,
-    popover_slot: &RefCell<Option<gtk::Popover>>,
+    popover_slot: &RefCell<Option<gtk::PopoverMenu>>,
     handler_slot: &RefCell<Option<glib::SignalHandlerId>>,
+    unmap_handler_slot: &RefCell<Option<glib::SignalHandlerId>>,
     shell: &Rc<Shell>,
     compact: bool,
 ) {
@@ -200,7 +345,9 @@ pub(super) fn relocalize_primary_menu_button(
         button,
         popover_slot,
         handler_slot,
-        primary_menu_popover(source_button, shell),
+        unmap_handler_slot,
+        primary_menu_popover(shell),
+        shell,
     );
 }
 
@@ -216,18 +363,39 @@ fn sidebar_spacer() -> gtk::Box {
     spacer
 }
 
-fn update_navigation_selection_in(container: &gtk::Box, active_route_class: Option<&str>) {
+fn update_navigation_selection_in(container: &gtk::Box, active_route: &Route) {
+    let active_route_class = nav_route_class(active_route);
+    let active_pin_key = sidebar_pin_route_key(active_route);
+    let pin_is_visible = active_pin_key.as_ref().is_some_and(|active_pin_key| {
+        let mut child = container.first_child();
+        while let Some(widget) = child {
+            child = widget.next_sibling();
+            if widget.has_css_class(SIDEBAR_PIN_ROW_CLASS)
+                && widget.widget_name().as_str() == active_pin_key
+            {
+                return true;
+            }
+        }
+        false
+    });
     let mut child = container.first_child();
     while let Some(widget) = child {
         child = widget.next_sibling();
 
-        if !widget.has_css_class("nav-button") || widget.has_css_class("source-selector") {
+        if !widget.has_css_class("nav-button") {
             continue;
         }
 
-        let selected = active_route_class
-            .map(|route_class| widget.has_css_class(route_class))
-            .unwrap_or(false);
+        let selected = if widget.has_css_class(SIDEBAR_PIN_ROW_CLASS) {
+            active_pin_key
+                .as_ref()
+                .is_some_and(|key| widget.widget_name().as_str() == key)
+        } else {
+            !pin_is_visible
+                && active_route_class
+                    .map(|route_class| widget.has_css_class(route_class))
+                    .unwrap_or(false)
+        };
         if selected {
             widget.add_css_class(NAV_SELECTED_CLASS);
         } else {
@@ -265,9 +433,9 @@ fn nav_route_icon_names(widget: &gtk::Widget) -> Option<(&'static str, &'static 
 
 fn primary_menu_button(
     button: &gtk::Button,
-    source_button: &gtk::Button,
-    popover_slot: &RefCell<Option<gtk::Popover>>,
+    popover_slot: &RefCell<Option<gtk::PopoverMenu>>,
     handler_slot: &RefCell<Option<glib::SignalHandlerId>>,
+    unmap_handler_slot: &RefCell<Option<glib::SignalHandlerId>>,
     shell: &Rc<Shell>,
     compact: bool,
 ) -> gtk::Button {
@@ -279,9 +447,9 @@ fn primary_menu_button(
     }
     relocalize_primary_menu_button(
         button,
-        source_button,
         popover_slot,
         handler_slot,
+        unmap_handler_slot,
         shell,
         compact,
     );
@@ -290,175 +458,159 @@ fn primary_menu_button(
 
 fn update_primary_menu_popover(
     button: &gtk::Button,
-    popover_slot: &RefCell<Option<gtk::Popover>>,
+    popover_slot: &RefCell<Option<gtk::PopoverMenu>>,
     handler_slot: &RefCell<Option<glib::SignalHandlerId>>,
-    popover: gtk::Popover,
+    unmap_handler_slot: &RefCell<Option<glib::SignalHandlerId>>,
+    popover: gtk::PopoverMenu,
+    shell: &Rc<Shell>,
 ) {
     if let Some(handler) = handler_slot.borrow_mut().take() {
         button.disconnect(handler);
     }
+    if let Some(handler) = unmap_handler_slot.borrow_mut().take() {
+        button.disconnect(handler);
+    }
     if let Some(current) = popover_slot.borrow_mut().replace(popover.clone()) {
         if current.is_visible() {
-            current.popdown();
+            popdown_native_menu(&current);
         }
         current.unparent();
     }
     popover.set_parent(button);
     let row_popover = popover.clone();
-    let handler = button.connect_clicked(move |button| {
-        set_primary_menu_pointing_to(&row_popover, button.width());
-        row_popover.popup();
+    let row_shell = Rc::downgrade(shell);
+    let handler = button.connect_clicked(move |_| {
+        if let Some(shell) = row_shell.upgrade() {
+            refresh_primary_menu(&row_popover, &shell);
+            row_popover.popup();
+        }
     });
+    let unmap_handler = popdown_on_anchor_unmap(button, &popover);
     *handler_slot.borrow_mut() = Some(handler);
+    *unmap_handler_slot.borrow_mut() = Some(unmap_handler);
 }
 
-pub(super) fn popup_primary_menu(popover_slot: &RefCell<Option<gtk::Popover>>) {
+pub(super) fn popup_primary_menu(
+    shell: &Rc<Shell>,
+    popover_slot: &RefCell<Option<gtk::PopoverMenu>>,
+) {
     if let Some(popover) = popover_slot.borrow().as_ref() {
-        let anchor_width = popover
-            .parent()
-            .map(|parent| parent.width())
-            .unwrap_or_default();
-        set_primary_menu_pointing_to(popover, anchor_width);
+        refresh_primary_menu(popover, shell);
         popover.popup();
     }
 }
 
-fn set_primary_menu_pointing_to(popover: &gtk::Popover, anchor_width: i32) {
-    popover.set_pointing_to(Some(&gtk::gdk::Rectangle::new(
-        anchor_width,
-        PRIMARY_MENU_POPOVER_ANCHOR_Y,
-        1,
-        1,
-    )));
-}
-
-fn primary_menu_popover(source_button: &gtk::Button, shell: &Rc<Shell>) -> gtk::Popover {
-    let popover = gtk::Popover::new();
-    popover.set_autohide(true);
-    popover.set_position(gtk::PositionType::Right);
-
-    let wrapper = gtk::Box::new(gtk::Orientation::Vertical, 1);
-    wrapper.add_css_class("primary-menu-popover");
-    wrapper.set_width_request(PRIMARY_MENU_POPOVER_WIDTH);
-    detach_from_parent(source_button);
-    wrapper.append(source_button);
-    wrapper.append(&gtk::Separator::new(gtk::Orientation::Horizontal));
-    wrapper.append(&primary_menu_action_row(
-        &popover,
-        &tr("Preferences"),
-        "win.preferences",
-        "preferences-system-symbolic",
-    ));
-    let (private_mode_row, private_mode_label, _) = primary_menu_labeled_action_row(
-        &popover,
-        &primary_menu_private_mode_label(shell.as_ref()),
-        "win.toggle-private-mode",
-        "system-lock-screen-symbolic",
-    );
-    let private_mode_shell = Rc::clone(shell);
-    let private_mode_label_for_notify = private_mode_label.clone();
-    popover.connect_visible_notify(move |popover| {
-        if popover.is_visible() {
-            private_mode_label_for_notify.set_text(&primary_menu_private_mode_label(
-                private_mode_shell.as_ref(),
-            ));
-        }
-    });
-    wrapper.append(&private_mode_row);
-    wrapper.append(&gtk::Separator::new(gtk::Orientation::Horizontal));
-    wrapper.append(&primary_menu_action_row(
-        &popover,
-        &tr("Keyboard Shortcuts"),
-        "win.show-shortcuts",
-        "preferences-desktop-keyboard-shortcuts-symbolic",
-    ));
-    wrapper.append(&primary_menu_action_row(
-        &popover,
-        &tr("Toggle Fullscreen"),
-        "win.toggle-fullscreen",
-        "view-fullscreen-symbolic",
-    ));
-    let (sidebar_toggle_row, sidebar_toggle_label, sidebar_toggle_icon) =
-        primary_menu_labeled_action_row(
-            &popover,
-            &primary_menu_sidebar_toggle_label(shell.as_ref()),
-            "win.toggle-left-sidebar",
-            primary_menu_sidebar_toggle_icon(shell.as_ref()),
-        );
-    let label_shell = Rc::clone(shell);
-    let sidebar_toggle_label_for_notify = sidebar_toggle_label.clone();
-    let sidebar_toggle_icon_for_notify = sidebar_toggle_icon.clone();
-    popover.connect_visible_notify(move |popover| {
-        if popover.is_visible() {
-            sidebar_toggle_label_for_notify
-                .set_text(&primary_menu_sidebar_toggle_label(label_shell.as_ref()));
-            sidebar_toggle_icon_for_notify
-                .set_icon_name(Some(primary_menu_sidebar_toggle_icon(label_shell.as_ref())));
-        }
-    });
-    wrapper.append(&sidebar_toggle_row);
-    wrapper.append(&gtk::Separator::new(gtk::Orientation::Horizontal));
-    wrapper.append(&primary_menu_action_row(
-        &popover,
-        &tr("Version History"),
-        "win.show-release-notes",
-        "rufin-view-list-symbolic",
-    ));
-    wrapper.append(&primary_menu_action_row(
-        &popover,
-        &tr("About Rufin"),
-        "win.about",
-        "help-about-symbolic",
-    ));
-    popover.set_child(Some(&wrapper));
-    popover
-}
-
-fn detach_from_parent(widget: &impl IsA<gtk::Widget>) {
-    let widget = widget.as_ref();
-    if let Some(parent) = widget.parent() {
-        if let Ok(parent_box) = parent.downcast::<gtk::Box>() {
-            parent_box.remove(widget);
-        } else {
-            widget.unparent();
+pub(crate) fn popdown_primary_menu(shell: &Shell) {
+    for slot in [
+        &shell.navigation_view.normal_main_menu.popover,
+        &shell.navigation_view.compact_main_menu.popover,
+    ] {
+        if let Some(popover) = slot.borrow().as_ref()
+            && popover.is_visible()
+        {
+            popdown_native_menu(popover);
         }
     }
 }
 
-fn primary_menu_action_row(
-    popover: &gtk::Popover,
-    label: &str,
-    action_name: &'static str,
-    icon_name: &str,
-) -> gtk::Button {
-    primary_menu_labeled_action_row(popover, label, action_name, icon_name).0
+fn refresh_primary_menu(popover: &gtk::PopoverMenu, shell: &Rc<Shell>) {
+    popover.set_menu_model(Some(&primary_menu_model(shell)));
+    style_primary_menu(popover);
 }
 
-fn primary_menu_labeled_action_row(
-    popover: &gtk::Popover,
-    label: &str,
-    action_name: &'static str,
-    icon_name: &str,
-) -> (gtk::Button, gtk::Label, gtk::Image) {
-    let row = gtk::Button::new();
-    row.add_css_class("flat");
-    row.add_css_class("primary-menu-row");
-    let content = gtk::Box::new(gtk::Orientation::Horizontal, 7);
-    content.set_halign(gtk::Align::Fill);
-    let icon = gtk::Image::from_icon_name(icon_name);
-    content.append(&icon);
-    let text = gtk::Label::new(Some(label));
-    text.set_xalign(0.0);
-    text.set_hexpand(true);
-    content.append(&text);
-    row.set_child(Some(&content));
+fn primary_menu_popover(shell: &Rc<Shell>) -> gtk::PopoverMenu {
+    let popover = gtk::PopoverMenu::from_model_full(
+        &primary_menu_model(shell),
+        gtk::PopoverMenuFlags::NESTED,
+    );
+    popover.set_autohide(true);
+    popover.set_position(gtk::PositionType::Bottom);
+    popover.set_halign(gtk::Align::Start);
+    style_primary_menu(&popover);
+    popover
+}
 
-    let row_popover = popover.clone();
-    row.connect_clicked(move |button| {
-        row_popover.popdown();
-        let _ = button.activate_action(action_name, None);
-    });
-    (row, text, icon)
+fn style_primary_menu(popover: &gtk::PopoverMenu) {
+    popover.add_css_class(PRIMARY_MENU_CLASS);
+    show_native_menu_icons(popover);
+    replace_native_menu_checkmarks(popover);
+    keep_parent_grab_for_nested_native_menus(popover);
+}
+
+fn primary_menu_model(shell: &Rc<Shell>) -> gio::Menu {
+    let menu = gio::Menu::new();
+
+    let source = gio::Menu::new();
+    let (source_name, source_icon_name, source_menu) = source_submenu(shell);
+    let source_item = gio::MenuItem::new_submenu(Some(&source_name), &source_menu);
+    source_item.set_icon(&gio::ThemedIcon::new(source_icon_name));
+    source.append_item(&source_item);
+    menu.append_section(None, &source);
+
+    let preferences = gio::Menu::new();
+    append_menu_action(
+        &preferences,
+        &tr("Preferences"),
+        "win.preferences",
+        "preferences-system-symbolic",
+    );
+    append_menu_action(
+        &preferences,
+        &primary_menu_private_mode_label(shell.as_ref()),
+        "win.toggle-private-mode",
+        "system-lock-screen-symbolic",
+    );
+    menu.append_section(None, &preferences);
+
+    let window = gio::Menu::new();
+    append_menu_action(
+        &window,
+        &tr("Keyboard Shortcuts"),
+        "win.show-shortcuts",
+        "preferences-desktop-keyboard-shortcuts-symbolic",
+    );
+    append_menu_action(
+        &window,
+        &tr("Toggle Fullscreen"),
+        "win.toggle-fullscreen",
+        "view-fullscreen-symbolic",
+    );
+    append_menu_action(
+        &window,
+        &primary_menu_sidebar_toggle_label(shell.as_ref()),
+        "win.toggle-left-sidebar",
+        primary_menu_sidebar_toggle_icon(shell.as_ref()),
+    );
+    menu.append_section(None, &window);
+
+    let information = gio::Menu::new();
+    append_menu_action(
+        &information,
+        &tr("Version History"),
+        "win.show-release-notes",
+        "rufin-view-list-symbolic",
+    );
+    append_menu_action(
+        &information,
+        &tr("Troubleshooting"),
+        "win.troubleshooting",
+        "utilities-terminal-symbolic",
+    );
+    append_menu_action(
+        &information,
+        &tr("About Rufin"),
+        "win.about",
+        "help-about-symbolic",
+    );
+    menu.append_section(None, &information);
+
+    menu
+}
+
+fn append_menu_action(menu: &gio::Menu, label: &str, action: &str, icon_name: &str) {
+    let item = gio::MenuItem::new(Some(label), Some(action));
+    item.set_icon(&gio::ThemedIcon::new(icon_name));
+    menu.append_item(&item);
 }
 
 fn primary_menu_sidebar_toggle_label(shell: &Shell) -> String {
@@ -532,6 +684,347 @@ struct NavItem {
     route: Route,
 }
 
+#[derive(Clone)]
+enum SidebarPinItem {
+    Album(AlbumSummary),
+    Artist(ArtistSummary),
+    Genre(GenreSummary),
+    Playlist(PlaylistSummary),
+    SmartPlaylist(SmartPlaylistSummary),
+}
+
+impl SidebarPinItem {
+    fn title(&self) -> String {
+        match self {
+            Self::Album(album) => album.album.title.clone(),
+            Self::Artist(artist) => artist.artist.name.clone(),
+            Self::Genre(genre) => genre.genre.name.clone(),
+            Self::Playlist(playlist) => playlist.playlist.name.clone(),
+            Self::SmartPlaylist(playlist) => smart_playlist_display_name(&playlist.smart_playlist),
+        }
+    }
+
+    fn track_count(&self) -> u32 {
+        match self {
+            Self::Album(album) => album.track_count,
+            Self::Artist(artist) => artist.track_count,
+            Self::Genre(genre) => genre.track_count,
+            Self::Playlist(playlist) => playlist.track_count,
+            Self::SmartPlaylist(playlist) => playlist.track_count,
+        }
+    }
+
+    fn duration_seconds(&self) -> u32 {
+        match self {
+            Self::Album(album) => album.duration_seconds,
+            Self::Artist(artist) => artist.duration_seconds,
+            Self::Genre(genre) => genre.duration_seconds,
+            Self::Playlist(playlist) => playlist.duration_seconds,
+            Self::SmartPlaylist(playlist) => playlist.duration_seconds,
+        }
+    }
+
+    fn route(&self) -> Route {
+        match self {
+            Self::Album(album) => Route::AlbumDetail(album.album.id.clone()),
+            Self::Artist(artist) => Route::ArtistDetail(artist.artist.id.clone()),
+            Self::Genre(genre) => Route::GenreDetail(genre.genre.id.clone()),
+            Self::Playlist(playlist) => Route::PlaylistDetail(playlist.playlist.id.clone()),
+            Self::SmartPlaylist(playlist) => {
+                Route::SmartPlaylistDetail(playlist.smart_playlist.id.clone())
+            }
+        }
+    }
+
+    fn playback_target(&self) -> PlaybackTarget {
+        match self {
+            Self::Album(album) => PlaybackTarget::Album(album.album.id.clone()),
+            Self::Artist(artist) => PlaybackTarget::Artist(artist.artist.id.clone()),
+            Self::Genre(genre) => PlaybackTarget::Genre(genre.genre.id.clone()),
+            Self::Playlist(playlist) => PlaybackTarget::Playlist(playlist.playlist.id.clone()),
+            Self::SmartPlaylist(playlist) => {
+                PlaybackTarget::SmartPlaylist(playlist.smart_playlist.id.clone())
+            }
+        }
+    }
+
+    fn artwork(&self, prefer_server_playlist_covers: bool) -> Vec<ArtworkBinding> {
+        match self {
+            Self::Album(album) => vec![ArtworkBinding::album_artwork(&album.artwork)],
+            Self::Artist(artist) => vec![ArtworkBinding::artist(
+                &artist.artist,
+                &artist.representative_albums,
+            )],
+            Self::Genre(genre) => {
+                ArtworkBinding::genre_slots(&genre.genre, &genre.representative_albums)
+            }
+            Self::Playlist(playlist) => ArtworkBinding::playlist_slots(
+                &playlist.playlist,
+                &playlist.representative_albums,
+                prefer_server_playlist_covers,
+            ),
+            Self::SmartPlaylist(playlist) => ArtworkBinding::smart_playlist_slots(
+                &playlist.smart_playlist,
+                &playlist.representative_albums,
+            ),
+        }
+    }
+
+    fn present_context_menu(
+        &self,
+        target: &gtk::Widget,
+        shell: &Rc<Shell>,
+        position: Option<(f64, f64)>,
+    ) {
+        match self {
+            Self::Album(album) => {
+                present_album_context_menu(target, shell, album.clone(), position);
+            }
+            Self::Artist(artist) => {
+                present_artist_context_menu(target, shell, artist.clone(), position);
+            }
+            Self::Genre(genre) => {
+                present_genre_context_menu(target, shell, genre.clone(), position);
+            }
+            Self::Playlist(playlist) => {
+                present_playlist_context_menu(target, shell, playlist.clone(), position);
+            }
+            Self::SmartPlaylist(playlist) => {
+                present_smart_playlist_context_menu(target, shell, playlist.clone(), position);
+            }
+        }
+    }
+}
+
+fn append_sidebar_pins(shell: &Rc<Shell>) {
+    if !shell.settings.current.borrow().sidebar.pins_visible {
+        return;
+    }
+    let pins = sidebar_pin_items(shell);
+
+    let heading = gtk::Label::new(Some(&tr("Pins")));
+    heading.add_css_class("sidebar-pins-heading");
+    heading.set_xalign(0.0);
+    shell.navigation_view.normal_nav.append(&heading);
+
+    let prefer_server_playlist_covers = shell
+        .settings
+        .current
+        .borrow()
+        .prefer_server_playlist_covers;
+    for pin in pins {
+        shell.navigation_view.normal_nav.append(&sidebar_pin_row(
+            shell,
+            pin,
+            prefer_server_playlist_covers,
+        ));
+    }
+}
+
+fn sidebar_pin_items(shell: &Shell) -> Vec<SidebarPinItem> {
+    let pins = {
+        let settings = shell.settings.current.borrow();
+        if !settings.sidebar.pins_visible {
+            return Vec::new();
+        }
+        settings.sidebar.pins.clone()
+    };
+    let Some(selected) = shell.library.selected.borrow().as_ref().cloned() else {
+        return Vec::new();
+    };
+    let folder = selected.music_folder_id.as_ref();
+
+    pins.into_iter()
+        .filter(|pin| pin.source_id() == &selected.source_id)
+        .filter_map(|pin| match pin {
+            SidebarPin::Album { album_id, .. } => selected
+                .loaded
+                .album_summary(&album_id, folder)
+                .ok()
+                .flatten()
+                .map(SidebarPinItem::Album),
+            SidebarPin::Artist { artist_id, .. } => selected
+                .loaded
+                .artist_summary(&artist_id, folder)
+                .ok()
+                .flatten()
+                .map(SidebarPinItem::Artist),
+            SidebarPin::Genre { genre_id, .. } => selected
+                .loaded
+                .genre_summary(&genre_id, folder)
+                .ok()
+                .flatten()
+                .map(SidebarPinItem::Genre),
+            SidebarPin::Playlist { playlist_id, .. } => selected
+                .loaded
+                .playlist_summary(&playlist_id)
+                .ok()
+                .flatten()
+                .map(SidebarPinItem::Playlist),
+            SidebarPin::SmartPlaylist { playlist_id, .. } => selected
+                .loaded
+                .smart_playlist_summary(&playlist_id, folder)
+                .ok()
+                .flatten()
+                .map(SidebarPinItem::SmartPlaylist),
+        })
+        .collect()
+}
+
+fn sidebar_pin_row(
+    shell: &Rc<Shell>,
+    pin: SidebarPinItem,
+    prefer_server_playlist_covers: bool,
+) -> gtk::Overlay {
+    let route = pin.route();
+    let title = pin.title();
+    let track_count = pin.track_count();
+    let duration_seconds = pin.duration_seconds();
+    let artwork = pin.artwork(prefer_server_playlist_covers);
+    let seed = stable_seed(
+        sidebar_pin_route_key(&route)
+            .as_deref()
+            .expect("a sidebar pin always has a detail route"),
+    );
+
+    let row = gtk::Overlay::new();
+    row.add_css_class("nav-button");
+    row.add_css_class(SIDEBAR_PIN_ROW_CLASS);
+    row.set_overflow(gtk::Overflow::Hidden);
+    row.set_widget_name(
+        sidebar_pin_route_key(&route)
+            .as_deref()
+            .expect("a sidebar pin always has a detail route"),
+    );
+    row.set_hexpand(true);
+    row.set_width_request(1);
+
+    let activate = gtk::Button::new();
+    activate.add_css_class("flat");
+    activate.add_css_class("sidebar-pin-activate");
+    activate.set_hexpand(true);
+    activate.set_width_request(1);
+    activate.update_property(&[gtk::accessible::Property::Label(&title)]);
+
+    let content = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    content.set_hexpand(true);
+    content.set_width_request(1);
+    let cover = shell
+        .cover_group_projection_for_artwork(
+            &artwork,
+            seed,
+            SIDEBAR_PIN_COVER_SIZE,
+            SIDEBAR_PIN_COVER_SIZE,
+        )
+        .widget();
+    cover.set_can_target(false);
+    content.append(&cover);
+
+    let identity = gtk::Box::new(gtk::Orientation::Vertical, 1);
+    identity.set_hexpand(true);
+    identity.set_width_request(1);
+    identity.set_valign(gtk::Align::Center);
+    let title_label = gtk::Label::new(Some(&title));
+    title_label.add_css_class("sidebar-pin-title");
+    title_label.set_xalign(0.0);
+    title_label.set_hexpand(true);
+    title_label.set_width_chars(1);
+    title_label.set_ellipsize(gtk::pango::EllipsizeMode::End);
+    identity.append(&title_label);
+    identity.append(&sidebar_pin_metadata(track_count, duration_seconds));
+    content.append(&identity);
+    activate.set_child(Some(&content));
+
+    let navigation_shell = Rc::clone(shell);
+    activate.connect_clicked(move |_| navigation_shell.navigate(route.clone()));
+    row.set_child(Some(&activate));
+
+    let controls = gtk::Box::new(gtk::Orientation::Horizontal, 1);
+    controls.add_css_class("sidebar-pin-controls");
+    controls.set_halign(gtk::Align::End);
+    controls.set_valign(gtk::Align::Center);
+    controls.set_margin_end(2);
+    controls.set_visible(false);
+    let playback_target = pin.playback_target();
+    for (icon_name, label, placement) in [
+        (PLAY_ICON, "Play", QueuePlacement::Now),
+        (PLAY_NEXT_ICON, "Play Next", QueuePlacement::Next),
+        (PLAY_LATER_ICON, "Play Later", QueuePlacement::Last),
+    ] {
+        controls.append(&sidebar_pin_transport_button(
+            shell,
+            &playback_target,
+            icon_name,
+            label,
+            placement,
+        ));
+    }
+    row.add_overlay(&controls);
+    row.set_measure_overlay(&controls, false);
+
+    let motion = gtk::EventControllerMotion::new();
+    let controls_for_enter = controls.clone();
+    motion.connect_enter(move |_, _, _| controls_for_enter.set_visible(true));
+    let controls_for_leave = controls.clone();
+    motion.connect_leave(move |_| controls_for_leave.set_visible(false));
+    row.add_controller(motion);
+
+    let context_shell = Rc::clone(shell);
+    let context_pin = pin.clone();
+    install_context_menu_openers(
+        &activate,
+        Rc::new(move |target, position| {
+            context_pin.present_context_menu(target, &context_shell, position);
+        }),
+    );
+    row
+}
+
+fn sidebar_pin_metadata(track_count: u32, duration_seconds: u32) -> gtk::Box {
+    let metadata = gtk::Box::new(gtk::Orientation::Horizontal, 3);
+    metadata.add_css_class("sidebar-pin-metadata");
+    metadata.set_hexpand(true);
+    metadata.set_width_request(1);
+    metadata.set_overflow(gtk::Overflow::Hidden);
+
+    let tracks_icon = gtk::Image::from_icon_name("rufin-route-tracks-symbolic");
+    tracks_icon.add_css_class("sidebar-pin-metadata-icon");
+    metadata.append(&tracks_icon);
+    let tracks = gtk::Label::new(Some(&track_count.to_string()));
+    tracks.add_css_class("sidebar-pin-metadata-label");
+    metadata.append(&tracks);
+
+    let duration_icon = gtk::Image::from_icon_name("appointment-soon-symbolic");
+    duration_icon.add_css_class("sidebar-pin-metadata-icon");
+    duration_icon.set_margin_start(3);
+    metadata.append(&duration_icon);
+    let duration = gtk::Label::new(Some(&format_duration_units(duration_seconds)));
+    duration.add_css_class("sidebar-pin-metadata-label");
+    duration.set_ellipsize(gtk::pango::EllipsizeMode::End);
+    metadata.append(&duration);
+    metadata
+}
+
+fn sidebar_pin_transport_button(
+    shell: &Rc<Shell>,
+    target: &PlaybackTarget,
+    icon_name: &str,
+    label: &str,
+    placement: QueuePlacement,
+) -> gtk::Button {
+    let button = icon_button(icon_name, label);
+    button.add_css_class("sidebar-pin-control");
+    let shell = Rc::clone(shell);
+    let target = target.clone();
+    let queue = shell.products.playback.queue.clone();
+    button.connect_clicked(move |_| {
+        if let Some(request) = target.play_request(&shell, placement, true) {
+            queue.play_loaded(request);
+        }
+    });
+    button
+}
+
 fn nav_items(shell: &Shell) -> Vec<NavItem> {
     shell
         .settings
@@ -545,6 +1038,37 @@ fn nav_items(shell: &Shell) -> Vec<NavItem> {
         .collect()
 }
 
+fn sidebar_pin_route_key(route: &Route) -> Option<String> {
+    match route {
+        Route::AlbumDetail(id) => Some(format!("sidebar-pin-album:{}", id.as_str())),
+        Route::ArtistDetail(id) => Some(format!("sidebar-pin-artist:{}", id.as_str())),
+        Route::GenreDetail(id) => Some(format!("sidebar-pin-genre:{}", id.as_str())),
+        Route::PlaylistDetail(id) => Some(format!("sidebar-pin-playlist:{}", id.as_str())),
+        Route::SmartPlaylistDetail(id) => {
+            Some(format!("sidebar-pin-smart-playlist:{}", id.as_str()))
+        }
+        _ => None,
+    }
+}
+
+pub(crate) fn sidebar_route_at_position(shell: &Shell, position: usize) -> Option<Route> {
+    sidebar_route_at_position_in(
+        &shell.settings.current.borrow().sidebar.route_items,
+        position,
+    )
+}
+
+fn sidebar_route_at_position_in(
+    route_items: &[crate::SidebarRouteItemSettings],
+    position: usize,
+) -> Option<Route> {
+    let item = route_items
+        .iter()
+        .filter(|entry| entry.visible)
+        .nth(position.checked_sub(1)?)?;
+    Some(nav_item(item.item).route)
+}
+
 fn nav_item(item: SidebarRouteItem) -> NavItem {
     match item {
         SidebarRouteItem::Home => NavItem {
@@ -552,10 +1076,20 @@ fn nav_item(item: SidebarRouteItem) -> NavItem {
             label: msgid("Home"),
             route: Route::Home,
         },
+        SidebarRouteItem::Search => NavItem {
+            icon_name: "rufin-route-search-symbolic",
+            label: msgid("Search"),
+            route: Route::Search,
+        },
         SidebarRouteItem::Favorites => NavItem {
             icon_name: "rufin-route-favorites-symbolic",
             label: msgid("Favorites"),
             route: Route::Favorites,
+        },
+        SidebarRouteItem::History => NavItem {
+            icon_name: "rufin-route-history-symbolic",
+            label: msgid("History"),
+            route: Route::History,
         },
         SidebarRouteItem::Albums => NavItem {
             icon_name: "rufin-route-albums-symbolic",
@@ -710,7 +1244,9 @@ fn rail_button(shell: &Rc<Shell>, icon_name: &str, label: &str, route: Route) ->
 fn nav_route_class(route: &Route) -> Option<&'static str> {
     match route {
         Route::Home => Some(NAV_ROUTE_HOME_CLASS),
+        Route::Search => Some(NAV_ROUTE_SEARCH_CLASS),
         Route::Favorites => Some(NAV_ROUTE_FAVORITES_CLASS),
+        Route::History => Some(NAV_ROUTE_HISTORY_CLASS),
         Route::Albums | Route::AlbumDetail(_) => Some(NAV_ROUTE_ALBUMS_CLASS),
         Route::Tracks => Some(NAV_ROUTE_TRACKS_CLASS),
         Route::Artists
@@ -752,7 +1288,36 @@ pub(super) fn install_mouse_history_buttons(shell: &Rc<Shell>) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use library::{PlaylistId, SmartPlaylistId};
+
+    #[test]
+    fn sidebar_position_uses_visible_configured_route_order() {
+        let route_items = vec![
+            crate::SidebarRouteItemSettings {
+                item: SidebarRouteItem::Playlists,
+                visible: false,
+            },
+            crate::SidebarRouteItemSettings {
+                item: SidebarRouteItem::Albums,
+                visible: true,
+            },
+            crate::SidebarRouteItemSettings {
+                item: SidebarRouteItem::Home,
+                visible: true,
+            },
+        ];
+
+        assert_eq!(
+            sidebar_route_at_position_in(&route_items, 1),
+            Some(Route::Albums)
+        );
+        assert_eq!(
+            sidebar_route_at_position_in(&route_items, 2),
+            Some(Route::Home)
+        );
+        assert_eq!(sidebar_route_at_position_in(&route_items, 0), None);
+        assert_eq!(sidebar_route_at_position_in(&route_items, 3), None);
+    }
+    use library::{AlbumId, ArtistId, GenreId, PlaylistId, SmartPlaylistId, SourceId};
     use std::path::PathBuf;
 
     #[test]
@@ -786,6 +1351,96 @@ mod tests {
             nav_route_class(&Route::Genres),
             nav_route_class(&Route::Moods)
         );
+    }
+
+    #[test]
+    fn sidebar_pin_keys_only_match_detail_routes() {
+        let album = sidebar_pin_route_key(&Route::AlbumDetail(AlbumId::new("album")));
+        let artist = sidebar_pin_route_key(&Route::ArtistDetail(ArtistId::new("artist")));
+        let genre = sidebar_pin_route_key(&Route::GenreDetail(GenreId::new("genre")));
+        let playlist = sidebar_pin_route_key(&Route::PlaylistDetail(PlaylistId::new("playlist")));
+        let smart =
+            sidebar_pin_route_key(&Route::SmartPlaylistDetail(SmartPlaylistId::new("smart")));
+
+        assert!(album.is_some());
+        assert!(artist.is_some());
+        assert!(genre.is_some());
+        assert!(playlist.is_some());
+        assert!(smart.is_some());
+        assert_eq!(
+            [album, artist, genre, playlist, smart]
+                .into_iter()
+                .flatten()
+                .collect::<std::collections::HashSet<_>>()
+                .len(),
+            5
+        );
+        assert_eq!(sidebar_pin_route_key(&Route::Albums), None);
+        assert_eq!(sidebar_pin_route_key(&Route::Artists), None);
+        assert_eq!(sidebar_pin_route_key(&Route::Genres), None);
+        assert_eq!(sidebar_pin_route_key(&Route::Playlists), None);
+        assert_eq!(sidebar_pin_route_key(&Route::SmartPlaylists), None);
+    }
+
+    #[test]
+    fn sidebar_pin_playback_only_matches_its_page_context() {
+        assert!(sidebar_pin_context_matches(
+            "artist:artist",
+            "artist:artist"
+        ));
+        assert!(sidebar_pin_context_matches(
+            "artist:artist",
+            "artist:artist|query=blue|sort=Title|descending=false"
+        ));
+        assert!(!sidebar_pin_context_matches(
+            "artist:artist",
+            "artist-favorites:artist|query=|sort=Title|descending=false"
+        ));
+        assert!(!sidebar_pin_context_matches(
+            "artist:artist",
+            "track:by-the-artist"
+        ));
+
+        assert!(sidebar_pin_context_matches(
+            "playlist:playlist",
+            "playlist:playlist:Title:false:blue"
+        ));
+        assert!(!sidebar_pin_context_matches(
+            "playlist:playlist",
+            "playlist:playlist-copy:Title:false:blue"
+        ));
+        assert!(sidebar_pin_context_matches(
+            "smart-playlist:smart",
+            "smart-playlist:smart|query=|sort=RowIndex|descending=false"
+        ));
+    }
+
+    #[test]
+    fn sidebar_pin_refresh_matches_the_exact_changed_projection() {
+        let source_id = SourceId::new("source");
+        let genre_id = GenreId::new("genre");
+        let genre = SidebarPin::Genre {
+            source_id: source_id.clone(),
+            genre_id: genre_id.clone(),
+        };
+        let mut change = AcceptedLibraryChange {
+            genres: vec![GenreId::new("other")],
+            ..AcceptedLibraryChange::default()
+        };
+        assert!(!sidebar_pin_changed(&genre, &change));
+        change.genres.push(genre_id);
+        assert!(sidebar_pin_changed(&genre, &change));
+
+        let artist_id = ArtistId::new("artist");
+        let artist = SidebarPin::Artist {
+            source_id,
+            artist_id: artist_id.clone(),
+        };
+        change = AcceptedLibraryChange {
+            artist_releases: vec![artist_id],
+            ..AcceptedLibraryChange::default()
+        };
+        assert!(sidebar_pin_changed(&artist, &change));
     }
 
     #[test]

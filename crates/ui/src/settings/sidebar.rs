@@ -58,6 +58,7 @@ pub fn available_sort_fields(key: LibraryListKey) -> &'static [LibraryField] {
         ],
         LibraryListKey::Tracks
         | LibraryListKey::FavoriteTracks
+        | LibraryListKey::History
         | LibraryListKey::AlbumDetailTracks
         | LibraryListKey::ArtistTracks
         | LibraryListKey::GenreTracks
@@ -117,19 +118,29 @@ pub(super) fn default_row_fields(key: LibraryListKey) -> Vec<LibraryField> {
             LibraryField::Duration,
         ],
         LibraryListKey::Tracks => vec![
+            LibraryField::RowIndex,
             LibraryField::TitleMerged,
             LibraryField::Album,
             LibraryField::Year,
             LibraryField::Favorite,
         ],
         LibraryListKey::FavoriteTracks => vec![
+            LibraryField::RowIndex,
             LibraryField::TitleMerged,
             LibraryField::Album,
             LibraryField::Year,
             LibraryField::PlayCount,
         ],
+        LibraryListKey::History => vec![
+            LibraryField::RowIndex,
+            LibraryField::TitleMerged,
+            LibraryField::Album,
+            LibraryField::Duration,
+            LibraryField::Favorite,
+        ],
         LibraryListKey::AlbumDetailTracks => default_detail_track_fields(),
         LibraryListKey::ArtistTracks => vec![
+            LibraryField::RowIndex,
             LibraryField::TitleMerged,
             LibraryField::Album,
             LibraryField::Year,
@@ -166,6 +177,7 @@ pub(super) fn default_grid_fields(key: LibraryListKey) -> Vec<LibraryField> {
         LibraryListKey::SmartPlaylists => vec![LibraryField::SongCount, LibraryField::Duration],
         LibraryListKey::Tracks
         | LibraryListKey::FavoriteTracks
+        | LibraryListKey::History
         | LibraryListKey::AlbumDetailTracks
         | LibraryListKey::ArtistTracks
         | LibraryListKey::GenreTracks
@@ -182,13 +194,18 @@ pub(super) fn default_grid_fields(key: LibraryListKey) -> Vec<LibraryField> {
 }
 pub fn available_detail_track_fields() -> &'static [LibraryField] {
     &[
+        LibraryField::RowIndex,
         LibraryField::TrackNumber,
         LibraryField::Title,
         LibraryField::Duration,
     ]
 }
 pub(super) fn default_detail_track_fields() -> Vec<LibraryField> {
-    available_detail_track_fields().to_vec()
+    vec![
+        LibraryField::RowIndex,
+        LibraryField::Title,
+        LibraryField::Duration,
+    ]
 }
 pub(super) fn default_sort_key(key: LibraryListKey) -> LibraryField {
     match key {
@@ -201,7 +218,9 @@ pub(super) fn default_sort_key(key: LibraryListKey) -> LibraryField {
         | LibraryListKey::Playlists
         | LibraryListKey::Tracks
         | LibraryListKey::FavoriteTracks => LibraryField::Title,
-        LibraryListKey::SmartPlaylists | LibraryListKey::PlaylistTracks => LibraryField::RowIndex,
+        LibraryListKey::History
+        | LibraryListKey::SmartPlaylists
+        | LibraryListKey::PlaylistTracks => LibraryField::RowIndex,
         LibraryListKey::AlbumDetailTracks
         | LibraryListKey::ArtistTracks
         | LibraryListKey::GenreTracks

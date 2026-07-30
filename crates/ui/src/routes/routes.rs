@@ -1,31 +1,27 @@
 use std::{
     cell::{Cell, RefCell},
-    collections::{HashMap, HashSet},
-    rc::{Rc, Weak},
-    sync::{
-        Arc,
-        atomic::{AtomicBool, AtomicI64, Ordering},
-    },
+    rc::Rc,
+    sync::Arc,
     time::Instant,
 };
 
-use ::library::play_context::PlayContextDescriptor;
-use ::library::{ActiveLibraryQuery, Album, Artist, Track};
+use ::library::{
+    AcceptedTrackReplacement, AlbumDetail, AlbumSummary, ArtistSummary, LoadedLibrary,
+    MusicFolderId, PlaylistSummary, SmartPlaylistSummary, TrackList,
+};
 use adw::prelude::*;
 use gtk::{gio, glib};
 use tracing::{info, warn};
 
 use crate::localization::bind_search_placeholder;
 use crate::shell::Shell;
-use crate::shell::route::{MountedRoute, MountedRouteDeltaApplier};
-use crate::{LibraryLayout, LibraryListKey};
+use crate::shell::route::{LatestMountedRouteRead, MountedRoute, SelectedRouteIdentity};
+use crate::{LibraryLayout, LibraryListKey, LibraryListSettings};
 use localization::msgid;
 
-use super::route_layout::PRIMARY_ROUTE_HORIZONTAL_INSET;
-
-use super::album_detail::{AlbumCollectionModels, populate_album_collection_model};
-use super::collection_routes::{
-    CollectionRouteSpec, MountedRefreshLoader, MountedRouteRefresh, load_complete_cached_items,
+use super::album_detail::{
+    AlbumCollectionModels, populate_album_collection_model,
+    populate_prepared_album_collection_model, sort_album_details,
 };
 use super::collections::{
     album_collection_projection, artist_collection_projection, library_route_inset,
@@ -33,67 +29,64 @@ use super::collections::{
     track_collection_projection,
 };
 use super::library_fields::{
-    album_matches_query, artist_matches_query, playlist_matches_query, smart_playlist_matches_query,
+    album_matches_query, artist_matches_query, playlist_matches_query,
+    smart_playlist_matches_query, sort_playlists,
 };
 use super::models::{
     populate_artist_model, populate_playlist_model, populate_smart_playlist_model,
+    replace_artists_in_model, replace_playlists_in_model, sort_albums, sort_artists,
 };
-use super::play_context::{selected_music_folder_id, track_collection_play_context};
 use super::route::Route;
-use super::route_shell::{LibraryPageShell, LibraryPageShellOptions, LibraryToolbarProjection};
-use super::track_model::TrackCollectionModel;
+use super::route_layout::PRIMARY_ROUTE_HORIZONTAL_INSET;
+use super::route_shell::{LibraryPageShellOptions, LibraryToolbarProjection};
+use super::track_model::{
+    PreparedTrackProjection, TrackCollectionModel, TrackProjectionRequest, prepare_track_projection,
+};
 
 const SLOW_LIBRARY_ROUTE_SETUP_MS: u64 = 100;
 const EMBEDDED_SCROLL_LATCH_MS: u128 = 280;
 const EMBEDDED_SURFACE_SCROLL_FACTOR: f64 = 2.5;
 
-fn changed_track_ids(delta: &::library::TrackDelta) -> Vec<::library::TrackId> {
-    let mut seen = HashSet::new();
-    delta
-        .added
-        .iter()
-        .chain(&delta.deleted)
-        .chain(&delta.fields)
-        .chain(&delta.metadata)
-        .chain(&delta.stats)
-        .chain(&delta.skip_stats)
-        .chain(&delta.favorite)
-        .chain(&delta.cover_refs)
-        .filter(|track_id| seen.insert((*track_id).clone()))
-        .cloned()
-        .collect()
+type TrackRouteSource =
+    Arc<dyn Fn(&LibraryListSettings) -> Result<TrackList, String> + Send + Sync>;
+type TrackRouteMembership = Rc<dyn Fn(&::library::Track) -> bool>;
+
+struct RootTrackRouteOptions {
+    key: LibraryListKey,
+    route: Route,
+    context: &'static str,
+    empty_body: &'static str,
+    reload_on_activity: bool,
 }
 
-fn retain_confirmed_track_deletions(
-    delta: &mut ::library::TrackDelta,
-    present_track_ids: &HashSet<::library::TrackId>,
-) {
-    delta
-        .deleted
-        .retain(|track_id| !present_track_ids.contains(track_id));
+#[derive(Clone)]
+struct TrackRouteReadRequest {
+    identity: SelectedRouteIdentity,
+    tracks: TrackProjectionRequest,
 }
 
-fn release_replaced_tracks(tracks: Arc<Vec<Track>>) {
-    let Some(tracks) = Arc::into_inner(tracks) else {
-        return;
-    };
-    if tracks.is_empty() {
-        return;
-    }
-    glib::spawn_future_local(async move {
-        let _ = gio::spawn_blocking(move || drop(tracks)).await;
-    });
+#[derive(Clone)]
+struct CollectionReadRequest {
+    identity: SelectedRouteIdentity,
+    query: String,
+    settings: LibraryListSettings,
 }
 
-fn invalidate_album_track_projection<T: Default>(projection: &RefCell<T>, loaded: &Cell<bool>) {
-    projection.replace(T::default());
-    loaded.set(false);
+pub(crate) struct PreparedCollection<T> {
+    pub(crate) source: Arc<[T]>,
+    pub(crate) visible: Arc<[T]>,
+}
+
+pub(crate) struct PreparedAlbums {
+    pub(crate) source: Arc<[AlbumSummary]>,
+    pub(crate) visible: Arc<[AlbumSummary]>,
+    pub(crate) details: Option<Arc<[AlbumDetail]>>,
+    pub(crate) visible_details: Option<Arc<[AlbumDetail]>>,
 }
 
 pub(crate) struct SearchableTrackOptions {
     pub(crate) on_visible_count_changed: Option<Rc<dyn Fn(usize)>>,
-    pub(crate) source_descriptor: Option<PlayContextDescriptor>,
-    pub(crate) favorites_only: bool,
+    pub(crate) context_id: String,
     pub(crate) content_inset: i32,
     pub(crate) fixed_layout: Option<LibraryLayout>,
 }
@@ -105,179 +98,7 @@ pub(crate) struct TrackListProjection {
     collection: super::collections::LibraryCollectionProjection,
     model: TrackCollectionModel,
     on_visible_count_changed: Option<Rc<dyn Fn(usize)>>,
-    source_descriptor: Option<Rc<RefCell<PlayContextDescriptor>>>,
     fixed_layout: Option<LibraryLayout>,
-}
-
-struct MountedTracksDeltaQueue {
-    shell: Weak<Shell>,
-    library_query: ActiveLibraryQuery,
-    projection: TrackListProjection,
-    page_shell: LibraryPageShell,
-    source_id: ::library::SourceId,
-    music_folder_id: RefCell<Option<::library::MusicFolderId>>,
-    pending: RefCell<::library::LibraryDelta>,
-    running: Cell<bool>,
-    epoch: Cell<u64>,
-}
-
-impl MountedTracksDeltaQueue {
-    fn new(
-        shell: Weak<Shell>,
-        library_query: ActiveLibraryQuery,
-        projection: TrackListProjection,
-        page_shell: LibraryPageShell,
-        music_folder_id: Option<::library::MusicFolderId>,
-    ) -> Self {
-        Self {
-            shell,
-            source_id: library_query.source_id().clone(),
-            library_query,
-            projection,
-            page_shell,
-            music_folder_id: RefCell::new(music_folder_id),
-            pending: RefCell::new(::library::LibraryDelta::default()),
-            running: Cell::new(false),
-            epoch: Cell::new(0),
-        }
-    }
-
-    fn enqueue(self: &Rc<Self>, delta: &::library::TrackDelta) {
-        self.pending.borrow_mut().merge(::library::LibraryDelta {
-            tracks: delta.clone(),
-            ..::library::LibraryDelta::default()
-        });
-        self.start_next();
-    }
-
-    fn reset_for_current_scope(&self) -> bool {
-        self.epoch.set(self.epoch.get().wrapping_add(1));
-        self.pending.replace(::library::LibraryDelta::default());
-        let Some(shell) = self.shell.upgrade() else {
-            return false;
-        };
-        if shell.navigation.routes.borrow().current() != &Route::Tracks
-            || shell
-                .library
-                .query
-                .borrow()
-                .as_ref()
-                .is_none_or(|query| query.source_id() != &self.source_id)
-        {
-            return false;
-        }
-        let music_folder_id = selected_music_folder_id(&shell);
-        self.music_folder_id.replace(music_folder_id.clone());
-        self.projection
-            .set_source_descriptor(PlayContextDescriptor::Global { music_folder_id });
-        true
-    }
-
-    fn context_is_current(&self, shell: &Shell) -> bool {
-        shell.navigation.routes.borrow().current() == &Route::Tracks
-            && shell
-                .library
-                .query
-                .borrow()
-                .as_ref()
-                .is_some_and(|query| query.source_id() == &self.source_id)
-            && selected_music_folder_id(shell) == *self.music_folder_id.borrow()
-    }
-
-    fn start_next(self: &Rc<Self>) {
-        if self.running.get() {
-            return;
-        }
-        let delta = self.pending.take();
-        if delta.tracks.is_empty() {
-            return;
-        }
-        self.running.set(true);
-        let epoch = self.epoch.get();
-        let ids = changed_track_ids(&delta.tracks);
-        if ids.is_empty() {
-            self.finish(epoch, delta, Vec::new());
-            return;
-        }
-
-        let query = self.library_query.clone();
-        let state = Rc::downgrade(self);
-        glib::spawn_future_local(async move {
-            let result = gio::spawn_blocking(move || query.tracks_by_ids(&ids)).await;
-            let Some(state) = state.upgrade() else {
-                return;
-            };
-            match result {
-                Ok(Ok(changed)) => state.finish(epoch, delta, changed),
-                Ok(Err(error)) => {
-                    warn!(%error, "failed to refresh changed Tracks route rows");
-                    state.recover_from_failed_read(epoch);
-                }
-                Err(_) => {
-                    warn!("changed Tracks route row refresh task panicked");
-                    state.recover_from_failed_read(epoch);
-                }
-            }
-        });
-    }
-
-    fn finish(
-        self: &Rc<Self>,
-        epoch: u64,
-        mut delta: ::library::LibraryDelta,
-        changed: Vec<Track>,
-    ) {
-        self.running.set(false);
-        if self.epoch.get() != epoch {
-            self.start_next();
-            return;
-        }
-        let Some(shell) = self.shell.upgrade() else {
-            return;
-        };
-        if !self.context_is_current(&shell) {
-            self.pending.replace(::library::LibraryDelta::default());
-            self.epoch.set(self.epoch.get().wrapping_add(1));
-            return;
-        }
-
-        let present_track_ids = changed
-            .iter()
-            .map(|track| track.id.clone())
-            .collect::<HashSet<_>>();
-        retain_confirmed_track_deletions(&mut delta.tracks, &present_track_ids);
-        self.projection.patch(changed, &delta.tracks);
-        self.page_shell.set_empty(self.projection.source_is_empty());
-        self.start_next();
-    }
-
-    fn recover_from_failed_read(self: &Rc<Self>, epoch: u64) {
-        self.running.set(false);
-        if self.epoch.get() != epoch {
-            self.start_next();
-            return;
-        }
-        let Some(shell) = self.shell.upgrade() else {
-            return;
-        };
-        if !self.context_is_current(&shell) {
-            self.pending.replace(::library::LibraryDelta::default());
-            self.epoch.set(self.epoch.get().wrapping_add(1));
-            return;
-        }
-
-        self.epoch.set(self.epoch.get().wrapping_add(1));
-        self.pending.replace(::library::LibraryDelta::default());
-        let projection = self.projection.clone();
-        let page_shell = self.page_shell.clone();
-        shell.refresh_mounted_tracks_from_prepared(
-            self.library_query.clone(),
-            Rc::new(move |tracks| {
-                projection.replace_shared(tracks);
-                page_shell.set_empty(projection.source_is_empty());
-            }),
-        );
-    }
 }
 
 impl TrackListProjection {
@@ -289,37 +110,64 @@ impl TrackListProjection {
         self.collection.scrolling_widget()
     }
 
+    pub(crate) fn item_navigation(&self) -> crate::shell::route::MountedRouteItemNavigation {
+        self.collection.item_navigation()
+    }
+
     pub(crate) fn mount_in_scroller(&self, scroller: &gtk::ScrolledWindow) -> gtk::Widget {
         self.collection.mount_in_scroller(scroller, 0, 0)
-    }
-
-    pub(crate) fn replace(&self, tracks: Vec<Track>) {
-        self.replace_shared(Arc::new(tracks));
-    }
-
-    pub(crate) fn replace_shared(&self, tracks: Arc<Vec<Track>>) {
-        let replaced = self.model.replace_tracks(tracks);
-        release_replaced_tracks(replaced);
-        self.notify_visible_count();
-    }
-
-    pub(crate) fn patch(&self, changed: Vec<Track>, delta: &::library::TrackDelta) {
-        self.model.patch(changed, delta);
-        self.notify_visible_count();
     }
 
     pub(crate) fn source_is_empty(&self) -> bool {
         self.model.source_is_empty()
     }
 
-    pub(crate) fn source_tracks(&self) -> Arc<Vec<Track>> {
-        self.model.source_tracks()
+    fn has_visible_results(&self) -> bool {
+        self.model.visible_count() != 0
     }
 
-    pub(crate) fn set_source_descriptor(&self, descriptor: PlayContextDescriptor) {
-        if let Some(current) = self.source_descriptor.as_ref() {
-            *current.borrow_mut() = descriptor;
+    pub(crate) fn source_play_request(
+        &self,
+        placement: playback::QueuePlacement,
+        context_id: &str,
+        shuffled_start: bool,
+    ) -> Option<playback::LoadedPlayRequest> {
+        self.model
+            .source_play_request(placement, context_id, shuffled_start)
+    }
+
+    pub(crate) fn projection_request(&self) -> TrackProjectionRequest {
+        self.model.projection_request()
+    }
+
+    pub(crate) fn connect_search_request(
+        &self,
+        callback: impl Fn(TrackProjectionRequest) + 'static,
+    ) {
+        let model = self.model.clone();
+        self.search.connect_search_changed(move |_| {
+            callback(model.projection_request());
+        });
+    }
+
+    pub(crate) fn replace_prepared(&self, prepared: PreparedTrackProjection) -> bool {
+        let changed = self.model.replace_prepared(prepared);
+        if changed {
+            self.notify_visible_count();
         }
+        changed
+    }
+
+    pub(crate) fn apply_track_replacement(
+        &self,
+        replacements: &[AcceptedTrackReplacement],
+        include: impl Fn(&library::Track) -> bool,
+    ) -> bool {
+        let changed = self.model.apply_track_replacement(replacements, include);
+        if changed {
+            self.notify_visible_count();
+        }
+        changed
     }
 
     pub(crate) fn apply_library_list_settings(
@@ -350,77 +198,29 @@ impl TrackListProjection {
 }
 
 impl Shell {
-    pub(crate) fn load_albums_route_data(
-        library_query: &ActiveLibraryQuery,
-        revision: i64,
-        include_tracks: bool,
-    ) -> Result<
-        (
-            Arc<Vec<Album>>,
-            Option<HashMap<::library::AlbumId, Vec<Track>>>,
-        ),
-        String,
-    > {
-        let albums = library_query
-            .prepared_albums_if_cached(revision)
-            .filter(|prepared| prepared.items.len() == prepared.total)
-            .map(|prepared| prepared.items)
-            .map(Ok)
-            .unwrap_or_else(|| {
-                load_complete_cached_items(|limit| library_query.albums_page(0, limit))
-                    .map(Arc::new)
-            })?;
-        let album_tracks = if include_tracks {
-            let ids = albums
-                .iter()
-                .map(|album| album.id.clone())
-                .collect::<Vec<_>>();
-            Some(
-                library_query
-                    .prepared_album_tracks_if_cached(revision, &ids)
-                    .unwrap_or_else(|| {
-                        library_query.album_tracks(&ids).unwrap_or_else(|error| {
-                            warn!(%error, "failed to load Albums detail track projection");
-                            HashMap::new()
-                        })
-                    }),
-            )
-        } else {
-            None
-        };
-        Ok((albums, album_tracks))
-    }
-
-    pub(crate) fn library_albums_route_from_prepared(
+    pub(crate) fn library_albums_route(
         self: &Rc<Self>,
-        library_query: ActiveLibraryQuery,
-        revision: i64,
-        prepared: (
-            Arc<Vec<Album>>,
-            Option<HashMap<::library::AlbumId, Vec<Track>>>,
-        ),
+        source_albums: Arc<[AlbumSummary]>,
+        prepared_details: Option<Arc<[AlbumDetail]>>,
+        loaded: Arc<LoadedLibrary>,
+        music_folder_id: Option<MusicFolderId>,
     ) -> MountedRoute {
-        let (loaded, prepared_album_tracks) = prepared;
         let view_started = Instant::now();
-        let settings = self
-            .settings
-            .current
-            .borrow()
-            .library_list(LibraryListKey::Albums);
+        let key = LibraryListKey::Albums;
+        let settings = self.settings.current.borrow().library_list(key);
         let applied_settings = Rc::new(RefCell::new(settings.clone()));
-        let page_total = loaded.len();
-        let source_albums = Rc::new(RefCell::new(Arc::clone(&loaded)));
-        let albums = Rc::new(RefCell::new(loaded));
-        let album_count = albums.borrow().len();
-        let album_tracks_loaded = Rc::new(Cell::new(prepared_album_tracks.is_some()));
-        let album_tracks = Rc::new(RefCell::new(prepared_album_tracks.unwrap_or_default()));
+        let source_albums = Rc::new(RefCell::new(source_albums));
+        let visible = Rc::new(RefCell::new(Arc::clone(&source_albums.borrow())));
+        let detail_albums = Rc::new(RefCell::new(prepared_details));
         let models = AlbumCollectionModels::new();
         let model_started = Instant::now();
-        populate_album_collection_model(
+        let initial_visible = visible.borrow().clone();
+        let initial_details = detail_albums.borrow().clone();
+        populate_prepared_album_collection_model(
             &models,
-            &albums.borrow(),
-            &settings,
-            &album_tracks.borrow(),
+            &initial_visible,
+            initial_details,
+            settings.layout,
         );
         let model_ms = model_started.elapsed().as_millis() as u64;
 
@@ -428,389 +228,334 @@ impl Shell {
         bind_search_placeholder(&search, "Search");
         search.set_hexpand(true);
         let query = Rc::new(RefCell::new(String::new()));
-
         {
             let shell = Rc::clone(self);
             let models = models.clone();
             let source_albums = Rc::clone(&source_albums);
-            let albums = Rc::clone(&albums);
-            let album_tracks = Rc::clone(&album_tracks);
+            let visible = Rc::clone(&visible);
+            let detail_albums = Rc::clone(&detail_albums);
             let query = Rc::clone(&query);
             search.connect_search_changed(move |entry| {
                 let text = entry.text().trim().to_string();
                 *query.borrow_mut() = text.clone();
-                let normalized = text.to_lowercase();
-                let values = {
-                    let source_albums = source_albums.borrow();
-                    if normalized.is_empty() {
-                        Arc::clone(&source_albums)
-                    } else {
-                        Arc::new(
-                            source_albums
-                                .iter()
-                                .filter(|album| album_matches_query(album, &normalized))
-                                .cloned()
-                                .collect::<Vec<_>>(),
-                        )
-                    }
-                };
-                *albums.borrow_mut() = values;
-                let settings = shell
-                    .settings
-                    .current
-                    .borrow()
-                    .library_list(LibraryListKey::Albums);
-                populate_album_collection_model(
-                    &models,
-                    &albums.borrow(),
-                    &settings,
-                    &album_tracks.borrow(),
-                );
+                let filtered = filter_shared(&source_albums.borrow(), &text, album_matches_query);
+                *visible.borrow_mut() = filtered;
+                let settings = shell.settings.current.borrow().library_list(key);
+                let details = album_details_for_route(&detail_albums, &text, settings.layout);
+                populate_album_collection_model(&models, &visible.borrow(), details, &settings);
                 models.clear_inactive(settings.layout);
+                if settings.layout != LibraryLayout::Detail {
+                    detail_albums.borrow_mut().take();
+                }
             });
         }
 
         let content_started = Instant::now();
-        let content = album_collection_projection(
-            self,
-            models.clone(),
-            LibraryListKey::Albums,
-            library_query.clone(),
-        );
+        let content = album_collection_projection(self, models.clone(), key);
         models.clear_inactive(settings.layout);
         let content_ms = content_started.elapsed().as_millis() as u64;
-        let content_surface = content.scrolling_widget();
         let shell_started = Instant::now();
+        let visible_results = Rc::clone(&visible);
         let page_shell = self.library_page_shell(LibraryPageShellOptions {
-            key: LibraryListKey::Albums,
-            empty: albums.borrow().is_empty(),
+            key,
+            empty: source_albums.borrow().is_empty(),
             empty_body: msgid("Cached entries will appear here after sync finishes"),
-            search,
-            content: content_surface,
+            search: search.clone(),
+            has_visible_results: Rc::new(move || !visible_results.borrow().is_empty()),
+            content: content.scrolling_widget(),
         });
         let shell_ms = shell_started.elapsed().as_millis() as u64;
-        let total_ms = view_started.elapsed().as_millis() as u64;
-        info!(
-            route = ?Route::Albums,
-            layout = ?settings.layout,
-            source = "store",
-            albums = album_count,
-            total = page_total,
+        log_route_setup(
+            Route::Albums,
+            settings.layout,
+            source_albums.borrow().len(),
             model_ms,
             content_ms,
             shell_ms,
-            total_ms,
-            "library route setup timing"
+            view_started,
         );
-        if total_ms >= SLOW_LIBRARY_ROUTE_SETUP_MS {
-            warn!(
-                route = ?Route::Albums,
-                layout = ?settings.layout,
-                albums = album_count,
-                total = page_total,
-                total_ms,
-                "slow library route setup"
-            );
-        }
-        if settings.layout == LibraryLayout::Detail {
-            info!(
-                albums = album_count,
-                total = page_total,
-                model_ms,
-                content_ms,
-                shell_ms,
-                total_ms,
-                "albums detail view timing"
-            );
-        }
-        let apply_loaded: Rc<
-            dyn Fn(
-                Result<
-                    (
-                        Arc<Vec<Album>>,
-                        Option<HashMap<::library::AlbumId, Vec<Track>>>,
-                    ),
-                    String,
-                >,
-            ),
-        > = {
+
+        let identity =
+            self.mounted_route_read_identity(Route::Albums, &loaded, music_folder_id.clone());
+        let apply = {
             let shell = Rc::clone(self);
             let models = models.clone();
             let source_albums = Rc::clone(&source_albums);
-            let albums = Rc::clone(&albums);
-            let album_tracks = Rc::clone(&album_tracks);
-            let album_tracks_loaded = Rc::clone(&album_tracks_loaded);
+            let visible = Rc::clone(&visible);
+            let detail_albums = Rc::clone(&detail_albums);
+            let content = content.clone();
+            let page_shell = page_shell.clone();
+            let applied_settings = Rc::clone(&applied_settings);
+            Rc::new(
+                move |request: CollectionReadRequest, result: Result<PreparedAlbums, String>| {
+                    if !shell.mounted_route_read_is_current(&request.identity) {
+                        return;
+                    }
+                    let prepared = match result {
+                        Ok(prepared) => prepared,
+                        Err(error) => {
+                            warn!(%error, "failed to refresh the mounted Albums route");
+                            return;
+                        }
+                    };
+                    source_albums.replace(prepared.source);
+                    visible.replace(prepared.visible);
+                    detail_albums.replace(prepared.details);
+                    let prepared_visible = visible.borrow().clone();
+                    populate_prepared_album_collection_model(
+                        &models,
+                        &prepared_visible,
+                        prepared.visible_details,
+                        request.settings.layout,
+                    );
+                    content.apply_settings(&request.settings);
+                    models.clear_inactive(request.settings.layout);
+                    page_shell.apply_library_list_settings(key, &request.settings);
+                    page_shell.set_empty(source_albums.borrow().is_empty());
+                    applied_settings.replace(request.settings);
+                },
+            )
+        };
+        let load = {
+            let loaded = Arc::clone(&loaded);
+            let music_folder_id = music_folder_id.clone();
+            Arc::new(move |request: &CollectionReadRequest| {
+                load_albums(
+                    &loaded,
+                    music_folder_id.as_ref(),
+                    &request.query,
+                    &request.settings,
+                )
+            })
+        };
+        let read = LatestMountedRouteRead::new_with_request(apply, load, "mounted Albums route");
+        {
+            let read = Rc::downgrade(&read);
+            let identity = identity.clone();
+            let shell = Rc::clone(self);
+            search.connect_search_changed(move |entry| {
+                let Some(read) = read.upgrade() else {
+                    return;
+                };
+                let settings = shell.settings.current.borrow().library_list(key);
+                read.request_with_if_running(CollectionReadRequest {
+                    identity: identity.clone(),
+                    query: entry.text().trim().to_string(),
+                    settings,
+                });
+            });
+        }
+        let resume = {
+            let shell = Rc::clone(self);
+            let models = models.clone();
+            let visible = Rc::clone(&visible);
+            let detail_albums = Rc::clone(&detail_albums);
             let query = Rc::clone(&query);
             let content = content.clone();
             let page_shell = page_shell.clone();
             let applied_settings = Rc::clone(&applied_settings);
-            Rc::new(move |result| {
-                let (loaded, loaded_album_tracks) = match result {
-                    Ok(loaded) => loaded,
-                    Err(error) => {
-                        warn!(%error, "failed to refresh Albums route projection");
-                        return;
-                    }
-                };
-                let settings = shell
-                    .settings
-                    .current
-                    .borrow()
-                    .library_list(LibraryListKey::Albums);
-                *source_albums.borrow_mut() = Arc::clone(&loaded);
-                if let Some(loaded_album_tracks) = loaded_album_tracks
-                    && settings.layout == LibraryLayout::Detail
-                {
-                    album_tracks.replace(loaded_album_tracks);
-                    album_tracks_loaded.set(true);
-                } else {
-                    invalidate_album_track_projection(&album_tracks, &album_tracks_loaded);
-                }
-                let normalized = query.borrow().trim().to_lowercase();
-                let visible = if normalized.is_empty() {
-                    loaded
-                } else {
-                    Arc::new(
-                        loaded
-                            .iter()
-                            .filter(|album| album_matches_query(album, &normalized))
-                            .cloned()
-                            .collect::<Vec<_>>(),
-                    )
-                };
-                *albums.borrow_mut() = visible;
-                populate_album_collection_model(
-                    &models,
-                    &albums.borrow(),
-                    &settings,
-                    &album_tracks.borrow(),
-                );
-                page_shell.set_empty(albums.borrow().is_empty());
-                content.apply_settings(&settings);
-                models.clear_inactive(settings.layout);
-                page_shell.apply_library_list_settings(LibraryListKey::Albums, &settings);
-                *applied_settings.borrow_mut() = settings;
-            })
-        };
-        let detail_requested = Arc::new(AtomicBool::new(settings.layout == LibraryLayout::Detail));
-        let load_revision = Arc::new(AtomicI64::new(revision));
-        let load_query = library_query.clone();
-        let load_detail_requested = Arc::clone(&detail_requested);
-        let loader_revision = Arc::clone(&load_revision);
-        let load: MountedRefreshLoader<
-            Result<
-                (
-                    Arc<Vec<Album>>,
-                    Option<HashMap<::library::AlbumId, Vec<Track>>>,
-                ),
-                String,
-            >,
-        > = Arc::new(move || {
-            Shell::load_albums_route_data(
-                &load_query,
-                loader_revision.load(Ordering::Acquire),
-                load_detail_requested.load(Ordering::Acquire),
-            )
-        });
-        let refresh =
-            MountedRouteRefresh::new(Rc::downgrade(&apply_loaded), load, "mounted Albums");
-        let affected_by = {
-            let shell = Rc::clone(self);
-            let album_tracks_loaded = Rc::clone(&album_tracks_loaded);
-            Rc::new(move |delta: &library::LibraryDelta| {
-                let settings = shell
-                    .settings
-                    .current
-                    .borrow()
-                    .library_list(LibraryListKey::Albums);
-                delta.reset.is_some()
-                    || !delta.albums.is_empty()
-                    || (!delta.tracks.is_empty()
-                        && (settings.layout == LibraryLayout::Detail || album_tracks_loaded.get()))
-            })
-        };
-        let apply_delta = {
-            let shell = Rc::clone(self);
-            let apply_loaded = Rc::clone(&apply_loaded);
-            let refresh = Rc::clone(&refresh);
-            let album_tracks = Rc::clone(&album_tracks);
-            let album_tracks_loaded = Rc::clone(&album_tracks_loaded);
-            let detail_requested = Arc::clone(&detail_requested);
-            let load_revision = Arc::clone(&load_revision);
-            Rc::new(move |delta: &library::LibraryDelta| {
-                load_revision.store(
-                    shell.source.presentation.borrow().cache.revision(),
-                    Ordering::Release,
-                );
-                if delta.reset.is_some() || !delta.albums.is_empty() {
-                    let detail = shell
-                        .settings
-                        .current
-                        .borrow()
-                        .library_list(LibraryListKey::Albums)
-                        .layout
-                        == LibraryLayout::Detail;
-                    detail_requested.store(detail, Ordering::Release);
-                    let _ = &apply_loaded;
-                    refresh.request();
-                    return;
-                }
-                if delta.tracks.is_empty() {
-                    return;
-                }
-                let settings = shell
-                    .settings
-                    .current
-                    .borrow()
-                    .library_list(LibraryListKey::Albums);
-                if settings.layout == LibraryLayout::Detail {
-                    detail_requested.store(true, Ordering::Release);
-                    let _ = &apply_loaded;
-                    refresh.request();
-                } else {
-                    invalidate_album_track_projection(&album_tracks, &album_tracks_loaded);
-                }
-            }) as MountedRouteDeltaApplier
-        };
-        let resume = {
-            let shell = Rc::clone(self);
-            let content = content.clone();
-            let page_shell = page_shell.clone();
-            let models = models.clone();
-            let albums = Rc::clone(&albums);
-            let album_tracks = Rc::clone(&album_tracks);
-            let album_tracks_loaded = Rc::clone(&album_tracks_loaded);
-            let applied_settings = Rc::clone(&applied_settings);
-            let apply_loaded = Rc::clone(&apply_loaded);
-            let detail_requested = Arc::clone(&detail_requested);
-            let load_revision = Arc::clone(&load_revision);
-            let refresh = Rc::clone(&refresh);
+            let read = Rc::clone(&read);
+            let identity = identity.clone();
             Rc::new(move || {
-                load_revision.store(
-                    shell.source.presentation.borrow().cache.revision(),
-                    Ordering::Release,
-                );
-                let settings = shell
-                    .settings
-                    .current
-                    .borrow()
-                    .library_list(LibraryListKey::Albums);
+                let settings = shell.settings.current.borrow().library_list(key);
                 let previous = applied_settings.borrow().clone();
-                let requested_detail = settings.layout == LibraryLayout::Detail;
-                detail_requested.store(requested_detail, Ordering::Release);
-                if requested_detail && !album_tracks_loaded.get() {
-                    let _ = &apply_loaded;
-                    refresh.request();
-                    page_shell.apply_library_list_settings(LibraryListKey::Albums, &settings);
-                    return;
-                }
-                let entering_detail = previous.layout != LibraryLayout::Detail && requested_detail;
-                let leaving_detail = previous.layout == LibraryLayout::Detail && !requested_detail;
-                if leaving_detail {
-                    invalidate_album_track_projection(&album_tracks, &album_tracks_loaded);
-                }
                 if previous.sort_key != settings.sort_key
                     || previous.descending != settings.descending
-                    || entering_detail
-                    || leaving_detail
+                    || previous.layout != settings.layout
                 {
-                    populate_album_collection_model(
-                        &models,
-                        &albums.borrow(),
-                        &settings,
-                        &album_tracks.borrow(),
-                    );
+                    let details =
+                        album_details_for_route(&detail_albums, &query.borrow(), settings.layout);
+                    populate_album_collection_model(&models, &visible.borrow(), details, &settings);
                 }
                 content.apply_settings(&settings);
                 models.clear_inactive(settings.layout);
-                page_shell.apply_library_list_settings(LibraryListKey::Albums, &settings);
-                *applied_settings.borrow_mut() = settings;
+                if settings.layout != LibraryLayout::Detail {
+                    detail_albums.borrow_mut().take();
+                }
+                page_shell.apply_library_list_settings(key, &settings);
+                *applied_settings.borrow_mut() = settings.clone();
+                let request = CollectionReadRequest {
+                    identity: identity.clone(),
+                    query: query.borrow().clone(),
+                    settings,
+                };
+                if request.settings.layout == LibraryLayout::Detail
+                    && detail_albums.borrow().is_none()
+                {
+                    read.request_with(request);
+                } else {
+                    read.request_with_if_running(request);
+                }
             })
         };
-        MountedRoute::new(page_shell.widget(), affected_by, apply_delta, resume)
+        let update = {
+            let read = Rc::clone(&read);
+            let identity = identity.clone();
+            let shell = Rc::clone(self);
+            let query = Rc::clone(&query);
+            Rc::new(move |update: &crate::runtime::SelectedLibraryUpdate| {
+                if !update.change.albums.is_empty() {
+                    read.request_with(CollectionReadRequest {
+                        identity: identity.clone(),
+                        query: query.borrow().clone(),
+                        settings: shell.settings.current.borrow().library_list(key),
+                    });
+                }
+            })
+        };
+        page_shell
+            .mounted_route(resume, content.item_navigation())
+            .with_library_update(update)
     }
-    pub(crate) fn library_tracks_route_from_prepared(
+
+    pub(crate) fn library_tracks_route(
         self: &Rc<Self>,
-        library_query: ActiveLibraryQuery,
-        tracks: Arc<Vec<Track>>,
+        tracks: TrackList,
+        loaded: Arc<LoadedLibrary>,
+        music_folder_id: Option<MusicFolderId>,
     ) -> MountedRoute {
-        let projection = self.searchable_track_collection_from_sorted_store(
+        let source = {
+            let loaded = Arc::clone(&loaded);
+            let music_folder_id = music_folder_id.clone();
+            Arc::new(move |settings: &LibraryListSettings| {
+                load_tracks(&loaded, music_folder_id.as_ref(), settings)
+            }) as TrackRouteSource
+        };
+        let membership_folder_id = music_folder_id.clone();
+        let membership = Rc::new(move |track: &::library::Track| {
+            membership_folder_id
+                .as_ref()
+                .is_none_or(|folder_id| track.relations.music_folders.contains(folder_id))
+        }) as TrackRouteMembership;
+        self.root_track_route(
+            RootTrackRouteOptions {
+                key: LibraryListKey::Tracks,
+                route: Route::Tracks,
+                context: "tracks",
+                empty_body: msgid("Cached entries will appear here after sync finishes"),
+                reload_on_activity: false,
+            },
             tracks,
-            LibraryListKey::Tracks,
+            loaded,
+            music_folder_id,
+            source,
+            membership,
+        )
+    }
+
+    pub(crate) fn favorites_route(
+        self: &Rc<Self>,
+        favorites: TrackList,
+        loaded: Arc<LoadedLibrary>,
+        music_folder_id: Option<MusicFolderId>,
+    ) -> MountedRoute {
+        let key = LibraryListKey::FavoriteTracks;
+        let source = {
+            let loaded = Arc::clone(&loaded);
+            let music_folder_id = music_folder_id.clone();
+            Arc::new(move |settings: &LibraryListSettings| {
+                load_favorite_tracks(&loaded, music_folder_id.as_ref(), settings)
+            }) as TrackRouteSource
+        };
+        let membership_folder_id = music_folder_id.clone();
+        let membership = Rc::new(move |track: &::library::Track| {
+            track.favorite
+                && membership_folder_id
+                    .as_ref()
+                    .is_none_or(|folder_id| track.relations.music_folders.contains(folder_id))
+        }) as TrackRouteMembership;
+        self.root_track_route(
+            RootTrackRouteOptions {
+                key,
+                route: Route::Favorites,
+                context: "favorite-tracks",
+                empty_body: "Favorite tracks will appear here after you add them.",
+                reload_on_activity: false,
+            },
+            favorites,
+            loaded,
+            music_folder_id,
+            source,
+            membership,
+        )
+    }
+
+    pub(crate) fn history_route(
+        self: &Rc<Self>,
+        history: TrackList,
+        loaded: Arc<LoadedLibrary>,
+        music_folder_id: Option<MusicFolderId>,
+    ) -> MountedRoute {
+        let source = {
+            let loaded = Arc::clone(&loaded);
+            let music_folder_id = music_folder_id.clone();
+            Arc::new(move |_: &LibraryListSettings| {
+                load_history_tracks(&loaded, music_folder_id.as_ref())
+            }) as TrackRouteSource
+        };
+        let membership_folder_id = music_folder_id.clone();
+        let membership = Rc::new(move |track: &::library::Track| {
+            membership_folder_id
+                .as_ref()
+                .is_none_or(|folder_id| track.relations.music_folders.contains(folder_id))
+        }) as TrackRouteMembership;
+        self.root_track_route(
+            RootTrackRouteOptions {
+                key: LibraryListKey::History,
+                route: Route::History,
+                context: "history",
+                empty_body: msgid("Accepted plays will appear here."),
+                reload_on_activity: true,
+            },
+            history,
+            loaded,
+            music_folder_id,
+            source,
+            membership,
+        )
+    }
+
+    fn root_track_route(
+        self: &Rc<Self>,
+        options: RootTrackRouteOptions,
+        tracks: TrackList,
+        loaded: Arc<LoadedLibrary>,
+        music_folder_id: Option<MusicFolderId>,
+        source: TrackRouteSource,
+        membership: TrackRouteMembership,
+    ) -> MountedRoute {
+        let context_id = music_folder_id.as_ref().map_or_else(
+            || format!("{}:all", options.context),
+            |folder_id| format!("{}:{}", options.context, folder_id.as_str()),
+        );
+        let projection = self.searchable_track_collection(
+            tracks,
+            options.key,
             SearchableTrackOptions {
                 on_visible_count_changed: None,
-                source_descriptor: Some(PlayContextDescriptor::Global {
-                    music_folder_id: selected_music_folder_id(self),
-                }),
-                favorites_only: false,
+                context_id,
                 content_inset: PRIMARY_ROUTE_HORIZONTAL_INSET,
                 fixed_layout: None,
             },
         );
-        let page_shell = self.library_page_shell(LibraryPageShellOptions {
-            key: LibraryListKey::Tracks,
-            empty: projection.source_is_empty(),
-            empty_body: msgid("Cached entries will appear here after sync finishes"),
-            search: projection.search(),
-            content: projection.scrolling_widget(),
-        });
-        let delta_queue = Rc::new(MountedTracksDeltaQueue::new(
-            Rc::downgrade(self),
-            library_query.clone(),
-            projection.clone(),
-            page_shell.clone(),
-            selected_music_folder_id(self),
-        ));
-        let apply_prepared = {
-            let projection = projection.clone();
-            let page_shell = page_shell.clone();
-            Rc::new(move |tracks: Arc<Vec<Track>>| {
-                projection.replace_shared(tracks);
-                page_shell.set_empty(projection.source_is_empty());
-            }) as Rc<dyn Fn(Arc<Vec<Track>>)>
-        };
-        let affected_by = Rc::new(|delta: &library::LibraryDelta| {
-            delta.reset.is_some() || !delta.tracks.is_empty()
-        });
-        let apply_delta = {
-            let shell = Rc::clone(self);
-            let apply_prepared = Rc::clone(&apply_prepared);
-            let delta_queue = Rc::clone(&delta_queue);
-            let library_query = library_query.clone();
-            Rc::new(move |delta: &library::LibraryDelta| {
-                if delta.reset.is_some() {
-                    if delta_queue.reset_for_current_scope() {
-                        shell.refresh_mounted_tracks_from_prepared(
-                            library_query.clone(),
-                            Rc::clone(&apply_prepared),
-                        );
-                    }
-                    return;
-                }
-                delta_queue.enqueue(&delta.tracks);
-            }) as MountedRouteDeltaApplier
-        };
-        let resume = {
-            let shell = Rc::clone(self);
-            let projection = projection.clone();
-            let page_shell = page_shell.clone();
-            Rc::new(move || {
-                let settings = shell
-                    .settings
-                    .current
-                    .borrow()
-                    .library_list(LibraryListKey::Tracks);
-                projection.apply_library_list_settings(LibraryListKey::Tracks, &settings);
-                page_shell.apply_library_list_settings(LibraryListKey::Tracks, &settings);
-            })
-        };
-        MountedRoute::new(page_shell.widget(), affected_by, apply_delta, resume)
+        let identity = self.mounted_route_read_identity(options.route, &loaded, music_folder_id);
+        self.track_page_route(
+            options.key,
+            options.empty_body,
+            projection,
+            identity,
+            source,
+            membership,
+            options.reload_on_activity,
+        )
     }
-    pub(crate) fn library_artist_list_route_from_prepared(
+
+    pub(crate) fn library_artist_list_route(
         self: &Rc<Self>,
         album_artist: bool,
-        loaded: Vec<Artist>,
-        library_query: ActiveLibraryQuery,
+        source_artists: Arc<[ArtistSummary]>,
+        loaded: Arc<LoadedLibrary>,
+        music_folder_id: Option<MusicFolderId>,
     ) -> MountedRoute {
         let view_started = Instant::now();
         let key = if album_artist {
@@ -825,160 +570,399 @@ impl Shell {
         };
         let settings = self.settings.current.borrow().library_list(key);
         let applied_settings = Rc::new(RefCell::new(settings.clone()));
-        let page_total = loaded.len();
-        let loaded = Arc::new(loaded);
-        let source_artists = Rc::new(RefCell::new(Arc::clone(&loaded)));
-        let artists = Rc::new(RefCell::new(loaded));
-        let artist_count = artists.borrow().len();
+        let source_artists = Rc::new(RefCell::new(source_artists));
+        let visible = Rc::new(RefCell::new(Arc::clone(&source_artists.borrow())));
         let model = gio::ListStore::new::<glib::BoxedAnyObject>();
         let model_started = Instant::now();
-        populate_artist_model(&model, &artists.borrow(), &settings);
+        replace_artists_in_model(&model, visible.borrow().iter().cloned());
         let model_ms = model_started.elapsed().as_millis() as u64;
 
         let search = gtk::SearchEntry::new();
         bind_search_placeholder(&search, "Search");
         search.set_hexpand(true);
-        let query = Rc::new(RefCell::new(String::new()));
-
         {
             let shell = Rc::clone(self);
             let model = model.clone();
             let source_artists = Rc::clone(&source_artists);
-            let artists = Rc::clone(&artists);
-            let query = Rc::clone(&query);
+            let visible = Rc::clone(&visible);
             search.connect_search_changed(move |entry| {
-                let text = entry.text().trim().to_string();
-                *query.borrow_mut() = text.clone();
-                let normalized = text.to_lowercase();
-                let values = {
-                    let source_artists = source_artists.borrow();
-                    if normalized.is_empty() {
-                        Arc::clone(&source_artists)
-                    } else {
-                        Arc::new(
-                            source_artists
-                                .iter()
-                                .filter(|artist| artist_matches_query(artist, &normalized))
-                                .cloned()
-                                .collect::<Vec<_>>(),
-                        )
-                    }
-                };
-                *artists.borrow_mut() = values;
+                *visible.borrow_mut() = filter_shared(
+                    &source_artists.borrow(),
+                    entry.text().as_str(),
+                    artist_matches_query,
+                );
                 populate_artist_model(
                     &model,
-                    &artists.borrow(),
+                    &visible.borrow(),
                     &shell.settings.current.borrow().library_list(key),
                 );
             });
         }
+
         let content_started = Instant::now();
-        let content = artist_collection_projection(self, model.clone(), key, library_query.clone());
+        let content = artist_collection_projection(self, model.clone(), key);
         let content_ms = content_started.elapsed().as_millis() as u64;
         let shell_started = Instant::now();
+        let visible_results = Rc::clone(&visible);
         let page_shell = self.library_page_shell(LibraryPageShellOptions {
             key,
-            empty: artists.borrow().is_empty(),
+            empty: source_artists.borrow().is_empty(),
             empty_body: msgid("Cached entries will appear here after sync finishes"),
-            search,
+            search: search.clone(),
+            has_visible_results: Rc::new(move || !visible_results.borrow().is_empty()),
             content: content.scrolling_widget(),
         });
         let shell_ms = shell_started.elapsed().as_millis() as u64;
-        let total_ms = view_started.elapsed().as_millis() as u64;
-        info!(
-            route = ?route,
-            layout = ?settings.layout,
-            source = "store",
-            artists = artist_count,
-            total = page_total,
+        log_route_setup(
+            route.clone(),
+            settings.layout,
+            source_artists.borrow().len(),
             model_ms,
             content_ms,
             shell_ms,
-            total_ms,
-            "library route setup timing"
+            view_started,
         );
-        if total_ms >= SLOW_LIBRARY_ROUTE_SETUP_MS {
-            warn!(
-                route = ?route,
-                layout = ?settings.layout,
-                artists = artist_count,
-                total = page_total,
-                total_ms,
-                "slow library route setup"
-            );
+        let identity = self.mounted_route_read_identity(route, &loaded, music_folder_id.clone());
+        let apply = {
+            let shell = Rc::clone(self);
+            let source_artists = Rc::clone(&source_artists);
+            let visible = Rc::clone(&visible);
+            let model = model.clone();
+            let content = content.clone();
+            let page_shell = page_shell.clone();
+            let applied_settings = Rc::clone(&applied_settings);
+            Rc::new(
+                move |request: CollectionReadRequest,
+                      result: Result<PreparedCollection<ArtistSummary>, String>| {
+                    if !shell.mounted_route_read_is_current(&request.identity) {
+                        return;
+                    }
+                    let prepared = match result {
+                        Ok(prepared) => prepared,
+                        Err(error) => {
+                            warn!(%error, "failed to refresh the mounted Artists route");
+                            return;
+                        }
+                    };
+                    source_artists.replace(prepared.source);
+                    visible.replace(prepared.visible);
+                    replace_artists_in_model(&model, visible.borrow().iter().cloned());
+                    content.apply_settings(&request.settings);
+                    page_shell.apply_library_list_settings(key, &request.settings);
+                    page_shell.set_empty(source_artists.borrow().is_empty());
+                    applied_settings.replace(request.settings);
+                },
+            )
+        };
+        let load = {
+            let loaded = Arc::clone(&loaded);
+            let music_folder_id = music_folder_id.clone();
+            Arc::new(move |request: &CollectionReadRequest| {
+                load_artists(
+                    &loaded,
+                    music_folder_id.as_ref(),
+                    album_artist,
+                    &request.query,
+                    &request.settings,
+                )
+            })
+        };
+        let read = LatestMountedRouteRead::new_with_request(apply, load, "mounted Artists route");
+        {
+            let read = Rc::downgrade(&read);
+            let identity = identity.clone();
+            let shell = Rc::clone(self);
+            search.connect_search_changed(move |entry| {
+                let Some(read) = read.upgrade() else {
+                    return;
+                };
+                read.request_with_if_running(CollectionReadRequest {
+                    identity: identity.clone(),
+                    query: entry.text().trim().to_string(),
+                    settings: shell.settings.current.borrow().library_list(key),
+                });
+            });
         }
-        let apply_loaded: Rc<dyn Fn(Result<Vec<Artist>, String>)> = {
+        let resume = {
             let shell = Rc::clone(self);
             let model = model.clone();
-            let source_artists = Rc::clone(&source_artists);
-            let artists = Rc::clone(&artists);
-            let query = Rc::clone(&query);
+            let visible = Rc::clone(&visible);
+            let content = content.clone();
             let page_shell = page_shell.clone();
-            Rc::new(move |result| {
-                let loaded = match result {
-                    Ok(loaded) => loaded,
+            let applied_settings = Rc::clone(&applied_settings);
+            let search = search.clone();
+            let read = Rc::clone(&read);
+            let identity = identity.clone();
+            Rc::new(move || {
+                let settings = shell.settings.current.borrow().library_list(key);
+                let previous = applied_settings.borrow().clone();
+                if previous.sort_key != settings.sort_key
+                    || previous.descending != settings.descending
+                {
+                    populate_artist_model(&model, &visible.borrow(), &settings);
+                }
+                content.apply_settings(&settings);
+                page_shell.apply_library_list_settings(key, &settings);
+                *applied_settings.borrow_mut() = settings.clone();
+                read.request_with_if_running(CollectionReadRequest {
+                    identity: identity.clone(),
+                    query: search.text().trim().to_string(),
+                    settings,
+                });
+            })
+        };
+        let update = {
+            let read = Rc::clone(&read);
+            let identity = identity.clone();
+            let shell = Rc::clone(self);
+            let search = search.clone();
+            Rc::new(move |update: &crate::runtime::SelectedLibraryUpdate| {
+                if !update.change.artists.is_empty() {
+                    read.request_with(CollectionReadRequest {
+                        identity: identity.clone(),
+                        query: search.text().trim().to_string(),
+                        settings: shell.settings.current.borrow().library_list(key),
+                    });
+                }
+            })
+        };
+        page_shell
+            .mounted_route(resume, content.item_navigation())
+            .with_library_update(update)
+    }
+
+    pub(crate) fn library_playlists_route(
+        self: &Rc<Self>,
+        source_playlists: Arc<[PlaylistSummary]>,
+        loaded: Arc<LoadedLibrary>,
+    ) -> MountedRoute {
+        let key = LibraryListKey::Playlists;
+        let settings = self.settings.current.borrow().library_list(key);
+        let applied_settings = Rc::new(RefCell::new(settings.clone()));
+        let source_playlists = Rc::new(RefCell::new(source_playlists));
+        let visible = Rc::new(RefCell::new(Arc::clone(&source_playlists.borrow())));
+        let model = gio::ListStore::new::<glib::BoxedAnyObject>();
+        replace_playlists_in_model(&model, visible.borrow().iter().cloned());
+        let search = gtk::SearchEntry::new();
+        bind_search_placeholder(&search, "Search");
+        search.set_hexpand(true);
+        {
+            let shell = Rc::clone(self);
+            let model = model.clone();
+            let source_playlists = Rc::clone(&source_playlists);
+            let visible = Rc::clone(&visible);
+            search.connect_search_changed(move |entry| {
+                *visible.borrow_mut() = filter_shared(
+                    &source_playlists.borrow(),
+                    entry.text().as_str(),
+                    playlist_matches_query,
+                );
+                populate_playlist_model(
+                    &model,
+                    &visible.borrow(),
+                    &shell.settings.current.borrow().library_list(key),
+                );
+            });
+        }
+        let content = playlist_collection_projection(self, model.clone());
+        let visible_results = Rc::clone(&visible);
+        let page_shell = self.library_page_shell(LibraryPageShellOptions {
+            key,
+            empty: source_playlists.borrow().is_empty(),
+            empty_body: msgid("Cached entries will appear here after sync finishes"),
+            search: search.clone(),
+            has_visible_results: Rc::new(move || !visible_results.borrow().is_empty()),
+            content: content.scrolling_widget(),
+        });
+        let identity = self.mounted_route_read_identity(Route::Playlists, &loaded, None);
+        let apply = {
+            let shell = Rc::clone(self);
+            let source_playlists = Rc::clone(&source_playlists);
+            let visible = Rc::clone(&visible);
+            let model = model.clone();
+            let content = content.clone();
+            let page_shell = page_shell.clone();
+            let applied_settings = Rc::clone(&applied_settings);
+            Rc::new(
+                move |request: CollectionReadRequest,
+                      result: Result<PreparedCollection<PlaylistSummary>, String>| {
+                    if !shell.mounted_route_read_is_current(&request.identity) {
+                        return;
+                    }
+                    let prepared = match result {
+                        Ok(prepared) => prepared,
+                        Err(error) => {
+                            warn!(%error, "failed to refresh the mounted Playlists route");
+                            return;
+                        }
+                    };
+                    source_playlists.replace(prepared.source);
+                    visible.replace(prepared.visible);
+                    replace_playlists_in_model(&model, visible.borrow().iter().cloned());
+                    content.apply_settings(&request.settings);
+                    page_shell.apply_library_list_settings(key, &request.settings);
+                    page_shell.set_empty(source_playlists.borrow().is_empty());
+                    applied_settings.replace(request.settings);
+                },
+            )
+        };
+        let load = {
+            let loaded = Arc::clone(&loaded);
+            Arc::new(move |request: &CollectionReadRequest| {
+                load_playlists(&loaded, &request.query, &request.settings)
+            })
+        };
+        let read = LatestMountedRouteRead::new_with_request(apply, load, "mounted Playlists route");
+        {
+            let read = Rc::downgrade(&read);
+            let identity = identity.clone();
+            let shell = Rc::clone(self);
+            search.connect_search_changed(move |entry| {
+                let Some(read) = read.upgrade() else {
+                    return;
+                };
+                read.request_with_if_running(CollectionReadRequest {
+                    identity: identity.clone(),
+                    query: entry.text().trim().to_string(),
+                    settings: shell.settings.current.borrow().library_list(key),
+                });
+            });
+        }
+        let resume = {
+            let shell = Rc::clone(self);
+            let model = model.clone();
+            let visible = Rc::clone(&visible);
+            let content = content.clone();
+            let page_shell = page_shell.clone();
+            let applied_settings = Rc::clone(&applied_settings);
+            let search = search.clone();
+            let read = Rc::clone(&read);
+            let identity = identity.clone();
+            Rc::new(move || {
+                let settings = shell.settings.current.borrow().library_list(key);
+                let previous = applied_settings.borrow().clone();
+                if previous.sort_key != settings.sort_key
+                    || previous.descending != settings.descending
+                {
+                    populate_playlist_model(&model, &visible.borrow(), &settings);
+                }
+                content.apply_settings(&settings);
+                page_shell.apply_library_list_settings(key, &settings);
+                *applied_settings.borrow_mut() = settings.clone();
+                read.request_with_if_running(CollectionReadRequest {
+                    identity: identity.clone(),
+                    query: search.text().trim().to_string(),
+                    settings,
+                });
+            })
+        };
+        let update = {
+            let read = Rc::clone(&read);
+            let identity = identity.clone();
+            let shell = Rc::clone(self);
+            let search = search.clone();
+            Rc::new(move |update: &crate::runtime::SelectedLibraryUpdate| {
+                if !update.change.playlists.is_empty() {
+                    read.request_with(CollectionReadRequest {
+                        identity: identity.clone(),
+                        query: search.text().trim().to_string(),
+                        settings: shell.settings.current.borrow().library_list(key),
+                    });
+                }
+            })
+        };
+        page_shell
+            .mounted_route(resume, content.item_navigation())
+            .with_library_update(update)
+    }
+
+    pub(crate) fn library_smart_playlists_route(
+        self: &Rc<Self>,
+        initial_playlists: Arc<[SmartPlaylistSummary]>,
+        loaded: Arc<LoadedLibrary>,
+        music_folder_id: Option<MusicFolderId>,
+    ) -> MountedRoute {
+        let key = LibraryListKey::SmartPlaylists;
+        let settings = self.settings.current.borrow().library_list(key);
+        let applied_settings = Rc::new(RefCell::new(settings.clone()));
+        let source_playlists = Rc::new(RefCell::new(initial_playlists));
+        let visible = Rc::new(RefCell::new(Arc::clone(&source_playlists.borrow())));
+        let model = gio::ListStore::new::<glib::BoxedAnyObject>();
+        populate_smart_playlist_model(&model, &visible.borrow(), &settings);
+        let search = gtk::SearchEntry::new();
+        bind_search_placeholder(&search, "Search");
+        search.set_hexpand(true);
+        {
+            let shell = Rc::clone(self);
+            let model = model.clone();
+            let source_playlists = Rc::clone(&source_playlists);
+            let visible = Rc::clone(&visible);
+            search.connect_search_changed(move |entry| {
+                *visible.borrow_mut() = filter_shared(
+                    &source_playlists.borrow(),
+                    entry.text().as_str(),
+                    smart_playlist_matches_query,
+                );
+                populate_smart_playlist_model(
+                    &model,
+                    &visible.borrow(),
+                    &shell.settings.current.borrow().library_list(key),
+                );
+            });
+        }
+        let content = smart_playlist_collection_projection(self, model.clone());
+        let visible_results = Rc::clone(&visible);
+        let page_shell = self.library_page_shell(LibraryPageShellOptions {
+            key,
+            empty: source_playlists.borrow().is_empty(),
+            empty_body: msgid("Smart playlists will appear here after the default set is seeded."),
+            search: search.clone(),
+            has_visible_results: Rc::new(move || !visible_results.borrow().is_empty()),
+            content: content.scrolling_widget(),
+        });
+
+        let apply = {
+            let shell = Rc::clone(self);
+            let source_playlists = Rc::clone(&source_playlists);
+            let visible = Rc::clone(&visible);
+            let model = model.clone();
+            let search = search.clone();
+            let page_shell = page_shell.clone();
+            Rc::new(move |result: Result<Arc<[SmartPlaylistSummary]>, String>| {
+                let next = match result {
+                    Ok(next) => next,
                     Err(error) => {
-                        warn!(%error, album_artist, "failed to refresh Artists route projection");
+                        warn!(%error, "failed to read the mounted Smart Playlists route");
                         return;
                     }
                 };
-                let settings = shell.settings.current.borrow().library_list(key);
-                let loaded = Arc::new(loaded);
-                *source_artists.borrow_mut() = Arc::clone(&loaded);
-                let normalized = query.borrow().trim().to_lowercase();
-                let visible = if normalized.is_empty() {
-                    loaded
-                } else {
-                    Arc::new(
-                        loaded
-                            .iter()
-                            .filter(|artist| artist_matches_query(artist, &normalized))
-                            .cloned()
-                            .collect::<Vec<_>>(),
-                    )
-                };
-                *artists.borrow_mut() = visible;
-                populate_artist_model(&model, &artists.borrow(), &settings);
-                page_shell.set_empty(artists.borrow().is_empty());
-            })
+                source_playlists.replace(next);
+                visible.replace(filter_shared(
+                    &source_playlists.borrow(),
+                    search.text().as_str(),
+                    smart_playlist_matches_query,
+                ));
+                populate_smart_playlist_model(
+                    &model,
+                    &visible.borrow(),
+                    &shell.settings.current.borrow().library_list(key),
+                );
+                page_shell.set_empty(source_playlists.borrow().is_empty());
+            }) as Rc<dyn Fn(Result<Arc<[SmartPlaylistSummary]>, String>)>
         };
-        let load_query = library_query.clone();
-        let load: MountedRefreshLoader<Result<Vec<Artist>, String>> = Arc::new(move || {
-            load_complete_cached_items(|limit| load_query.artists_page(album_artist, 0, limit))
-        });
-        let refresh = MountedRouteRefresh::new(
-            Rc::downgrade(&apply_loaded),
-            load,
-            if album_artist {
-                "mounted Album Artists"
-            } else {
-                "mounted Artists"
-            },
-        );
-        let affected_by = {
-            Rc::new(move |delta: &library::LibraryDelta| {
-                let changed = if album_artist {
-                    !delta.album_artists.is_empty()
-                } else {
-                    !delta.artists.is_empty()
-                };
-                delta.reset.is_some() || changed
-            })
+        let load = {
+            let loaded = Arc::clone(&loaded);
+            let music_folder_id = music_folder_id.clone();
+            Arc::new(move || load_smart_playlists(&loaded, music_folder_id.as_ref()))
+                as Arc<dyn Fn() -> Result<Arc<[SmartPlaylistSummary]>, String> + Send + Sync>
         };
-        let apply_delta = {
-            let apply_loaded = Rc::clone(&apply_loaded);
-            let refresh = Rc::clone(&refresh);
-            Rc::new(move |_: &library::LibraryDelta| {
-                let _ = &apply_loaded;
-                refresh.request();
-            }) as MountedRouteDeltaApplier
-        };
+        let read = LatestMountedRouteRead::new(apply, load, "Smart Playlists");
         let resume = {
             let shell = Rc::clone(self);
+            let model = model.clone();
+            let visible = Rc::clone(&visible);
             let content = content.clone();
             let page_shell = page_shell.clone();
-            let model = model.clone();
-            let artists = Rc::clone(&artists);
             let applied_settings = Rc::clone(&applied_settings);
             Rc::new(move || {
                 let settings = shell.settings.current.borrow().library_list(key);
@@ -986,86 +970,39 @@ impl Shell {
                 if previous.sort_key != settings.sort_key
                     || previous.descending != settings.descending
                 {
-                    populate_artist_model(&model, &artists.borrow(), &settings);
+                    populate_smart_playlist_model(&model, &visible.borrow(), &settings);
                 }
                 content.apply_settings(&settings);
                 page_shell.apply_library_list_settings(key, &settings);
                 *applied_settings.borrow_mut() = settings;
             })
         };
-        MountedRoute::new(page_shell.widget(), affected_by, apply_delta, resume)
+        let update = {
+            let read = Rc::clone(&read);
+            Rc::new(move |update: &crate::runtime::SelectedLibraryUpdate| {
+                if !update.change.smart_playlists.is_empty() {
+                    read.request();
+                }
+            })
+        };
+        page_shell
+            .mounted_route(resume, content.item_navigation())
+            .with_library_update(update)
     }
-    pub(crate) fn library_playlists_route_from_prepared(
-        self: &Rc<Self>,
-        library_query: ActiveLibraryQuery,
-        playlists: Vec<::library::Playlist>,
-    ) -> MountedRoute {
-        let load_query = library_query.clone();
-        CollectionRouteSpec {
-            key: LibraryListKey::Playlists,
-            empty_body: msgid("Cached entries will appear here after sync finishes"),
-            load_items: Arc::new(move || {
-                load_complete_cached_items(|limit| load_query.playlists_page(0, limit))
-                    .unwrap_or_else(|error| {
-                        warn!(%error, "failed to load playlists page");
-                        Vec::new()
-                    })
-            }),
-            matches_query: Rc::new(playlist_matches_query),
-            populate_model: Rc::new(populate_playlist_model),
-            build_content: Rc::new(playlist_collection_projection),
-            affected: Rc::new(|delta| delta.reset.is_some() || !delta.playlists.is_empty()),
-        }
-        .view_from_items(self, playlists)
-    }
-    pub(crate) fn library_smart_playlists_route_from_prepared(
-        self: &Rc<Self>,
-        library_query: ActiveLibraryQuery,
-        playlists: Vec<::library::SmartPlaylist>,
-    ) -> MountedRoute {
-        let initial_query = library_query;
-        CollectionRouteSpec {
-            key: LibraryListKey::SmartPlaylists,
-            empty_body: msgid("Smart playlists will appear here after the default set is seeded."),
-            load_items: Arc::new(move || {
-                load_complete_cached_items(|limit| initial_query.smart_playlists_page(0, limit))
-                    .unwrap_or_else(|error| {
-                        warn!(%error, "failed to load smart playlists page");
-                        Vec::new()
-                    })
-            }),
-            matches_query: Rc::new(smart_playlist_matches_query),
-            populate_model: Rc::new(populate_smart_playlist_model),
-            build_content: Rc::new(smart_playlist_collection_projection),
-            affected: Rc::new(|delta| {
-                delta.reset.is_some()
-                    || !delta.tracks.added.is_empty()
-                    || !delta.tracks.deleted.is_empty()
-                    || !delta.tracks.fields.is_empty()
-                    || !delta.tracks.metadata.is_empty()
-                    || !delta.tracks.stats.is_empty()
-                    || !delta.tracks.skip_stats.is_empty()
-                    || !delta.tracks.favorite.is_empty()
-                    || !delta.tracks.cover_refs.is_empty()
-                    || !delta.smart_playlists.is_empty()
-            }),
-        }
-        .view_from_items(self, playlists)
-    }
+
     pub(crate) fn scrolling_track_projection(
         self: &Rc<Self>,
-        tracks: impl Into<Arc<Vec<Track>>>,
+        tracks: TrackList,
         key: LibraryListKey,
         context: &str,
-        source_descriptor: Option<PlayContextDescriptor>,
+        context_id: String,
     ) -> (gtk::Widget, TrackListProjection, LibraryToolbarProjection) {
-        let projection = self.searchable_track_collection_shared(
-            tracks.into(),
+        let projection = self.searchable_track_collection(
+            tracks,
             key,
             SearchableTrackOptions {
                 on_visible_count_changed: None,
-                source_descriptor,
-                favorites_only: false,
+                context_id,
                 content_inset: PRIMARY_ROUTE_HORIZONTAL_INSET,
                 fixed_layout: None,
             },
@@ -1078,51 +1015,28 @@ impl Shell {
         let toolbar = self.library_toolbar_projection(key, projection.search());
         wrapper.append(&library_route_inset(toolbar.widget()));
         self.set_route_search(Some(projection.search()));
-
         wrapper.append(&projection.scrolling_widget());
         (wrapper.upcast(), projection, toolbar)
     }
+
     pub(crate) fn searchable_track_collection(
         self: &Rc<Self>,
-        tracks: Vec<Track>,
+        tracks: TrackList,
         key: LibraryListKey,
         options: SearchableTrackOptions,
     ) -> TrackListProjection {
-        self.searchable_track_collection_shared(Arc::new(tracks), key, options)
-    }
-
-    fn searchable_track_collection_shared(
-        self: &Rc<Self>,
-        tracks: Arc<Vec<Track>>,
-        key: LibraryListKey,
-        options: SearchableTrackOptions,
-    ) -> TrackListProjection {
-        self.searchable_track_collection_with_initial_order(tracks, key, options, false)
-    }
-
-    fn searchable_track_collection_from_sorted_store(
-        self: &Rc<Self>,
-        tracks: Arc<Vec<Track>>,
-        key: LibraryListKey,
-        options: SearchableTrackOptions,
-    ) -> TrackListProjection {
-        self.searchable_track_collection_with_initial_order(tracks, key, options, true)
-    }
-
-    fn searchable_track_collection_with_initial_order(
-        self: &Rc<Self>,
-        tracks: Arc<Vec<Track>>,
-        key: LibraryListKey,
-        options: SearchableTrackOptions,
-        initial_tracks_are_sorted: bool,
-    ) -> TrackListProjection {
+        let selected = self
+            .library
+            .selected
+            .borrow()
+            .as_ref()
+            .map(|selected| (selected.source_id.clone(), selected.source_session_epoch))
+            .expect("a music route requires one selected source");
         let mut settings = self.settings.current.borrow().library_list(key);
         if let Some(layout) = options.fixed_layout {
             settings.layout = layout;
         }
-        // The global Tracks route has loaded this complete vector from the Store in the current
-        // order. The model keeps that Arc and builds its ID positions in the same source pass.
-        let model = TrackCollectionModel::new(tracks, settings.clone(), initial_tracks_are_sorted);
+        let model = TrackCollectionModel::new(selected.0, selected.1, tracks, settings.clone());
         if let Some(on_visible_count_changed) = options.on_visible_count_changed.as_ref() {
             on_visible_count_changed(model.visible_count());
         }
@@ -1140,23 +1054,12 @@ impl Shell {
                 }
             });
         }
-        let source_descriptor = options
-            .source_descriptor
-            .map(|descriptor| Rc::new(RefCell::new(descriptor)));
-        let play_context = source_descriptor.as_ref().map(|descriptor| {
-            track_collection_play_context(
-                Rc::clone(descriptor),
-                model.clone(),
-                options.favorites_only,
-                false,
-            )
-        });
         let collection = track_collection_projection(
             self,
             model.clone(),
             key,
-            settings.clone(),
-            play_context,
+            settings,
+            options.context_id,
             options.content_inset,
         );
         TrackListProjection {
@@ -1165,9 +1068,314 @@ impl Shell {
             collection,
             model,
             on_visible_count_changed: options.on_visible_count_changed,
-            source_descriptor,
             fixed_layout: options.fixed_layout,
         }
+    }
+
+    fn track_page_route(
+        self: &Rc<Self>,
+        key: LibraryListKey,
+        empty_body: &'static str,
+        projection: TrackListProjection,
+        identity: SelectedRouteIdentity,
+        source: TrackRouteSource,
+        membership: TrackRouteMembership,
+        reload_on_activity: bool,
+    ) -> MountedRoute {
+        let visible_projection = projection.clone();
+        let page_shell = self.library_page_shell(LibraryPageShellOptions {
+            key,
+            empty: projection.source_is_empty(),
+            empty_body,
+            search: projection.search(),
+            has_visible_results: Rc::new(move || visible_projection.has_visible_results()),
+            content: projection.scrolling_widget(),
+        });
+        let apply = {
+            let shell = Rc::clone(self);
+            let projection = projection.clone();
+            let page_shell = page_shell.clone();
+            Rc::new(move |request: TrackRouteReadRequest, result| {
+                if !shell.mounted_route_read_is_current(&request.identity) {
+                    return;
+                }
+                let prepared = match result {
+                    Ok(prepared) => prepared,
+                    Err(error) => {
+                        warn!(%error, "failed to read a mounted Track route");
+                        return;
+                    }
+                };
+                if projection.replace_prepared(prepared) {
+                    page_shell.set_empty(projection.source_is_empty());
+                }
+            })
+        };
+        let load = Arc::new(move |request: &TrackRouteReadRequest| {
+            source(&request.tracks.settings).and_then(|tracks| {
+                prepare_track_projection(tracks, request.tracks.clone())
+                    .map_err(|error| error.to_string())
+            })
+        });
+        let read = LatestMountedRouteRead::new_with_request(apply, load, "mounted Track route");
+        {
+            let read = Rc::downgrade(&read);
+            let identity = identity.clone();
+            projection.connect_search_request(move |tracks| {
+                let Some(read) = read.upgrade() else {
+                    return;
+                };
+                read.request_with_if_running(TrackRouteReadRequest {
+                    identity: identity.clone(),
+                    tracks,
+                });
+            });
+        }
+        let resume = {
+            let shell = Rc::clone(self);
+            let projection = projection.clone();
+            let page_shell = page_shell.clone();
+            let read = Rc::clone(&read);
+            let identity = identity.clone();
+            Rc::new(move || {
+                let settings = shell.settings.current.borrow().library_list(key);
+                projection.apply_library_list_settings(key, &settings);
+                page_shell.apply_library_list_settings(key, &settings);
+                read.request_with_if_running(TrackRouteReadRequest {
+                    identity: identity.clone(),
+                    tracks: projection.projection_request(),
+                });
+            })
+        };
+        let update_projection = projection.clone();
+        let update_shell = page_shell.clone();
+        let read = Rc::clone(&read);
+        let identity = identity.clone();
+        page_shell
+            .mounted_route(resume, projection.item_navigation())
+            .with_library_update(Rc::new(move |library_update| {
+                if reload_on_activity && library_update.change.history_changed {
+                    read.request_with(TrackRouteReadRequest {
+                        identity: identity.clone(),
+                        tracks: update_projection.projection_request(),
+                    });
+                    return;
+                }
+                let replacements = library_update.change.tracks.as_slice();
+                if replacements.is_empty() {
+                    return;
+                }
+                if update_projection
+                    .apply_track_replacement(replacements, |track| membership(track))
+                {
+                    update_shell.set_empty(update_projection.source_is_empty());
+                    return;
+                }
+                read.request_with(TrackRouteReadRequest {
+                    identity: identity.clone(),
+                    tracks: update_projection.projection_request(),
+                });
+            }))
+    }
+}
+
+pub(crate) fn load_smart_playlists(
+    loaded: &Arc<LoadedLibrary>,
+    music_folder_id: Option<&MusicFolderId>,
+) -> Result<Arc<[SmartPlaylistSummary]>, String> {
+    loaded
+        .smart_playlists(music_folder_id)
+        .map_err(|error| error.to_string())
+}
+
+pub(crate) fn load_albums(
+    loaded: &Arc<LoadedLibrary>,
+    music_folder_id: Option<&MusicFolderId>,
+    query: &str,
+    settings: &LibraryListSettings,
+) -> Result<PreparedAlbums, String> {
+    let source = loaded
+        .albums(music_folder_id)
+        .map_err(|error| error.to_string())?;
+    let prepared = prepare_collection(source, query, settings, album_matches_query, sort_albums);
+    let (details, visible_details) = if settings.layout == LibraryLayout::Detail {
+        let mut details = loaded
+            .album_details(music_folder_id)
+            .map_err(|error| error.to_string())?;
+        sort_album_details(Arc::make_mut(&mut details), settings);
+        let visible = filter_shared(&details, query, |detail, query| {
+            album_matches_query(&detail.summary, query)
+        });
+        (Some(details), Some(visible))
+    } else {
+        (None, None)
+    };
+    Ok(PreparedAlbums {
+        source: prepared.source,
+        visible: prepared.visible,
+        details,
+        visible_details,
+    })
+}
+
+pub(crate) fn load_tracks(
+    loaded: &Arc<LoadedLibrary>,
+    music_folder_id: Option<&MusicFolderId>,
+    settings: &LibraryListSettings,
+) -> Result<TrackList, String> {
+    loaded
+        .track_list(
+            music_folder_id,
+            settings.sort_key.track_sort(),
+            settings.descending,
+        )
+        .map_err(|error| error.to_string())
+}
+
+pub(crate) fn load_favorite_tracks(
+    loaded: &Arc<LoadedLibrary>,
+    music_folder_id: Option<&MusicFolderId>,
+    settings: &LibraryListSettings,
+) -> Result<TrackList, String> {
+    loaded
+        .favorite_track_list(
+            music_folder_id,
+            settings.sort_key.track_sort(),
+            settings.descending,
+        )
+        .map_err(|error| error.to_string())
+}
+
+pub(crate) fn load_history_tracks(
+    loaded: &Arc<LoadedLibrary>,
+    music_folder_id: Option<&MusicFolderId>,
+) -> Result<TrackList, String> {
+    loaded
+        .history_track_list(music_folder_id)
+        .map_err(|error| error.to_string())
+}
+
+pub(crate) fn load_artists(
+    loaded: &Arc<LoadedLibrary>,
+    music_folder_id: Option<&MusicFolderId>,
+    album_artists: bool,
+    query: &str,
+    settings: &LibraryListSettings,
+) -> Result<PreparedCollection<ArtistSummary>, String> {
+    let source = if album_artists {
+        loaded.album_artists(music_folder_id)
+    } else {
+        loaded.artists(music_folder_id)
+    }
+    .map_err(|error| error.to_string())?;
+    Ok(prepare_collection(
+        source,
+        query,
+        settings,
+        artist_matches_query,
+        sort_artists,
+    ))
+}
+
+pub(crate) fn load_playlists(
+    loaded: &Arc<LoadedLibrary>,
+    query: &str,
+    settings: &LibraryListSettings,
+) -> Result<PreparedCollection<PlaylistSummary>, String> {
+    let source = loaded.playlists().map_err(|error| error.to_string())?;
+    Ok(prepare_collection(
+        source,
+        query,
+        settings,
+        playlist_matches_query,
+        sort_playlists,
+    ))
+}
+
+fn prepare_collection<T: Clone>(
+    mut source: Arc<[T]>,
+    query: &str,
+    settings: &LibraryListSettings,
+    matches: impl Fn(&T, &str) -> bool,
+    sort: impl Fn(&mut [T], &LibraryListSettings),
+) -> PreparedCollection<T> {
+    sort(Arc::make_mut(&mut source), settings);
+    let visible = filter_shared(&source, query, matches);
+    PreparedCollection { source, visible }
+}
+
+fn album_details_for_route(
+    cache: &RefCell<Option<Arc<[AlbumDetail]>>>,
+    query: &str,
+    layout: LibraryLayout,
+) -> Option<Arc<[AlbumDetail]>> {
+    if layout != LibraryLayout::Detail {
+        return None;
+    }
+    let normalized = query.trim().to_lowercase();
+    let cache = cache.borrow();
+    let Some(details) = cache.as_ref() else {
+        return Some(Arc::from([]));
+    };
+    if normalized.is_empty() {
+        return Some(Arc::clone(details));
+    }
+    Some(
+        details
+            .iter()
+            .filter(|detail| album_matches_query(&detail.summary, &normalized))
+            .cloned()
+            .collect::<Vec<_>>()
+            .into(),
+    )
+}
+
+fn filter_shared<T: Clone>(
+    source: &Arc<[T]>,
+    query: &str,
+    matches: impl Fn(&T, &str) -> bool,
+) -> Arc<[T]> {
+    let query = query.trim().to_lowercase();
+    if query.is_empty() {
+        return Arc::clone(source);
+    }
+    source
+        .iter()
+        .filter(|item| matches(item, &query))
+        .cloned()
+        .collect::<Vec<_>>()
+        .into()
+}
+
+fn log_route_setup(
+    route: Route,
+    layout: LibraryLayout,
+    item_count: usize,
+    model_ms: u64,
+    content_ms: u64,
+    shell_ms: u64,
+    started: Instant,
+) {
+    let total_ms = started.elapsed().as_millis() as u64;
+    info!(
+        ?route,
+        ?layout,
+        source = "loaded-library",
+        item_count,
+        model_ms,
+        content_ms,
+        shell_ms,
+        total_ms,
+        "library route setup timing"
+    );
+    if total_ms >= SLOW_LIBRARY_ROUTE_SETUP_MS {
+        warn!(
+            ?route,
+            ?layout,
+            item_count,
+            total_ms,
+            "slow library route setup"
+        );
     }
 }
 
@@ -1280,47 +1488,6 @@ fn nearest_parent_scrolled_window(widget: &gtk::Widget) -> Option<gtk::ScrolledW
         parent = widget.parent();
     }
     None
-}
-
-#[cfg(test)]
-mod track_delta_queue_tests {
-    use std::collections::HashSet;
-
-    use library::{LibraryDelta, TrackDelta, TrackId};
-
-    use super::{changed_track_ids, retain_confirmed_track_deletions};
-
-    #[test]
-    fn coalesced_delete_and_add_uses_final_store_presence() {
-        let track_id = TrackId::new("track:structural-conflict");
-        let mut merged = LibraryDelta {
-            tracks: TrackDelta {
-                deleted: vec![track_id.clone()],
-                ..TrackDelta::default()
-            },
-            ..LibraryDelta::default()
-        };
-        merged.merge(LibraryDelta {
-            tracks: TrackDelta {
-                added: vec![track_id.clone()],
-                ..TrackDelta::default()
-            },
-            ..LibraryDelta::default()
-        });
-
-        assert_eq!(
-            changed_track_ids(&merged.tracks),
-            std::slice::from_ref(&track_id)
-        );
-
-        let mut present = merged.tracks.clone();
-        retain_confirmed_track_deletions(&mut present, &HashSet::from([track_id.clone()]));
-        assert!(present.deleted.is_empty());
-
-        let mut absent = merged.tracks;
-        retain_confirmed_track_deletions(&mut absent, &HashSet::new());
-        assert_eq!(absent.deleted, [track_id]);
-    }
 }
 
 #[cfg(test)]

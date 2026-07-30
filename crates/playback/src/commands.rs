@@ -1,15 +1,15 @@
 use std::sync::Arc;
 
-use library::play_context::{ArtistTrackScope, PlayContextDescriptor, PlaylistSort};
 use library::{
-    Album, AlbumId, Artist, ArtistId, Genre, GenreId, Playlist, PlaylistEntry, PlaylistId,
-    SmartPlaylistId, Track, TrackSort,
+    GenreId, LoadedLibraryError, LoadedLibraryResult, RadioSeed, SourceId, Track, TrackId,
+    TrackList, TrackSelection,
 };
-use sources::{GeneratedTrackSeedKind, PlayedFilter, RandomTrackDomain};
+use serde::{Deserialize, Serialize};
 
-use crate::{AudioOutput, OccurrenceId, Placement, QueuePage, QueuePageQuery, RepeatMode};
-
-pub type TrackLookup = Box<dyn FnMut(usize) -> Option<Track>>;
+use crate::{
+    AudioOutput, Batch, BatchItem, OccurrenceId, Placement, Provenance, QueuePage, QueuePageQuery,
+    RepeatMode, SourceSessionEpoch,
+};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum QueuePlacement {
@@ -28,110 +28,255 @@ impl From<QueuePlacement> for Placement {
     }
 }
 
-pub struct AlbumPlayRequest {
-    pub album_id: AlbumId,
-    pub tracks: Vec<Track>,
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum QueueOrigin {
+    Context(String),
+    Manual,
+    Random,
+    Radio,
+}
+
+/// One already-loaded ordered music selection.
+///
+/// Routes pass either an existing shallow loaded-Library order or a small
+/// already-materialized selection. Rufin prepares the compact order away from
+/// GTK, asks Playback for exact context activation, and materializes complete
+/// Track values only when activation misses.
+#[derive(Clone, Debug)]
+pub enum LoadedTrackSelection {
+    Shallow(TrackSelection),
+    Materialized(Arc<[Track]>),
+}
+
+enum SelectionAnchor {
+    Deferred,
+    Missing,
+    Present(TrackId),
+}
+
+impl LoadedTrackSelection {
+    fn anchor(&self, position: usize) -> LoadedLibraryResult<SelectionAnchor> {
+        match self {
+            Self::Shallow(selection) => match selection.prepared() {
+                Some(tracks) => Ok(tracks
+                    .track(position)?
+                    .map_or(SelectionAnchor::Missing, |track| {
+                        SelectionAnchor::Present(track.id.clone())
+                    })),
+                None => Ok(SelectionAnchor::Deferred),
+            },
+            Self::Materialized(tracks) => Ok(tracks
+                .get(position)
+                .map_or(SelectionAnchor::Missing, |track| {
+                    SelectionAnchor::Present(track.id.clone())
+                })),
+        }
+    }
+
+    fn prepare(self) -> LoadedLibraryResult<Self> {
+        match self {
+            Self::Shallow(selection) => Ok(Self::Shallow(selection.prepare()?.into())),
+            Self::Materialized(tracks) => Ok(Self::Materialized(tracks)),
+        }
+    }
+
+    fn materialize_owned(self) -> LoadedLibraryResult<Vec<Track>> {
+        match self {
+            Self::Shallow(selection) => selection.prepare()?.materialize_owned(),
+            Self::Materialized(tracks) => Ok(tracks.iter().cloned().collect()),
+        }
+    }
+
+    pub fn materialize(&self) -> LoadedLibraryResult<Arc<[Track]>> {
+        match self {
+            Self::Shallow(selection) => selection.clone().prepare()?.materialize(),
+            Self::Materialized(tracks) => Ok(Arc::clone(tracks)),
+        }
+    }
+}
+
+impl From<TrackList> for LoadedTrackSelection {
+    fn from(value: TrackList) -> Self {
+        Self::Shallow(value.into())
+    }
+}
+
+impl From<TrackSelection> for LoadedTrackSelection {
+    fn from(value: TrackSelection) -> Self {
+        Self::Shallow(value)
+    }
+}
+
+impl From<Arc<[Track]>> for LoadedTrackSelection {
+    fn from(value: Arc<[Track]>) -> Self {
+        Self::Materialized(value)
+    }
+}
+
+#[derive(Clone)]
+pub struct LoadedPlayRequest {
+    pub source_id: SourceId,
+    pub source_session_epoch: SourceSessionEpoch,
+    pub tracks: LoadedTrackSelection,
+    anchor_track_id: Option<TrackId>,
     pub anchor_index: usize,
+    pub placement: QueuePlacement,
+    pub origin: QueueOrigin,
     pub shuffled_start: bool,
 }
 
-pub struct PlaylistEntryPlayRequest {
-    pub playlist_id: PlaylistId,
-    pub entry: PlaylistEntry,
-    pub source_index: usize,
-    pub query: Option<String>,
-    pub sort: PlaylistSort,
-    pub descending: bool,
-    pub shuffled_start: bool,
-}
-
-pub struct CachedPlaylistPlayRequest {
-    pub playlist_id: PlaylistId,
-    pub placement: QueuePlacement,
-}
-
-impl CachedPlaylistPlayRequest {
-    pub fn new(playlist_id: PlaylistId, placement: QueuePlacement) -> Self {
-        Self {
-            playlist_id,
-            placement,
-        }
-    }
-}
-
-pub struct SmartPlaylistPlayRequest {
-    pub smart_playlist_id: SmartPlaylistId,
-    pub placement: QueuePlacement,
-}
-
-impl SmartPlaylistPlayRequest {
-    pub fn new(smart_playlist_id: SmartPlaylistId, placement: QueuePlacement) -> Self {
-        Self {
-            smart_playlist_id,
-            placement,
-        }
-    }
-}
-
-pub struct LibraryWindowPlayRequest {
-    pub descriptor: PlayContextDescriptor,
-    pub sort: TrackSort,
-    pub descending: bool,
-    pub query: String,
-    pub favorites_only: bool,
-    pub favorite_first: bool,
-    pub total_items: usize,
-    pub anchor_index: usize,
-    pub track_at: TrackLookup,
-}
-
-pub struct FolderWindowPlayRequest {
-    pub path: Vec<String>,
-    pub query: String,
-    pub sort: TrackSort,
-    pub descending: bool,
-    pub tracks: Arc<Vec<Track>>,
-    pub anchor_index: usize,
-}
-
-pub struct ArtistWindowPlayRequest {
-    pub artist_id: ArtistId,
-    pub scope: ArtistTrackScope,
-    pub total_items: usize,
-    pub anchor_index: usize,
-    pub track_at: TrackLookup,
-}
-
-pub enum ContextTrackSource {
-    Store,
-    Loaded(Arc<Vec<Track>>),
-}
-
-pub struct ContextPlayRequest {
-    pub descriptor: PlayContextDescriptor,
-    pub placement: QueuePlacement,
-    pub tracks: ContextTrackSource,
-}
-
-impl ContextPlayRequest {
-    pub fn store(descriptor: PlayContextDescriptor, placement: QueuePlacement) -> Self {
-        Self {
-            descriptor,
-            placement,
-            tracks: ContextTrackSource::Store,
-        }
-    }
-
-    pub fn loaded(
-        descriptor: PlayContextDescriptor,
-        placement: QueuePlacement,
-        tracks: Arc<Vec<Track>>,
+impl LoadedPlayRequest {
+    pub fn now(
+        source_id: SourceId,
+        source_session_epoch: SourceSessionEpoch,
+        tracks: Arc<[Track]>,
+        anchor_index: usize,
     ) -> Self {
+        let anchor_track_id = tracks
+            .get(anchor_index)
+            .expect("a loaded Play request must identify an available Track")
+            .id
+            .clone();
         Self {
-            descriptor,
-            placement,
-            tracks: ContextTrackSource::Loaded(tracks),
+            source_id,
+            source_session_epoch,
+            tracks: tracks.into(),
+            anchor_track_id: Some(anchor_track_id),
+            anchor_index,
+            placement: QueuePlacement::Now,
+            origin: QueueOrigin::Manual,
+            shuffled_start: false,
         }
+    }
+
+    pub fn one(
+        source_id: SourceId,
+        source_session_epoch: SourceSessionEpoch,
+        track: Track,
+        placement: QueuePlacement,
+    ) -> Self {
+        let anchor_track_id = track.id.clone();
+        Self {
+            source_id,
+            source_session_epoch,
+            tracks: Arc::<[Track]>::from([track]).into(),
+            anchor_track_id: Some(anchor_track_id),
+            anchor_index: 0,
+            placement,
+            origin: QueueOrigin::Manual,
+            shuffled_start: false,
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn context(
+        source_id: SourceId,
+        source_session_epoch: SourceSessionEpoch,
+        tracks: impl Into<LoadedTrackSelection>,
+        anchor_index: usize,
+        placement: QueuePlacement,
+        context_id: impl Into<String>,
+        shuffled_start: bool,
+    ) -> Option<Self> {
+        let tracks = tracks.into();
+        let anchor_track_id = match tracks.anchor(anchor_index).ok()? {
+            SelectionAnchor::Deferred => None,
+            SelectionAnchor::Missing => return None,
+            SelectionAnchor::Present(track_id) => Some(track_id),
+        };
+        Some(Self {
+            source_id,
+            source_session_epoch,
+            tracks,
+            anchor_track_id,
+            anchor_index,
+            placement,
+            origin: QueueOrigin::Context(context_id.into()),
+            shuffled_start,
+        })
+    }
+
+    pub(crate) fn activation_context(&self) -> Option<(String, TrackId, usize)> {
+        let QueueOrigin::Context(context_id) = &self.origin else {
+            return None;
+        };
+        let anchor_track_id = self.anchor_track_id.as_ref()?;
+        (self.placement == QueuePlacement::Now && !self.shuffled_start).then(|| {
+            (
+                context_id.clone(),
+                anchor_track_id.clone(),
+                self.anchor_index,
+            )
+        })
+    }
+
+    /// Prepares only the compact loaded-Library slot order.
+    ///
+    /// Rufin runs this on its loaded-Play executor before asking Playback for
+    /// exact context activation. Complete Track handles remain unmaterialized.
+    pub fn prepare(mut self) -> LoadedLibraryResult<Option<Self>> {
+        self.tracks = self.tracks.prepare()?;
+        let anchor_track_id = match self.tracks.anchor(self.anchor_index)? {
+            SelectionAnchor::Present(track_id) => track_id,
+            SelectionAnchor::Missing => return Ok(None),
+            SelectionAnchor::Deferred => {
+                unreachable!("a prepared loaded Track selection must have a concrete order")
+            }
+        };
+        if self
+            .anchor_track_id
+            .as_ref()
+            .is_some_and(|expected| expected != &anchor_track_id)
+        {
+            return Err(LoadedLibraryError::StaleTrackSelection);
+        }
+        self.anchor_track_id = Some(anchor_track_id);
+        Ok(Some(self))
+    }
+
+    pub fn placement(&self) -> Placement {
+        self.placement.into()
+    }
+
+    pub fn materialize_batch(self, shuffle_seed: u64) -> LoadedLibraryResult<(Batch, Placement)> {
+        let placement = match self.placement {
+            QueuePlacement::Now => Placement::Replace {
+                anchor_index: self.anchor_index,
+            },
+            QueuePlacement::Next => Placement::AfterCurrent,
+            QueuePlacement::Last => Placement::End,
+        };
+        let tracks = self.tracks.materialize_owned()?;
+        let anchor_track_id = self
+            .anchor_track_id
+            .ok_or(LoadedLibraryError::StaleTrackSelection)?;
+        if tracks
+            .get(self.anchor_index)
+            .is_none_or(|track| track.id != anchor_track_id)
+        {
+            return Err(LoadedLibraryError::StaleTrackSelection);
+        }
+        let origin = self.origin;
+        let items = tracks
+            .into_iter()
+            .enumerate()
+            .map(|(source_rank, track)| {
+                let provenance = match &origin {
+                    QueueOrigin::Context(context_id) => Provenance::Context {
+                        context_id: context_id.clone(),
+                        source_rank,
+                    },
+                    QueueOrigin::Manual => Provenance::Manual,
+                    QueueOrigin::Random => Provenance::Random,
+                    QueueOrigin::Radio => Provenance::Radio,
+                };
+                BatchItem::new(track, provenance)
+            })
+            .collect();
+        Ok((
+            Batch::new(items).with_shuffle_intent(shuffle_seed, self.shuffled_start),
+            placement,
+        ))
     }
 }
 
@@ -139,6 +284,14 @@ pub struct QueueReorderRequest {
     pub occurrence: OccurrenceId,
     pub target_index: usize,
     pub after: bool,
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+pub enum PlayedFilter {
+    #[default]
+    All,
+    Unplayed,
+    Played,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -150,16 +303,6 @@ pub struct RandomPlayRequest {
     pub genre_id: Option<GenreId>,
     pub genre_name: Option<String>,
     pub played_filter: PlayedFilter,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-#[expect(clippy::large_enum_variant)]
-pub enum RadioSeed {
-    Track(Track),
-    Album(Album),
-    Artist(Artist),
-    Genre(Genre),
-    Playlist(Playlist),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -192,18 +335,7 @@ impl RadioPlayRequest {
 }
 
 pub trait QueueCommandPort: Send + Sync {
-    fn play_tracks_now(&self, tracks: Vec<Track>);
-    fn play_now(&self, track: Track);
-    fn play_album(&self, request: AlbumPlayRequest);
-    fn play_playlist_entry(&self, request: PlaylistEntryPlayRequest);
-    fn play_cached_playlist(&self, request: CachedPlaylistPlayRequest);
-    fn play_smart_playlist(&self, request: SmartPlaylistPlayRequest);
-    fn play_library_window(&self, request: LibraryWindowPlayRequest) -> bool;
-    fn play_folder_window(&self, request: FolderWindowPlayRequest) -> bool;
-    fn play_artist_window(&self, request: ArtistWindowPlayRequest) -> bool;
-    fn play_context(&self, request: ContextPlayRequest) -> bool;
-    fn play_next(&self, track: Track);
-    fn play_last(&self, tracks: Vec<Track>);
+    fn play_loaded(&self, request: LoadedPlayRequest);
     fn remove(&self, occurrence: OccurrenceId);
     fn activate(&self, occurrence: OccurrenceId);
     fn move_after_current(&self, occurrence: OccurrenceId);
@@ -213,9 +345,7 @@ pub trait QueueCommandPort: Send + Sync {
 }
 
 pub trait RadioCommandPort: Send + Sync {
-    fn random_track_domain(&self) -> Option<RandomTrackDomain>;
     fn play_random(&self, request: RandomPlayRequest);
-    fn manual_radio_supported(&self, kind: GeneratedTrackSeedKind) -> bool;
     fn play_radio(&self, request: RadioPlayRequest);
 }
 
@@ -238,24 +368,16 @@ pub trait TransportCommandPort: Send + Sync {
     fn toggle_auto_dj(&self);
     fn set_visualizer_enabled(&self, enabled: bool);
     fn available_audio_outputs(&self) -> Vec<AudioOutput>;
-    fn poll_events(&self);
     fn shutdown(&self);
-}
-
-pub trait WaveformCommandPort: Send + Sync {
-    fn request_current(&self);
-    fn warm_queue(&self);
 }
 
 pub type TransportHandle = Arc<dyn TransportCommandPort>;
 pub type QueueHandle = Arc<dyn QueueCommandPort>;
 pub type RadioHandle = Arc<dyn RadioCommandPort>;
-pub type WaveformHandle = Arc<dyn WaveformCommandPort>;
 
 #[derive(Clone)]
 pub struct PlaybackHandles {
     pub transport: TransportHandle,
     pub queue: QueueHandle,
     pub radio: RadioHandle,
-    pub waveform: WaveformHandle,
 }

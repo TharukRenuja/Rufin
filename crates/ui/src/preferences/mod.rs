@@ -7,13 +7,13 @@ use crate::{
 };
 use adw::prelude::*;
 use localization::{language_option_index, language_options, msgid, tr};
-use metadata::ExternalLyricsProvider;
 use secrets::SecretStorageMode;
 use std::{
     cell::{Cell, RefCell},
     rc::Rc,
 };
 
+mod context_menu;
 pub(crate) mod dialogs;
 mod general;
 mod layout;
@@ -25,7 +25,7 @@ use general::{layout_page, playback_page, scrobbling_page};
 use layout::{
     discord_display_from_index, discord_display_index, discord_link_from_index, discord_link_index,
     left_sidebar_mode_from_index, left_sidebar_row, right_sidebar_mode_from_index,
-    right_sidebar_row,
+    right_sidebar_row, visibility_position_subtitle,
 };
 
 #[cfg(test)]
@@ -38,8 +38,21 @@ const LISTENBRAINZ_TOKEN_URL: &str = "https://listenbrainz.org/settings/";
 const SCROBBLING_ICON_NAME: &str = "io.github.screwys.Rufin.scrobbling-symbolic";
 
 pub(crate) struct PreferencesState {
-    pub(crate) dialog: RefCell<Option<adw::Dialog>>,
-    pub(crate) release_notes: RefCell<Vec<dialogs::release_notes::ReleaseNote>>,
+    pub(crate) dialog: RefCell<Option<gtk::glib::WeakRef<adw::Dialog>>>,
+    pub(crate) release_notes: RefCell<std::sync::Arc<[crate::runtime::ReleaseNote]>>,
+}
+
+impl PreferencesState {
+    pub(crate) fn active_dialog(&self) -> Option<adw::Dialog> {
+        self.dialog
+            .borrow()
+            .as_ref()
+            .and_then(gtk::glib::WeakRef::upgrade)
+    }
+
+    pub(crate) fn set_active_dialog(&self, dialog: &adw::Dialog) {
+        self.dialog.replace(Some(dialog.downgrade()));
+    }
 }
 
 fn selection_row<F>(
@@ -83,14 +96,26 @@ where
 }
 
 pub(crate) fn present_preferences_dialog(shell: &Rc<Shell>) {
-    present_preferences_dialog_with_page(shell, PreferencesPageKind::General, false);
+    present_preferences_dialog_with_page(shell, PreferencesPageKind::General, false, false);
 }
 pub(crate) fn present_library_preferences_dialog(shell: &Rc<Shell>) {
-    present_preferences_dialog_with_page(shell, PreferencesPageKind::Library, false);
+    present_preferences_dialog_with_page(shell, PreferencesPageKind::Library, false, false);
 }
 pub(crate) fn present_add_server_preferences_dialog(shell: &Rc<Shell>) {
-    present_preferences_dialog_with_page(shell, PreferencesPageKind::Library, true);
+    present_preferences_dialog_with_page(shell, PreferencesPageKind::Library, true, false);
 }
+pub(crate) fn present_downloads_preferences_dialog(shell: &Rc<Shell>) {
+    present_preferences_dialog_with_page(shell, PreferencesPageKind::Library, false, true);
+}
+
+impl Shell {
+    pub(crate) fn close_preferences_dialog(&self) {
+        if let Some(dialog) = self.preferences.active_dialog() {
+            dialog.close();
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum PreferencesPageKind {
     General,
@@ -141,6 +166,15 @@ impl PreferencesPageKind {
     fn from_name(name: &str) -> Option<Self> {
         Self::ALL.into_iter().find(|kind| kind.name() == name)
     }
+}
+
+struct PreferencesSearchItem {
+    page: PreferencesPageKind,
+    title: String,
+    context: String,
+    searchable_text: String,
+    target: gtk::glib::WeakRef<gtk::Widget>,
+    expander: Option<gtk::glib::WeakRef<adw::ExpanderRow>>,
 }
 
 #[derive(Clone)]
@@ -196,15 +230,33 @@ impl PreferencesNavigationControls {
         self.back
             .set_visible(self.page_allows_back.get() && self.nested_page_visible.get());
     }
+
+    fn return_to_root(&self) {
+        if let Some(navigation) = self.navigation.borrow().as_ref() {
+            while navigation.pop() {}
+        }
+        self.nested_page_visible.set(false);
+        self.update_visibility();
+    }
 }
 
 fn present_preferences_dialog_with_page(
     shell: &Rc<Shell>,
     initial_page: PreferencesPageKind,
     open_add_server: bool,
+    focus_download_queue: bool,
 ) {
-    if let Some(dialog) = shell.preferences.dialog.borrow().as_ref().cloned() {
-        rebuild_preferences_dialog(shell, &dialog, initial_page, open_add_server);
+    if !open_add_server {
+        shell.clear_retained_add_server_form();
+    }
+    if let Some(dialog) = shell.preferences.active_dialog() {
+        rebuild_preferences_dialog(
+            shell,
+            &dialog,
+            initial_page,
+            open_add_server,
+            focus_download_queue,
+        );
         present_light_dismiss_dialog(&dialog, &shell.chrome.window);
         return;
     }
@@ -218,17 +270,14 @@ fn present_preferences_dialog_with_page(
         ))
         .build();
     dialog.add_css_class("preferences");
-    *shell.preferences.dialog.borrow_mut() = Some(dialog.clone());
-    rebuild_preferences_dialog(shell, &dialog, initial_page, open_add_server);
-
-    let shell_for_close = Rc::clone(shell);
-    let dialog_for_close = dialog.clone();
-    dialog.connect_closed(move |_| {
-        let mut active_dialog = shell_for_close.preferences.dialog.borrow_mut();
-        if active_dialog.as_ref() == Some(&dialog_for_close) {
-            *active_dialog = None;
-        }
-    });
+    shell.preferences.set_active_dialog(&dialog);
+    rebuild_preferences_dialog(
+        shell,
+        &dialog,
+        initial_page,
+        open_add_server,
+        focus_download_queue,
+    );
 
     present_light_dismiss_dialog(&dialog, &shell.chrome.window);
 }
@@ -238,13 +287,11 @@ fn rebuild_preferences_dialog(
     dialog: &adw::Dialog,
     initial_page: PreferencesPageKind,
     open_add_server: bool,
+    focus_download_queue: bool,
 ) {
     dialog.set_title(&tr("Preferences"));
 
     let toolbar = adw::ToolbarView::new();
-    let header = adw::HeaderBar::new();
-    header.set_title_widget(Some(&adw::WindowTitle::new(&tr("Preferences"), "")));
-    toolbar.add_top_bar(&header);
 
     let stack = adw::ViewStack::builder()
         .hexpand(true)
@@ -255,13 +302,56 @@ fn rebuild_preferences_dialog(
         .stack(&stack)
         .build();
     let navigation_controls = PreferencesNavigationControls::new();
+    let search_button = gtk::ToggleButton::builder()
+        .icon_name("system-search-symbolic")
+        .tooltip_text(tr("Search"))
+        .build();
+    search_button.add_css_class("flat");
+    search_button.add_css_class("preferences-search-button");
+    search_button.update_property(&[gtk::accessible::Property::Label(&tr("Search"))]);
+    let start_controls = gtk::Box::new(gtk::Orientation::Horizontal, 4);
+    start_controls.append(&search_button);
+    start_controls.append(&navigation_controls.back);
+    let close_button = gtk::Button::from_icon_name("window-close-symbolic");
+    close_button.add_css_class("flat");
+    close_button.add_css_class("preferences-dialog-close");
+    close_button.set_tooltip_text(Some(&tr("Close")));
+    close_button.update_property(&[gtk::accessible::Property::Label(&tr("Close"))]);
+    let dialog_for_close = dialog.downgrade();
+    close_button.connect_clicked(move |_| {
+        if let Some(dialog) = dialog_for_close.upgrade() {
+            dialog.close();
+        }
+    });
     let switcher_bar = gtk::CenterBox::new();
     switcher_bar.add_css_class("preferences-tab-bar");
     switcher_bar.set_hexpand(true);
-    switcher_bar.set_start_widget(Some(&navigation_controls.back));
+    switcher_bar.set_start_widget(Some(&start_controls));
     switcher_bar.set_center_widget(Some(&switcher));
+    switcher_bar.set_end_widget(Some(&close_button));
     toolbar.add_top_bar(&switcher_bar);
-    toolbar.set_content(Some(&stack));
+
+    let search_entry = gtk::SearchEntry::builder()
+        .placeholder_text(tr("Search preferences"))
+        .hexpand(true)
+        .build();
+    let search_bar = gtk::SearchBar::new();
+    search_bar.connect_entry(&search_entry);
+    search_bar.set_child(Some(&search_entry));
+    toolbar.add_top_bar(&search_bar);
+
+    let search_results = adw::PreferencesPage::new();
+    let search_results_group = adw::PreferencesGroup::new();
+    search_results.add(&search_results_group);
+    let content_stack = gtk::Stack::builder()
+        .hexpand(true)
+        .vexpand(true)
+        .transition_type(gtk::StackTransitionType::Crossfade)
+        .build();
+    content_stack.add_named(&stack, Some("pages"));
+    content_stack.add_named(&search_results, Some("search"));
+    content_stack.set_visible_child_name("pages");
+    toolbar.set_content(Some(&content_stack));
 
     let page_slots = Rc::new(
         PreferencesPageKind::ALL
@@ -284,13 +374,17 @@ fn rebuild_preferences_dialog(
         &navigation_controls,
         initial_page,
         open_add_server,
+        focus_download_queue,
     );
     stack.set_visible_child_name(initial_page.name());
     let page_shell = Rc::clone(shell);
-    let page_dialog = dialog.clone();
+    let page_dialog = dialog.downgrade();
     let page_slots_for_switch = Rc::clone(&page_slots);
     let navigation_controls_for_switch = navigation_controls.clone();
     stack.connect_visible_child_name_notify(move |stack| {
+        let Some(page_dialog) = page_dialog.upgrade() else {
+            return;
+        };
         let Some(name) = stack.visible_child_name() else {
             return;
         };
@@ -305,11 +399,212 @@ fn rebuild_preferences_dialog(
             &navigation_controls_for_switch,
             kind,
             false,
+            false,
         );
+    });
+
+    let search_items = Rc::new(RefCell::new(Vec::<PreferencesSearchItem>::new()));
+    let rendered_search_rows = Rc::new(RefCell::new(Vec::<gtk::Widget>::new()));
+    let search_shell = Rc::clone(shell);
+    let search_dialog = dialog.downgrade();
+    let search_slots = Rc::clone(&page_slots);
+    let search_navigation = navigation_controls.clone();
+    let search_items_for_button = Rc::clone(&search_items);
+    let search_entry_for_button = search_entry.clone();
+    let search_bar_for_button = search_bar.clone();
+    search_button.connect_toggled(move |button| {
+        let enabled = button.is_active();
+        search_bar_for_button.set_search_mode(enabled);
+        if !enabled {
+            search_entry_for_button.set_text("");
+            return;
+        }
+        let Some(search_dialog) = search_dialog.upgrade() else {
+            return;
+        };
+        for kind in PreferencesPageKind::ALL {
+            ensure_preferences_page(
+                &search_shell,
+                &search_dialog,
+                &search_slots,
+                &search_navigation,
+                kind,
+                false,
+                false,
+            );
+        }
+        let mut items = search_items_for_button.borrow_mut();
+        items.clear();
+        for (kind, slot) in search_slots.iter() {
+            collect_preferences_search_items(slot.upcast_ref(), *kind, "", None, &mut items);
+        }
+        search_entry_for_button.grab_focus();
+    });
+
+    let search_button_for_bar = search_button.clone();
+    let content_stack_for_bar = content_stack.clone();
+    search_bar.connect_search_mode_enabled_notify(move |bar| {
+        search_button_for_bar.set_active(bar.is_search_mode());
+        if !bar.is_search_mode() {
+            content_stack_for_bar.set_visible_child_name("pages");
+        }
+    });
+
+    let search_items_for_entry = Rc::clone(&search_items);
+    let rendered_rows_for_entry = Rc::clone(&rendered_search_rows);
+    let results_group_for_entry = search_results_group.clone();
+    let page_stack_for_entry = stack.clone();
+    let content_stack_for_entry = content_stack.clone();
+    let search_bar_for_entry = search_bar.clone();
+    let navigation_for_entry = navigation_controls.clone();
+    search_entry.connect_search_changed(move |entry| {
+        for row in rendered_rows_for_entry.borrow_mut().drain(..) {
+            results_group_for_entry.remove(&row);
+        }
+        let query = entry.text();
+        if query.trim().is_empty() {
+            content_stack_for_entry.set_visible_child_name("pages");
+            return;
+        }
+        content_stack_for_entry.set_visible_child_name("search");
+        let mut matched = false;
+        for item in search_items_for_entry
+            .borrow()
+            .iter()
+            .filter(|item| preferences_search_matches(&item.searchable_text, query.as_str()))
+        {
+            matched = true;
+            let row = adw::ActionRow::builder()
+                .title(&item.title)
+                .subtitle(&item.context)
+                .activatable(true)
+                .build();
+            row.add_prefix(&gtk::Image::from_icon_name(item.page.icon_name()));
+            row.add_suffix(&gtk::Image::from_icon_name("go-next-symbolic"));
+            let page = item.page;
+            let target = item.target.clone();
+            let expander = item.expander.clone();
+            let page_stack = page_stack_for_entry.clone();
+            let content_stack = content_stack_for_entry.clone();
+            let search_bar = search_bar_for_entry.clone();
+            let navigation = navigation_for_entry.clone();
+            row.connect_activated(move |_| {
+                if let Some(expander) = expander.as_ref().and_then(gtk::glib::WeakRef::upgrade) {
+                    expander.set_expanded(true);
+                }
+                navigation.return_to_root();
+                page_stack.set_visible_child_name(page.name());
+                content_stack.set_visible_child_name("pages");
+                search_bar.set_search_mode(false);
+                let target = target.clone();
+                gtk::glib::idle_add_local_once(move || {
+                    if let Some(target) = target.upgrade() {
+                        target.grab_focus();
+                    }
+                });
+            });
+            results_group_for_entry.add(&row);
+            rendered_rows_for_entry
+                .borrow_mut()
+                .push(row.upcast::<gtk::Widget>());
+        }
+        if !matched {
+            let row = adw::ActionRow::builder()
+                .title(tr(r"No results ¯\_(°╭╮°)_/¯"))
+                .build();
+            results_group_for_entry.add(&row);
+            rendered_rows_for_entry
+                .borrow_mut()
+                .push(row.upcast::<gtk::Widget>());
+        }
     });
 
     dialog.set_child(Some(&toolbar));
 }
+
+fn collect_preferences_search_items(
+    widget: &gtk::Widget,
+    page: PreferencesPageKind,
+    group_title: &str,
+    expander: Option<gtk::glib::WeakRef<adw::ExpanderRow>>,
+    items: &mut Vec<PreferencesSearchItem>,
+) {
+    let group_title = widget
+        .clone()
+        .downcast::<adw::PreferencesGroup>()
+        .ok()
+        .map(|group| group.title().to_string())
+        .filter(|title| !title.is_empty())
+        .unwrap_or_else(|| group_title.to_owned());
+    let (group_title, expander) = widget
+        .clone()
+        .downcast::<adw::ExpanderRow>()
+        .ok()
+        .map(|row| {
+            let title = row.title().to_string();
+            let title = if title.is_empty() {
+                group_title.clone()
+            } else {
+                title
+            };
+            (title, Some(row.downgrade()))
+        })
+        .unwrap_or((group_title, expander));
+
+    if let Ok(row) = widget.clone().downcast::<adw::PreferencesRow>() {
+        let title = row.title().to_string();
+        if !title.is_empty() {
+            let page_title = page.title();
+            let context = if group_title.is_empty() {
+                page_title.clone()
+            } else {
+                format!("{page_title} · {group_title}")
+            };
+            let subtitle = row
+                .clone()
+                .downcast::<adw::ActionRow>()
+                .ok()
+                .and_then(|row| row.subtitle())
+                .unwrap_or_default();
+            items.push(PreferencesSearchItem {
+                page,
+                searchable_text: format!("{title} {subtitle} {context}").to_lowercase(),
+                title,
+                context,
+                target: widget.downgrade(),
+                expander: expander.clone(),
+            });
+        }
+    }
+
+    let mut child = widget.first_child();
+    while let Some(current) = child {
+        child = current.next_sibling();
+        collect_preferences_search_items(&current, page, &group_title, expander.clone(), items);
+    }
+}
+
+fn preferences_search_matches(searchable_text: &str, query: &str) -> bool {
+    query
+        .split_whitespace()
+        .map(str::to_lowercase)
+        .all(|term| searchable_text.contains(&term))
+}
+
+#[cfg(test)]
+mod search_tests {
+    use super::preferences_search_matches;
+
+    #[test]
+    fn preference_search_matches_terms_across_row_context() {
+        let searchable = "show tray icon app window general";
+
+        assert!(preferences_search_matches(searchable, "tray general"));
+        assert!(preferences_search_matches(searchable, "GENERAL ICON"));
+        assert!(!preferences_search_matches(searchable, "tray playback"));
+    }
+}
+
 fn ensure_preferences_page(
     shell: &Rc<Shell>,
     dialog: &adw::Dialog,
@@ -317,6 +612,7 @@ fn ensure_preferences_page(
     navigation_controls: &PreferencesNavigationControls,
     kind: PreferencesPageKind,
     open_add_server: bool,
+    focus_download_queue: bool,
 ) {
     let Some((_, slot)) = page_slots.iter().find(|(slot_kind, _)| *slot_kind == kind) else {
         return;
@@ -330,6 +626,7 @@ fn ensure_preferences_page(
         dialog,
         navigation_controls,
         open_add_server,
+        focus_download_queue,
     ));
 }
 fn build_preferences_page(
@@ -338,15 +635,20 @@ fn build_preferences_page(
     dialog: &adw::Dialog,
     navigation_controls: &PreferencesNavigationControls,
     open_add_server: bool,
+    focus_download_queue: bool,
 ) -> gtk::Widget {
     match kind {
         PreferencesPageKind::General => general_page(shell, dialog).upcast(),
         PreferencesPageKind::Layout => layout_page(shell).upcast(),
         PreferencesPageKind::Scrobbling => scrobbling_page(shell).upcast(),
         PreferencesPageKind::Playback => playback_page(shell).upcast(),
-        PreferencesPageKind::Library => {
-            library::library_page(shell, dialog, navigation_controls, open_add_server)
-        }
+        PreferencesPageKind::Library => library::library_page(
+            shell,
+            dialog,
+            navigation_controls,
+            open_add_server,
+            focus_download_queue,
+        ),
     }
 }
 fn general_page(shell: &Rc<Shell>, dialog: &adw::Dialog) -> adw::PreferencesPage {
@@ -376,17 +678,21 @@ fn general_page(shell: &Rc<Shell>, dialog: &adw::Dialog) -> adw::PreferencesPage
         .build();
     let language_shell = Rc::clone(shell);
     let language_options_for_row = Rc::clone(&language_options);
-    let dialog_for_language = dialog.clone();
+    let dialog_for_language = dialog.downgrade();
     language_row.connect_selected_notify(move |row| {
         let Some(option) = language_options_for_row.get(row.selected() as usize) else {
             return;
         };
         let language = option.id.clone();
         if language_shell.set_language_preference(language) {
+            let Some(dialog) = dialog_for_language.upgrade() else {
+                return;
+            };
             rebuild_preferences_dialog(
                 &language_shell,
-                &dialog_for_language,
+                &dialog,
                 PreferencesPageKind::General,
+                false,
                 false,
             );
         }
@@ -495,72 +801,17 @@ fn general_page(shell: &Rc<Shell>, dialog: &adw::Dialog) -> adw::PreferencesPage
         prefer_server_playlist_shell.set_prefer_server_playlist_covers(row.is_active());
     });
 
-    let prefer_server_row = adw::SwitchRow::builder()
-        .title(tr("Prefer server lyrics"))
-        .active(settings.metadata.prefer_server_lyrics)
-        .sensitive(settings.metadata.external_lyrics_enabled)
-        .build();
-    let prefer_server_shell = Rc::clone(shell);
-    prefer_server_row.connect_active_notify(move |row| {
-        prefer_server_shell.set_prefer_server_lyrics(row.is_active());
-    });
-
     let external_metadata_row = adw::SwitchRow::builder()
         .title(tr("External metadata lookup"))
-        .active(settings.metadata.external_metadata_enabled)
+        .active(settings.external_album_lookup_enabled)
         .build();
     let metadata_shell = Rc::clone(shell);
     external_metadata_row.connect_active_notify(move |row| {
-        metadata_shell.set_external_metadata_enabled(row.is_active());
+        metadata_shell.set_external_album_lookup_enabled(row.is_active());
     });
 
-    let external_row = adw::SwitchRow::builder()
-        .title(tr("External lyric lookup"))
-        .active(settings.metadata.external_lyrics_enabled)
-        .build();
-
-    let provider_rows = ExternalLyricsProvider::all()
-        .into_iter()
-        .map(|provider| {
-            let row = adw::SwitchRow::builder()
-                .title(provider.title())
-                .active(
-                    settings
-                        .metadata
-                        .external_lyrics_providers
-                        .contains(&provider),
-                )
-                .sensitive(settings.metadata.external_lyrics_enabled)
-                .build();
-            let provider_shell = Rc::clone(shell);
-            row.connect_active_notify(move |row| {
-                provider_shell.set_external_lyrics_provider_enabled(provider, row.is_active());
-            });
-            (provider, row)
-        })
-        .collect::<Vec<_>>();
-
-    let external_shell = Rc::clone(shell);
-    let prefer_server_row_for_external = prefer_server_row.clone();
-    let provider_rows_for_external = provider_rows
-        .iter()
-        .map(|(_provider, row)| row.clone())
-        .collect::<Vec<_>>();
-    external_row.connect_active_notify(move |row| {
-        let enabled = row.is_active();
-        prefer_server_row_for_external.set_sensitive(enabled);
-        for provider_row in &provider_rows_for_external {
-            provider_row.set_sensitive(enabled);
-        }
-        external_shell.set_external_lyrics_enabled(enabled);
-    });
     metadata_group.add(&prefer_server_playlist_row);
-    metadata_group.add(&prefer_server_row);
     metadata_group.add(&external_metadata_row);
-    metadata_group.add(&external_row);
-    for (_provider, row) in provider_rows {
-        metadata_group.add(&row);
-    }
     page.add(&metadata_group);
 
     let external_links = settings.external_site_links.clone();
@@ -725,7 +976,7 @@ fn general_page(shell: &Rc<Shell>, dialog: &adw::Dialog) -> adw::PreferencesPage
     let secret_storage_shell = Rc::clone(shell);
     let secret_storage_guard = Rc::new(Cell::new(false));
     let secret_storage_guard_for_row = Rc::clone(&secret_storage_guard);
-    let preferences_dialog_for_secret_storage = dialog.clone();
+    let preferences_dialog_for_secret_storage = dialog.downgrade();
     secret_storage_row.connect_selected_notify(move |row| {
         if secret_storage_guard_for_row.get() {
             return;
@@ -761,13 +1012,23 @@ fn general_page(shell: &Rc<Shell>, dialog: &adw::Dialog) -> adw::PreferencesPage
             Some(&window),
             None::<&gtk::gio::Cancellable>,
             move |response| {
-                if response.as_str() == "change" && shell.set_secret_storage_mode(mode) {
-                    preferences_dialog.close();
+                if response.as_str() != "change" {
+                    guard.set(true);
+                    row.set_selected(secret_storage_mode_index(previous_mode));
+                    guard.set(false);
                     return;
                 }
-                guard.set(true);
-                row.set_selected(secret_storage_mode_index(previous_mode));
-                guard.set(false);
+                gtk::glib::spawn_future_local(async move {
+                    if shell.set_secret_storage_mode(mode).await {
+                        if let Some(preferences_dialog) = preferences_dialog.upgrade() {
+                            preferences_dialog.close();
+                        }
+                        return;
+                    }
+                    guard.set(true);
+                    row.set_selected(secret_storage_mode_index(previous_mode));
+                    guard.set(false);
+                });
             },
         );
     });
@@ -941,39 +1202,72 @@ fn interface_group(shell: &Rc<Shell>) -> adw::PreferencesGroup {
 
     group
 }
-fn sidebar_items_group(shell: &Rc<Shell>) -> adw::PreferencesGroup {
-    let group = adw::PreferencesGroup::builder()
+fn sidebar_items_expander(shell: &Rc<Shell>) -> adw::ExpanderRow {
+    let expander = adw::ExpanderRow::builder()
         .title(tr("Sidebar Items"))
+        .expanded(false)
         .build();
-    let rows = Rc::new(RefCell::new(Vec::<adw::ActionRow>::new()));
-    populate_sidebar_item_rows(shell, &group, &rows);
-    group
+    let pins = adw::SwitchRow::builder()
+        .title(tr("Pins"))
+        .subtitle(tr("Fixed position"))
+        .active(shell.settings.current.borrow().sidebar.pins_visible)
+        .build();
+    let pins_shell = Rc::clone(shell);
+    pins.connect_active_notify(move |row| {
+        let visible = row.is_active();
+        if pins_shell
+            .update_app_settings("Pins visibility setting", |settings| {
+                if settings.sidebar.pins_visible == visible {
+                    return false;
+                }
+                settings.sidebar.pins_visible = visible;
+                true
+            })
+            .is_some()
+        {
+            pins_shell.rebuild_sidebar_navigation();
+        }
+    });
+    let rows = Rc::new(RefCell::new(
+        Vec::<gtk::glib::WeakRef<adw::ActionRow>>::new(),
+    ));
+    populate_sidebar_item_rows(shell, &expander, &rows, &pins);
+    expander
 }
 fn populate_sidebar_item_rows(
     shell: &Rc<Shell>,
-    group: &adw::PreferencesGroup,
-    rows: &Rc<RefCell<Vec<adw::ActionRow>>>,
+    expander: &adw::ExpanderRow,
+    rows: &Rc<RefCell<Vec<gtk::glib::WeakRef<adw::ActionRow>>>>,
+    pins: &adw::SwitchRow,
 ) {
     for row in rows.borrow_mut().drain(..) {
-        group.remove(&row);
+        if let Some(row) = row.upgrade() {
+            expander.remove(&row);
+        }
     }
 
     let items = shell.settings.current.borrow().sidebar.route_items.clone();
-    for entry in items {
-        let row = sidebar_item_row(shell, group, rows, entry);
-        group.add(&row);
-        rows.borrow_mut().push(row);
+    for (position, entry) in items.into_iter().enumerate() {
+        let row = sidebar_item_row(shell, expander, rows, pins, entry, position);
+        expander.add_row(&row);
+        rows.borrow_mut().push(row.downgrade());
     }
+    if pins.parent().is_some() {
+        expander.remove(pins);
+    }
+    expander.add_row(pins);
 }
 fn sidebar_item_row(
     shell: &Rc<Shell>,
-    group: &adw::PreferencesGroup,
-    rows: &Rc<RefCell<Vec<adw::ActionRow>>>,
+    expander: &adw::ExpanderRow,
+    rows: &Rc<RefCell<Vec<gtk::glib::WeakRef<adw::ActionRow>>>>,
+    pins: &adw::SwitchRow,
     entry: SidebarRouteItemSettings,
+    position: usize,
 ) -> adw::ActionRow {
     let row = adw::ActionRow::builder()
         .title(tr(sidebar_route_item_title(entry.item)))
-        .subtitle(sidebar_route_item_subtitle(&entry))
+        .subtitle(sidebar_route_item_subtitle(&entry, position))
         .build();
 
     let drag = gtk::Image::from_icon_name("rufin-list-drag-handle-symbolic");
@@ -1002,8 +1296,9 @@ fn sidebar_item_row(
 
     {
         let shell = Rc::clone(shell);
-        let group = group.clone();
+        let expander = expander.downgrade();
         let rows = Rc::clone(rows);
+        let pins = pins.clone();
         visible.connect_active_notify(move |switch| {
             let item = entry.item;
             let is_visible = switch.is_active();
@@ -1023,25 +1318,36 @@ fn sidebar_item_row(
                 true
             });
             shell.rebuild_sidebar_navigation();
-            populate_sidebar_item_rows(&shell, &group, &rows);
+            let Some(expander) = expander.upgrade() else {
+                return;
+            };
+            populate_sidebar_item_rows(&shell, &expander, &rows, &pins);
         });
     }
     {
         let shell = Rc::clone(shell);
-        let group = group.clone();
+        let expander = expander.downgrade();
         let rows = Rc::clone(rows);
+        let pins = pins.clone();
         up.connect_clicked(move |_| {
             move_sidebar_item(&shell, entry.item, -1);
-            populate_sidebar_item_rows(&shell, &group, &rows);
+            let Some(expander) = expander.upgrade() else {
+                return;
+            };
+            populate_sidebar_item_rows(&shell, &expander, &rows, &pins);
         });
     }
     {
         let shell = Rc::clone(shell);
-        let group = group.clone();
+        let expander = expander.downgrade();
         let rows = Rc::clone(rows);
+        let pins = pins.clone();
         down.connect_clicked(move |_| {
             move_sidebar_item(&shell, entry.item, 1);
-            populate_sidebar_item_rows(&shell, &group, &rows);
+            let Some(expander) = expander.upgrade() else {
+                return;
+            };
+            populate_sidebar_item_rows(&shell, &expander, &rows, &pins);
         });
     }
 
@@ -1056,8 +1362,9 @@ fn sidebar_item_row(
 
     let drop_target = gtk::DropTarget::new(String::static_type(), gtk::gdk::DragAction::MOVE);
     let shell = Rc::clone(shell);
-    let group = group.downgrade();
+    let expander = expander.downgrade();
     let rows = Rc::downgrade(rows);
+    let pins = pins.clone();
     let row_for_drop = row.downgrade();
     drop_target.connect_drop(move |_, value, _, y| {
         let Ok(source_id) = value.get::<String>() else {
@@ -1069,8 +1376,8 @@ fn sidebar_item_row(
         if source_item == entry.item {
             return false;
         }
-        let (Some(row), Some(group), Some(rows)) =
-            (row_for_drop.upgrade(), group.upgrade(), rows.upgrade())
+        let (Some(row), Some(expander), Some(rows)) =
+            (row_for_drop.upgrade(), expander.upgrade(), rows.upgrade())
         else {
             return false;
         };
@@ -1091,7 +1398,7 @@ fn sidebar_item_row(
             .is_some();
         if changed {
             shell.rebuild_sidebar_navigation();
-            populate_sidebar_item_rows(&shell, &group, &rows);
+            populate_sidebar_item_rows(&shell, &expander, &rows, &pins);
         }
         changed
     });
@@ -1150,7 +1457,9 @@ fn reorder_sidebar_item_settings(
 fn sidebar_route_item_drag_id(item: SidebarRouteItem) -> &'static str {
     match item {
         SidebarRouteItem::Home => "Home",
+        SidebarRouteItem::Search => "Search",
         SidebarRouteItem::Favorites => "Favorites",
+        SidebarRouteItem::History => "History",
         SidebarRouteItem::Albums => "Albums",
         SidebarRouteItem::Tracks => "Tracks",
         SidebarRouteItem::Artists => "Artists",
@@ -1170,7 +1479,9 @@ fn sidebar_drag_route(id: &str) -> Option<SidebarRouteItem> {
 fn sidebar_route_item_title(item: SidebarRouteItem) -> &'static str {
     match item {
         SidebarRouteItem::Home => msgid("Home"),
+        SidebarRouteItem::Search => msgid("Search"),
         SidebarRouteItem::Favorites => msgid("Favorites"),
+        SidebarRouteItem::History => msgid("History"),
         SidebarRouteItem::Albums => msgid("Albums"),
         SidebarRouteItem::Tracks => msgid("Tracks"),
         SidebarRouteItem::Artists => msgid("Artists"),
@@ -1182,12 +1493,8 @@ fn sidebar_route_item_title(item: SidebarRouteItem) -> &'static str {
         SidebarRouteItem::SmartPlaylists => msgid("Smart Playlists"),
     }
 }
-fn sidebar_route_item_subtitle(entry: &SidebarRouteItemSettings) -> String {
-    let state = if entry.visible {
-        tr("Visible")
-    } else {
-        tr("Hidden")
-    };
+fn sidebar_route_item_subtitle(entry: &SidebarRouteItemSettings, position: usize) -> String {
+    let state = visibility_position_subtitle(entry.visible, position);
     if entry.item == SidebarRouteItem::Moods {
         format!(
             "{state} · {}",

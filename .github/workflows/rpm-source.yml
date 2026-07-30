@@ -43,7 +43,7 @@ jobs:
           bash cargo coreutils findutils git gnupg2 rpm-build tar xz
 
       - name: Check out repository
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           ref: ${{ inputs.ref }}
           fetch-depth: 0
@@ -52,16 +52,13 @@ jobs:
       - name: Trust checked-out repository
         run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
 
-      - name: Select release tag
+      - name: Select release source
         env:
           REQUESTED_TAG: ${{ inputs.release_tag }}
         run: |
           set -euo pipefail
           release_tag="$REQUESTED_TAG"
-          if [[ -z "$release_tag" ]]; then
-            release_tag="$(git describe --tags --abbrev=0 --match 'v[0-9]*')"
-          fi
-          if [[ ! "$release_tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([-.][0-9A-Za-z.-]+)?$ ]]; then
+          if [[ -n "$release_tag" && ! "$release_tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([-.][0-9A-Za-z.-]+)?$ ]]; then
             echo "Release tag must look like vMAJOR.MINOR.PATCH" >&2
             exit 1
           fi
@@ -74,13 +71,18 @@ jobs:
           set -euo pipefail
           gpg --batch --import .github/release-gpg.pub
           if [[ "$VERIFY_RELEASE_TAG" == "true" ]]; then
+            test -n "$RELEASE_TAG"
             cargo run --locked -p xtask -- verify release-tag "$RELEASE_TAG"
           fi
 
       - name: Generate source RPM
         run: |
           set -euo pipefail
-          cargo run --locked -p xtask -- generate rpm-srpm "$RELEASE_TAG" --output dist
+          if [[ -n "$RELEASE_TAG" ]]; then
+            cargo run --locked -p xtask -- generate rpm-srpm "$RELEASE_TAG" --output dist
+          else
+            cargo run --locked -p xtask -- generate rpm-srpm --candidate-ref HEAD --output dist
+          fi
 
       - name: Verify source RPM
         run: |

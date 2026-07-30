@@ -63,7 +63,7 @@ jobs:
           exit 1
 
       - name: Check out repository
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           ref: ${{ github.event_name == 'release' && github.event.release.tag_name || inputs.ref || github.sha }}
           fetch-depth: 0
@@ -125,5 +125,15 @@ jobs:
           STORE_PATH: ${{ steps.build.outputs.store-path }}
         run: cargo run --locked -p xtask -- verify package-layout "$STORE_PATH" /
 
+      - name: Create media verification files
+        run: |
+          bash scripts/retry-nix nix develop --command \
+            bash scripts/create-media-verification-files "$RUNNER_TEMP/rufin-package-media"
+
       - name: Verify wrapped app
-        run: bash scripts/retry-nix nix run .# -- --help >/dev/null
+        env:
+          STORE_PATH: ${{ steps.build.outputs.store-path }}
+        run: |
+          for media in "$RUNNER_TEMP"/rufin-package-media/*; do
+            "$STORE_PATH/bin/rufin" --verify-media "$media"
+          done
