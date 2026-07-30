@@ -4513,14 +4513,14 @@
     {
         "type": "archive",
         "archive-type": "tar-gzip",
-        "url": "https://static.crates.io/crates/tokio-tungstenite/tokio-tungstenite-0.29.0.crate",
-        "sha256": "8f72a05e828585856dacd553fba484c242c46e391fb0e58917c942ee9202915c",
-        "dest": "cargo/vendor/tokio-tungstenite-0.29.0"
+        "url": "https://static.crates.io/crates/tokio-tungstenite/tokio-tungstenite-0.30.0.crate",
+        "sha256": "17a073bfed563fa236697a068031408a93cd9522e08abf9933ead3e73411bd71",
+        "dest": "cargo/vendor/tokio-tungstenite-0.30.0"
     },
     {
         "type": "inline",
-        "contents": "{\"package\": \"8f72a05e828585856dacd553fba484c242c46e391fb0e58917c942ee9202915c\", \"files\": {}}",
-        "dest": "cargo/vendor/tokio-tungstenite-0.29.0",
+        "contents": "{\"package\": \"17a073bfed563fa236697a068031408a93cd9522e08abf9933ead3e73411bd71\", \"files\": {}}",
+        "dest": "cargo/vendor/tokio-tungstenite-0.30.0",
         "dest-filename": ".cargo-checksum.json"
     },
     {
@@ -4760,14 +4760,14 @@
     {
         "type": "archive",
         "archive-type": "tar-gzip",
-        "url": "https://static.crates.io/crates/tungstenite/tungstenite-0.29.0.crate",
-        "sha256": "6c01152af293afb9c7c2a57e4b559c5620b421f6d133261c60dd2d0cdb38e6b8",
-        "dest": "cargo/vendor/tungstenite-0.29.0"
+        "url": "https://static.crates.io/crates/tungstenite/tungstenite-0.30.0.crate",
+        "sha256": "e48ac77174b19c110a50ab2128b24215ac9cb40e0e12e093fb602d175c569d22",
+        "dest": "cargo/vendor/tungstenite-0.30.0"
     },
     {
         "type": "inline",
-        "contents": "{\"package\": \"6c01152af293afb9c7c2a57e4b559c5620b421f6d133261c60dd2d0cdb38e6b8\", \"files\": {}}",
-        "dest": "cargo/vendor/tungstenite-0.29.0",
+        "contents": "{\"package\": \"e48ac77174b19c110a50ab2128b24215ac9cb40e0e12e093fb602d175c569d22\", \"files\": {}}",
+        "dest": "cargo/vendor/tungstenite-0.30.0",
         "dest-filename": ".cargo-checksum.json"
     },
     {
