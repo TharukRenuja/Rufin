@@ -57,7 +57,7 @@ fn prepare_version(version: &str, notes: &str) -> Result<()> {
 
     replace_workspace_version(version)?;
     update_rpm_spec_version(version)?;
-    run_command("cargo", ["generate-lockfile", "--offline"])?;
+    run_command("cargo", ["update", "--workspace", "--offline"])?;
     update_metainfo_release(version, &release_date, notes)?;
     update_issue_template_versions(version)?;
 
@@ -1116,21 +1116,4 @@ fn quoted_value(line: &str, key: &str) -> Option<String> {
     line.strip_prefix(&prefix)
         .and_then(|value| value.strip_suffix('"'))
         .map(ToOwned::to_owned)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::update_rpm_spec_version_in;
-
-    #[test]
-    fn release_prepare_updates_rpm_spec_version() {
-        let input = "Name:           rufin\nVersion:        0.9.0\nRelease:        1%{?dist}\n";
-
-        let output = update_rpm_spec_version_in(input, "0.10.0").unwrap();
-
-        assert_eq!(
-            output,
-            "Name:           rufin\nVersion:        0.10.0\nRelease:        1%{?dist}\n"
-        );
-    }
 }

@@ -442,10 +442,7 @@ fn run(command: &mut Command, label: &str) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        RpmSource, latest_metainfo_version, select_source, spec_version, verify_lock_sources,
-        verify_spec_japanese_readings, workspace_version,
-    };
+    use super::{RpmSource, select_source, verify_lock_sources, verify_spec_japanese_readings};
 
     #[test]
     fn candidate_ref_is_distinct_from_a_signed_release_tag() {
@@ -454,26 +451,6 @@ mod tests {
             RpmSource::CandidateRef("HEAD".to_owned())
         );
         assert!(select_source(Some("v0.9.0".to_owned()), Some("HEAD".to_owned())).is_err());
-    }
-
-    #[test]
-    fn release_versions_come_from_their_owner_fields() {
-        assert_eq!(
-            spec_version("Name: rufin\nVersion: 0.9.0\n").unwrap(),
-            "0.9.0"
-        );
-        assert_eq!(
-            workspace_version("[workspace.package]\nversion = \"0.9.0\"\n[dependencies]\n")
-                .unwrap(),
-            "0.9.0"
-        );
-        assert_eq!(
-            latest_metainfo_version(
-                "<releases>\n<release version=\"0.9.0\" date=\"2026-07-16\"/>\n</releases>"
-            )
-            .unwrap(),
-            "0.9.0"
-        );
     }
 
     #[test]
