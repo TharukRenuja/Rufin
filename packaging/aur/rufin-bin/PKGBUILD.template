@@ -7,7 +7,7 @@ pkgrel=1
 pkgdesc='Native GTK4/libadwaita music client for Jellyfin, Subsonic, Navidrome and local libraries written in Rust'
 arch=('x86_64')
 url='https://github.com/screwys/Rufin'
-license=('GPL-3.0-or-later' 'NAIST-2003')
+license=('GPL-3.0-or-later')
 # Generated Linux package dependencies start.
 depends=(
   'gcc-libs'

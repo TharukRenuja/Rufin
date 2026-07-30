@@ -6,7 +6,6 @@ pkgbase = rufin-git
 	arch = x86_64
 	arch = aarch64
 	license = GPL-3.0-or-later
-	license = NAIST-2003
 	makedepends = cargo
 	makedepends = gettext
 	makedepends = git
