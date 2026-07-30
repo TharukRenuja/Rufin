@@ -27,8 +27,8 @@ fn default_narrow_layout_threshold() -> i32 {
 }
 pub const MIN_NARROW_LAYOUT_THRESHOLD: i32 = 700;
 pub const MAX_NARROW_LAYOUT_THRESHOLD: i32 = 3_400;
-pub const DEFAULT_LEFT_SIDEBAR_WIDTH: i32 = 176;
-pub const MIN_LEFT_SIDEBAR_WIDTH: i32 = 176;
+pub const DEFAULT_LEFT_SIDEBAR_WIDTH: i32 = 230;
+pub const MIN_LEFT_SIDEBAR_WIDTH: i32 = 210;
 pub const MAX_LEFT_SIDEBAR_WIDTH: i32 = 400;
 pub const DEFAULT_RIGHT_SIDEBAR_WIDTH: i32 = 300;
 pub const MIN_RIGHT_SIDEBAR_WIDTH: i32 = 250;

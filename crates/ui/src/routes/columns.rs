@@ -559,6 +559,7 @@ pub(crate) struct TrackRowPlayingIndicator {
 
 struct TrackRowPlayingIndicatorInner {
     position: std::cell::Cell<u32>,
+    paused: std::cell::Cell<bool>,
     cells: RefCell<HashMap<usize, (glib::WeakRef<gtk::Widget>, u32)>>,
 }
 
@@ -567,13 +568,18 @@ impl TrackRowPlayingIndicator {
         Self {
             inner: Rc::new(TrackRowPlayingIndicatorInner {
                 position: std::cell::Cell::new(gtk::INVALID_LIST_POSITION),
+                paused: std::cell::Cell::new(false),
                 cells: RefCell::new(HashMap::new()),
             }),
         }
     }
 
     pub(crate) fn bind(&self, widget: &gtk::Widget, position: u32) {
-        apply_track_row_playing(widget, position == self.inner.position.get());
+        apply_track_row_playing(
+            widget,
+            position == self.inner.position.get(),
+            self.inner.paused.get(),
+        );
         self.inner
             .cells
             .borrow_mut()
@@ -582,6 +588,7 @@ impl TrackRowPlayingIndicator {
 
     pub(crate) fn unbind(&self, widget: &gtk::Widget) {
         widget.remove_css_class("track-row-playing");
+        widget.remove_css_class("track-row-paused");
         self.inner
             .cells
             .borrow_mut()
@@ -597,17 +604,41 @@ impl TrackRowPlayingIndicator {
                 let Some(widget) = widget.upgrade() else {
                     return false;
                 };
-                apply_track_row_playing(&widget, *bound_position == position);
+                apply_track_row_playing(
+                    &widget,
+                    *bound_position == position,
+                    self.inner.paused.get(),
+                );
+                true
+            });
+    }
+
+    pub(crate) fn set_paused(&self, paused: bool) {
+        self.inner.paused.set(paused);
+        let position = self.inner.position.get();
+        self.inner
+            .cells
+            .borrow_mut()
+            .retain(|_, (widget, bound_position)| {
+                let Some(widget) = widget.upgrade() else {
+                    return false;
+                };
+                apply_track_row_playing(&widget, *bound_position == position, paused);
                 true
             });
     }
 }
 
-fn apply_track_row_playing(cell: &gtk::Widget, playing: bool) {
+fn apply_track_row_playing(cell: &gtk::Widget, playing: bool, paused: bool) {
     if playing {
         cell.add_css_class("track-row-playing");
     } else {
         cell.remove_css_class("track-row-playing");
+    }
+    if playing && paused {
+        cell.add_css_class("track-row-paused");
+    } else {
+        cell.remove_css_class("track-row-paused");
     }
 }
 
@@ -633,6 +664,14 @@ pub(crate) fn track_row_index_cell(text: &str) -> gtk::Overlay {
     playing.set_valign(gtk::Align::Center);
     playing.set_margin_start(2);
     cell.add_overlay(&playing);
+
+    let paused = gtk::Image::from_icon_name("media-playback-pause-symbolic");
+    paused.add_css_class("track-row-index-paused");
+    paused.set_pixel_size(14);
+    paused.set_halign(gtk::Align::Center);
+    paused.set_valign(gtk::Align::Center);
+    paused.set_margin_start(2);
+    cell.add_overlay(&paused);
     cell
 }
 

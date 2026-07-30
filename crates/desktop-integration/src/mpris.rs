@@ -362,7 +362,7 @@ fn mpris_desired_state(
                 mpris_track_id(media.id.occurrence.as_str())
             }),
         playback_status: playback.map_or(PlaybackStatus::Stopped, |playback| {
-            mpris_playback_status(playback.transport.state)
+            mpris_playback_status(playback.transport.effective_state())
         }),
         loop_status: mpris_loop_status(
             playback.map_or(RepeatMode::Off, |playback| playback.controls.repeat_mode),
@@ -435,10 +435,10 @@ fn repeat_mode_from_mpris(status: LoopStatus) -> RepeatMode {
 
 fn mpris_playback_status(state: TransportStatus) -> PlaybackStatus {
     match state {
-        TransportStatus::Playing => PlaybackStatus::Playing,
-        TransportStatus::Resolving | TransportStatus::Buffering | TransportStatus::Paused => {
-            PlaybackStatus::Paused
+        TransportStatus::Resolving | TransportStatus::Buffering | TransportStatus::Playing => {
+            PlaybackStatus::Playing
         }
+        TransportStatus::Paused => PlaybackStatus::Paused,
         TransportStatus::Stopped | TransportStatus::Failed => PlaybackStatus::Stopped,
     }
 }

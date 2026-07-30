@@ -141,6 +141,10 @@ impl PlaylistEntryTablePlayingState {
         self.sync();
     }
 
+    pub(crate) fn set_paused(&self, paused: bool) {
+        self.indicator.set_paused(paused);
+    }
+
     pub(crate) fn is_bound(&self) -> bool {
         self.model.upgrade().is_some()
     }
@@ -379,6 +383,7 @@ pub(crate) fn playlist_entries_collection_projection(
             &expected_context_id,
             &source_context_id,
         );
+        current_playlist_playing.set_paused(current.is_some_and(|current| current.paused));
         true
     }));
     let play_entry = {

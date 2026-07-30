@@ -513,6 +513,10 @@ impl TrackTablePlayingState {
         }
     }
 
+    pub(crate) fn set_paused(&self, paused: bool) {
+        self.inner.indicator.set_paused(paused);
+    }
+
     pub(crate) fn is_bound(&self) -> bool {
         self.inner.model.upgrade().is_some()
     }
@@ -1213,6 +1217,7 @@ pub(crate) fn track_table(
         });
         current_playing_state
             .set_now_playing_track(current.map(|current| &current.track_id), position);
+        current_playing_state.set_paused(current.is_some_and(|current| current.paused));
         true
     }));
     let fields = if options.detail {

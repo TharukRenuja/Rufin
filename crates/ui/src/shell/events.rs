@@ -20,6 +20,7 @@ use crate::runtime::{
 };
 
 use super::Shell;
+use super::navigation::update_sidebar_pin_playback;
 use super::route::route_current_track;
 
 pub(crate) fn install_product_event_receivers(shell: &Rc<Shell>, receivers: ProductReceivers) {
@@ -642,12 +643,13 @@ fn finish_playback_projection(
         shell.request_queue_page(QueuePageQuery::current());
     }
 
+    let previous_route_track = route_current_track(previous_player.as_ref());
+    let next_route_track = route_current_track(Some(&next_player));
+    if previous_route_track != next_route_track {
+        shell.refresh_current_route_now_playing_selections();
+        update_sidebar_pin_playback(shell);
+    }
     if static_playback_changed {
-        let previous_route_track = route_current_track(previous_player.as_ref());
-        let next_route_track = route_current_track(Some(&next_player));
-        if previous_route_track != next_route_track {
-            shell.refresh_current_route_now_playing_selections();
-        }
         shell.sync_bottom_player_favorite();
     }
     shell.maybe_clear_player_seek_preview(&next_player, media_changed);
@@ -754,7 +756,7 @@ fn bottom_player_can_update_position_only(
     previous.is_some_and(|previous| {
         previous.transport.source_id == next.transport.source_id
             && previous.transport.current == next.transport.current
-            && previous.transport.state == next.transport.state
+            && previous.transport.effective_state() == next.transport.effective_state()
             && previous.transport.duration_millis == next.transport.duration_millis
             && previous.transport.buffering_percent == next.transport.buffering_percent
             && previous.transport.error == next.transport.error
@@ -769,7 +771,7 @@ fn mpris_static_state_changed(
 ) -> bool {
     previous.is_none_or(|previous| {
         previous.transport.current != next.transport.current
-            || previous.transport.state != next.transport.state
+            || previous.transport.effective_state() != next.transport.effective_state()
             || previous.controls.repeat_mode != next.controls.repeat_mode
             || previous.controls.shuffle_enabled != next.controls.shuffle_enabled
             || previous.controls.auto_dj_enabled != next.controls.auto_dj_enabled
@@ -922,6 +924,7 @@ mod tests {
 
         let mut state_change = tick.clone();
         state_change.transport.state = TransportStatus::Playing;
+        state_change.transport.desired_playing = true;
         assert!(!bottom_player_can_update_position_only(
             Some(&tick),
             &state_change
@@ -952,6 +955,7 @@ mod tests {
                 source_id: SourceId::new("tick-source"),
                 current: None,
                 state: TransportStatus::Stopped,
+                desired_playing: false,
                 position_millis: 0,
                 duration_millis: 0,
                 buffering_percent: None,

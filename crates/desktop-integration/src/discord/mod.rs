@@ -516,6 +516,7 @@ pub(crate) mod tests {
         assert_eq!(seeked.ended_at_millis, Some(123_000));
 
         view.transport.state = TransportStatus::Paused;
+        view.transport.desired_playing = false;
         let paused = ipc::Activity::new(&settings, &view, 102_000, ipc::APP_ICON_URL.to_string())
             .unwrap_or_else(|| panic!("visible pause should publish activity"));
         assert_eq!(paused.started_at_millis, None);
@@ -530,6 +531,7 @@ pub(crate) mod tests {
         .id
         .run = Some(RunId::new(2));
         view.transport.state = TransportStatus::Playing;
+        view.transport.desired_playing = true;
         view.transport.position_millis = 0;
         let replay = ipc::Activity::new(&settings, &view, 103_000, ipc::APP_ICON_URL.to_string())
             .unwrap_or_else(|| panic!("new run should publish a new timeline"));
@@ -921,6 +923,12 @@ pub(crate) mod tests {
                 source_id,
                 current: Some(current),
                 state,
+                desired_playing: matches!(
+                    state,
+                    TransportStatus::Resolving
+                        | TransportStatus::Buffering
+                        | TransportStatus::Playing
+                ),
                 position_millis,
                 duration_millis: 42_500,
                 buffering_percent: None,

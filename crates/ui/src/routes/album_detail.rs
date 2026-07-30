@@ -448,8 +448,11 @@ impl AlbumDetailVirtualList {
                         .as_ref()
                         .is_some_and(|play| play.source_id == current.source_id)
                 })
-                .map(|current| &current.track_id);
-            inner.selection.select_now_playing_track(track_id);
+                .map(|current| (&current.track_id, current.paused));
+            inner.selection.select_now_playing_track(
+                track_id.map(|(track_id, _)| track_id),
+                track_id.is_some_and(|(_, paused)| paused),
+            );
             true
         }));
         Self { inner }
@@ -673,6 +676,7 @@ fn album_detail_virtual_overscan_height() -> i32 {
 #[derive(Clone, Default)]
 pub(crate) struct AlbumDetailTrackSelection {
     selected_track_id: Rc<RefCell<Option<TrackId>>>,
+    paused: Rc<Cell<bool>>,
     bound_rows: Rc<RefCell<Vec<AlbumDetailTrackRowBinding>>>,
 }
 
@@ -685,6 +689,9 @@ impl AlbumDetailTrackSelection {
     pub(crate) fn bind_row(&self, row: &gtk::Widget, track_id: &TrackId) {
         if self.selected_track_id.borrow().as_ref() == Some(track_id) {
             row.add_css_class("album-detail-track-selected");
+            if self.paused.get() {
+                row.add_css_class("track-row-paused");
+            }
         }
         self.bound_rows
             .borrow_mut()
@@ -694,16 +701,23 @@ impl AlbumDetailTrackSelection {
             });
     }
 
-    fn select_now_playing_track(&self, track_id: Option<&TrackId>) {
+    fn select_now_playing_track(&self, track_id: Option<&TrackId>, paused: bool) {
         *self.selected_track_id.borrow_mut() = track_id.cloned();
+        self.paused.set(paused);
         self.bound_rows.borrow_mut().retain(|binding| {
             let Some(row) = binding.row.upgrade() else {
                 return false;
             };
             if track_id == Some(&binding.track_id) {
                 row.add_css_class("album-detail-track-selected");
+                if paused {
+                    row.add_css_class("track-row-paused");
+                } else {
+                    row.remove_css_class("track-row-paused");
+                }
             } else {
                 row.remove_css_class("album-detail-track-selected");
+                row.remove_css_class("track-row-paused");
             }
             true
         });

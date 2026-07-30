@@ -93,10 +93,26 @@ pub struct TransportView {
     pub source_id: SourceId,
     pub current: Option<Arc<CurrentMedia>>,
     pub state: TransportStatus,
+    pub desired_playing: bool,
     pub position_millis: u64,
     pub duration_millis: u64,
     pub buffering_percent: Option<u8>,
     pub error: Option<String>,
+}
+
+impl TransportView {
+    pub fn effective_state(&self) -> TransportStatus {
+        effective_transport_state(self.state, self.desired_playing)
+    }
+}
+
+fn effective_transport_state(state: TransportStatus, desired_playing: bool) -> TransportStatus {
+    match state {
+        TransportStatus::Stopped | TransportStatus::Failed => state,
+        _ if !desired_playing => TransportStatus::Paused,
+        TransportStatus::Paused => TransportStatus::Buffering,
+        state => state,
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -209,6 +225,7 @@ impl PlaybackSession {
                     })
                 }),
                 state: self.status(),
+                desired_playing: self.desired_playing(),
                 position_millis: self.position_millis(),
                 duration_millis: self.duration_millis(),
                 buffering_percent: self.buffering_percent(),
@@ -232,6 +249,26 @@ mod tests {
 
     use super::*;
     use crate::sequence::{Batch, BatchItem, Placement, Provenance};
+
+    #[test]
+    fn effective_transport_state_follows_play_pause_intent_before_backend_confirmation() {
+        assert_eq!(
+            effective_transport_state(TransportStatus::Playing, false),
+            TransportStatus::Paused
+        );
+        assert_eq!(
+            effective_transport_state(TransportStatus::Paused, true),
+            TransportStatus::Buffering
+        );
+        assert_eq!(
+            effective_transport_state(TransportStatus::Stopped, true),
+            TransportStatus::Stopped
+        );
+        assert_eq!(
+            effective_transport_state(TransportStatus::Failed, true),
+            TransportStatus::Failed
+        );
+    }
 
     #[test]
     fn queue_view_exposes_the_complete_sequence() {
