@@ -1786,6 +1786,24 @@ mod tests {
     #[test]
     fn ordinary_and_album_grids_use_their_card_minimums() {
         let ordinary_slot = COLLECTION_GRID_MIN_CARD_WIDTH + COLLECTION_GRID_CARD_MARGIN * 2;
+        let ordinary_maximum_slot =
+            COLLECTION_GRID_MAX_CARD_WIDTH + COLLECTION_GRID_CARD_MARGIN * 2;
+        assert_eq!(
+            collection_grid_column_count(
+                435,
+                COLLECTION_GRID_MIN_CARD_WIDTH,
+                COLLECTION_GRID_MAX_CARD_WIDTH,
+            ),
+            3
+        );
+        assert_eq!(
+            collection_grid_column_count(
+                435,
+                ALBUM_COLLECTION_GRID_MIN_CARD_WIDTH,
+                ALBUM_COLLECTION_GRID_MAX_CARD_WIDTH,
+            ),
+            2
+        );
         assert_eq!(
             collection_grid_column_count(
                 450,
@@ -1820,7 +1838,7 @@ mod tests {
         );
         assert_eq!(
             collection_grid_column_count(
-                ordinary_slot * 3,
+                ordinary_maximum_slot * 2 + 1,
                 COLLECTION_GRID_MIN_CARD_WIDTH,
                 COLLECTION_GRID_MAX_CARD_WIDTH,
             ),
