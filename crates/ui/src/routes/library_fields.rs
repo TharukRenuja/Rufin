@@ -273,7 +273,7 @@ pub(crate) fn clear_list_item_child(_: &gtk::SignalListItemFactory, item: &glib:
 }
 pub(crate) const COLLECTION_GRID_CARD_GAP: i32 = 2;
 pub(crate) const COLLECTION_GRID_CARD_MARGIN: i32 = 5;
-pub(crate) const COLLECTION_GRID_MIN_CARD_WIDTH: i32 = 140;
+pub(crate) const COLLECTION_GRID_MIN_CARD_WIDTH: i32 = 128;
 pub(crate) const COLLECTION_GRID_MAX_CARD_WIDTH: i32 = 200;
 pub(crate) const ALBUM_COLLECTION_GRID_MIN_CARD_WIDTH: i32 = 200;
 pub(crate) const ALBUM_COLLECTION_GRID_MAX_CARD_WIDTH: i32 = 260;
