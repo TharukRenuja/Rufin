@@ -24,7 +24,7 @@ use super::equalizer::{
     build_equalizer_preset_dropdown, connect_equalizer_scale_commit, equalizer_band_label_parts,
     equalizer_band_title, equalizer_default_preset_bands, equalizer_preset_bands,
     equalizer_preset_name_at, equalizer_preset_position, equalizer_selected_preset,
-    install_equalizer_scroll,
+    install_equalizer_scroll, relocalize_equalizer_preset_dropdown,
 };
 use super::icons::lyrics_icon_area;
 use super::lyrics::LyricsPane;
@@ -1097,6 +1097,12 @@ pub(crate) fn connect_fullscreen_player_controls(shell: &Rc<Shell>) {
         });
 }
 
+fn while_equalizer_syncing(syncing: &Cell<bool>, update: impl FnOnce()) {
+    syncing.set(true);
+    update();
+    syncing.set(false);
+}
+
 impl Shell {
     pub(crate) fn open_fullscreen_player(self: &Rc<Self>) {
         let Some(player) = self.playback.player.borrow().clone() else {
@@ -1183,9 +1189,14 @@ impl Shell {
     }
 
     pub(crate) fn relocalize_fullscreen_player_controls(&self) {
-        self.sync_fullscreen_equalizer_preset_label(
-            &self.settings.current.borrow().playback.equalizer,
-        );
+        let selected = {
+            let settings = self.settings.current.borrow();
+            equalizer_preset_position(&equalizer_selected_preset(&settings.playback.equalizer))
+        };
+        let fullscreen = &self.player_view.fullscreen_player;
+        while_equalizer_syncing(&fullscreen.equalizer_syncing, || {
+            relocalize_equalizer_preset_dropdown(&fullscreen.equalizer_preset_dropdown, selected);
+        });
     }
 
     pub(crate) fn update_fullscreen_player(self: &Rc<Self>) {
@@ -1864,6 +1875,7 @@ fn fullscreen_equalizer_compact_for(width: i32, height: i32) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use std::cell::{Cell, RefCell};
     use std::sync::Arc;
 
     use library::SourceId;
@@ -1873,6 +1885,22 @@ mod tests {
     };
 
     use super::FullscreenPlaybackRefresh;
+
+    #[test]
+    fn locale_equalizer_sync_does_not_reenter_settings() {
+        let syncing = Cell::new(false);
+        let settings = RefCell::new(false);
+        let current_settings = settings.borrow();
+
+        super::while_equalizer_syncing(&syncing, || {
+            if !syncing.get() {
+                *settings.borrow_mut() = true;
+            }
+        });
+
+        assert!(!*current_settings);
+        assert!(!syncing.get());
+    }
 
     #[test]
     fn fullscreen_use_duration() {
