@@ -10,7 +10,7 @@ on:
       - data/**
       - justfile
       - packaging/macos/**
-      - scripts/build-dmg
+      - scripts/create-media-verification-files
   release:
     types:
       - published
@@ -86,8 +86,23 @@ jobs:
           set -euo pipefail
           gettext_prefix="$(brew --prefix gettext)"
           export PATH="${gettext_prefix}/bin:$PATH"
-          RUFIN_ARTIFACT_ROOT="$PWD/dist" scripts/build-dmg
+          RUFIN_ARTIFACT_ROOT="$PWD/dist" packaging/macos/build
           hdiutil verify dist/Rufin.dmg
+
+      - name: Verify disk image
+        run: |
+          set -euo pipefail
+          media_dir="$RUNNER_TEMP/rufin-package-media"
+          mount_dir="$RUNNER_TEMP/rufin-dmg"
+          scripts/create-media-verification-files "$media_dir"
+          mkdir -p "$mount_dir"
+          hdiutil attach dist/Rufin.dmg -nobrowse -readonly -mountpoint "$mount_dir"
+          trap 'hdiutil detach "$mount_dir"' EXIT
+          for media in "$media_dir"/*; do
+            "$mount_dir/Rufin.app/Contents/MacOS/rufin" --verify-media "$media"
+          done
+          hdiutil detach "$mount_dir"
+          trap - EXIT
 
       - name: Upload workflow artifact
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7

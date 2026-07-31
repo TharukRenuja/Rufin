@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 artifact_root="${RUFIN_ARTIFACT_ROOT:-${repo_root}/.local/artifacts}"
 work_root="${RUFIN_DMG_WORK_ROOT:-${artifact_root}/macos}"
 target_dir="${RUFIN_DMG_TARGET_DIR:-${work_root}/target}"
@@ -25,7 +25,7 @@ fi
 
 required_commands=(
     brew cargo codesign ditto dylibbundler file gio-querymodules
-    glib-compile-schemas hdiutil iconutil msgfmt otool pkg-config rsvg-convert
+    glib-compile-schemas hdiutil iconutil msgfmt otool pkg-config rsvg-convert rsync
 )
 for command_name in "${required_commands[@]}"; do
     if ! command -v "$command_name" >/dev/null 2>&1; then
@@ -87,8 +87,8 @@ copy_directory() {
     fi
 }
 
-copy_directory "$gstreamer_plugins" \
-    "$app_path/Contents/Resources/lib/gstreamer-1.0"
+rsync -aL --exclude='libgstnice.*' "$gstreamer_plugins/" \
+    "$app_path/Contents/Resources/lib/gstreamer-1.0/"
 copy_directory "$pixbuf_loaders" \
     "$app_path/Contents/Resources/lib/gdk-pixbuf-2.0/loaders"
 copy_directory "${brew_prefix}/lib/gio/modules" \

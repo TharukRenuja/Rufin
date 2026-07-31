@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 artifact_root="${RUFIN_ARTIFACT_ROOT:-${repo_root}/.local/artifacts}"
 work_root="${RUFIN_WINDOWS_WORK_ROOT:-${artifact_root}/windows}"
 target_dir="${RUFIN_WINDOWS_TARGET_DIR:-${work_root}/target}"

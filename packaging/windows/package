@@ -44,7 +44,9 @@ copy_directory() {
 rm -rf "$stage_dir"
 mkdir -p "$stage_dir"
 
-cp "$binary" "$stage_dir/rufin.exe"
+app_bin="$stage_dir/bin"
+mkdir -p "$app_bin"
+cp "$binary" "$app_bin/rufin.exe"
 copy_file "$repo_root/LICENSE" "$stage_dir/LICENSE"
 copy_file "$repo_root/packaging/windows/assets/rufin.ico" "$stage_dir/rufin.ico"
 
@@ -68,10 +70,10 @@ if [[ ${#runtime_dlls[@]} -eq 0 ]]; then
     echo "The Windows runtime contains no DLLs: ${runtime_prefix}/bin" >&2
     exit 1
 fi
-cp -L "${runtime_dlls[@]}" "$stage_dir/"
+cp -L "${runtime_dlls[@]}" "$app_bin/"
 
 for helper in gspawn-win64-helper.exe gspawn-win64-helper-console.exe; do
-    copy_file "$runtime_prefix/bin/$helper" "$stage_dir/$helper"
+    copy_file "$runtime_prefix/bin/$helper" "$app_bin/$helper"
 done
 
 copy_directory "$runtime_prefix/lib/gstreamer-1.0" "$stage_dir/lib/gstreamer-1.0"

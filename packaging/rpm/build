@@ -14,7 +14,7 @@ case "${requested_arch}" in
         container_arch="arm64"
         ;;
     *)
-        echo "usage: scripts/build-rpm [arm]" >&2
+        echo "usage: just build rpm [arm]" >&2
         exit 2
         ;;
 esac

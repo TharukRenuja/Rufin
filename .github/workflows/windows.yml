@@ -136,7 +136,7 @@ jobs:
         shell: msys2 {0}
         run: |
           set -euo pipefail
-          RUFIN_ARTIFACT_ROOT="$PWD/dist" scripts/build-windows
+          RUFIN_ARTIFACT_ROOT="$PWD/dist" packaging/windows/build
 
       - name: Create media verification files
         shell: msys2 {0}
@@ -150,13 +150,23 @@ jobs:
             throw "Windows installer was not produced"
           }
           $installDir = Join-Path $env:RUNNER_TEMP "Rufin"
+          New-Item -ItemType Directory -Force -Path $installDir | Out-Null
+          Set-Content -NoNewline -Path (Join-Path $installDir "rufin.exe") -Value "legacy"
+          Set-Content -NoNewline -Path (Join-Path $installDir "legacy-runtime.dll") -Value "legacy"
+          $desktopShortcut = Join-Path ([Environment]::GetFolderPath("Desktop")) "Rufin.lnk"
+          $shortcutShell = New-Object -ComObject WScript.Shell
+          $legacyShortcut = $shortcutShell.CreateShortcut($desktopShortcut)
+          $legacyShortcut.TargetPath = Join-Path $installDir "rufin.exe"
+          $legacyShortcut.Save()
+
           $installerArgs = @("/S", "/D=$installDir")
           $process = Start-Process -FilePath $installer.FullName -ArgumentList $installerArgs -Wait -PassThru
           if ($process.ExitCode -ne 0) {
             throw "Windows installer exited with code $($process.ExitCode)"
           }
 
-          $installedExe = Join-Path $installDir "rufin.exe"
+          $installedBin = Join-Path $installDir "bin"
+          $installedExe = Join-Path $installedBin "rufin.exe"
           $deadline = (Get-Date).AddSeconds(60)
           while (-not (Test-Path $installedExe) -and (Get-Date) -lt $deadline) {
             Start-Sleep -Milliseconds 250
@@ -164,19 +174,32 @@ jobs:
           if (-not (Test-Path $installedExe)) {
             throw "Installed Rufin executable was not found: $installedExe"
           }
-          $installedDlls = @(Get-ChildItem -LiteralPath $installDir -Filter "*.dll" -File)
-          Write-Host "Installed Rufin runtime has $($installedDlls.Count) top-level DLLs"
+          foreach ($legacyRuntime in @("rufin.exe", "legacy-runtime.dll")) {
+            $legacyPath = Join-Path $installDir $legacyRuntime
+            if (Test-Path $legacyPath) {
+              throw "Legacy Windows runtime was not removed: $legacyPath"
+            }
+          }
+          $desktopTarget = $shortcutShell.CreateShortcut($desktopShortcut).TargetPath
+          if ($desktopTarget -ne $installedExe) {
+            throw "Desktop shortcut still targets the legacy runtime: $desktopTarget"
+          }
+          $startMenuShortcut = Join-Path ([Environment]::GetFolderPath("Programs")) "Rufin\Rufin.lnk"
+          $startMenuTarget = $shortcutShell.CreateShortcut($startMenuShortcut).TargetPath
+          if ($startMenuTarget -ne $installedExe) {
+            throw "Start Menu shortcut does not target the installed executable: $startMenuTarget"
+          }
+          $installedDlls = @(Get-ChildItem -LiteralPath $installedBin -Filter "*.dll" -File)
+          Write-Host "Installed Rufin runtime has $($installedDlls.Count) DLLs"
           if ($installedDlls.Count -eq 0) {
-            throw "Installed Rufin runtime has no top-level DLLs"
+            throw "Installed Rufin runtime has no DLLs"
           }
 
           $runtimeStdout = Join-Path $env:RUNNER_TEMP "rufin-runtime.out"
           $runtimeStderr = Join-Path $env:RUNNER_TEMP "rufin-runtime.err"
           $previousPath = $env:PATH
-          $previousPluginPath = $env:GST_PLUGIN_SYSTEM_PATH_1_0
           try {
-            $env:PATH = "$installDir;$env:PATH"
-            $env:GST_PLUGIN_SYSTEM_PATH_1_0 = Join-Path $installDir "lib\gstreamer-1.0"
+            $env:PATH = "$installedBin;$env:SystemRoot\System32;$env:SystemRoot"
             $mediaDirectory = Join-Path $env:RUNNER_TEMP "rufin-package-media"
             foreach ($media in Get-ChildItem -LiteralPath $mediaDirectory -File) {
               $runtimeProcess = Start-Process `
@@ -199,7 +222,6 @@ jobs:
             throw "Installed Rufin executable failed to start: $_"
           } finally {
             $env:PATH = $previousPath
-            $env:GST_PLUGIN_SYSTEM_PATH_1_0 = $previousPluginPath
           }
           foreach ($runtimeLog in @($runtimeStdout, $runtimeStderr)) {
             if ((Test-Path $runtimeLog) -and (Get-Item $runtimeLog).Length -gt 0) {

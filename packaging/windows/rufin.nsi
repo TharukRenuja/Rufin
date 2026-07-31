@@ -41,9 +41,9 @@ VIAddVersionKey /LANG=1033 "LegalCopyright" "GPL-3.0-or-later"
 !define MUI_ABORTWARNING
 !define MUI_ICON "${RUFIN_ASSET_DIR}/rufin.ico"
 !define MUI_UNICON "${RUFIN_ASSET_DIR}/rufin.ico"
-!define MUI_WELCOMEPAGE_TITLE "Welcome to Rufin, GTK4/libadwaita music client for Jellyfin, Navidrome/OpenSubsonic and local libraries."
+!define MUI_WELCOMEPAGE_TITLE "Welcome to Rufin"
 !define MUI_WELCOMEPAGE_TEXT " This will install Rufin on your computer."
-!define MUI_FINISHPAGE_RUN "$INSTDIR\rufin.exe"
+!define MUI_FINISHPAGE_RUN "$INSTDIR\bin\rufin.exe"
 
 !insertmacro MUI_PAGE_WELCOME
 !insertmacro MUI_PAGE_LICENSE "${RUFIN_STAGE_DIR}/LICENSE"
@@ -59,6 +59,10 @@ VIAddVersionKey /LANG=1033 "LegalCopyright" "GPL-3.0-or-later"
 
 Section "Rufin" RufinSection
     SectionIn RO
+    Delete /REBOOTOK "$INSTDIR\rufin.exe"
+    Delete /REBOOTOK "$INSTDIR\*.dll"
+    Delete /REBOOTOK "$INSTDIR\gspawn-win64-helper.exe"
+    Delete /REBOOTOK "$INSTDIR\gspawn-win64-helper-console.exe"
     SetOutPath "$INSTDIR"
     File /r "${RUFIN_STAGE_DIR}/*"
     WriteUninstaller "$INSTDIR\Uninstall.exe"
@@ -84,13 +88,15 @@ Section "Rufin" RufinSection
         "NoRepair" 1
 
     CreateDirectory "$SMPROGRAMS\Rufin"
-    CreateShortcut "$SMPROGRAMS\Rufin\Rufin.lnk" "$INSTDIR\rufin.exe" \
+    CreateShortcut "$SMPROGRAMS\Rufin\Rufin.lnk" "$INSTDIR\bin\rufin.exe" \
         "" "$INSTDIR\rufin.ico"
     CreateShortcut "$SMPROGRAMS\Rufin\Uninstall Rufin.lnk" "$INSTDIR\Uninstall.exe"
+    IfFileExists "$DESKTOP\Rufin.lnk" 0 +2
+    CreateShortcut "$DESKTOP\Rufin.lnk" "$INSTDIR\bin\rufin.exe" "" "$INSTDIR\rufin.ico"
 SectionEnd
 
 Section /o "Desktop shortcut" DesktopSection
-    CreateShortcut "$DESKTOP\Rufin.lnk" "$INSTDIR\rufin.exe" "" "$INSTDIR\rufin.ico"
+    CreateShortcut "$DESKTOP\Rufin.lnk" "$INSTDIR\bin\rufin.exe" "" "$INSTDIR\rufin.ico"
 SectionEnd
 
 Section "Uninstall"
