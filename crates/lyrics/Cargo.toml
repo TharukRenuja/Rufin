@@ -14,7 +14,7 @@ publish.workspace = true
 async-channel.workspace = true
 library.workspace = true
 playback.workspace = true
-reqwest = { workspace = true, features = ["blocking", "json"] }
+reqwest = { workspace = true, features = ["blocking"] }
 serde.workspace = true
 serde_json.workspace = true
 sources.workspace = true

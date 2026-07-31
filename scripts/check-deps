@@ -12,7 +12,7 @@ nix_gstreamer_packages=(
   gst-libav
 )
 arch_dependencies=(
-  gcc-libs
+  libgcc_s.so
   glib2
   glibc
   gst-libav
@@ -99,6 +99,17 @@ render_pkgbuild() {
   printf '%s\n' ')'
 }
 
+render_arch_build_packages() {
+  local dependency
+  for dependency in "${arch_dependencies[@]}"; do
+    case "$dependency" in
+      libgcc_s.so) printf '%s\n' gcc-libs ;;
+      *) printf '%s\n' "$dependency" ;;
+    esac
+  done
+  printf '%s\n' "${arch_build_dependencies[@]}"
+}
+
 project_file() {
   local path="$1" body="$2" mode="$3" start_marker="$4" end_marker="$5"
   local generated="$tmpdir/generated"
@@ -128,7 +139,7 @@ project_file() {
     return
   fi
   if [[ "$mode" == check ]]; then
-    echo "$path is stale; run scripts/check-deps" >&2
+    echo "$path is stale; run just deps" >&2
     exit 1
   fi
   cp "$generated" "$path"
@@ -165,8 +176,7 @@ case "${1:-}" in
     ;;
   --arch-build-packages)
     [[ $# -eq 1 ]] || { usage; exit 1; }
-    printf '%s\n' "${arch_dependencies[@]}" "${arch_build_dependencies[@]}" |
-      sort -u
+    render_arch_build_packages | sort -u
     exit
     ;;
   --check)

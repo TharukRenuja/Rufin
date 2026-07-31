@@ -1,6 +1,6 @@
 [workspace]
 members = ["crates/*"]
-resolver = "2"
+resolver = "3"
 
 [workspace.package]
 version = "0.11.1"
@@ -25,7 +25,6 @@ csv = "1.4.0"
 directories = "6.0.0"
 desktop-integration = { path = "crates/desktop-integration" }
 downloads = { path = "crates/downloads" }
-futures-executor = "0.3.32"
 futures-util = "0.3.32"
 getrandom = "0.4.0"
 gio = "0.22.6"
@@ -49,8 +48,8 @@ percent-encoding = "2.3.2"
 playback = { path = "crates/playback" }
 playback-gstreamer = { path = "crates/playback-gstreamer" }
 scrobbling = { path = "crates/scrobbling" }
-reqwest = "0.13.3"
-rusqlite = "0.40.1"
+reqwest = { version = "0.13.3", default-features = false, features = ["http2", "rustls", "system-proxy"] }
+rusqlite = { version = "0.40.1", default-features = false }
 rustix = { version = "1.1.4", features = ["fs"] }
 rustfft = "6.2.0"
 secrets = { path = "crates/secrets" }

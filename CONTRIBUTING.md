@@ -67,6 +67,11 @@ To run the broader testing suite:
 just check
 ```
 
+Run `just deps` after changing Linux package dependencies or AUR metadata; `just check deps`
+validates the generated metadata. Direct `makepkg --printsrcinfo` also works on
+Arch-based systems, while `just deps` handles a Nix-provided `makepkg` without
+`/etc/makepkg.conf`.
+
 If you are testing natively, this also needs rustfmt, clippy, cargo-deny, and gettext.
 `cargo-nextest` and `ast-grep` (which CI runs by default) are used when available.
 
