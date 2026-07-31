@@ -12,7 +12,7 @@ publish.workspace = true
 
 [dependencies]
 library.workspace = true
-reqwest = { workspace = true, features = ["blocking", "json"] }
+reqwest = { workspace = true, features = ["blocking"] }
 serde_json.workspace = true
 tracing.workspace = true
 

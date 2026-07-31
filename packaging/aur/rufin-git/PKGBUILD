@@ -10,7 +10,7 @@ url='https://github.com/screwys/Rufin'
 license=('GPL-3.0-or-later')
 # Generated Linux package dependencies start.
 depends=(
-  'gcc-libs'
+  'libgcc_s.so'
   'glib2'
   'glibc'
   'gst-libav'

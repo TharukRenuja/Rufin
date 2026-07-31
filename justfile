@@ -30,8 +30,17 @@ _build-flatpak:
         .local/flatpak/build \
         packaging/flatpak/io.github.screwys.Rufin.json
 
-check:
-    scripts/container run just _check-all
+# Run all checks, or only Linux dependency checks with `just check deps`.
+check target="":
+    if [[ -z "{{ target }}" ]]; then \
+        scripts/container run just _check-all; \
+    elif [[ "{{ target }}" == "deps" ]]; then \
+        just _check-deps; \
+        scripts/aur-srcinfo --check; \
+    else \
+        echo "usage: just check [deps]" >&2; \
+        exit 2; \
+    fi
 
 _check-all:
     just _flatpak-sources-check
@@ -77,9 +86,9 @@ _test *args:
             echo "NEXTEST_JOBS must be a positive integer." >&2; \
             exit 1; \
         fi; \
-        cargo nextest run --workspace --locked --test-threads "$nextest_jobs" {{ args }}; \
+        cargo nextest run --locked --test-threads "$nextest_jobs" {{ args }}; \
     else \
-        cargo_args=(--workspace --locked); \
+        cargo_args=(--locked); \
         if [[ -z "{{ args }}" ]]; then \
             cargo_args+=(--lib --bins --tests --benches --examples); \
         fi; \
@@ -121,6 +130,11 @@ _i18n-template-check:
 
 _check-deps:
     bash scripts/check-deps --check
+
+# Regenerate Linux package dependency metadata.
+deps:
+    bash scripts/check-deps
+    scripts/aur-srcinfo
 
 _icon-check:
     cargo run --locked -p xtask -- verify icons

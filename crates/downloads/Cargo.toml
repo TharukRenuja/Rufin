@@ -17,13 +17,12 @@ library.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 sources.workspace = true
-tokio = { workspace = true, features = ["fs", "rt", "time"] }
+tokio = { workspace = true, features = ["fs", "macros", "rt", "time"] }
 tracing.workspace = true
 
 [dev-dependencies]
 proptest = "1.6.0"
 tempfile.workspace = true
-tokio = { workspace = true, features = ["macros", "rt"] }
 
 [lints]
 workspace = true
