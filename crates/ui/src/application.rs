@@ -1,4 +1,4 @@
-use std::cell::{Cell, RefCell};
+use std::cell::RefCell;
 use std::path::PathBuf;
 use std::process::ExitCode;
 use std::rc::Rc;
@@ -25,19 +25,14 @@ where
         Ok(runtime) => runtime,
         Err(error) => {
             error!(%error, "failed to create async runtime");
-            return ExitCode::FAILURE;
+            return run_startup_error_application(error.to_string());
         }
     };
     let _runtime_guard = runtime.enter();
 
-    let app = adw::Application::builder()
-        .application_id(APP_ID)
-        .flags(gio::ApplicationFlags::empty())
-        .build();
-    let startup_succeeded = Rc::new(Cell::new(true));
+    let app = application();
     app.connect_startup(|_| configure_app_icon());
     let bootstrap = Rc::new(RefCell::new(Some(bootstrap)));
-    let startup_succeeded_check = Rc::clone(&startup_succeeded);
     app.connect_activate(move |app| {
         if let Some(window) = app.active_window() {
             window.present();
@@ -50,18 +45,48 @@ where
             Ok(inputs) => crate::shell::build::build(app, inputs),
             Err(error) => {
                 error!(%error, "failed to start Rufin");
-                startup_succeeded_check.set(false);
-                app.quit();
+                present_startup_error(app, &error);
             }
         }
     });
 
-    let exit_code = app.run();
-    if !startup_succeeded.get() {
-        ExitCode::FAILURE
-    } else {
-        exit_code.into()
-    }
+    app.run().into()
+}
+
+fn run_startup_error_application(error: String) -> ExitCode {
+    let app = application();
+    app.connect_startup(|_| configure_app_icon());
+    app.connect_activate(move |app| {
+        if let Some(window) = app.active_window() {
+            window.present();
+        } else {
+            present_startup_error(app, &error);
+        }
+    });
+    app.run().into()
+}
+
+fn application() -> adw::Application {
+    adw::Application::builder()
+        .application_id(APP_ID)
+        .flags(gio::ApplicationFlags::empty())
+        .build()
+}
+
+fn present_startup_error(app: &adw::Application, error: &str) {
+    let status = adw::StatusPage::builder()
+        .icon_name(APP_ID)
+        .title("Rufin")
+        .description(error)
+        .build();
+    let window = adw::ApplicationWindow::builder()
+        .application(app)
+        .title("Rufin")
+        .default_width(480)
+        .default_height(320)
+        .content(&status)
+        .build();
+    window.present();
 }
 
 fn configure_app_icon() {

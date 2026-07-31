@@ -17,7 +17,7 @@ use sources::{LOCAL_LIBRARY_SOURCE_ID, LOCAL_SOURCE_ID, SourceConfiguration};
 use tracing::{info, warn};
 
 use crate::settings::{
-    ConfiguredLocalAccess, ConfiguredSource, CredentialRef, StoredSettings, read_settings,
+    ConfiguredLocalAccess, ConfiguredSource, CredentialRef, StoredSettings, read_startup_settings,
     write_settings,
 };
 
@@ -60,16 +60,28 @@ pub(crate) fn install_if_needed(
     released_store_path: &Path,
     final_store_path: &Path,
 ) -> Result<Option<Schema30MigrationReport>, String> {
+    let input = read_settings_input(settings_path)?;
     if final_store_path.exists() {
+        install_settings_without_released_data(settings_path, input)?;
         return Ok(None);
     }
-    require_released_main_or_nothing(released_store_path)?;
     if !released_store_path.exists() {
+        install_settings_without_released_data(settings_path, input)?;
         return Ok(None);
     }
 
-    let migration = Schema30Migration::open(released_store_path).map_err(string_error)?;
-    let input = read_settings_input(settings_path)?;
+    let migration = match Schema30Migration::open(released_store_path) {
+        Ok(migration) => migration,
+        Err(error) => {
+            install_settings_without_released_data(settings_path, input)?;
+            warn!(
+                %error,
+                path = %released_store_path.display(),
+                "could not import the released Store; files were preserved"
+            );
+            return Ok(None);
+        }
+    };
     let import_shuffle = !input.shuffle_setting_is_authority;
     let import_repeat = !input.repeat_setting_is_authority;
     let mut next = merge_settings(input, migration.configuration())?;
@@ -102,9 +114,19 @@ pub(crate) fn install_if_needed(
 
     let prepared = prepared_store_path(final_store_path);
     remove_prepared_store(&prepared)?;
-    let report = migration
-        .prepare_store(&prepared, &accepted)
-        .map_err(string_error)?;
+    let report = match migration.prepare_store(&prepared, &accepted) {
+        Ok(report) => report,
+        Err(error) => {
+            remove_prepared_store(&prepared)?;
+            write_settings(settings_path, &next)?;
+            warn!(
+                %error,
+                path = %released_store_path.display(),
+                "could not import released user data; files were preserved"
+            );
+            return Ok(None);
+        }
+    };
 
     write_settings(settings_path, &next)?;
     fs::rename(&prepared, final_store_path).map_err(|error| error.to_string())?;
@@ -113,26 +135,34 @@ pub(crate) fn install_if_needed(
     Ok(Some(report))
 }
 
+fn install_settings_without_released_data(
+    settings_path: &Path,
+    input: SettingsInput,
+) -> Result<(), String> {
+    let previous = input.stored.clone();
+    let next = merge_settings(input, &Schema30Configuration::default())?;
+    if next != previous {
+        write_settings(settings_path, &next)?;
+    }
+    Ok(())
+}
+
 fn read_settings_input(path: &Path) -> Result<SettingsInput, String> {
-    let raw = match fs::read_to_string(path) {
-        Ok(raw) => raw,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => String::new(),
-        Err(error) => return Err(error.to_string()),
-    };
-    let stored = if raw.is_empty() {
-        StoredSettings::default()
-    } else {
-        read_settings(path)?
-    };
-    let released = if raw.is_empty() {
-        ReleasedSettingsProjection::default()
-    } else {
-        serde_json::from_str::<ReleasedSettingsProjection>(&raw)
-            .map_err(|error| error.to_string())?
-    };
-    let raw_value = (!raw.is_empty())
-        .then(|| serde_json::from_str::<serde_json::Value>(&raw).ok())
-        .flatten();
+    let startup = read_startup_settings(path)?;
+    let stored = startup.stored;
+    let raw_value = startup.raw;
+    let released = raw_value
+        .as_ref()
+        .and_then(|value| {
+            match serde_json::from_value::<ReleasedSettingsProjection>(value.clone()) {
+                Ok(released) => Some(released),
+                Err(error) => {
+                    warn!(%error, "ignored unreadable legacy source settings");
+                    None
+                }
+            }
+        })
+        .unwrap_or_default();
     let current_sources_are_authority = raw_value
         .as_ref()
         .and_then(|value| value.get("sources")?.get("configured")?.as_array())
@@ -331,21 +361,6 @@ fn valid_selection(
             .iter()
             .any(|source| &source.configuration.source_id == selected)
     })
-}
-
-fn require_released_main_or_nothing(path: &Path) -> Result<(), String> {
-    if path.exists() {
-        return Ok(());
-    }
-    let wal = sidecar(path, "-wal");
-    let shm = sidecar(path, "-shm");
-    if wal.exists() || shm.exists() {
-        return Err(format!(
-            "released Store main file is missing while SQLite sidecars remain at {}",
-            path.display()
-        ));
-    }
-    Ok(())
 }
 
 fn prepared_store_path(final_store: &Path) -> PathBuf {

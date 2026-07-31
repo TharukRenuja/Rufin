@@ -1,5 +1,4 @@
 use std::fs;
-use std::path::Path;
 
 use library::{Library, LibraryError, PlaybackLoad, ScrobbleService, SourceId};
 use rusqlite::Connection;
@@ -158,42 +157,52 @@ fn missing_source_table_repairs_without_touching_configuration_or_durable_rows()
 }
 
 #[test]
-fn unknown_and_unidentifiable_stores_are_preserved_and_refused() {
-    let directory = tempfile::tempdir().expect("temporary refusal directory");
+fn unsupported_and_unidentifiable_stores_are_preserved_and_rebuilt() {
+    let directory = tempfile::tempdir().expect("temporary recovery directory");
     let unknown_path = directory.path().join("unknown.sqlite");
     let unknown = Connection::open(&unknown_path).expect("create unknown Store");
     unknown
         .execute_batch(
-            "PRAGMA application_id = 1234;
-             PRAGMA user_version = 31;
+            "PRAGMA application_id = 0;
+             PRAGMA user_version = 13;
              CREATE TABLE unrelated(value TEXT);",
         )
         .expect("create unknown schema");
     drop(unknown);
     let unknown_before = fs::read(&unknown_path).expect("read unknown Store");
 
-    assert!(matches!(
-        Library::open_with_repair(&unknown_path),
-        Err(LibraryError::UnsupportedStore {
-            application_id: 1234,
-            user_version: 31
-        })
-    ));
+    let (unknown_library, unknown_repair) = Library::open_with_repair(&unknown_path)
+        .expect("replace unsupported Store with a current Store");
+    let unknown_repair = unknown_repair.expect("unsupported Store recovery report");
     assert_eq!(
-        fs::read(&unknown_path).expect("reread unknown Store"),
-        unknown_before
+        fs::read(&unknown_repair.preserved_store).expect("read preserved unsupported Store"),
+        unknown_before,
+        "unsupported Store contents remain available beside the replacement"
     );
-    assert_no_repair_siblings(directory.path(), &unknown_path);
+    assert!(
+        unknown_library
+            .load_source(&SourceId::new("local"))
+            .expect("read replacement Store")
+            .is_none()
+    );
 
     let malformed_path = directory.path().join("malformed.sqlite");
     let malformed = b"this is not a SQLite database";
     fs::write(&malformed_path, malformed).expect("write malformed Store");
-    assert!(Library::open_with_repair(&malformed_path).is_err());
+    let (malformed_library, malformed_repair) = Library::open_with_repair(&malformed_path)
+        .expect("replace malformed Store with a current Store");
+    let malformed_repair = malformed_repair.expect("malformed Store recovery report");
     assert_eq!(
-        fs::read(&malformed_path).expect("reread malformed Store"),
-        malformed
+        fs::read(&malformed_repair.preserved_store).expect("read preserved malformed Store"),
+        malformed,
+        "malformed Store contents remain available beside the replacement"
     );
-    assert_no_repair_siblings(directory.path(), &malformed_path);
+    assert!(
+        malformed_library
+            .load_source(&SourceId::new("local"))
+            .expect("read replacement Store")
+            .is_none()
+    );
 }
 
 fn insert_source_and_user_rows(connection: &Connection) {
@@ -269,26 +278,4 @@ fn row_count(connection: &Connection, table: &str) -> i64 {
             row.get(0)
         })
         .unwrap_or_else(|error| panic!("count {table}: {error}"))
-}
-
-fn assert_no_repair_siblings(directory: &Path, store_path: &Path) {
-    let prefix = format!(
-        "{}.",
-        store_path
-            .file_name()
-            .expect("Store file name")
-            .to_string_lossy()
-    );
-    let siblings = fs::read_dir(directory)
-        .expect("read Store directory")
-        .map(|entry| {
-            entry
-                .expect("Store directory entry")
-                .file_name()
-                .to_string_lossy()
-                .into_owned()
-        })
-        .filter(|name| name.starts_with(&prefix))
-        .collect::<Vec<_>>();
-    assert!(siblings.is_empty(), "unexpected repair files: {siblings:?}");
 }
