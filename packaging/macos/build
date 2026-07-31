@@ -25,7 +25,8 @@ fi
 
 required_commands=(
     brew cargo codesign ditto dylibbundler file gio-querymodules
-    glib-compile-schemas hdiutil iconutil msgfmt otool pkg-config rsvg-convert
+    glib-compile-schemas hdiutil iconutil install_name_tool msgfmt otool pkg-config
+    rsvg-convert
 )
 for command_name in "${required_commands[@]}"; do
     if ! command -v "$command_name" >/dev/null 2>&1; then
@@ -33,6 +34,16 @@ for command_name in "${required_commands[@]}"; do
         exit 1
     fi
 done
+
+mach_o_dependencies() {
+    otool -L "$1" \
+        | sed -n 's/^[[:space:]][[:space:]]*\([^[:space:]]*\).*/\1/p'
+}
+
+mach_o_install_name() {
+    otool -D "$1" 2>/dev/null \
+        | sed -n '2s/^[[:space:]]*//p'
+}
 
 brew_prefix="$(brew --prefix)"
 gstreamer_plugins="$(pkg-config --variable=pluginsdir gstreamer-1.0)"
@@ -72,8 +83,8 @@ if [[ -z "$framework_gstreamer_version" \
     exit 1
 fi
 wavpack_library_name="$(
-    otool -L "$wavpack_plugin" \
-        | sed -n '2,$s/^[[:space:]]*\([^[:space:]]*libwavpack[^[:space:]]*\.dylib\).*/\1/p' \
+    mach_o_dependencies "$wavpack_plugin" \
+        | sed -n '/libwavpack[^[:space:]]*\.dylib$/p' \
         | head -n 1
 )"
 wavpack_library="${gstreamer_framework}/lib/$(basename "$wavpack_library_name")"
@@ -252,12 +263,26 @@ for file_to_fix in "${files_to_fix[@]}"; do
 done
 dylibbundler "${dylib_args[@]}" -s "$dependency_sources"
 
+bundled_wavpack_library="$app_path/Contents/Frameworks/$(basename "$wavpack_library")"
+bundled_wavpack_plugin="$app_path/Contents/Resources/lib/gstreamer-1.0/libgstwavpack.dylib"
+bundled_wavpack_name="@executable_path/../Frameworks/$(basename "$wavpack_library")"
+cp -L "$wavpack_library" "$bundled_wavpack_library"
+install_name_tool -id "$bundled_wavpack_name" "$bundled_wavpack_library"
+install_name_tool -change \
+    "$wavpack_library_name" \
+    "$bundled_wavpack_name" \
+    "$bundled_wavpack_plugin"
+if ! mach_o_dependencies "$bundled_wavpack_plugin" \
+    | grep -Fx "$bundled_wavpack_name" >/dev/null; then
+    echo "The bundled GStreamer WavPack plugin does not use its bundled library." >&2
+    exit 1
+fi
+
 while IFS= read -r -d '' bundled_file; do
     if file "$bundled_file" | grep -q 'Mach-O'; then
         codesign --force --sign - "$bundled_file"
-        install_name="$(otool -D "$bundled_file" 2>/dev/null | sed -n '2p' || true)"
-        external_dependencies="$(otool -L "$bundled_file" \
-            | sed -n '2,$s/^[[:space:]]*\([^[:space:]]*\).*/\1/p' \
+        install_name="$(mach_o_install_name "$bundled_file" || true)"
+        external_dependencies="$(mach_o_dependencies "$bundled_file" \
             | grep -vFx "$install_name" \
             | grep '^/' \
             | grep -Ev '^(/usr/lib/|/System/Library/)' || true)"

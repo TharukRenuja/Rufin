@@ -55,7 +55,7 @@ jobs:
             build_required=false
             while IFS= read -r path; do
               case "$path" in
-                .github/workflows/windows.yml|Cargo.lock|Cargo.toml|crates/*|data/*|justfile|packaging/windows/*|scripts/create-media-verification-files)
+                .cargo/*|.github/workflows/windows.yml|Cargo.lock|Cargo.toml|crates/*|data/*|justfile|packaging/windows/*|scripts/create-media-verification-files)
                   build_required=true
                   break
                   ;;

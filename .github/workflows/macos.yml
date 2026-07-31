@@ -51,7 +51,7 @@ jobs:
             build_required=false
             while IFS= read -r path; do
               case "$path" in
-                .github/workflows/macos.yml|Cargo.lock|Cargo.toml|crates/*|data/*|justfile|packaging/macos/*|scripts/create-media-verification-files)
+                .cargo/*|.github/workflows/macos.yml|Cargo.lock|Cargo.toml|crates/*|data/*|justfile|packaging/macos/*|scripts/create-media-verification-files)
                   build_required=true
                   break
                   ;;

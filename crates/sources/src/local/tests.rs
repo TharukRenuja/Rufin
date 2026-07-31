@@ -241,14 +241,12 @@ fn metadata_availability_uses_accepted_paths_and_registered_lofty_writers() {
     assert!(!source.metadata_entry_available(&library::MetadataItem::Track(outside_track.clone())));
 
     let mut non_normal_track = outside_track.clone();
-    non_normal_track.make_mut().source_path = Some(
-        root_path
-            .join("nested")
-            .join("..")
-            .join("editable.wav")
-            .to_string_lossy()
-            .into_owned(),
-    );
+    let separator = std::path::MAIN_SEPARATOR;
+    let mut non_normal_path = root_path.as_os_str().to_os_string();
+    non_normal_path.push(format!(
+        "{separator}nested{separator}..{separator}editable.wav"
+    ));
+    non_normal_track.make_mut().source_path = Some(non_normal_path.to_string_lossy().into_owned());
     assert!(!source.metadata_entry_available(&library::MetadataItem::Track(non_normal_track)));
 
     #[cfg(unix)]

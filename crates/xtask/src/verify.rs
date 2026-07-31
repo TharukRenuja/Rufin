@@ -146,7 +146,7 @@ fn package_layout(args: Vec<String>) -> Result<()> {
         "share/licenses/rufin/japanese-readings.LICENSE",
     ))?;
 
-    let repo = repo_root()?;
+    let repo = workspace_source_root()?;
     let icon_root = repo.join("data/icons/hicolor");
     let mut icon_paths = Vec::new();
     collect_files_relative(&icon_root, &icon_root, &mut icon_paths)?;
@@ -206,6 +206,14 @@ fn po_files(dir: &Path) -> Result<Vec<PathBuf>> {
         .collect::<Vec<_>>();
     files.sort();
     Ok(files)
+}
+
+fn workspace_source_root() -> Result<PathBuf> {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(Path::parent)
+        .map(Path::to_path_buf)
+        .ok_or_else(|| "could not determine workspace source root".into())
 }
 
 fn release_tag(args: Vec<String>) -> Result<()> {
