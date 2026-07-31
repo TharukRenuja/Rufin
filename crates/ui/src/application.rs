@@ -148,8 +148,7 @@ mod tests {
 
     #[test]
     fn includes_flatpak_icon_search_path() {
-        let paths =
-            app_icon_search_paths_for(None, Some(PathBuf::from("/app/bin/rufin.bin")), None);
+        let paths = app_icon_search_paths_for(None, Some(PathBuf::from("/app/bin/rufin")), None);
 
         assert!(paths.contains(&PathBuf::from("/app/share/icons")));
     }

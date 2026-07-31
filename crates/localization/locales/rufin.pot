@@ -1574,9 +1574,6 @@ msgstr ""
 msgid "Show paused status"
 msgstr ""
 
-msgid "Show playback icon"
-msgstr ""
-
 msgid "Show sidebar"
 msgstr ""
 

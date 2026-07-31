@@ -158,6 +158,15 @@ Testing, Nix, and container controls are documented in
 
 # Troubleshooting
 
+> [!WARNING]
+> If you are using native Discord with Flatpak Rufin, you should add the `xdg-run/discord-ipc-0` filesystem override via Flatseal, or from the terminal:
+>
+> ```bash
+> flatpak override --user --filesystem=xdg-run/discord-ipc-0 io.github.screwys.Rufin
+> ```
+>
+> This override is only for this combination, else it works out of the box.
+
 Open **Troubleshooting** from the main menu, enable **Debug logging**, reproduce the problem, then click `Save`. Crash logs also appear here on
 the next launch. Logs have secrets and absolute folder paths redacted, but you may still want to review the logs before sharing them.
 

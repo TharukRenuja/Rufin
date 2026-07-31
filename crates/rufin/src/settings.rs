@@ -949,6 +949,10 @@ mod tests {
             "discord_client_id".to_string(),
             serde_json::Value::String(String::new()),
         );
+        object.insert(
+            "discord_show_state_icon".to_string(),
+            serde_json::Value::Bool(true),
+        );
         object.remove("discord_link_type");
 
         let mut restored = serde_json::from_value::<StoredSettings>(value)
@@ -967,6 +971,12 @@ mod tests {
         assert_eq!(
             restored.ui.rich_presence.link_type,
             desktop_integration::LinkType::MusicBrainz
+        );
+        assert!(
+            serde_json::to_value(restored)
+                .expect("serialize settings without removed Discord icon setting")
+                .get("discord_show_state_icon")
+                .is_none()
         );
     }
 

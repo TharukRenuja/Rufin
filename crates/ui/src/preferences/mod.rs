@@ -939,16 +939,6 @@ fn general_page(shell: &Rc<Shell>, dialog: &adw::Dialog) -> adw::PreferencesPage
     });
     discord_group.add(&listening_row);
 
-    let state_icon_row = adw::SwitchRow::builder()
-        .title(tr("Show playback icon"))
-        .active(settings.rich_presence.show_state_icon)
-        .build();
-    let state_icon_shell = Rc::clone(shell);
-    state_icon_row.connect_active_notify(move |row| {
-        state_icon_shell.set_discord_show_state_icon(row.is_active());
-    });
-    discord_group.add(&state_icon_row);
-
     page.add(&discord_group);
 
     let privacy_group = adw::PreferencesGroup::builder()

@@ -383,16 +383,6 @@ impl Shell {
         });
     }
 
-    pub(super) fn set_discord_show_state_icon(self: &Rc<Self>, enabled: bool) {
-        self.update_app_settings("Discord state icon setting", |settings| {
-            if settings.rich_presence.show_state_icon == enabled {
-                return false;
-            }
-            settings.rich_presence.show_state_icon = enabled;
-            true
-        });
-    }
-
     pub(super) fn update_scrobbling_settings(
         self: &Rc<Self>,
         warning_action: &'static str,
