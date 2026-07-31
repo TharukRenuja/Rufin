@@ -771,6 +771,7 @@ fn locale_dir_candidates() -> Vec<PathBuf> {
     {
         candidates.push(exe_dir.join("share/locale"));
         candidates.push(exe_dir.join("../share/locale"));
+        candidates.push(exe_dir.join("../Resources/share/locale"));
     }
     candidates.push(PathBuf::from("crates/localization/locales"));
     candidates

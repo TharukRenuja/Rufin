@@ -1,11 +1,11 @@
 use std::collections::HashMap;
 use std::fs;
-#[cfg(unix)]
+#[cfg(all(unix, not(any(target_os = "android", target_vendor = "apple"))))]
 use std::future::Future;
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
-#[cfg(unix)]
+#[cfg(all(unix, not(any(target_os = "android", target_vendor = "apple"))))]
 use std::time::Duration;
 
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
@@ -13,11 +13,11 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 const CONFIG_SECRET_FORMAT: &str = "config-base64";
-#[cfg(unix)]
+#[cfg(all(unix, not(any(target_os = "android", target_vendor = "apple"))))]
 const SECRET_SERVICE_TIMEOUT: Duration = Duration::from_secs(2);
-#[cfg(unix)]
+#[cfg(all(unix, not(any(target_os = "android", target_vendor = "apple"))))]
 static SECRET_SERVICE_KEYRING: Mutex<Option<Arc<oo7::Keyring>>> = Mutex::new(None);
-#[cfg(unix)]
+#[cfg(all(unix, not(any(target_os = "android", target_vendor = "apple"))))]
 static SECRET_SERVICE_KEYRING_INIT: Mutex<()> = Mutex::new(());
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize)]
@@ -33,12 +33,20 @@ impl Default for SecretStorageMode {
     }
 }
 
-#[cfg(unix)]
+#[cfg(any(
+    target_os = "macos",
+    target_os = "windows",
+    all(unix, not(any(target_os = "android", target_vendor = "apple")))
+))]
 fn default_secret_storage_mode() -> SecretStorageMode {
     SecretStorageMode::SystemKeyring
 }
 
-#[cfg(not(unix))]
+#[cfg(not(any(
+    target_os = "macos",
+    target_os = "windows",
+    all(unix, not(any(target_os = "android", target_vendor = "apple")))
+)))]
 fn default_secret_storage_mode() -> SecretStorageMode {
     SecretStorageMode::ConfigFile
 }
@@ -393,20 +401,47 @@ impl SecretStore for UnavailableSecretStore {
     }
 }
 
-#[cfg(unix)]
 #[derive(Clone, Debug)]
-pub struct SecretServiceStore {
+pub struct SystemKeyringStore {
+    backend: SystemKeyringBackend,
+}
+
+impl SystemKeyringStore {
+    pub fn new(scope_id: impl Into<String>) -> SecretResult<Self> {
+        Ok(Self {
+            backend: SystemKeyringBackend::new(scope_id.into())?,
+        })
+    }
+}
+
+impl SecretStore for SystemKeyringStore {
+    fn save_secret(&self, key: &SecretKey, secret: &str) -> SecretResult<()> {
+        self.backend.save_secret(key, secret)
+    }
+
+    fn load_secret(&self, key: &SecretKey) -> SecretResult<Option<String>> {
+        self.backend.load_secret(key)
+    }
+
+    fn delete_secret(&self, key: &SecretKey) -> SecretResult<()> {
+        self.backend.delete_secret(key)
+    }
+}
+
+#[cfg(all(unix, not(any(target_os = "android", target_vendor = "apple"))))]
+#[derive(Clone, Debug)]
+struct SystemKeyringBackend {
     application: String,
     scope_id: String,
 }
 
-#[cfg(unix)]
-impl SecretServiceStore {
-    pub fn new(scope_id: impl Into<String>) -> Self {
-        Self {
+#[cfg(all(unix, not(any(target_os = "android", target_vendor = "apple"))))]
+impl SystemKeyringBackend {
+    fn new(scope_id: String) -> SecretResult<Self> {
+        Ok(Self {
             application: "Rufin".to_string(),
-            scope_id: scope_id.into(),
-        }
+            scope_id,
+        })
     }
 
     fn secret_attributes(&self, key: &SecretKey) -> Vec<(String, String)> {
@@ -501,7 +536,7 @@ impl SecretServiceStore {
     }
 }
 
-#[cfg(unix)]
+#[cfg(all(unix, not(any(target_os = "android", target_vendor = "apple"))))]
 async fn load_item_secret(
     keyring: &oo7::Keyring,
     attributes: &Vec<(String, String)>,
@@ -515,8 +550,8 @@ async fn load_item_secret(
     Ok(Some(item.secret().await?))
 }
 
-#[cfg(unix)]
-impl SecretStore for SecretServiceStore {
+#[cfg(all(unix, not(any(target_os = "android", target_vendor = "apple"))))]
+impl SecretStore for SystemKeyringBackend {
     fn save_secret(&self, key: &SecretKey, secret: &str) -> SecretResult<()> {
         let attributes = self.secret_attributes(key);
         let label = self.secret_label(key);
@@ -562,10 +597,133 @@ impl SecretStore for SecretServiceStore {
     }
 }
 
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+#[derive(Clone, Debug)]
+struct SystemKeyringBackend {
+    scope_id: String,
+    store: Arc<keyring_core::CredentialStore>,
+    operation_lock: Arc<Mutex<()>>,
+}
+
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+impl SystemKeyringBackend {
+    fn new(scope_id: String) -> SecretResult<Self> {
+        Ok(Self {
+            scope_id,
+            store: native_credential_store().map_err(native_credential_error)?,
+            operation_lock: Arc::new(Mutex::new(())),
+        })
+    }
+
+    fn entry(&self, key: &SecretKey) -> SecretResult<keyring_core::Entry> {
+        let user = key.scoped_config_key(&self.scope_id);
+        self.store
+            .build("io.github.screwys.Rufin", &user, None)
+            .map_err(native_credential_error)
+    }
+}
+
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+impl SecretStore for SystemKeyringBackend {
+    fn save_secret(&self, key: &SecretKey, secret: &str) -> SecretResult<()> {
+        let _guard = self
+            .operation_lock
+            .lock()
+            .map_err(|_| SecretError::Locked)?;
+        self.entry(key)?
+            .set_password(secret)
+            .map_err(native_credential_error)
+    }
+
+    fn load_secret(&self, key: &SecretKey) -> SecretResult<Option<String>> {
+        let _guard = self
+            .operation_lock
+            .lock()
+            .map_err(|_| SecretError::Locked)?;
+        match self.entry(key)?.get_password() {
+            Ok(secret) => Ok(Some(secret)),
+            Err(keyring_core::Error::NoEntry) => Ok(None),
+            Err(error) => Err(native_credential_error(error)),
+        }
+    }
+
+    fn delete_secret(&self, key: &SecretKey) -> SecretResult<()> {
+        let _guard = self
+            .operation_lock
+            .lock()
+            .map_err(|_| SecretError::Locked)?;
+        match self.entry(key)?.delete_credential() {
+            Ok(()) | Err(keyring_core::Error::NoEntry) => Ok(()),
+            Err(error) => Err(native_credential_error(error)),
+        }
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn native_credential_store() -> keyring_core::Result<Arc<keyring_core::CredentialStore>> {
+    Ok(windows_native_keyring_store::Store::new()?)
+}
+
+#[cfg(target_os = "macos")]
+fn native_credential_store() -> keyring_core::Result<Arc<keyring_core::CredentialStore>> {
+    Ok(apple_native_keyring_store::keychain::Store::new()?)
+}
+
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+fn native_credential_error(error: keyring_core::Error) -> SecretError {
+    SecretError::Backend(error.to_string())
+}
+
+#[cfg(not(any(
+    target_os = "macos",
+    target_os = "windows",
+    all(unix, not(any(target_os = "android", target_vendor = "apple")))
+)))]
+#[derive(Clone, Debug)]
+struct SystemKeyringBackend;
+
+#[cfg(not(any(
+    target_os = "macos",
+    target_os = "windows",
+    all(unix, not(any(target_os = "android", target_vendor = "apple")))
+)))]
+impl SystemKeyringBackend {
+    fn new(_scope_id: String) -> SecretResult<Self> {
+        Err(SecretError::Backend(
+            "system keyring is unavailable on this platform".to_string(),
+        ))
+    }
+}
+
+#[cfg(not(any(
+    target_os = "macos",
+    target_os = "windows",
+    all(unix, not(any(target_os = "android", target_vendor = "apple")))
+)))]
+impl SecretStore for SystemKeyringBackend {
+    fn save_secret(&self, _key: &SecretKey, _secret: &str) -> SecretResult<()> {
+        Err(SecretError::Backend(
+            "system keyring is unavailable on this platform".to_string(),
+        ))
+    }
+
+    fn load_secret(&self, _key: &SecretKey) -> SecretResult<Option<String>> {
+        Err(SecretError::Backend(
+            "system keyring is unavailable on this platform".to_string(),
+        ))
+    }
+
+    fn delete_secret(&self, _key: &SecretKey) -> SecretResult<()> {
+        Err(SecretError::Backend(
+            "system keyring is unavailable on this platform".to_string(),
+        ))
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    #[cfg(unix)]
-    use super::SecretServiceStore;
+    #[cfg(all(unix, not(any(target_os = "android", target_vendor = "apple"))))]
+    use super::SystemKeyringStore;
     use super::{
         CachedSecretStore, ConfigSecretStore, MemorySecretStore, SecretError, SecretKey,
         SecretResult, SecretStorageMode, SecretStore, SwitchableSecretStore,
@@ -608,12 +766,20 @@ mod tests {
                 .expect("deserialize system-keyring mode"),
             SecretStorageMode::SystemKeyring
         );
-        #[cfg(unix)]
+        #[cfg(any(
+            target_os = "macos",
+            target_os = "windows",
+            all(unix, not(any(target_os = "android", target_vendor = "apple")))
+        ))]
         assert_eq!(
             SecretStorageMode::default(),
             SecretStorageMode::SystemKeyring
         );
-        #[cfg(not(unix))]
+        #[cfg(not(any(
+            target_os = "macos",
+            target_os = "windows",
+            all(unix, not(any(target_os = "android", target_vendor = "apple")))
+        )))]
         assert_eq!(SecretStorageMode::default(), SecretStorageMode::ConfigFile);
     }
 
@@ -749,14 +915,14 @@ mod tests {
         assert!(stored.contains_key("scope:scope-1:example:session"));
     }
 
-    #[cfg(unix)]
+    #[cfg(all(unix, not(any(target_os = "android", target_vendor = "apple"))))]
     #[test]
     fn secret_service_namespaced_attributes_preserve_shape() {
-        let store = SecretServiceStore::new("scope-1");
+        let store = SystemKeyringStore::new("scope-1").expect("system keyring store");
         let key = example_session_key();
 
         assert_eq!(
-            store.secret_attributes(&key),
+            store.backend.secret_attributes(&key),
             vec![
                 ("application".to_string(), "Rufin".to_string()),
                 ("scope".to_string(), "scope-1".to_string()),
@@ -764,18 +930,18 @@ mod tests {
                 ("kind".to_string(), "session".to_string()),
             ]
         );
-        assert_eq!(store.legacy_secret_attributes(&key), None);
-        assert_eq!(store.secret_label(&key), "Rufin example session");
+        assert_eq!(store.backend.legacy_secret_attributes(&key), None);
+        assert_eq!(store.backend.secret_label(&key), "Rufin example session");
     }
 
-    #[cfg(unix)]
+    #[cfg(all(unix, not(any(target_os = "android", target_vendor = "apple"))))]
     #[test]
     fn provider_attributes_preserve_current_and_legacy_lookup() {
-        let store = SecretServiceStore::new("scope-1");
+        let store = SystemKeyringStore::new("scope-1").expect("system keyring store");
         let key = SecretKey::provider_token(SOURCE);
 
         assert_eq!(
-            store.secret_attributes(&key),
+            store.backend.secret_attributes(&key),
             vec![
                 ("application".to_string(), "Rufin".to_string()),
                 ("scope".to_string(), "scope-1".to_string()),
@@ -785,7 +951,7 @@ mod tests {
             ]
         );
         assert_eq!(
-            store.legacy_secret_attributes(&key),
+            store.backend.legacy_secret_attributes(&key),
             Some(vec![
                 ("application".to_string(), "Rufin".to_string()),
                 ("scope".to_string(), "scope-1".to_string()),
@@ -794,7 +960,10 @@ mod tests {
                 ("server_id".to_string(), SOURCE.to_string()),
             ])
         );
-        assert_eq!(store.secret_label(&key), "Rufin provider token source-1");
+        assert_eq!(
+            store.backend.secret_label(&key),
+            "Rufin provider token source-1"
+        );
     }
 
     #[derive(Default)]

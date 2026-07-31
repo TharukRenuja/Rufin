@@ -1,6 +1,9 @@
 name: Windows
 
 on:
+  release:
+    types:
+      - published
   workflow_dispatch:
     inputs:
       ref:
@@ -16,7 +19,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: windows-${{ github.ref }}
+  group: windows-${{ github.event_name == 'release' && github.event.release.tag_name || inputs.upload_release_tag || github.ref }}
   cancel-in-progress: true
 
 env:
@@ -30,11 +33,11 @@ jobs:
 
     steps:
       - name: Validate release target
-        if: inputs.upload_release_tag != ''
+        if: github.event_name == 'release' || inputs.upload_release_tag != ''
         shell: bash
         env:
           BUILD_REF: ${{ inputs.ref }}
-          RELEASE_TAG: ${{ inputs.upload_release_tag }}
+          RELEASE_TAG: ${{ github.event_name == 'release' && github.event.release.tag_name || inputs.upload_release_tag }}
         run: |
           set -euo pipefail
           release_tag="$RELEASE_TAG"
@@ -54,7 +57,7 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          ref: ${{ inputs.ref }}
+          ref: ${{ github.event_name == 'release' && github.event.release.tag_name || inputs.ref }}
           fetch-depth: 0
           persist-credentials: false
 
@@ -90,17 +93,17 @@ jobs:
             mingw-w64-ucrt-x86_64-toolchain
 
       - name: Verify signed release tag
-        if: inputs.upload_release_tag != ''
+        if: github.event_name == 'release' || inputs.upload_release_tag != ''
         shell: msys2 {0}
         env:
-          RELEASE_TAG: ${{ inputs.upload_release_tag }}
+          RELEASE_TAG: ${{ github.event_name == 'release' && github.event.release.tag_name || inputs.upload_release_tag }}
         run: cargo run --locked -p xtask -- verify release-tag "$RELEASE_TAG"
 
       - name: Validate release metadata
-        if: inputs.upload_release_tag != ''
+        if: github.event_name == 'release' || inputs.upload_release_tag != ''
         shell: msys2 {0}
         env:
-          RELEASE_TAG: ${{ inputs.upload_release_tag }}
+          RELEASE_TAG: ${{ github.event_name == 'release' && github.event.release.tag_name || inputs.upload_release_tag }}
         run: |
           set -euo pipefail
           version="${RELEASE_TAG#v}"
@@ -113,42 +116,31 @@ jobs:
           test "$version" = "$cargo_version"
           test "$version" = "$metainfo_version"
 
-      - name: Build Rufin
+      - name: Test platform integrations
         shell: msys2 {0}
         run: |
           set -euo pipefail
-          cargo build --release --locked -p rufin
-          target/release/rufin.exe --help >/dev/null
+          cargo test --locked -p secrets
+          cargo test --locked -p desktop-integration
+          cargo test --locked -p sources metadata_
+          cargo test --locked -p rufin settings_
 
-      - name: Stage Windows runtime
+      - name: Install NSIS
         shell: pwsh
-        env:
-          MSYS2_LOCATION: ${{ steps.msys2.outputs.msys2-location }}
         run: |
-          $msysPrefix = Join-Path $env:MSYS2_LOCATION "ucrt64"
-          ./packaging/windows/package.ps1 -MsysPrefix $msysPrefix
+          choco install nsis --no-progress -y
+          $makensis = (Get-Command makensis.exe).Source
+          "RUFIN_MAKENSIS=$makensis" | Out-File -FilePath $env:GITHUB_ENV -Append
 
-      - name: Verify staged package layout
+      - name: Build Windows installer
         shell: msys2 {0}
-        run: cargo run --locked -p xtask -- verify package-layout dist/windows/Rufin /
+        run: |
+          set -euo pipefail
+          RUFIN_ARTIFACT_ROOT="$PWD/dist" scripts/build-windows
 
       - name: Create media verification files
         shell: msys2 {0}
         run: bash scripts/create-media-verification-files "$RUNNER_TEMP/rufin-package-media"
-
-      - name: Install Inno Setup
-        shell: pwsh
-        run: choco install innosetup --no-progress -y
-
-      - name: Build setup.exe
-        shell: pwsh
-        run: |
-          $version = (Select-String -Path Cargo.toml -Pattern '^version = "([^"]+)"').Matches[0].Groups[1].Value
-          $stage = Join-Path $PWD "dist/windows/Rufin"
-          $output = Join-Path $PWD "dist"
-          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
-          & $iscc "/DRUFIN_STAGE_DIR=$stage" "/DRUFIN_OUTPUT_DIR=$output" "/DRUFIN_VERSION=$version" packaging/windows/rufin.iss
-          Get-ChildItem dist -Filter "Rufin-*-setup.exe"
 
       - name: Verify installer
         shell: pwsh
@@ -158,19 +150,9 @@ jobs:
             throw "Windows installer was not produced"
           }
           $installDir = Join-Path $env:RUNNER_TEMP "Rufin"
-          $installLog = Join-Path $env:RUNNER_TEMP "rufin-install.log"
-          $installerArgs = @(
-            "/VERYSILENT",
-            "/SUPPRESSMSGBOXES",
-            "/NORESTART",
-            "/DIR=`"$installDir`"",
-            "/LOG=`"$installLog`""
-          )
+          $installerArgs = @("/S", "/D=$installDir")
           $process = Start-Process -FilePath $installer.FullName -ArgumentList $installerArgs -Wait -PassThru
           if ($process.ExitCode -ne 0) {
-            if (Test-Path $installLog) {
-              Get-Content $installLog
-            }
             throw "Windows installer exited with code $($process.ExitCode)"
           }
 
@@ -180,9 +162,6 @@ jobs:
             Start-Sleep -Milliseconds 250
           }
           if (-not (Test-Path $installedExe)) {
-            if (Test-Path $installLog) {
-              Get-Content $installLog
-            }
             throw "Installed Rufin executable was not found: $installedExe"
           }
           $installedDlls = @(Get-ChildItem -LiteralPath $installDir -Filter "*.dll" -File)
@@ -237,7 +216,7 @@ jobs:
 
   release:
     name: Upload Windows release asset
-    if: inputs.upload_release_tag != ''
+    if: github.event_name == 'release' || inputs.upload_release_tag != ''
     needs: setup
     runs-on: ubuntu-latest
     permissions:
@@ -268,7 +247,7 @@ jobs:
       - name: Upload release asset
         env:
           GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: ${{ inputs.upload_release_tag }}
+          RELEASE_TAG: ${{ github.event_name == 'release' && github.event.release.tag_name || inputs.upload_release_tag }}
         run: |
           set -euo pipefail
           installer="$(find dist -maxdepth 1 -name 'Rufin-*-setup.exe' -print -quit)"

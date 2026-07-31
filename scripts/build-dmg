@@ -1,0 +1,187 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+artifact_root="${RUFIN_ARTIFACT_ROOT:-${repo_root}/.local/artifacts}"
+work_root="${RUFIN_DMG_WORK_ROOT:-${artifact_root}/macos}"
+target_dir="${RUFIN_DMG_TARGET_DIR:-${work_root}/target}"
+app_path="${work_root}/Rufin.app"
+dmg_root="${work_root}/dmg"
+dmg_path="${RUFIN_DMG_ARTIFACT:-${artifact_root}/Rufin.dmg}"
+
+case "$work_root" in
+    "$repo_root"/*/macos)
+        ;;
+    *)
+        echo "Refusing unsafe macOS packaging directory: ${work_root:-empty}" >&2
+        exit 1
+        ;;
+esac
+
+if [[ "$(uname -s)" != "Darwin" ]]; then
+    echo "just build dmg must run on macOS." >&2
+    exit 1
+fi
+
+required_commands=(
+    brew cargo codesign ditto dylibbundler file gio-querymodules
+    glib-compile-schemas hdiutil iconutil msgfmt otool pkg-config rsvg-convert
+)
+for command_name in "${required_commands[@]}"; do
+    if ! command -v "$command_name" >/dev/null 2>&1; then
+        echo "Required macOS packaging command is unavailable: ${command_name}" >&2
+        exit 1
+    fi
+done
+
+brew_prefix="$(brew --prefix)"
+gstreamer_plugins="$(pkg-config --variable=pluginsdir gstreamer-1.0)"
+pixbuf_loaders="$(pkg-config --variable=gdk_pixbuf_moduledir gdk-pixbuf-2.0)"
+plugin_scanner_dir="$(pkg-config --variable=pluginscannerdir gstreamer-1.0)"
+plugin_scanner="${plugin_scanner_dir}/gst-plugin-scanner"
+
+if [[ -z "$gstreamer_plugins" || ! -d "$gstreamer_plugins" ]]; then
+    echo "The Homebrew GStreamer plugin directory is unavailable: ${gstreamer_plugins:-not set}" >&2
+    exit 1
+fi
+if [[ -z "$pixbuf_loaders" || ! -d "$pixbuf_loaders" ]]; then
+    echo "The Homebrew pixbuf loader directory is unavailable: ${pixbuf_loaders:-not set}" >&2
+    exit 1
+fi
+if [[ -z "$plugin_scanner_dir" || ! -f "$plugin_scanner" ]]; then
+    echo "The Homebrew GStreamer plugin scanner is unavailable: ${plugin_scanner}" >&2
+    exit 1
+fi
+
+version="$(sed -n 's/^version = "\([^"]*\)"/\1/p' "${repo_root}/Cargo.toml" | head -n 1)"
+if [[ -z "$version" ]]; then
+    echo "Could not read the Rufin version from Cargo.toml." >&2
+    exit 1
+fi
+
+rm -rf "$app_path" "$dmg_root"
+mkdir -p \
+    "$app_path/Contents/Frameworks" \
+    "$app_path/Contents/MacOS" \
+    "$app_path/Contents/Resources/lib/gdk-pixbuf-2.0/loaders" \
+    "$app_path/Contents/Resources/lib/gio/modules" \
+    "$app_path/Contents/Resources/lib/gstreamer-1.0" \
+    "$app_path/Contents/Resources/share"
+
+CARGO_TARGET_DIR="$target_dir" cargo build --locked --release -p rufin
+cp "$target_dir/release/rufin" "$app_path/Contents/MacOS/rufin-bin"
+cp "${repo_root}/packaging/macos/rufin" "$app_path/Contents/MacOS/rufin"
+cp "$plugin_scanner" "$app_path/Contents/MacOS/gst-plugin-scanner"
+cp "$(brew --prefix gdk-pixbuf)/bin/gdk-pixbuf-query-loaders" \
+    "$app_path/Contents/MacOS/gdk-pixbuf-query-loaders"
+chmod +x "$app_path/Contents/MacOS/"*
+sed "s/@VERSION@/${version}/g" "${repo_root}/packaging/macos/Info.plist.in" \
+    >"$app_path/Contents/Info.plist"
+
+copy_directory() {
+    local source_path="$1"
+    local destination_path="$2"
+    if [[ -d "$source_path" ]]; then
+        mkdir -p "$destination_path"
+        cp -R -L "$source_path"/. "$destination_path"/
+    fi
+}
+
+copy_directory "$gstreamer_plugins" \
+    "$app_path/Contents/Resources/lib/gstreamer-1.0"
+copy_directory "$pixbuf_loaders" \
+    "$app_path/Contents/Resources/lib/gdk-pixbuf-2.0/loaders"
+copy_directory "${brew_prefix}/lib/gio/modules" \
+    "$app_path/Contents/Resources/lib/gio/modules"
+copy_directory "${brew_prefix}/share/glib-2.0/schemas" \
+    "$app_path/Contents/Resources/share/glib-2.0/schemas"
+copy_directory "${brew_prefix}/share/gstreamer-1.0" \
+    "$app_path/Contents/Resources/share/gstreamer-1.0"
+copy_directory "${brew_prefix}/share/gtk-4.0" \
+    "$app_path/Contents/Resources/share/gtk-4.0"
+copy_directory "${brew_prefix}/share/icons/Adwaita" \
+    "$app_path/Contents/Resources/share/icons/Adwaita"
+copy_directory "${brew_prefix}/share/icons/AdwaitaLegacy" \
+    "$app_path/Contents/Resources/share/icons/AdwaitaLegacy"
+copy_directory "${brew_prefix}/share/icons/hicolor" \
+    "$app_path/Contents/Resources/share/icons/hicolor"
+copy_directory "${repo_root}/data/icons/hicolor" \
+    "$app_path/Contents/Resources/share/icons/hicolor"
+copy_directory "${brew_prefix}/share/locale" \
+    "$app_path/Contents/Resources/share/locale"
+copy_directory "${brew_prefix}/share/mime" \
+    "$app_path/Contents/Resources/share/mime"
+
+mkdir -p \
+    "$app_path/Contents/Resources/share/rufin" \
+    "$app_path/Contents/Resources/share/licenses/rufin"
+cp "${repo_root}/data/japanese-readings.dic" \
+    "$app_path/Contents/Resources/share/rufin/japanese-readings.dic"
+cp "${repo_root}/data/japanese-readings.LICENSE" \
+    "$app_path/Contents/Resources/share/licenses/rufin/japanese-readings.LICENSE"
+cp "${repo_root}/LICENSE" "$app_path/Contents/Resources/LICENSE"
+
+for po_file in "${repo_root}"/crates/localization/locales/*.po; do
+    language="$(basename "$po_file" .po)"
+    locale_dir="$app_path/Contents/Resources/share/locale/${language}/LC_MESSAGES"
+    mkdir -p "$locale_dir"
+    msgfmt --check "$po_file" -o "$locale_dir/rufin.mo"
+done
+
+glib-compile-schemas "$app_path/Contents/Resources/share/glib-2.0/schemas"
+gio-querymodules "$app_path/Contents/Resources/lib/gio/modules"
+
+iconset="$work_root/Rufin.iconset"
+rm -rf "$iconset"
+mkdir -p "$iconset"
+icon_source="${repo_root}/data/icons/hicolor/scalable/apps/io.github.screwys.Rufin.svg"
+for icon_size in 16 32 128 256 512; do
+    rsvg-convert -w "$icon_size" -h "$icon_size" "$icon_source" \
+        >"$iconset/icon_${icon_size}x${icon_size}.png"
+    doubled_size=$((icon_size * 2))
+    rsvg-convert -w "$doubled_size" -h "$doubled_size" "$icon_source" \
+        >"$iconset/icon_${icon_size}x${icon_size}@2x.png"
+done
+iconutil -c icns "$iconset" -o "$app_path/Contents/Resources/Rufin.icns"
+
+files_to_fix=(
+    "$app_path/Contents/MacOS/rufin-bin"
+    "$app_path/Contents/MacOS/gdk-pixbuf-query-loaders"
+    "$app_path/Contents/MacOS/gst-plugin-scanner"
+)
+while IFS= read -r -d '' module_path; do
+    files_to_fix+=("$module_path")
+done < <(
+    find \
+        "$app_path/Contents/Resources/lib/gdk-pixbuf-2.0/loaders" \
+        "$app_path/Contents/Resources/lib/gio/modules" \
+        "$app_path/Contents/Resources/lib/gstreamer-1.0" \
+        -type f \( -name '*.dylib' -o -name '*.so' \) -print0
+)
+
+dylib_args=(-od -b -d "$app_path/Contents/Frameworks" -p '@executable_path/../Frameworks/')
+for file_to_fix in "${files_to_fix[@]}"; do
+    dylib_args+=(-x "$file_to_fix")
+done
+dylibbundler "${dylib_args[@]}" -s "${brew_prefix}/lib"
+
+while IFS= read -r -d '' bundled_file; do
+    if file "$bundled_file" | grep -q 'Mach-O'; then
+        codesign --force --sign - "$bundled_file"
+        if otool -L "$bundled_file" | grep -E "${brew_prefix}|/Cellar/"; then
+            echo "Homebrew library path remains in ${bundled_file}." >&2
+            exit 1
+        fi
+    fi
+done < <(find "$app_path/Contents" -type f -print0)
+codesign --force --sign - --identifier io.github.screwys.Rufin "$app_path"
+codesign --verify --deep --strict "$app_path"
+
+mkdir -p "$dmg_root"
+ditto "$app_path" "$dmg_root/Rufin.app"
+ln -s /Applications "$dmg_root/Applications"
+mkdir -p "$(dirname "$dmg_path")"
+hdiutil create -volname Rufin -srcfolder "$dmg_root" -ov -format UDZO "$dmg_path"
+hdiutil verify "$dmg_path"
+
+echo "Built ${dmg_path}"

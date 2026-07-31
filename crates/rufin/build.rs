@@ -114,6 +114,11 @@ fn compile_with_windres(
     compiled_resource_path: &Path,
 ) -> BuildResult<()> {
     let mut last_error = None;
+    let mut compilers = Vec::new();
+    if let Some(compiler) = env::var_os("WINDRES") {
+        compilers.push(PathBuf::from(compiler));
+    }
+    compilers.extend(["windres", "llvm-windres"].map(PathBuf::from));
     let resource_dir = resource_script_path
         .parent()
         .ok_or_else(|| io::Error::other("Windows resource script has no parent directory"))?;
@@ -123,8 +128,8 @@ fn compile_with_windres(
     let compiled_resource_file = compiled_resource_path
         .file_name()
         .ok_or_else(|| io::Error::other("compiled Windows resource has no file name"))?;
-    for compiler in ["windres", "llvm-windres"] {
-        let result = Command::new(compiler)
+    for compiler in compilers {
+        let result = Command::new(&compiler)
             .current_dir(resource_dir)
             .arg("-i")
             .arg(resource_file)
@@ -136,13 +141,19 @@ fn compile_with_windres(
         match result {
             Ok(status) if status.success() => return Ok(()),
             Ok(status) => {
-                return Err(
-                    io::Error::other(format!("{compiler} failed with status {status}")).into(),
-                );
+                return Err(io::Error::other(format!(
+                    "{} failed with status {status}",
+                    compiler.display()
+                ))
+                .into());
             }
             Err(error) if error.kind() == io::ErrorKind::NotFound => last_error = Some(error),
             Err(error) => {
-                return Err(io::Error::other(format!("failed to run {compiler}: {error}")).into());
+                return Err(io::Error::other(format!(
+                    "failed to run {}: {error}",
+                    compiler.display()
+                ))
+                .into());
             }
         }
     }

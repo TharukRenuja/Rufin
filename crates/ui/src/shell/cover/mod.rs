@@ -383,8 +383,7 @@ impl Shell {
             if ready && refresh_desktop_on_ready {
                 let player = shell.playback.player.borrow().clone();
                 shell.refresh_now_playing_notification(player.as_ref());
-                #[cfg(unix)]
-                shell.update_mpris_player();
+                shell.update_media_controls();
             }
             drop(startup_prime);
         });

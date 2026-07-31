@@ -174,8 +174,7 @@ fn release_selected_source(shell: &Rc<Shell>) {
     shell.clear_fullscreen_player_cover();
     shell.close_fullscreen_player();
     shell.withdraw_now_playing_notification();
-    #[cfg(unix)]
-    shell.update_mpris_player();
+    shell.update_media_controls();
 }
 
 #[derive(Clone)]
@@ -620,8 +619,8 @@ fn finish_playback_projection(
     let static_playback_changed = matches!(fullscreen_refresh, FullscreenPlaybackRefresh::Static);
     let position_only =
         bottom_player_can_update_position_only(previous_player.as_ref(), &next_player);
-    #[cfg(unix)]
-    let mpris_static_changed = mpris_static_state_changed(previous_player.as_ref(), &next_player);
+    let media_controls_static_changed =
+        media_controls_static_state_changed(previous_player.as_ref(), &next_player);
     let queue_panel_changed = queue_panel_refresh_needed(
         queue_page_changed,
         previous_player
@@ -661,8 +660,7 @@ fn finish_playback_projection(
         shell.update_bottom_player_transport();
     }
 
-    #[cfg(unix)]
-    let mut mpris_discontinuity = None;
+    let mut media_controls_discontinuity = None;
     let mut notification_started_run = None;
     for notice in notices {
         match notice {
@@ -670,14 +668,7 @@ fn finish_playback_projection(
                 shell.apply_fullscreen_visualizer_levels(levels);
             }
             playback::PlaybackNotice::PositionDiscontinuity(discontinuity) => {
-                #[cfg(unix)]
-                {
-                    mpris_discontinuity = Some(discontinuity);
-                }
-                #[cfg(not(unix))]
-                {
-                    let _ = discontinuity;
-                }
+                media_controls_discontinuity = Some(discontinuity);
             }
             playback::PlaybackNotice::RunStarted(run) => {
                 notification_started_run = Some(run);
@@ -723,17 +714,16 @@ fn finish_playback_projection(
     if let Some(error) = playback_error {
         shell.show_notice_toast(error);
     }
-    #[cfg(unix)]
-    if mpris_static_changed {
-        shell.update_mpris_player_after(mpris_discontinuity);
+    if media_controls_static_changed {
+        shell.update_media_controls_after(media_controls_discontinuity);
     } else {
-        shell.update_mpris_position_after(
+        shell.update_media_controls_position_after(
             next_player
                 .transport
                 .current
                 .as_ref()
                 .map(|_| next_player.transport.position_millis),
-            mpris_discontinuity,
+            media_controls_discontinuity,
         );
     }
     if queue_panel_changed {
@@ -764,14 +754,14 @@ fn bottom_player_can_update_position_only(
     })
 }
 
-#[cfg(unix)]
-fn mpris_static_state_changed(
+fn media_controls_static_state_changed(
     previous: Option<&playback::PlaybackView>,
     next: &playback::PlaybackView,
 ) -> bool {
     previous.is_none_or(|previous| {
         previous.transport.current != next.transport.current
             || previous.transport.effective_state() != next.transport.effective_state()
+            || previous.transport.duration_millis != next.transport.duration_millis
             || previous.controls.repeat_mode != next.controls.repeat_mode
             || previous.controls.shuffle_enabled != next.controls.shuffle_enabled
             || previous.controls.auto_dj_enabled != next.controls.auto_dj_enabled
@@ -836,11 +826,9 @@ mod tests {
         ControlsView, PlaybackView, QueueSummaryView, RepeatMode, TransportStatus, TransportView,
     };
 
-    #[cfg(unix)]
-    use super::mpris_static_state_changed;
     use super::{
-        bottom_player_can_update_position_only, new_playback_error, queue_panel_refresh_needed,
-        source_add_completed,
+        bottom_player_can_update_position_only, media_controls_static_state_changed,
+        new_playback_error, queue_panel_refresh_needed, source_add_completed,
     };
     use crate::runtime::source::{SourceOperation, SourceProgress, SourceProgressStage};
 
@@ -919,8 +907,7 @@ mod tests {
             Some(&previous),
             &tick
         ));
-        #[cfg(unix)]
-        assert!(!mpris_static_state_changed(Some(&previous), &tick));
+        assert!(!media_controls_static_state_changed(Some(&previous), &tick));
 
         let mut state_change = tick.clone();
         state_change.transport.state = TransportStatus::Playing;
@@ -929,8 +916,17 @@ mod tests {
             Some(&tick),
             &state_change
         ));
-        #[cfg(unix)]
-        assert!(mpris_static_state_changed(Some(&tick), &state_change));
+        assert!(media_controls_static_state_changed(
+            Some(&tick),
+            &state_change
+        ));
+
+        let mut duration_change = tick.clone();
+        duration_change.transport.duration_millis = 2_000;
+        assert!(media_controls_static_state_changed(
+            Some(&tick),
+            &duration_change
+        ));
 
         let mut queue_change = tick.clone();
         queue_change.queue.next_occurrence = Some(playback::OccurrenceId::new("next"));
@@ -938,8 +934,10 @@ mod tests {
             Some(&tick),
             &queue_change
         ));
-        #[cfg(unix)]
-        assert!(mpris_static_state_changed(Some(&tick), &queue_change));
+        assert!(media_controls_static_state_changed(
+            Some(&tick),
+            &queue_change
+        ));
     }
 
     fn idle_playback_view() -> PlaybackView {

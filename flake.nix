@@ -159,13 +159,20 @@
                 cargo-deny
                 cargo-nextest
                 clippy
+                debugedit
                 desktop-file-utils
+                fakeroot
+                file
                 gettext
+                git
                 just
                 jq
+                libarchive
+                pacman
                 pkg-config
                 rustc
                 rustfmt
+                zstd
               ]
               # Generated Linux development dependencies start.
               ++ (with pkgs; [

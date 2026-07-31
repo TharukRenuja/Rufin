@@ -42,7 +42,8 @@ if [[ ! "${fedora_version}" =~ ^[0-9]+$ ]]; then
     exit 1
 fi
 
-artifact_dir="${repo_root}/.local/release-artifacts/${tag}/rpm/${rpm_arch}"
+artifact_root="${repo_root}/.local/artifacts"
+artifact_dir="${artifact_root}/rpm/${tag}/${rpm_arch}"
 image="registry.fedoraproject.org/fedora-minimal:${fedora_version}"
 
 rm -rf "${artifact_dir}"
@@ -63,4 +64,10 @@ podman run --rm \
         cp /root/rpmbuild/RPMS/*/rufin-*.rpm /work/
     '
 
-echo "Created ${rpm_arch} RPMs in ${artifact_dir}"
+mapfile -t rpms < <(find "${artifact_dir}" -maxdepth 1 -type f -name 'rufin-*.rpm' -print)
+if [[ ${#rpms[@]} -eq 0 ]]; then
+    echo "The RPM build did not produce an artifact." >&2
+    exit 1
+fi
+cp "${rpms[@]}" "${artifact_root}/"
+echo "Created ${rpm_arch} RPMs in ${artifact_root}"

@@ -127,6 +127,7 @@ fn app_icon_search_paths_for(
     {
         paths.push(exe_dir.join("data/icons"));
         paths.push(exe_dir.join("share/icons"));
+        paths.push(exe_dir.join("../Resources/share/icons"));
         if let Some(install_prefix) = exe_dir.parent() {
             paths.push(install_prefix.join("share/icons"));
         }
@@ -151,5 +152,20 @@ mod tests {
         let paths = app_icon_search_paths_for(None, Some(PathBuf::from("/app/bin/rufin")), None);
 
         assert!(paths.contains(&PathBuf::from("/app/share/icons")));
+    }
+
+    #[test]
+    fn includes_macos_bundle_icon_search_path() {
+        let paths = app_icon_search_paths_for(
+            None,
+            Some(PathBuf::from(
+                "/Applications/Rufin.app/Contents/MacOS/rufin-bin",
+            )),
+            None,
+        );
+
+        assert!(paths.contains(&PathBuf::from(
+            "/Applications/Rufin.app/Contents/MacOS/../Resources/share/icons",
+        )));
     }
 }

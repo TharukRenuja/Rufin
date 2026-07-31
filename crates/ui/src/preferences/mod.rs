@@ -701,7 +701,6 @@ fn general_page(shell: &Rc<Shell>, dialog: &adw::Dialog) -> adw::PreferencesPage
     language_group.add(&language_row);
     page.add(&language_group);
 
-    #[cfg(unix)]
     {
         let window_group = adw::PreferencesGroup::builder()
             .title(tr("App window"))

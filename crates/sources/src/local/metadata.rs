@@ -43,7 +43,16 @@ const ALBUM_FIELDS: &[(MetadataField, ItemKey)] = &[
     ),
 ];
 
+const METADATA_REPLACEMENT_AVAILABLE: bool = cfg!(any(
+    target_os = "linux",
+    target_os = "macos",
+    target_os = "windows"
+));
+
 pub(super) fn mapped_editing_available(item: &MetadataItem) -> bool {
+    if !METADATA_REPLACEMENT_AVAILABLE {
+        return false;
+    }
     match item {
         MetadataItem::Track(track) => {
             if track.cue.is_some() {
@@ -61,6 +70,9 @@ pub(super) fn mapped_editing_available(item: &MetadataItem) -> bool {
 }
 
 pub(super) fn entry_editing_available(roots: &[PathBuf], item: &MetadataItem) -> bool {
+    if !METADATA_REPLACEMENT_AVAILABLE {
+        return false;
+    }
     match item {
         MetadataItem::Track(track) => accepted_target(roots, track)
             .and_then(|target| target.format.metadata_editing())
@@ -79,6 +91,7 @@ pub(super) fn read_subject(
     roots: &[PathBuf],
     subject: &MetadataSubject,
 ) -> Result<MetadataDraft, MetadataError> {
+    ensure_metadata_replacement_available()?;
     let targets = native_subject_targets(roots, subject)?;
     read_subject_targets(subject.item(), &targets)
 }
@@ -87,6 +100,7 @@ pub(super) fn read_mapped_subject(
     subject: &MetadataSubject,
     access: &[library::LocalAccessTarget],
 ) -> Result<MetadataDraft, MetadataError> {
+    ensure_metadata_replacement_available()?;
     let targets = mapped_subject_targets(subject, access)?;
     read_subject_targets(subject.item(), &targets)
 }
@@ -230,7 +244,7 @@ fn mapped_target_in_roots(
 
 fn target_path(roots: &[PathBuf], source_path: &Path) -> Option<MetadataTarget> {
     let path = fs::canonicalize(source_path).ok()?;
-    if source_path != path {
+    if cfg!(not(target_os = "windows")) && source_path != path {
         return None;
     }
     if !roots.iter().any(|root| path.starts_with(root)) {
@@ -646,13 +660,118 @@ fn write_subject_targets(
     targets: Vec<SubjectTarget>,
     edit: &MetadataEdit,
 ) -> Result<BTreeSet<PathBuf>, MetadataError> {
+    ensure_metadata_replacement_available()?;
     write_batch(item, targets, edit, |_| Ok(()))
+}
+
+fn ensure_metadata_replacement_available() -> Result<(), MetadataError> {
+    if METADATA_REPLACEMENT_AVAILABLE {
+        Ok(())
+    } else {
+        Err(MetadataError::Unavailable)
+    }
 }
 
 struct PreparedBatchFile {
     target: MetadataTarget,
-    temp: tempfile::NamedTempFile,
+    temp: tempfile::TempPath,
     expected_revision: String,
+    #[cfg(target_os = "windows")]
+    backup: WindowsBackupPath,
+}
+
+impl PreparedBatchFile {
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    fn replace_target(&self) -> std::io::Result<()> {
+        atomic_exchange(self.temp.as_ref(), &self.target.path)
+    }
+
+    #[cfg(target_os = "windows")]
+    fn replace_target(&self) -> std::io::Result<()> {
+        windows_replace_with_backup(self.temp.as_ref(), &self.target.path, &self.backup.path)
+    }
+
+    #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
+    fn replace_target(&self) -> std::io::Result<()> {
+        Err(unsupported_metadata_replacement())
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    fn original_path(&self) -> &Path {
+        self.temp.as_ref()
+    }
+
+    #[cfg(target_os = "windows")]
+    fn original_path(&self) -> &Path {
+        &self.backup.path
+    }
+
+    #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
+    fn original_path(&self) -> &Path {
+        self.temp.as_ref()
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    fn restore_target(&self) -> std::io::Result<()> {
+        atomic_exchange(self.temp.as_ref(), &self.target.path)
+    }
+
+    #[cfg(target_os = "windows")]
+    fn restore_target(&self) -> std::io::Result<()> {
+        windows_replace_with_backup(&self.backup.path, &self.target.path, self.temp.as_ref())
+    }
+
+    #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
+    fn restore_target(&self) -> std::io::Result<()> {
+        Err(unsupported_metadata_replacement())
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    fn preserve_original(self) -> std::io::Result<PathBuf> {
+        self.temp.keep().map_err(Into::into)
+    }
+
+    #[cfg(target_os = "windows")]
+    fn preserve_original(self) -> std::io::Result<PathBuf> {
+        Ok(self.backup.keep())
+    }
+
+    #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
+    fn preserve_original(self) -> std::io::Result<PathBuf> {
+        Err(unsupported_metadata_replacement())
+    }
+}
+
+#[cfg(target_os = "windows")]
+struct WindowsBackupPath {
+    path: PathBuf,
+    keep: bool,
+}
+
+#[cfg(target_os = "windows")]
+impl WindowsBackupPath {
+    fn reserve(parent: &Path) -> std::io::Result<Self> {
+        let file = tempfile::Builder::new()
+            .prefix(".rufin-metadata-backup-")
+            .tempfile_in(parent)?;
+        let path = file.path().to_path_buf();
+        file.close()?;
+        Ok(Self { path, keep: false })
+    }
+
+    fn keep(mut self) -> PathBuf {
+        self.keep = true;
+        self.path.clone()
+    }
+}
+
+#[cfg(target_os = "windows")]
+impl Drop for WindowsBackupPath {
+    fn drop(&mut self) {
+        if !self.keep {
+            let _ = fs::remove_file(&self.path);
+        }
+    }
 }
 
 fn write_batch(
@@ -756,8 +875,11 @@ fn prepare_batch_file(
             path: target.path.clone(),
             format: target.format,
         },
-        temp,
+        temp: temp.into_temp_path(),
         expected_revision,
+        #[cfg(target_os = "windows")]
+        backup: WindowsBackupPath::reserve(parent)
+            .map_err(|error| write_error("reserve a metadata recovery file", error))?,
     })
 }
 
@@ -774,7 +896,7 @@ fn commit_batch(
         if let Err(error) = before_exchange(index) {
             return rollback_batch(prepared, committed, error);
         }
-        if let Err(error) = atomic_exchange(file.temp.path(), &file.target.path) {
+        if let Err(error) = file.replace_target() {
             return rollback_batch(
                 prepared,
                 committed,
@@ -782,7 +904,7 @@ fn commit_batch(
             );
         }
         committed += 1;
-        match file_revision(file.temp.path()) {
+        match file_revision(file.original_path()) {
             Ok(revision) if revision == file.expected_revision => {}
             Ok(_) => return rollback_batch(prepared, committed, MetadataError::Conflict),
             Err(error) => return rollback_batch(prepared, committed, error),
@@ -810,18 +932,19 @@ fn rollback_batch(
         if index >= committed {
             continue;
         }
-        if let Err(error) = atomic_exchange(file.temp.path(), &file.target.path) {
-            let recovery_path = file.temp.path().to_path_buf();
-            let kept = file.temp.keep().map_err(|error| error.error);
+        if let Err(error) = file.restore_target() {
+            let recovery_path = file.original_path().to_path_buf();
+            let target_path = file.target.path.clone();
+            let kept = file.preserve_original();
             recovery_errors.push(match kept {
                 Ok(_) => format!(
                     "could not restore {}; the previous file is preserved at {}: {error}",
-                    file.target.path.display(),
+                    target_path.display(),
                     recovery_path.display()
                 ),
                 Err(keep_error) => format!(
                     "could not restore {} or preserve its recovery file: {error}; {keep_error}",
-                    file.target.path.display()
+                    target_path.display()
                 ),
             });
             continue;
@@ -979,7 +1102,7 @@ fn verification_values(
     }
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 fn atomic_exchange(first: &Path, second: &Path) -> std::io::Result<()> {
     rustix::fs::renameat_with(
         rustix::fs::CWD,
@@ -991,12 +1114,40 @@ fn atomic_exchange(first: &Path, second: &Path) -> std::io::Result<()> {
     .map_err(Into::into)
 }
 
-#[cfg(not(target_os = "linux"))]
-fn atomic_exchange(_first: &Path, _second: &Path) -> std::io::Result<()> {
-    Err(std::io::Error::new(
+#[cfg(target_os = "windows")]
+fn windows_replace_with_backup(
+    replacement: &Path,
+    target: &Path,
+    backup: &Path,
+) -> std::io::Result<()> {
+    let replacement = windows_path(replacement)?;
+    let target = windows_path(target)?;
+    let backup = windows_path(backup)?;
+    winsafe::ReplaceFile(
+        target,
+        replacement,
+        Some(backup),
+        winsafe::co::REPLACEFILE::default(),
+    )
+    .map_err(std::io::Error::other)
+}
+
+#[cfg(target_os = "windows")]
+fn windows_path(path: &Path) -> std::io::Result<&str> {
+    path.to_str().ok_or_else(|| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "metadata replacement requires a Unicode Windows path",
+        )
+    })
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
+fn unsupported_metadata_replacement() -> std::io::Error {
+    std::io::Error::new(
         std::io::ErrorKind::Unsupported,
         "atomic metadata replacement is unavailable on this platform",
-    ))
+    )
 }
 
 fn read_tagged(path: &Path, format: &AudioFormat) -> Result<TaggedFile, MetadataError> {

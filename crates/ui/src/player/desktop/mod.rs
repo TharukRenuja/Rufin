@@ -2,44 +2,34 @@ pub(crate) mod lifecycle;
 
 use std::cell::RefCell;
 use std::rc::Rc;
-#[cfg(unix)]
 use std::sync::mpsc::Receiver;
-#[cfg(unix)]
 use std::time::Duration;
 
 use adw::prelude::*;
 use gtk::glib;
 use library::SourceId;
 use playback::{CurrentMedia, PlaybackView, PositionDiscontinuity, TransportHandle};
-#[cfg(unix)]
 use tracing::warn;
 
 use crate::Settings as UiSettings;
 use crate::shell::Shell;
 use crate::shell::cover::THUMB_COVER_SIZE;
 
-#[cfg(unix)]
 const TRAY_POLL_INTERVAL: Duration = Duration::from_millis(120);
 
 pub(crate) struct DesktopState {
-    #[cfg(unix)]
-    pub(crate) mpris: Rc<desktop_integration::Mpris>,
+    pub(crate) media_controls: Rc<desktop_integration::MediaControls>,
     pub(crate) notifications: Rc<desktop_integration::Notifications>,
-    #[cfg(unix)]
     tray: RefCell<Option<desktop_integration::Tray>>,
-    #[cfg(unix)]
     tray_command_source: RefCell<Option<glib::SourceId>>,
 }
 
 impl DesktopState {
     pub(crate) fn new(application: &adw::Application, transport: TransportHandle) -> Self {
         Self {
-            #[cfg(unix)]
-            mpris: desktop_integration::Mpris::start(transport),
+            media_controls: desktop_integration::MediaControls::start(transport),
             notifications: desktop_integration::Notifications::new(application.clone().upcast()),
-            #[cfg(unix)]
             tray: RefCell::new(None),
-            #[cfg(unix)]
             tray_command_source: RefCell::new(None),
         }
     }
@@ -98,13 +88,11 @@ impl Shell {
         self.desktop.notifications.withdraw();
     }
 
-    #[cfg(unix)]
-    pub(crate) fn update_mpris_player(&self) {
-        self.update_mpris_player_after(None);
+    pub(crate) fn update_media_controls(&self) {
+        self.update_media_controls_after(None);
     }
 
-    #[cfg(unix)]
-    pub(crate) fn update_mpris_player_after(&self, discontinuity: Option<PositionDiscontinuity>) {
+    pub(crate) fn update_media_controls_after(&self, discontinuity: Option<PositionDiscontinuity>) {
         let playback = self.playback.player.borrow();
         let art_url = playback.as_ref().and_then(|playback| {
             playback
@@ -114,22 +102,20 @@ impl Shell {
                 .and_then(|media| self.current_art_url(&playback.transport.source_id, media))
         });
         self.desktop
-            .mpris
+            .media_controls
             .observe(playback.as_ref(), art_url, discontinuity);
     }
 
-    #[cfg(unix)]
-    pub(crate) fn update_mpris_position_after(
+    pub(crate) fn update_media_controls_position_after(
         &self,
         position_millis: Option<u64>,
         discontinuity: Option<PositionDiscontinuity>,
     ) {
         self.desktop
-            .mpris
+            .media_controls
             .observe_position(position_millis, discontinuity);
     }
 
-    #[cfg(unix)]
     fn current_art_url(&self, source_id: &SourceId, media: &CurrentMedia) -> Option<String> {
         let artwork =
             self.current_playback_cached_artwork_path(source_id, media, THUMB_COVER_SIZE)?;
@@ -138,7 +124,6 @@ impl Shell {
             .map(|uri| uri.to_string())
     }
 
-    #[cfg(unix)]
     pub(crate) fn set_tray_enabled(self: &Rc<Self>, enabled: bool) {
         if self
             .update_app_settings("tray setting", |settings| {
@@ -165,7 +150,6 @@ impl Shell {
         }
     }
 
-    #[cfg(unix)]
     pub(crate) fn set_exit_to_tray_enabled(self: &Rc<Self>, enabled: bool) {
         if self
             .update_app_settings("exit to tray setting", |settings| {
@@ -184,7 +168,6 @@ impl Shell {
         }
     }
 
-    #[cfg(unix)]
     pub(crate) fn set_start_minimized_enabled(self: &Rc<Self>, enabled: bool) {
         if self
             .update_app_settings("start minimized setting", |settings| {
@@ -203,7 +186,6 @@ impl Shell {
         }
     }
 
-    #[cfg(unix)]
     fn ensure_tray(self: &Rc<Self>) -> bool {
         if self.desktop.tray.borrow().is_some() {
             return true;
@@ -221,7 +203,6 @@ impl Shell {
         true
     }
 
-    #[cfg(unix)]
     fn shutdown_tray(&self) {
         if let Some(source) = self.desktop.tray_command_source.borrow_mut().take() {
             source.remove();
@@ -231,7 +212,6 @@ impl Shell {
         }
     }
 
-    #[cfg(unix)]
     pub(crate) fn refresh_tray_private_mode(&self) {
         let private_mode = self.settings.current.borrow().private_mode;
         if let Some(tray) = self.desktop.tray.borrow().as_ref() {
@@ -239,7 +219,6 @@ impl Shell {
         }
     }
 
-    #[cfg(unix)]
     fn install_tray_command_pump(
         self: &Rc<Self>,
         receiver: Receiver<desktop_integration::TrayIntent>,
@@ -277,14 +256,12 @@ impl Shell {
         *self.desktop.tray_command_source.borrow_mut() = Some(source);
     }
 
-    #[cfg(unix)]
     fn present_from_tray(&self) {
         self.chrome.window.set_visible(true);
         self.chrome.window.present();
     }
 }
 
-#[cfg(unix)]
 pub(crate) fn install_tray(shell: &Rc<Shell>) {
     if shell.settings.current.borrow().tray_enabled {
         shell.ensure_tray();
@@ -308,7 +285,6 @@ pub(crate) fn install_tray(shell: &Rc<Shell>) {
     });
 }
 
-#[cfg(unix)]
 pub(crate) fn present_initial_window(shell: &Rc<Shell>) {
     let settings = shell.settings.current.borrow().clone();
     let tray_available = settings.tray_enabled && settings.start_minimized && shell.ensure_tray();

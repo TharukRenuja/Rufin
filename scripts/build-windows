@@ -1,0 +1,99 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+artifact_root="${RUFIN_ARTIFACT_ROOT:-${repo_root}/.local/artifacts}"
+work_root="${RUFIN_WINDOWS_WORK_ROOT:-${artifact_root}/windows}"
+target_dir="${RUFIN_WINDOWS_TARGET_DIR:-${work_root}/target}"
+stage_dir="${RUFIN_WINDOWS_STAGE_DIR:-${work_root}/Rufin}"
+verify_target_dir="${RUFIN_WINDOWS_VERIFY_TARGET_DIR:-${work_root}/verify-target}"
+windows_cargo="${RUFIN_WINDOWS_CARGO:-cargo}"
+windows_rustc="${RUFIN_WINDOWS_RUSTC:-rustc}"
+host_target="$($windows_rustc -vV | sed -n 's/^host: //p')"
+version="$(sed -n 's/^version = "\([^"]*\)"/\1/p' "$repo_root/Cargo.toml" | head -n 1)"
+version_base="${version%%-*}"
+IFS=. read -r version_major version_minor version_patch <<<"$version_base"
+version_quad="${version_major:-0}.${version_minor:-0}.${version_patch:-0}.0"
+
+if [[ -z "$host_target" || -z "$version" \
+    || ! "$version_quad" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+    echo "Could not resolve the Rust host or Rufin version." >&2
+    exit 1
+fi
+
+mkdir -p "$artifact_root" "$work_root"
+if [[ "$host_target" == *-windows-* ]]; then
+    runtime_prefix="${RUFIN_WINDOWS_PREFIX:-${MINGW_PREFIX:-}}"
+    CARGO_TARGET_DIR="$target_dir" \
+        "$windows_cargo" build --locked --release -p rufin
+    binary="$target_dir/release/rufin.exe"
+else
+    runtime_prefix="${RUFIN_WINDOWS_PREFIX:-/usr/x86_64-w64-mingw32/sys-root/mingw}"
+    windows_pkg_config="${RUFIN_WINDOWS_PKG_CONFIG:-x86_64-w64-mingw32-pkg-config}"
+    command -v x86_64-w64-mingw32-gcc >/dev/null
+    command -v "$windows_pkg_config" >/dev/null
+    AR_x86_64_pc_windows_gnu=x86_64-w64-mingw32-ar \
+        CC_x86_64_pc_windows_gnu=x86_64-w64-mingw32-gcc \
+        CARGO_TARGET_DIR="$target_dir" \
+        CXX_x86_64_pc_windows_gnu=x86_64-w64-mingw32-g++ \
+        PKG_CONFIG="$windows_pkg_config" \
+        PKG_CONFIG_ALLOW_CROSS=1 \
+        PKG_CONFIG_PATH='' \
+        RUSTC="$windows_rustc" \
+        WINDRES=x86_64-w64-mingw32-windres \
+        "$windows_cargo" build \
+            --locked \
+            --release \
+            --target x86_64-pc-windows-gnu \
+            -p rufin
+    binary="$target_dir/x86_64-pc-windows-gnu/release/rufin.exe"
+fi
+
+RUFIN_WINDOWS_BINARY="$binary" \
+RUFIN_WINDOWS_PREFIX="$runtime_prefix" \
+RUFIN_WINDOWS_STAGE_DIR="$stage_dir" \
+    "$repo_root/packaging/windows/package"
+
+CARGO_TARGET_DIR="$verify_target_dir" \
+    "$windows_cargo" run --locked -p xtask -- \
+        verify package-layout "$stage_dir" /
+
+makensis_command="${RUFIN_MAKENSIS:-makensis}"
+if [[ ( "$(uname -s)" == MINGW* || "$(uname -s)" == MSYS* ) \
+    && "$makensis_command" == *:* ]]; then
+    makensis_command="$(cygpath -u "$makensis_command")"
+fi
+if ! command -v "$makensis_command" >/dev/null 2>&1 \
+    && [[ ! -x "$makensis_command" ]]; then
+    echo "NSIS is required to build the Windows installer: ${makensis_command}" >&2
+    exit 1
+fi
+
+stage_argument="$stage_dir"
+output_argument="$artifact_root"
+asset_argument="$repo_root/packaging/windows/assets"
+define_prefix=-D
+command_prefix=-X
+if [[ "$(uname -s)" == MINGW* || "$(uname -s)" == MSYS* ]]; then
+    stage_argument="$(cygpath -w "$stage_dir")"
+    output_argument="$(cygpath -w "$artifact_root")"
+    asset_argument="$(cygpath -w "$repo_root/packaging/windows/assets")"
+    define_prefix=/D
+    command_prefix=/X
+fi
+
+"$makensis_command" \
+    "${command_prefix}Target amd64-unicode" \
+    "${define_prefix}RUFIN_STAGE_DIR=${stage_argument}" \
+    "${define_prefix}RUFIN_OUTPUT_DIR=${output_argument}" \
+    "${define_prefix}RUFIN_ASSET_DIR=${asset_argument}" \
+    "${define_prefix}RUFIN_VERSION=${version}" \
+    "${define_prefix}RUFIN_VERSION_QUAD=${version_quad}" \
+    "$repo_root/packaging/windows/rufin.nsi"
+
+installer="$artifact_root/Rufin-${version}-setup.exe"
+if [[ ! -s "$installer" ]]; then
+    echo "The Windows installer was not produced: ${installer}" >&2
+    exit 1
+fi
+echo "Built ${installer}"

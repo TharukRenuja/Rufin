@@ -533,10 +533,22 @@ fn load_japanese_reader() -> JapaneseReaderState {
 }
 
 fn japanese_dictionary_paths() -> Vec<PathBuf> {
+    japanese_dictionary_paths_for(std::env::current_exe().ok().as_deref())
+}
+
+fn japanese_dictionary_paths_for(executable: Option<&Path>) -> Vec<PathBuf> {
     let mut paths = Vec::new();
-    if let Ok(executable) = std::env::current_exe()
+    if let Some(executable) = executable
         && let Some(directory) = executable.parent()
     {
+        paths.push(
+            directory
+                .join("..")
+                .join("Resources")
+                .join("share")
+                .join("rufin")
+                .join("japanese-readings.dic"),
+        );
         paths.push(
             directory
                 .join("..")
@@ -723,6 +735,17 @@ fn language_matches(candidate: Option<&str>, target: Option<&str>) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn japanese_dictionary_paths_include_macos_bundle_resources() {
+        let paths = japanese_dictionary_paths_for(Some(Path::new(
+            "/Applications/Rufin.app/Contents/MacOS/rufin-bin",
+        )));
+
+        assert!(paths.contains(&PathBuf::from(
+            "/Applications/Rufin.app/Contents/MacOS/../Resources/share/rufin/japanese-readings.dic",
+        )));
+    }
 
     #[test]
     fn sparse_settings_preserve_flat_defaults_and_provider_order() {
