@@ -239,7 +239,12 @@ fn mapped_target_in_roots(
     if track.cue.is_some() {
         return None;
     }
-    target_path(roots, access.path())
+    let root = fs::canonicalize(access.root_path()).ok()?;
+    let path = access.path().strip_prefix(access.root_path()).map_or_else(
+        |_| access.path().to_path_buf(),
+        |relative| root.join(relative),
+    );
+    target_path(roots, &path)
 }
 
 fn target_path(roots: &[PathBuf], source_path: &Path) -> Option<MetadataTarget> {

@@ -1607,7 +1607,9 @@ fn sidecar(path: &Path, suffix: &str) -> PathBuf {
 }
 
 fn sync_file(path: &Path) -> crate::LibraryResult<()> {
-    fs::File::open(path)
+    fs::OpenOptions::new()
+        .write(true)
+        .open(path)
         .and_then(|file| file.sync_all())
         .map_err(StoreError::from)?;
     Ok(())

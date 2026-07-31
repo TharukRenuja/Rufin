@@ -1,0 +1,103 @@
+name: Native release assets
+
+on:
+  release:
+    types:
+      - published
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Git ref to build, including a test commit for an existing release
+        required: true
+        default: main
+      upload_release_tag:
+        description: Optional existing GitHub release tag to upload the native packages to
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+concurrency:
+  group: native-release-${{ github.event_name == 'release' && github.event.release.tag_name || inputs.upload_release_tag || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  macos:
+    name: macOS
+    uses: ./.github/workflows/macos.yml
+    with:
+      ref: ${{ github.event_name == 'release' && github.event.release.tag_name || inputs.ref }}
+      release_tag: ${{ github.event_name == 'release' && github.event.release.tag_name || inputs.upload_release_tag }}
+      verify_signed_tag: ${{ github.event_name == 'release' }}
+
+  windows:
+    name: Windows
+    uses: ./.github/workflows/windows.yml
+    with:
+      ref: ${{ github.event_name == 'release' && github.event.release.tag_name || inputs.ref }}
+      release_tag: ${{ github.event_name == 'release' && github.event.release.tag_name || inputs.upload_release_tag }}
+      verify_signed_tag: ${{ github.event_name == 'release' }}
+
+  upload-macos:
+    name: Upload macOS release assets
+    if: github.event_name == 'release' || inputs.upload_release_tag != ''
+    needs: macos
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+      artifact-metadata: write
+
+    steps:
+      - name: Download workflow artifacts
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          pattern: Rufin-macos-*.dmg
+          path: dist
+          merge-multiple: true
+
+      - name: Attest macOS disk images
+        uses: actions/attest@f7c74d28b9d84cb8768d0b8ca14a4bac6ef463e6 # v4
+        with:
+          subject-path: dist/Rufin-macos-*.dmg
+
+      - name: Upload release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.event_name == 'release' && github.event.release.tag_name || inputs.upload_release_tag }}
+        run: gh release upload "$RELEASE_TAG" dist/Rufin-macos-*.dmg --clobber --repo "$GITHUB_REPOSITORY"
+
+  upload-windows:
+    name: Upload Windows release asset
+    if: github.event_name == 'release' || inputs.upload_release_tag != ''
+    needs: windows
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+      artifact-metadata: write
+
+    steps:
+      - name: Download workflow artifact
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: Rufin-setup.exe
+          path: dist
+
+      - name: Attest Windows installer
+        uses: actions/attest@f7c74d28b9d84cb8768d0b8ca14a4bac6ef463e6 # v4
+        with:
+          subject-path: dist/Rufin-*-setup.exe
+
+      - name: Upload release asset
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.event_name == 'release' && github.event.release.tag_name || inputs.upload_release_tag }}
+        run: |
+          set -euo pipefail
+          installer="$(find dist -maxdepth 1 -name 'Rufin-*-setup.exe' -print -quit)"
+          test -n "$installer"
+          gh release upload "$RELEASE_TAG" "$installer" --clobber --repo "$GITHUB_REPOSITORY"

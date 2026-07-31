@@ -6,15 +6,27 @@ contents_dir=$(dirname "$macos_dir")
 resources_dir="$contents_dir/Resources"
 loader_dir="$resources_dir/lib/gdk-pixbuf-2.0/loaders"
 loader_cache="${TMPDIR:-/tmp}/rufin-gdk-pixbuf-loaders-$(id -u).cache"
-
-"$macos_dir/gdk-pixbuf-query-loaders" "$loader_dir"/*.so >"$loader_cache"
+registry_dir="${HOME:-${TMPDIR:-/tmp}}/Library/Caches/io.github.screwys.Rufin"
+registry_path="${RUFIN_GST_REGISTRY_1_0:-${registry_dir}/gstreamer-registry-$(uname -m).bin}"
+registry_parent="$(dirname "$registry_path")"
 
 export GDK_PIXBUF_MODULEDIR="$loader_dir"
-export GDK_PIXBUF_MODULE_FILE="$loader_cache"
+if "$macos_dir/gdk-pixbuf-query-loaders" "$loader_dir"/*.so >"$loader_cache"; then
+  export GDK_PIXBUF_MODULE_FILE="$loader_cache"
+else
+  unset GDK_PIXBUF_MODULE_FILE
+fi
 export GIO_MODULE_DIR="$resources_dir/lib/gio/modules"
 export GSETTINGS_SCHEMA_DIR="$resources_dir/share/glib-2.0/schemas"
 export GST_PLUGIN_SCANNER_1_0="$macos_dir/gst-plugin-scanner"
+export GST_PLUGIN_PATH=''
+export GST_PLUGIN_PATH_1_0=''
 export GST_PLUGIN_SYSTEM_PATH_1_0="$resources_dir/lib/gstreamer-1.0"
+if mkdir -p "$registry_parent" && [ -w "$registry_parent" ]; then
+  export GST_REGISTRY_1_0="$registry_path"
+else
+  unset GST_REGISTRY_1_0
+fi
 export RUFIN_LOCALEDIR="$resources_dir/share/locale"
 export XDG_DATA_DIRS="$resources_dir/share"
 

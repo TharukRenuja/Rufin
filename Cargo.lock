@@ -724,6 +724,7 @@ version = "0.11.1"
 dependencies = [
  "apple-cf",
  "artwork",
+ "async-channel",
  "gio",
  "glib",
  "ksni",
@@ -739,6 +740,7 @@ dependencies = [
  "tracing",
  "tray-icon",
  "windows",
+ "winsafe",
 ]
 
 [[package]]

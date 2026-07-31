@@ -252,7 +252,6 @@ where
     let maximum_columns = columns.min(u32::MAX as usize) as u32;
     let row = gtk::FlowBox::new();
     row.add_css_class("album-grid");
-    row.set_homogeneous(true);
     row.set_column_spacing(0);
     row.set_min_children_per_line(maximum_columns);
     row.set_max_children_per_line(maximum_columns);

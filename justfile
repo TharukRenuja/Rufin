@@ -7,9 +7,9 @@ build target="" architecture="":
     if [[ "{{ target }}" == "arch" && -z "{{ architecture }}" ]]; then \
         scripts/container run just _build-arch; \
     elif [[ "{{ target }}" == "dmg" && -z "{{ architecture }}" ]]; then \
-        scripts/build-dmg; \
+        packaging/macos/build; \
     elif [[ "{{ target }}" == "rpm" ]]; then \
-        scripts/build-rpm "{{ architecture }}"; \
+        packaging/rpm/build "{{ architecture }}"; \
     elif [[ "{{ target }}" == "flatpak" && -z "{{ architecture }}" ]]; then \
         just _build-flatpak; \
     elif [[ "{{ target }}" == "windows" && -z "{{ architecture }}" ]]; then \
@@ -33,10 +33,10 @@ _build:
     cp "$native_target_dir/debug/$native_executable" "$native_artifact"
 
 _build-arch:
-    scripts/build-arch
+    packaging/aur/build
 
 _build-windows:
-    scripts/build-windows
+    packaging/windows/build
 
 _build-flatpak:
     if [[ "${RUFIN_CONTAINER:-0}" == "1" ]]; then \

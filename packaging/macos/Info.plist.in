@@ -24,6 +24,8 @@
   <string>@VERSION@</string>
   <key>LSApplicationCategoryType</key>
   <string>public.app-category.music</string>
+  <key>LSMinimumSystemVersion</key>
+  <string>@MINIMUM_SYSTEM_VERSION@</string>
   <key>NSHighResolutionCapable</key>
   <true/>
 </dict>

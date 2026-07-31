@@ -1,25 +1,28 @@
 name: Windows
 
 on:
-  release:
-    types:
-      - published
-  workflow_dispatch:
+  workflow_call:
     inputs:
       ref:
         description: Git ref to build
         required: true
-        default: main
-      upload_release_tag:
-        description: Optional existing GitHub release tag to upload the installer to
-        required: false
+        type: string
+      release_tag:
+        description: Release version to validate
         default: ""
+        required: false
+        type: string
+      verify_signed_tag:
+        description: Verify that the release tag is signed
+        default: false
+        required: false
+        type: boolean
 
 permissions:
   contents: read
 
 concurrency:
-  group: windows-${{ github.event_name == 'release' && github.event.release.tag_name || inputs.upload_release_tag || github.ref }}
+  group: windows-${{ github.event_name == 'pull_request' && github.ref || inputs.release_tag || inputs.ref }}
   cancel-in-progress: true
 
 env:
@@ -33,11 +36,10 @@ jobs:
 
     steps:
       - name: Validate release target
-        if: github.event_name == 'release' || inputs.upload_release_tag != ''
+        if: inputs.release_tag != ''
         shell: bash
         env:
-          BUILD_REF: ${{ inputs.ref }}
-          RELEASE_TAG: ${{ github.event_name == 'release' && github.event.release.tag_name || inputs.upload_release_tag }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
         run: |
           set -euo pipefail
           release_tag="$RELEASE_TAG"
@@ -46,18 +48,10 @@ jobs:
             exit 1
           fi
 
-          if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]]; then
-            build_ref="$BUILD_REF"
-            if [[ "$build_ref" != "$release_tag" && "$build_ref" != "refs/tags/$release_tag" ]]; then
-              echo "Manual release uploads must build the same tag they upload" >&2
-              exit 1
-            fi
-          fi
-
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          ref: ${{ github.event_name == 'release' && github.event.release.tag_name || inputs.ref }}
+          ref: ${{ inputs.ref }}
           fetch-depth: 0
           persist-credentials: false
 
@@ -91,19 +85,20 @@ jobs:
             mingw-w64-ucrt-x86_64-rust
             mingw-w64-ucrt-x86_64-shared-mime-info
             mingw-w64-ucrt-x86_64-toolchain
+            mingw-w64-ucrt-x86_64-wavpack
 
       - name: Verify signed release tag
-        if: github.event_name == 'release' || inputs.upload_release_tag != ''
+        if: inputs.verify_signed_tag
         shell: msys2 {0}
         env:
-          RELEASE_TAG: ${{ github.event_name == 'release' && github.event.release.tag_name || inputs.upload_release_tag }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
         run: cargo run --locked -p xtask -- verify release-tag "$RELEASE_TAG"
 
       - name: Validate release metadata
-        if: github.event_name == 'release' || inputs.upload_release_tag != ''
+        if: inputs.release_tag != ''
         shell: msys2 {0}
         env:
-          RELEASE_TAG: ${{ github.event_name == 'release' && github.event.release.tag_name || inputs.upload_release_tag }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
         run: |
           set -euo pipefail
           version="${RELEASE_TAG#v}"
@@ -129,18 +124,21 @@ jobs:
         shell: pwsh
         run: |
           choco install nsis --no-progress -y
-          $makensis = (Get-Command makensis.exe).Source
+          $makensis = Join-Path ${env:ProgramFiles(x86)} "NSIS\makensis.exe"
+          if (-not (Test-Path $makensis)) {
+            throw "NSIS was not installed at $makensis"
+          }
           "RUFIN_MAKENSIS=$makensis" | Out-File -FilePath $env:GITHUB_ENV -Append
 
       - name: Build Windows installer
         shell: msys2 {0}
         run: |
           set -euo pipefail
-          RUFIN_ARTIFACT_ROOT="$PWD/dist" scripts/build-windows
+          RUFIN_ARTIFACT_ROOT="$PWD/dist" packaging/windows/build
 
       - name: Create media verification files
         shell: msys2 {0}
-        run: bash scripts/create-media-verification-files "$RUNNER_TEMP/rufin-package-media"
+        run: bash scripts/create-media-verification-files "$(cygpath -u "$RUNNER_TEMP")/rufin-package-media"
 
       - name: Verify installer
         shell: pwsh
@@ -149,14 +147,72 @@ jobs:
           if (-not $installer) {
             throw "Windows installer was not produced"
           }
-          $installDir = Join-Path $env:RUNNER_TEMP "Rufin"
-          $installerArgs = @("/S", "/D=$installDir")
-          $process = Start-Process -FilePath $installer.FullName -ArgumentList $installerArgs -Wait -PassThru
+          $kitsRoot = (Get-ItemProperty `
+            "HKLM:\SOFTWARE\Microsoft\Windows Kits\Installed Roots").KitsRoot10
+          $manifestTool = Get-ChildItem `
+            -Path (Join-Path $kitsRoot "bin\*\x64\mt.exe") `
+            | Sort-Object FullName -Descending `
+            | Select-Object -First 1
+          if (-not $manifestTool) {
+            throw "The Windows manifest tool was not found"
+          }
+          $manifest = Join-Path $env:RUNNER_TEMP "rufin-installer.manifest"
+          & $manifestTool.FullName "-inputresource:$($installer.FullName);#1" "-out:$manifest"
+          if ($LASTEXITCODE -ne 0) {
+            throw "Could not read the Windows installer manifest"
+          }
+          $manifestText = Get-Content -Raw $manifest
+          if ($manifestText -notmatch 'requestedExecutionLevel level="asInvoker"') {
+            throw "Windows installer is not declared as a per-user process"
+          }
+          $installDir = Join-Path $env:LOCALAPPDATA "Programs\Rufin"
+          Remove-Item -Recurse -Force -ErrorAction SilentlyContinue $installDir
+          New-Item -ItemType Directory -Force -Path $installDir | Out-Null
+          Set-Content -NoNewline -Path (Join-Path $installDir "rufin.exe") -Value "legacy"
+          Set-Content -NoNewline -Path (Join-Path $installDir "legacy-runtime.dll") -Value "legacy"
+          New-Item -ItemType Directory -Force -Path (Join-Path $installDir "bin") | Out-Null
+          Set-Content -NoNewline -Path (Join-Path $installDir "bin\obsolete-runtime.dll") -Value "obsolete"
+          $legacyInstallDir = Join-Path $env:RUNNER_TEMP "Rufin legacy custom"
+          Remove-Item -Recurse -Force -ErrorAction SilentlyContinue $legacyInstallDir
+          New-Item -ItemType Directory -Force -Path $legacyInstallDir | Out-Null
+          Set-Content -NoNewline -Path (Join-Path $legacyInstallDir "rufin.exe") -Value "legacy"
+          Set-Content -NoNewline -Path (Join-Path $legacyInstallDir "legacy-runtime.dll") -Value "legacy"
+          Set-Content -NoNewline -Path (Join-Path $legacyInstallDir "Uninstall.exe") -Value "legacy"
+          Set-Content -NoNewline -Path (Join-Path $legacyInstallDir "rufin.ico") -Value "legacy"
+          Set-Content -NoNewline -Path (Join-Path $legacyInstallDir "keep.txt") -Value "keep"
+          New-Item -ItemType Directory -Force -Path "HKCU:\Software\Rufin" | Out-Null
+          Set-ItemProperty -Path "HKCU:\Software\Rufin" -Name InstallDir -Value $legacyInstallDir
+          $desktopShortcut = Join-Path ([Environment]::GetFolderPath("Desktop")) "Rufin.lnk"
+          $shortcutShell = New-Object -ComObject WScript.Shell
+          $legacyShortcut = $shortcutShell.CreateShortcut($desktopShortcut)
+          $legacyShortcut.TargetPath = Join-Path $installDir "rufin.exe"
+          $legacyShortcut.Save()
+
+          $legacyHandle = [System.IO.File]::Open(
+            (Join-Path $legacyInstallDir "rufin.exe"),
+            [System.IO.FileMode]::Open,
+            [System.IO.FileAccess]::Read,
+            [System.IO.FileShare]::None
+          )
+          try {
+            $blockedInstall = Start-Process -FilePath $installer.FullName -ArgumentList "/S" -Wait -PassThru
+            if ($blockedInstall.ExitCode -eq 0) {
+              throw "Windows installer replaced a running legacy Rufin executable"
+            }
+            if (-not (Test-Path (Join-Path $legacyInstallDir "rufin.exe"))) {
+              throw "Blocked Windows upgrade changed the legacy installation"
+            }
+          } finally {
+            $legacyHandle.Dispose()
+          }
+
+          $process = Start-Process -FilePath $installer.FullName -ArgumentList "/S" -Wait -PassThru
           if ($process.ExitCode -ne 0) {
             throw "Windows installer exited with code $($process.ExitCode)"
           }
 
-          $installedExe = Join-Path $installDir "rufin.exe"
+          $installedBin = Join-Path $installDir "bin"
+          $installedExe = Join-Path $installedBin "rufin.exe"
           $deadline = (Get-Date).AddSeconds(60)
           while (-not (Test-Path $installedExe) -and (Get-Date) -lt $deadline) {
             Start-Sleep -Milliseconds 250
@@ -164,19 +220,62 @@ jobs:
           if (-not (Test-Path $installedExe)) {
             throw "Installed Rufin executable was not found: $installedExe"
           }
-          $installedDlls = @(Get-ChildItem -LiteralPath $installDir -Filter "*.dll" -File)
-          Write-Host "Installed Rufin runtime has $($installedDlls.Count) top-level DLLs"
+          foreach ($legacyRuntime in @("rufin.exe", "legacy-runtime.dll", "bin\obsolete-runtime.dll")) {
+            $legacyPath = Join-Path $installDir $legacyRuntime
+            if (Test-Path $legacyPath) {
+              throw "Legacy Windows runtime was not removed: $legacyPath"
+            }
+          }
+          foreach ($legacyRuntime in @("rufin.exe", "legacy-runtime.dll", "Uninstall.exe", "rufin.ico")) {
+            $legacyPath = Join-Path $legacyInstallDir $legacyRuntime
+            if (Test-Path $legacyPath) {
+              throw "Custom legacy Windows runtime was not removed: $legacyPath"
+            }
+          }
+          if (-not (Test-Path (Join-Path $legacyInstallDir "keep.txt"))) {
+            throw "Windows migration removed a file it did not own"
+          }
+          if (Test-Path "HKCU:\Software\Rufin") {
+            throw "Windows migration left the legacy install registry key behind"
+          }
+          $desktopTarget = $shortcutShell.CreateShortcut($desktopShortcut).TargetPath
+          if ($desktopTarget -ne $installedExe) {
+            throw "Desktop shortcut still targets the legacy runtime: $desktopTarget"
+          }
+          $startMenuShortcut = Join-Path ([Environment]::GetFolderPath("Programs")) "Rufin\Rufin.lnk"
+          $startMenuTarget = $shortcutShell.CreateShortcut($startMenuShortcut).TargetPath
+          if ($startMenuTarget -ne $installedExe) {
+            throw "Start Menu shortcut does not target the installed executable: $startMenuTarget"
+          }
+          $shell = New-Object -ComObject Shell.Application
+          $shortcutFolder = $shell.Namespace((Split-Path $startMenuShortcut))
+          $shortcutItem = $shortcutFolder.ParseName((Split-Path $startMenuShortcut -Leaf))
+          $shortcutAppId = $shortcutItem.ExtendedProperty("System.AppUserModel.ID")
+          if ($shortcutAppId -ne "io.github.screwys.Rufin") {
+            throw "Start Menu shortcut has the wrong application identity: $shortcutAppId"
+          }
+          $installedDlls = @(Get-ChildItem -LiteralPath $installedBin -Filter "*.dll" -File)
+          Write-Host "Installed Rufin runtime has $($installedDlls.Count) DLLs"
           if ($installedDlls.Count -eq 0) {
-            throw "Installed Rufin runtime has no top-level DLLs"
+            throw "Installed Rufin runtime has no DLLs"
           }
 
           $runtimeStdout = Join-Path $env:RUNNER_TEMP "rufin-runtime.out"
           $runtimeStderr = Join-Path $env:RUNNER_TEMP "rufin-runtime.err"
           $previousPath = $env:PATH
-          $previousPluginPath = $env:GST_PLUGIN_SYSTEM_PATH_1_0
+          $gstreamerRegistry = Join-Path $env:RUNNER_TEMP "rufin-gstreamer-registry.bin"
+          Remove-Item -Force -ErrorAction SilentlyContinue $gstreamerRegistry
+          foreach ($variable in @(
+            "GST_PLUGIN_PATH",
+            "GST_PLUGIN_PATH_1_0",
+            "GST_PLUGIN_SYSTEM_PATH",
+            "GST_PLUGIN_SYSTEM_PATH_1_0"
+          )) {
+            Remove-Item -Path "Env:$variable" -ErrorAction SilentlyContinue
+          }
           try {
-            $env:PATH = "$installDir;$env:PATH"
-            $env:GST_PLUGIN_SYSTEM_PATH_1_0 = Join-Path $installDir "lib\gstreamer-1.0"
+            $env:PATH = "$installedBin;$env:SystemRoot\System32;$env:SystemRoot"
+            $env:GST_REGISTRY_1_0 = $gstreamerRegistry
             $mediaDirectory = Join-Path $env:RUNNER_TEMP "rufin-package-media"
             foreach ($media in Get-ChildItem -LiteralPath $mediaDirectory -File) {
               $runtimeProcess = Start-Process `
@@ -199,12 +298,36 @@ jobs:
             throw "Installed Rufin executable failed to start: $_"
           } finally {
             $env:PATH = $previousPath
-            $env:GST_PLUGIN_SYSTEM_PATH_1_0 = $previousPluginPath
-          }
-          foreach ($runtimeLog in @($runtimeStdout, $runtimeStderr)) {
-            if ((Test-Path $runtimeLog) -and (Get-Item $runtimeLog).Length -gt 0) {
-              Get-Content $runtimeLog
+            Remove-Item Env:GST_REGISTRY_1_0 -ErrorAction SilentlyContinue
+            foreach ($runtimeLog in @($runtimeStdout, $runtimeStderr)) {
+              if ((Test-Path $runtimeLog) -and (Get-Item $runtimeLog).Length -gt 0) {
+                Get-Content $runtimeLog
+              }
             }
+          }
+
+          $runningHandle = [System.IO.File]::Open(
+            $installedExe,
+            [System.IO.FileMode]::Open,
+            [System.IO.FileAccess]::Read,
+            [System.IO.FileShare]::None
+          )
+          try {
+            $upgrade = Start-Process -FilePath $installer.FullName -ArgumentList "/S" -Wait -PassThru
+            if ($upgrade.ExitCode -eq 0) {
+              throw "Windows installer replaced a running Rufin executable"
+            }
+          } finally {
+            $runningHandle.Dispose()
+          }
+
+          $uninstaller = Join-Path $installDir "Uninstall.exe"
+          $uninstall = Start-Process -FilePath $uninstaller -ArgumentList "/S" -Wait -PassThru
+          if ($uninstall.ExitCode -ne 0) {
+            throw "Windows uninstaller exited with code $($uninstall.ExitCode)"
+          }
+          if (Test-Path $installDir) {
+            throw "Windows uninstaller left the dedicated install directory behind"
           }
       - name: Upload workflow artifact
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
@@ -213,43 +336,3 @@ jobs:
           path: dist/Rufin-*-setup.exe
           if-no-files-found: error
           retention-days: 7
-
-  release:
-    name: Upload Windows release asset
-    if: github.event_name == 'release' || inputs.upload_release_tag != ''
-    needs: setup
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-      id-token: write
-      attestations: write
-      artifact-metadata: write
-
-    steps:
-      - name: Download workflow artifact
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
-        with:
-          name: Rufin-setup.exe
-          path: dist
-
-      - name: Generate checksum
-        run: |
-          set -euo pipefail
-          installer="$(find dist -maxdepth 1 -name 'Rufin-*-setup.exe' -print -quit)"
-          test -n "$installer"
-          sha256sum "$installer" > "$installer.sha256"
-
-      - name: Attest Windows installer
-        uses: actions/attest@f7c74d28b9d84cb8768d0b8ca14a4bac6ef463e6 # v4
-        with:
-          subject-path: dist/Rufin-*-setup.exe
-
-      - name: Upload release asset
-        env:
-          GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: ${{ github.event_name == 'release' && github.event.release.tag_name || inputs.upload_release_tag }}
-        run: |
-          set -euo pipefail
-          installer="$(find dist -maxdepth 1 -name 'Rufin-*-setup.exe' -print -quit)"
-          test -n "$installer"
-          gh release upload "$RELEASE_TAG" "$installer" "$installer.sha256" --clobber --repo "$GITHUB_REPOSITORY"
