@@ -36,19 +36,22 @@ done
 
 brew_prefix="$(brew --prefix)"
 gstreamer_plugins="$(pkg-config --variable=pluginsdir gstreamer-1.0)"
-pixbuf_loaders="$({
-    find "${brew_prefix}/lib/gdk-pixbuf-2.0" -type d -name loaders -print 2>/dev/null || true
-} | head -n 1)"
-plugin_scanner="$({
-    find "${brew_prefix}/libexec" -type f -name gst-plugin-scanner -print 2>/dev/null || true
-} | head -n 1)"
+pixbuf_loaders="$(pkg-config --variable=gdk_pixbuf_moduledir gdk-pixbuf-2.0)"
+plugin_scanner_dir="$(pkg-config --variable=pluginscannerdir gstreamer-1.0)"
+plugin_scanner="${plugin_scanner_dir}/gst-plugin-scanner"
 
-for runtime_path in "$gstreamer_plugins" "$pixbuf_loaders" "$plugin_scanner"; do
-    if [[ -z "$runtime_path" || ! -e "$runtime_path" ]]; then
-        echo "The Homebrew GTK and GStreamer runtime is incomplete." >&2
-        exit 1
-    fi
-done
+if [[ -z "$gstreamer_plugins" || ! -d "$gstreamer_plugins" ]]; then
+    echo "The Homebrew GStreamer plugin directory is unavailable: ${gstreamer_plugins:-not set}" >&2
+    exit 1
+fi
+if [[ -z "$pixbuf_loaders" || ! -d "$pixbuf_loaders" ]]; then
+    echo "The Homebrew pixbuf loader directory is unavailable: ${pixbuf_loaders:-not set}" >&2
+    exit 1
+fi
+if [[ -z "$plugin_scanner_dir" || ! -f "$plugin_scanner" ]]; then
+    echo "The Homebrew GStreamer plugin scanner is unavailable: ${plugin_scanner}" >&2
+    exit 1
+fi
 
 version="$(sed -n 's/^version = "\([^"]*\)"/\1/p' "${repo_root}/Cargo.toml" | head -n 1)"
 if [[ -z "$version" ]]; then
