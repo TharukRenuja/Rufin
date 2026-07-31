@@ -845,6 +845,14 @@ fn released_local_roots() -> Vec<PathBuf> {
     }
 }
 
+fn released_store_local_root() -> PathBuf {
+    if cfg!(target_os = "windows") {
+        PathBuf::from(r"C:\obsolete-local-root")
+    } else {
+        PathBuf::from("/obsolete-local-root")
+    }
+}
+
 fn write_released_store(path: &Path) {
     let connection = Connection::open(path).expect("open released Store fixture");
     connection
@@ -858,7 +866,7 @@ fn write_released_store(path: &Path) {
                 LOCAL_ID,
                 serde_json::json!({
                     "version": 1,
-                    "base_url": "/obsolete-local-root",
+                    "base_url": released_store_local_root(),
                     "user_id": "",
                     "username": "",
                     "trust_invalid_cert": false
