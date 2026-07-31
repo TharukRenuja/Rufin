@@ -86,7 +86,7 @@ if [[ "$(uname -s)" == MINGW* || "$(uname -s)" == MSYS* ]]; then
     command_prefix=/X
 fi
 
-"$makensis_command" \
+MSYS2_ARG_CONV_EXCL='/X;/D' "$makensis_command" \
     "${command_prefix}Target amd64-unicode" \
     "${define_prefix}RUFIN_STAGE_DIR=${stage_argument}" \
     "${define_prefix}RUFIN_OUTPUT_DIR=${output_argument}" \
