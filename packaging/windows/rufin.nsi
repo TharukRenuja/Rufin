@@ -7,6 +7,10 @@
 !define RUFIN_STAGE_DIR "..\..\dist\windows\Rufin"
 !endif
 
+!ifndef RUFIN_STAGE_FILES
+!define RUFIN_STAGE_FILES "${RUFIN_STAGE_DIR}\*"
+!endif
+
 !ifndef RUFIN_OUTPUT_DIR
 !define RUFIN_OUTPUT_DIR "..\..\dist"
 !endif
@@ -154,7 +158,7 @@ runtime_not_running:
     Delete /REBOOTOK "$INSTDIR\gspawn-win64-helper.exe"
     Delete /REBOOTOK "$INSTDIR\gspawn-win64-helper-console.exe"
     SetOutPath "$INSTDIR"
-    File /r "${RUFIN_STAGE_DIR}/*"
+    File /r "${RUFIN_STAGE_FILES}"
     WriteUninstaller "$INSTDIR\Uninstall.exe"
 
     StrCmp $LegacyInstallOwned 1 0 legacy_install_removed

@@ -1,26 +1,28 @@
 name: Windows
 
 on:
-  pull_request:
-  release:
-    types:
-      - published
-  workflow_dispatch:
+  workflow_call:
     inputs:
       ref:
-        description: Git ref to build, including a test commit for an existing release
+        description: Git ref to build
         required: true
-        default: main
-      upload_release_tag:
-        description: Optional existing GitHub release tag to upload the installer to
-        required: false
+        type: string
+      release_tag:
+        description: Release version to validate
         default: ""
+        required: false
+        type: string
+      verify_signed_tag:
+        description: Verify that the release tag is signed
+        default: false
+        required: false
+        type: boolean
 
 permissions:
   contents: read
 
 concurrency:
-  group: windows-${{ github.event_name == 'release' && github.event.release.tag_name || inputs.upload_release_tag || github.ref }}
+  group: windows-${{ github.event_name == 'pull_request' && github.ref || inputs.release_tag || inputs.ref }}
   cancel-in-progress: true
 
 env:
@@ -28,54 +30,16 @@ env:
   CHERE_INVOKING: 1
 
 jobs:
-  changes:
-    name: Check Windows paths
-    runs-on: ubuntu-latest
-    outputs:
-      build_required: ${{ steps.classify.outputs.build_required }}
-
-    steps:
-      - name: Check out pull request
-        if: github.event_name == 'pull_request'
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-        with:
-          ref: ${{ github.event.pull_request.head.sha }}
-          fetch-depth: 0
-          persist-credentials: false
-
-      - name: Classify changed paths
-        id: classify
-        env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-        run: |
-          set -euo pipefail
-          build_required=true
-          if [[ "$GITHUB_EVENT_NAME" == "pull_request" ]]; then
-            build_required=false
-            while IFS= read -r path; do
-              case "$path" in
-                .cargo/*|.github/workflows/windows.yml|Cargo.lock|Cargo.toml|crates/*|data/*|justfile|packaging/windows/*|scripts/create-media-verification-files)
-                  build_required=true
-                  break
-                  ;;
-              esac
-            done < <(git diff --name-only "$BASE_SHA" "$HEAD_SHA")
-          fi
-          echo "build_required=$build_required" >> "$GITHUB_OUTPUT"
-
   setup:
     name: Build Windows installer
-    needs: changes
-    if: needs.changes.outputs.build_required == 'true'
     runs-on: windows-latest
 
     steps:
       - name: Validate release target
-        if: github.event_name == 'release' || inputs.upload_release_tag != ''
+        if: inputs.release_tag != ''
         shell: bash
         env:
-          RELEASE_TAG: ${{ github.event_name == 'release' && github.event.release.tag_name || inputs.upload_release_tag }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
         run: |
           set -euo pipefail
           release_tag="$RELEASE_TAG"
@@ -87,7 +51,7 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          ref: ${{ github.event_name == 'release' && github.event.release.tag_name || github.event_name == 'workflow_dispatch' && inputs.ref || github.event.pull_request.head.sha }}
+          ref: ${{ inputs.ref }}
           fetch-depth: 0
           persist-credentials: false
 
@@ -124,17 +88,17 @@ jobs:
             mingw-w64-ucrt-x86_64-wavpack
 
       - name: Verify signed release tag
-        if: github.event_name == 'release'
+        if: inputs.verify_signed_tag
         shell: msys2 {0}
         env:
-          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
         run: cargo run --locked -p xtask -- verify release-tag "$RELEASE_TAG"
 
       - name: Validate release metadata
-        if: github.event_name == 'release' || inputs.upload_release_tag != ''
+        if: inputs.release_tag != ''
         shell: msys2 {0}
         env:
-          RELEASE_TAG: ${{ github.event_name == 'release' && github.event.release.tag_name || inputs.upload_release_tag }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
         run: |
           set -euo pipefail
           version="${RELEASE_TAG#v}"
@@ -174,7 +138,7 @@ jobs:
 
       - name: Create media verification files
         shell: msys2 {0}
-        run: bash scripts/create-media-verification-files "$RUNNER_TEMP/rufin-package-media"
+        run: bash scripts/create-media-verification-files "$(cygpath -u "$RUNNER_TEMP")/rufin-package-media"
 
       - name: Verify installer
         shell: pwsh
@@ -335,10 +299,10 @@ jobs:
           } finally {
             $env:PATH = $previousPath
             Remove-Item Env:GST_REGISTRY_1_0 -ErrorAction SilentlyContinue
-          }
-          foreach ($runtimeLog in @($runtimeStdout, $runtimeStderr)) {
-            if ((Test-Path $runtimeLog) -and (Get-Item $runtimeLog).Length -gt 0) {
-              Get-Content $runtimeLog
+            foreach ($runtimeLog in @($runtimeStdout, $runtimeStderr)) {
+              if ((Test-Path $runtimeLog) -and (Get-Item $runtimeLog).Length -gt 0) {
+                Get-Content $runtimeLog
+              }
             }
           }
 
@@ -372,73 +336,3 @@ jobs:
           path: dist/Rufin-*-setup.exe
           if-no-files-found: error
           retention-days: 7
-
-  required:
-    name: Windows required
-    needs:
-      - changes
-      - setup
-    if: always() && github.event_name == 'pull_request'
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Enforce Windows build policy
-        env:
-          BUILD_REQUIRED: ${{ needs.changes.outputs.build_required }}
-          BUILD_RESULT: ${{ needs.setup.result }}
-          CHANGES_RESULT: ${{ needs.changes.result }}
-        run: |
-          set -euo pipefail
-          if [[ "$CHANGES_RESULT" != "success" ]]; then
-            echo "Windows path classification failed: $CHANGES_RESULT" >&2
-            exit 1
-          fi
-          if [[ "$BUILD_REQUIRED" != "true" ]]; then
-            echo "The Windows build is not required for these changes."
-            exit 0
-          fi
-          if [[ "$BUILD_RESULT" != "success" ]]; then
-            echo "The Windows build did not pass: $BUILD_RESULT" >&2
-            exit 1
-          fi
-          echo "The Windows build passed."
-
-  release:
-    name: Upload Windows release asset
-    if: github.event_name == 'release' || inputs.upload_release_tag != ''
-    needs: setup
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-      id-token: write
-      attestations: write
-      artifact-metadata: write
-
-    steps:
-      - name: Download workflow artifact
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
-        with:
-          name: Rufin-setup.exe
-          path: dist
-
-      - name: Generate checksum
-        run: |
-          set -euo pipefail
-          installer="$(find dist -maxdepth 1 -name 'Rufin-*-setup.exe' -print -quit)"
-          test -n "$installer"
-          sha256sum "$installer" > "$installer.sha256"
-
-      - name: Attest Windows installer
-        uses: actions/attest@f7c74d28b9d84cb8768d0b8ca14a4bac6ef463e6 # v4
-        with:
-          subject-path: dist/Rufin-*-setup.exe
-
-      - name: Upload release asset
-        env:
-          GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: ${{ github.event_name == 'release' && github.event.release.tag_name || inputs.upload_release_tag }}
-        run: |
-          set -euo pipefail
-          installer="$(find dist -maxdepth 1 -name 'Rufin-*-setup.exe' -print -quit)"
-          test -n "$installer"
-          gh release upload "$RELEASE_TAG" "$installer" "$installer.sha256" --clobber --repo "$GITHUB_REPOSITORY"

@@ -74,21 +74,21 @@ if ! command -v "$makensis_command" >/dev/null 2>&1 \
 fi
 
 stage_argument="$stage_dir"
+stage_files_argument="$stage_dir/*"
 output_argument="$artifact_root"
 asset_argument="$repo_root/packaging/windows/assets"
 define_prefix=-D
-command_prefix=-X
 if [[ "$(uname -s)" == MINGW* || "$(uname -s)" == MSYS* ]]; then
     stage_argument="$(cygpath -w "$stage_dir")"
+    stage_files_argument="${stage_argument}\\*"
     output_argument="$(cygpath -w "$artifact_root")"
     asset_argument="$(cygpath -w "$repo_root/packaging/windows/assets")"
     define_prefix=/D
-    command_prefix=/X
 fi
 
-MSYS2_ARG_CONV_EXCL='/X;/D' "$makensis_command" \
-    "${command_prefix}Target amd64-unicode" \
+MSYS2_ARG_CONV_EXCL='/D' "$makensis_command" \
     "${define_prefix}RUFIN_STAGE_DIR=${stage_argument}" \
+    "${define_prefix}RUFIN_STAGE_FILES=${stage_files_argument}" \
     "${define_prefix}RUFIN_OUTPUT_DIR=${output_argument}" \
     "${define_prefix}RUFIN_ASSET_DIR=${asset_argument}" \
     "${define_prefix}RUFIN_VERSION=${version}" \

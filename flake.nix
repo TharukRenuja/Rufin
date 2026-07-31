@@ -172,6 +172,7 @@
                 pkg-config
                 rustc
                 rustfmt
+                wavpack
                 zstd
               ]
               # Generated Linux development dependencies start.

@@ -22,11 +22,12 @@ if [[ "$(uname -s)" != "Darwin" ]]; then
     echo "just build dmg must run on macOS." >&2
     exit 1
 fi
+mkdir -p "$work_root"
 
 required_commands=(
-    brew cargo codesign ditto dylibbundler file gio-querymodules
-    glib-compile-schemas hdiutil iconutil install_name_tool lipo msgfmt otool pkg-config
-    rsvg-convert
+    brew cargo codesign curl ditto dylibbundler file gio-querymodules
+    glib-compile-schemas hdiutil iconutil install_name_tool lipo meson msgfmt ninja
+    otool pkg-config rsvg-convert shasum tar
 )
 for command_name in "${required_commands[@]}"; do
     if ! command -v "$command_name" >/dev/null 2>&1; then
@@ -109,8 +110,6 @@ gstreamer_plugins="$(pkg-config --variable=pluginsdir gstreamer-1.0)"
 pixbuf_loaders="$(pkg-config --variable=gdk_pixbuf_moduledir gdk-pixbuf-2.0)"
 plugin_scanner_dir="$(pkg-config --variable=pluginscannerdir gstreamer-1.0)"
 plugin_scanner="${plugin_scanner_dir}/gst-plugin-scanner"
-gstreamer_framework="${RUFIN_MACOS_GSTREAMER_FRAMEWORK:-/Library/Frameworks/GStreamer.framework/Versions/1.0}"
-wavpack_plugin="${gstreamer_framework}/lib/gstreamer-1.0/libgstwavpack.dylib"
 
 if [[ -z "$gstreamer_plugins" || ! -d "$gstreamer_plugins" ]]; then
     echo "The Homebrew GStreamer plugin directory is unavailable: ${gstreamer_plugins:-not set}" >&2
@@ -124,31 +123,35 @@ if [[ -z "$plugin_scanner_dir" || ! -f "$plugin_scanner" ]]; then
     echo "The Homebrew GStreamer plugin scanner is unavailable: ${plugin_scanner}" >&2
     exit 1
 fi
+gstreamer_version="$(pkg-config --modversion gstreamer-1.0)"
+wavpack_source_archive="$work_root/gst-plugins-good-${gstreamer_version}.tar.xz"
+wavpack_source_checksum="${wavpack_source_archive}.sha256sum"
+wavpack_source_dir="$work_root/gst-plugins-good-${gstreamer_version}"
+wavpack_build_dir="$work_root/gst-plugins-good-build"
+wavpack_source_url="https://gstreamer.freedesktop.org/src/gst-plugins-good"
+
+curl --fail --location --silent --show-error --retry 3 \
+    "$wavpack_source_url/$(basename "$wavpack_source_archive")" \
+    --output "$wavpack_source_archive"
+curl --fail --location --silent --show-error --retry 3 \
+    "$wavpack_source_url/$(basename "$wavpack_source_checksum")" \
+    --output "$wavpack_source_checksum"
+(
+    cd "$work_root"
+    shasum -a 256 --check "$(basename "$wavpack_source_checksum")"
+)
+rm -rf "$wavpack_source_dir" "$wavpack_build_dir"
+tar -xJf "$wavpack_source_archive" -C "$work_root"
+meson setup \
+    "$wavpack_build_dir" \
+    "$wavpack_source_dir" \
+    -Dauto_features=disabled \
+    -Dwavpack=enabled \
+    --buildtype=release
+meson compile -C "$wavpack_build_dir" gstwavpack
+wavpack_plugin="$wavpack_build_dir/ext/wavpack/libgstwavpack.dylib"
 if [[ ! -f "$wavpack_plugin" ]]; then
-    echo "The GStreamer runtime WavPack decoder is unavailable: ${gstreamer_framework}" >&2
-    echo "Install the Homebrew gstreamer-runtime cask before building the disk image." >&2
-    exit 1
-fi
-homebrew_gstreamer_version="$(pkg-config --modversion gstreamer-1.0)"
-framework_gstreamer_version="$(
-    "$gstreamer_framework/bin/gst-launch-1.0" --version \
-        | sed -n 's/^GStreamer //p' \
-        | head -n 1
-)"
-if [[ -z "$framework_gstreamer_version" \
-    || "$framework_gstreamer_version" != "$homebrew_gstreamer_version" ]]; then
-    echo "The Homebrew and GStreamer runtime versions do not match." >&2
-    echo "Homebrew: ${homebrew_gstreamer_version}; runtime: ${framework_gstreamer_version:-unknown}" >&2
-    exit 1
-fi
-wavpack_library_name="$(
-    mach_o_dependencies "$wavpack_plugin" \
-        | sed -n '/libwavpack[^[:space:]]*\.dylib$/p' \
-        | head -n 1
-)"
-wavpack_library="${gstreamer_framework}/lib/$(basename "$wavpack_library_name")"
-if [[ -z "$wavpack_library_name" || ! -f "$wavpack_library" ]]; then
-    echo "The GStreamer runtime WavPack library is unavailable: ${wavpack_library}" >&2
+    echo "The GStreamer WavPack plugin was not produced: ${wavpack_plugin}" >&2
     exit 1
 fi
 
@@ -319,7 +322,6 @@ mkdir -p "$dependency_sources"
 while IFS= read -r -d '' dependency; do
     ln -s "$dependency" "$dependency_sources/$(basename "$dependency")"
 done < <(find -L "${brew_prefix}/lib" -maxdepth 1 -type f -name '*.dylib' -print0)
-ln -sfn "$wavpack_library" "$dependency_sources/$(basename "$wavpack_library")"
 
 dylib_args=(-od -b -d "$app_path/Contents/Frameworks" -p '@executable_path/../Frameworks/')
 for file_to_fix in "${files_to_fix[@]}"; do
@@ -330,21 +332,6 @@ dylibbundler "${dylib_args[@]}" -s "$dependency_sources" -ns
 bundled_rufin_binary="$app_path/Contents/MacOS/rufin-bin"
 if ! mach_o_rpaths "$bundled_rufin_binary" | grep -Fx '/usr/lib/swift' >/dev/null; then
     install_name_tool -add_rpath '/usr/lib/swift' "$bundled_rufin_binary"
-fi
-
-bundled_wavpack_library="$app_path/Contents/Frameworks/$(basename "$wavpack_library")"
-bundled_wavpack_plugin="$app_path/Contents/Resources/lib/gstreamer-1.0/libgstwavpack.dylib"
-bundled_wavpack_name="@executable_path/../Frameworks/$(basename "$wavpack_library")"
-cp -L "$wavpack_library" "$bundled_wavpack_library"
-install_name_tool -id "$bundled_wavpack_name" "$bundled_wavpack_library"
-install_name_tool -change \
-    "$wavpack_library_name" \
-    "$bundled_wavpack_name" \
-    "$bundled_wavpack_plugin"
-if ! mach_o_dependencies "$bundled_wavpack_plugin" \
-    | grep -Fx "$bundled_wavpack_name" >/dev/null; then
-    echo "The bundled GStreamer WavPack plugin does not use its bundled library." >&2
-    exit 1
 fi
 
 while IFS= read -r -d '' bundled_file; do

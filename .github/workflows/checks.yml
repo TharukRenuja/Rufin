@@ -26,12 +26,14 @@ jobs:
       container_required: ${{ steps.classify.outputs.container_required }}
       current_nix_required: ${{ steps.classify.outputs.current_nix_required }}
       dependency_policy_required: ${{ steps.classify.outputs.dependency_policy_required }}
+      macos_required: ${{ steps.classify.outputs.macos_required }}
       nix_package_required: ${{ steps.classify.outputs.nix_package_required }}
       package_dependencies_required: ${{ steps.classify.outputs.package_dependencies_required }}
       rpm_required: ${{ steps.classify.outputs.rpm_required }}
       rust_cache_required: ${{ steps.classify.outputs.rust_cache_required }}
       rust_required: ${{ steps.classify.outputs.rust_required }}
       workflows_required: ${{ steps.classify.outputs.workflows_required }}
+      windows_required: ${{ steps.classify.outputs.windows_required }}
 
     steps:
       - name: Check out repository
@@ -56,12 +58,14 @@ jobs:
               echo "container_required=true"
               echo "current_nix_required=true"
               echo "dependency_policy_required=true"
+              echo "macos_required=true"
               echo "nix_package_required=true"
               echo "package_dependencies_required=true"
               echo "rpm_required=true"
               echo "rust_cache_required=true"
               echo "rust_required=true"
               echo "workflows_required=true"
+              echo "windows_required=true"
             } >> "$GITHUB_OUTPUT"
             echo "Manual runs execute the container and full Rust checks."
             exit 0
@@ -87,18 +91,22 @@ jobs:
           container_required=false
           current_nix_required=false
           dependency_policy_required=false
+          macos_required=false
           nix_package_required=false
           package_dependencies_required=false
           workflows_required=false
+          windows_required=false
           if [[ "${#changed_paths[@]}" -eq 0 ]]; then
             aur_required=true
             container_required=true
             dependency_policy_required=true
+            macos_required=true
             rpm_required=true
             rust_required=true
             current_nix_required=true
             nix_package_required=true
             package_dependencies_required=true
+            windows_required=true
           fi
 
           for path in "${changed_paths[@]}"; do
@@ -117,6 +125,18 @@ jobs:
                 package_dependencies_required=true
                 rpm_required=true
                 rust_required=true
+                ;;
+            esac
+
+            case "$path" in
+              .cargo/*|.github/workflows/checks.yml|.github/workflows/macos.yml|.github/workflows/release-native.yml|Cargo.lock|Cargo.toml|crates/*|data/*|justfile|packaging/macos/*|scripts/create-media-verification-files)
+                macos_required=true
+                ;;
+            esac
+
+            case "$path" in
+              .cargo/*|.github/workflows/checks.yml|.github/workflows/release-native.yml|.github/workflows/windows.yml|Cargo.lock|Cargo.toml|crates/*|data/*|justfile|packaging/windows/*|scripts/create-media-verification-files)
+                windows_required=true
                 ;;
             esac
 
@@ -186,12 +206,14 @@ jobs:
             echo "container_required=$container_required"
             echo "current_nix_required=$current_nix_required"
             echo "dependency_policy_required=$dependency_policy_required"
+            echo "macos_required=$macos_required"
             echo "nix_package_required=$nix_package_required"
             echo "package_dependencies_required=$package_dependencies_required"
             echo "rpm_required=$rpm_required"
             echo "rust_cache_required=$rust_cache_required"
             echo "rust_required=$rust_required"
             echo "workflows_required=$workflows_required"
+            echo "windows_required=$windows_required"
           } >> "$GITHUB_OUTPUT"
 
       - name: Check Linux package dependencies
@@ -377,6 +399,22 @@ jobs:
           command: check
           command-arguments: -D unmatched-skip
 
+  macos:
+    name: macOS
+    needs: changes
+    if: github.event_name == 'pull_request' && needs.changes.outputs.macos_required == 'true'
+    uses: ./.github/workflows/macos.yml
+    with:
+      ref: ${{ github.event.pull_request.head.sha }}
+
+  windows:
+    name: Windows
+    needs: changes
+    if: github.event_name == 'pull_request' && needs.changes.outputs.windows_required == 'true'
+    uses: ./.github/workflows/windows.yml
+    with:
+      ref: ${{ github.event.pull_request.head.sha }}
+
   required:
     name: Required
     needs:
@@ -387,6 +425,8 @@ jobs:
       - container
       - workspace
       - cargo-deny
+      - macos
+      - windows
     if: always()
     runs-on: ubuntu-latest
 
@@ -401,6 +441,8 @@ jobs:
           CONTAINER_RESULT: ${{ needs.container.result }}
           DEPENDENCY_POLICY_REQUIRED: ${{ needs.changes.outputs.dependency_policy_required }}
           EVENT_NAME: ${{ github.event_name }}
+          MACOS_REQUIRED: ${{ needs.changes.outputs.macos_required }}
+          MACOS_RESULT: ${{ needs.macos.result }}
           NIX_PACKAGE_REQUIRED: ${{ needs.changes.outputs.nix_package_required }}
           NIX_PACKAGE_RESULT: ${{ needs.nix-package.result }}
           RPM_REQUIRED: ${{ needs.changes.outputs.rpm_required }}
@@ -408,6 +450,8 @@ jobs:
           RUST_CACHE_REQUIRED: ${{ needs.changes.outputs.rust_cache_required }}
           RUST_REQUIRED: ${{ needs.changes.outputs.rust_required }}
           WORKSPACE_RESULT: ${{ needs.workspace.result }}
+          WINDOWS_REQUIRED: ${{ needs.changes.outputs.windows_required }}
+          WINDOWS_RESULT: ${{ needs.windows.result }}
         run: |
           set -euo pipefail
 
@@ -427,6 +471,17 @@ jobs:
             fi
             echo "Rust cache updated."
             exit 0
+          fi
+
+          if [[ "$EVENT_NAME" == "pull_request" ]]; then
+            if [[ "$MACOS_REQUIRED" == "true" && "$MACOS_RESULT" != "success" ]]; then
+              echo "macOS check did not pass: $MACOS_RESULT" >&2
+              exit 1
+            fi
+            if [[ "$WINDOWS_REQUIRED" == "true" && "$WINDOWS_RESULT" != "success" ]]; then
+              echo "Windows check did not pass: $WINDOWS_RESULT" >&2
+              exit 1
+            fi
           fi
 
           if [[ "$NIX_PACKAGE_REQUIRED" == "true" && "$NIX_PACKAGE_RESULT" != "success" ]]; then

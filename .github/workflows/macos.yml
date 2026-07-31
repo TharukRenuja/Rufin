@@ -1,69 +1,33 @@
 name: macOS
 
 on:
-  pull_request:
-  release:
-    types:
-      - published
-  workflow_dispatch:
+  workflow_call:
     inputs:
       ref:
-        description: Git ref to build, including a test commit for an existing release
+        description: Git ref to build
         required: true
-        default: main
-      upload_release_tag:
-        description: Optional existing GitHub release tag to upload the disk image to
-        required: false
+        type: string
+      release_tag:
+        description: Release version to validate
         default: ""
+        required: false
+        type: string
+      verify_signed_tag:
+        description: Verify that the release tag is signed
+        default: false
+        required: false
+        type: boolean
 
 permissions:
   contents: read
 
 concurrency:
-  group: macos-${{ github.event_name == 'release' && github.event.release.tag_name || inputs.upload_release_tag || github.ref }}
+  group: macos-${{ github.event_name == 'pull_request' && github.ref || inputs.release_tag || inputs.ref }}
   cancel-in-progress: true
 
 jobs:
-  changes:
-    name: Check macOS paths
-    runs-on: ubuntu-latest
-    outputs:
-      build_required: ${{ steps.classify.outputs.build_required }}
-
-    steps:
-      - name: Check out pull request
-        if: github.event_name == 'pull_request'
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-        with:
-          ref: ${{ github.event.pull_request.head.sha }}
-          fetch-depth: 0
-          persist-credentials: false
-
-      - name: Classify changed paths
-        id: classify
-        env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-        run: |
-          set -euo pipefail
-          build_required=true
-          if [[ "$GITHUB_EVENT_NAME" == "pull_request" ]]; then
-            build_required=false
-            while IFS= read -r path; do
-              case "$path" in
-                .cargo/*|.github/workflows/macos.yml|Cargo.lock|Cargo.toml|crates/*|data/*|justfile|packaging/macos/*|scripts/create-media-verification-files)
-                  build_required=true
-                  break
-                  ;;
-              esac
-            done < <(git diff --name-only "$BASE_SHA" "$HEAD_SHA")
-          fi
-          echo "build_required=$build_required" >> "$GITHUB_OUTPUT"
-
   build:
     name: Build macOS ${{ matrix.architecture }} disk image
-    needs: changes
-    if: needs.changes.outputs.build_required == 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -79,10 +43,10 @@ jobs:
 
     steps:
       - name: Validate release target
-        if: github.event_name == 'release' || inputs.upload_release_tag != ''
+        if: inputs.release_tag != ''
         shell: bash
         env:
-          RELEASE_TAG: ${{ github.event_name == 'release' && github.event.release.tag_name || inputs.upload_release_tag }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
         run: |
           set -euo pipefail
           release_tag="$RELEASE_TAG"
@@ -94,20 +58,20 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          ref: ${{ github.event_name == 'release' && github.event.release.tag_name || github.event_name == 'workflow_dispatch' && inputs.ref || github.event.pull_request.head.sha }}
+          ref: ${{ inputs.ref }}
           fetch-depth: 0
           persist-credentials: false
 
       - name: Verify signed release tag
-        if: github.event_name == 'release'
+        if: inputs.verify_signed_tag
         env:
-          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
         run: cargo run --locked -p xtask -- verify release-tag "$RELEASE_TAG"
 
       - name: Validate release metadata
-        if: github.event_name == 'release' || inputs.upload_release_tag != ''
+        if: inputs.release_tag != ''
         env:
-          RELEASE_TAG: ${{ github.event_name == 'release' && github.event.release.tag_name || inputs.upload_release_tag }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
         run: |
           set -euo pipefail
           version="${RELEASE_TAG#v}"
@@ -122,6 +86,10 @@ jobs:
 
       - name: Install packaging dependencies
         run: |
+          set -euo pipefail
+          if brew tap | grep -Fxq aws/tap; then
+            brew untap aws/tap
+          fi
           brew install \
             adwaita-icon-theme \
             dylibbundler \
@@ -130,10 +98,11 @@ jobs:
             gtk4 \
             libadwaita \
             librsvg \
+            meson \
+            ninja \
             pkgconf \
             shared-mime-info \
             wavpack
-          brew install --cask gstreamer-runtime
 
       - name: Select Xcode 26
         run: |
@@ -193,70 +162,3 @@ jobs:
           path: dist/Rufin-macos-${{ matrix.architecture }}.dmg
           if-no-files-found: error
           retention-days: 7
-
-  required:
-    name: macOS required
-    needs:
-      - changes
-      - build
-    if: always() && github.event_name == 'pull_request'
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Enforce macOS build policy
-        env:
-          BUILD_REQUIRED: ${{ needs.changes.outputs.build_required }}
-          BUILD_RESULT: ${{ needs.build.result }}
-          CHANGES_RESULT: ${{ needs.changes.result }}
-        run: |
-          set -euo pipefail
-          if [[ "$CHANGES_RESULT" != "success" ]]; then
-            echo "macOS path classification failed: $CHANGES_RESULT" >&2
-            exit 1
-          fi
-          if [[ "$BUILD_REQUIRED" != "true" ]]; then
-            echo "The macOS build is not required for these changes."
-            exit 0
-          fi
-          if [[ "$BUILD_RESULT" != "success" ]]; then
-            echo "The macOS build did not pass: $BUILD_RESULT" >&2
-            exit 1
-          fi
-          echo "The macOS build passed."
-
-  release:
-    name: Upload macOS release asset
-    if: github.event_name == 'release' || inputs.upload_release_tag != ''
-    needs: build
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-      id-token: write
-      attestations: write
-      artifact-metadata: write
-
-    steps:
-      - name: Download workflow artifact
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
-        with:
-          pattern: Rufin-macos-*.dmg
-          path: dist
-          merge-multiple: true
-
-      - name: Generate checksum
-        run: |
-          set -euo pipefail
-          for disk_image in dist/Rufin-macos-*.dmg; do
-            sha256sum "$disk_image" > "$disk_image.sha256"
-          done
-
-      - name: Attest macOS disk image
-        uses: actions/attest@f7c74d28b9d84cb8768d0b8ca14a4bac6ef463e6 # v4
-        with:
-          subject-path: dist/Rufin-macos-*.dmg
-
-      - name: Upload release asset
-        env:
-          GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: ${{ github.event_name == 'release' && github.event.release.tag_name || inputs.upload_release_tag }}
-        run: gh release upload "$RELEASE_TAG" dist/Rufin-macos-*.dmg dist/Rufin-macos-*.dmg.sha256 --clobber --repo "$GITHUB_REPOSITORY"
