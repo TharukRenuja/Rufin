@@ -7,19 +7,20 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use library::{HomeFacts, LocalComponentBaseline, LocalComponentReplacement, Track};
+use library::{HomeFacts, LocalComponentBaseline, LocalComponentReplacement};
 use serde::Deserialize;
 
 use crate::source::{BatchEmitter, SourceReadProgress};
 use crate::{
     ConnectedSource, ImageBytes, LocalFolderHostInput, SourceConfiguration, SourceEditResult,
-    SourceError, SourceResult, TrackMetadataEditing,
+    SourceError, SourceResult,
 };
 
 mod artwork;
 mod cue;
 mod discoverer;
 mod format;
+pub(crate) mod metadata;
 mod scan;
 mod tags;
 mod watch;
@@ -132,15 +133,23 @@ impl LocalSource {
         &self.roots
     }
 
-    pub(crate) fn track_metadata_editing(&self, track: &Track) -> Option<TrackMetadataEditing> {
-        if track.cue.is_some() {
-            return None;
-        }
-        let path = Path::new(track.source_path.as_deref()?);
-        if !self.roots.iter().any(|root| path.starts_with(root)) {
-            return None;
-        }
-        format::audio_format(path)?.metadata_editing()
+    pub(crate) fn metadata_entry_available(&self, item: &library::MetadataItem) -> bool {
+        metadata::entry_editing_available(&self.roots, item)
+    }
+
+    pub(crate) fn read_metadata(
+        &self,
+        subject: &library::MetadataSubject,
+    ) -> Result<library::MetadataDraft, library::MetadataError> {
+        metadata::read_subject(&self.roots, subject)
+    }
+
+    pub(crate) fn write_metadata(
+        &self,
+        subject: &library::MetadataSubject,
+        edit: &library::MetadataEdit,
+    ) -> Result<std::collections::BTreeSet<PathBuf>, library::MetadataError> {
+        metadata::write_subject(&self.roots, subject, edit)
     }
 
     pub(super) fn read_facts(
@@ -227,6 +236,25 @@ impl LocalSource {
             should_stop,
         )
     }
+}
+
+pub(crate) fn mapped_metadata_editing_available(item: &library::MetadataItem) -> bool {
+    metadata::mapped_editing_available(item)
+}
+
+pub(crate) fn read_mapped_metadata(
+    subject: &library::MetadataSubject,
+    targets: &[library::LocalAccessTarget],
+) -> Result<library::MetadataDraft, library::MetadataError> {
+    metadata::read_mapped_subject(subject, targets)
+}
+
+pub(crate) fn write_mapped_metadata(
+    subject: &library::MetadataSubject,
+    targets: &[library::LocalAccessTarget],
+    edit: &library::MetadataEdit,
+) -> Result<std::collections::BTreeSet<PathBuf>, library::MetadataError> {
+    metadata::write_mapped_subject(subject, targets, edit)
 }
 
 pub(crate) fn connect(input: LocalFolderHostInput) -> SourceResult<ConnectedSource> {

@@ -15,15 +15,14 @@ mod subsonic;
 
 pub use config::{
     CredentialHostInput, CredentialHostPreset, CredentialSettingsInput, EditableSource,
-    JellyfinSettingsInput, JellyfinSetupInput, LocalFolderHostInput, SourceConfiguration,
-    SourceSettingsInput, SourceSetupInput,
+    JellyfinSettingsInput, JellyfinSetupInput, LocalFolderHostInput, SourceCacheMatch,
+    SourceConfiguration, SourceSettingsInput, SourceSetupInput,
 };
 pub use operations::{
     GeneratedTracksRequest, ImageBytes, LyricsSearch, NativeLyricAgent, NativeLyricAgentRole,
     NativeLyricCue, NativeLyricCueLine, NativeLyricLine, NativeLyrics, NativeLyricsDocument,
     NativeLyricsOrigin, NativeLyricsRole, PlaybackReport, PlaybackReportKind, PlayedFilter,
-    RandomTrackRequest, StreamDescriptor, StreamQuality, StreamRequest, TrackMetadataEditing,
-    TrackMetadataField,
+    RandomTrackRequest, StreamDescriptor, StreamQuality, StreamRequest,
 };
 pub use source::*;
 

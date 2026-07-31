@@ -1,4 +1,5 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
+use std::time::Duration;
 
 use library::{CandidateBatch, GenreCredit, HomeFacts, ImageRef, ProviderFreshness};
 
@@ -8,13 +9,24 @@ use crate::source::{BatchEmitter, SourceReadProgress, SourceReadStage};
 const ALBUM_REQUEST_SIZE: usize = 500;
 const TRACK_REQUEST_SIZE: usize = 20_000;
 const FRESHNESS_VERSION: u32 = 2;
+const METADATA_SCAN_POLL_INTERVAL: Duration = Duration::from_secs(1);
+const METADATA_SCAN_MAX_POLLS: usize = 120;
+
+#[derive(Clone, Copy)]
+struct ScanWait {
+    interval: Duration,
+    max_polls: usize,
+}
 
 impl SubsonicSource {
     pub(crate) async fn check_freshness(
         &self,
         accepted: Option<&ProviderFreshness>,
     ) -> SourceResult<crate::SourceFreshness> {
-        let body: ScanStatusBody = self.get_json("getScanStatus", &[]).await?;
+        let capability = self.refresh_metadata_editing();
+        let status = self.get_json("getScanStatus", &[]);
+        let (_, status) = tokio::join!(capability, status);
+        let body: ScanStatusBody = status?;
         if body.scan_status.scanning {
             return Ok(crate::SourceFreshness::Busy);
         }
@@ -32,13 +44,7 @@ impl SubsonicSource {
         progress: &(dyn Fn(SourceReadProgress) + Send + Sync),
         cancelled: &(dyn Fn() -> bool + Send + Sync),
     ) -> SourceResult<(Option<ProviderFreshness>, HomeFacts)> {
-        let mut relation_genres = BTreeMap::<GenreId, String>::new();
-
-        check_cancelled(cancelled)?;
-        progress(stage(SourceReadStage::Albums, 0));
-        let album_images = self
-            .emit_albums(emitter, &mut relation_genres, progress, cancelled)
-            .await?;
+        self.refresh_metadata_editing().await;
 
         check_cancelled(cancelled)?;
         let music_folders = self.read_music_folders().await?;
@@ -46,22 +52,35 @@ impl SubsonicSource {
             .emit_async(CandidateBatch::MusicFolders(music_folders.clone()))
             .await?;
 
-        progress(stage(SourceReadStage::Tracks, 0));
-        self.emit_tracks(
-            &music_folders,
-            &album_images,
-            emitter,
-            &mut relation_genres,
-            progress,
-            cancelled,
-        )
-        .await?;
+        let relation_genres = if self.has_navidrome_library() {
+            self.emit_navidrome_library(emitter, progress, cancelled)
+                .await?
+        } else {
+            let mut relation_genres = BTreeMap::new();
+            check_cancelled(cancelled)?;
+            progress(stage(SourceReadStage::Albums, 0));
+            let album_images = self
+                .emit_albums(emitter, &mut relation_genres, progress, cancelled)
+                .await?;
 
-        check_cancelled(cancelled)?;
-        progress(stage(SourceReadStage::Artists, 0));
-        emitter
-            .emit_async(CandidateBatch::Artists(self.get_all_artists().await?))
+            progress(stage(SourceReadStage::Tracks, 0));
+            self.emit_tracks(
+                &music_folders,
+                &album_images,
+                emitter,
+                &mut relation_genres,
+                progress,
+                cancelled,
+            )
             .await?;
+
+            check_cancelled(cancelled)?;
+            progress(stage(SourceReadStage::Artists, 0));
+            emitter
+                .emit_async(CandidateBatch::Artists(self.get_all_artists().await?))
+                .await?;
+            relation_genres
+        };
 
         check_cancelled(cancelled)?;
         progress(stage(SourceReadStage::Genres, 0));
@@ -344,6 +363,65 @@ impl SubsonicSource {
     async fn read_freshness(&self) -> SourceResult<ProviderFreshness> {
         let body: ScanStatusBody = self.get_json("getScanStatus", &[]).await?;
         Ok(freshness(body.scan_status))
+    }
+
+    pub(crate) async fn require_metadata_scan_idle(&self) -> SourceResult<()> {
+        let body: ScanStatusBody = self.get_json("getScanStatus", &[]).await?;
+        if body.scan_status.scanning {
+            return Err(SourceError::Other(
+                "The server is already scanning its library. Wait for it to finish before editing metadata."
+                    .to_string(),
+            ));
+        }
+        Ok(())
+    }
+
+    pub(crate) async fn start_metadata_scan_and_wait(&self) -> SourceResult<()> {
+        self.start_metadata_scan_with_wait(ScanWait {
+            interval: METADATA_SCAN_POLL_INTERVAL,
+            max_polls: METADATA_SCAN_MAX_POLLS,
+        })
+        .await
+    }
+
+    async fn start_metadata_scan_with_wait(&self, wait: ScanWait) -> SourceResult<()> {
+        let body: ScanStatusBody = self.get_json("startScan", &[]).await?;
+        let mut status = body.scan_status;
+        for poll in 0..=wait.max_polls {
+            if !status.scanning {
+                return scan_finished(status);
+            }
+            if poll == wait.max_polls {
+                break;
+            }
+            if !wait.interval.is_zero() {
+                tokio::time::sleep(wait.interval).await;
+            }
+            let body: ScanStatusBody = self.get_json("getScanStatus", &[]).await?;
+            status = body.scan_status;
+        }
+        Err(SourceError::Other(
+            "The server library scan did not finish within two minutes.".to_string(),
+        ))
+    }
+
+    #[cfg(test)]
+    pub(super) async fn start_metadata_scan_for_test(&self, max_polls: usize) -> SourceResult<()> {
+        self.start_metadata_scan_with_wait(ScanWait {
+            interval: Duration::ZERO,
+            max_polls,
+        })
+        .await
+    }
+}
+
+fn scan_finished(status: ScanStatus) -> SourceResult<()> {
+    if let Some(error) = status.error.filter(|error| !error.trim().is_empty()) {
+        Err(SourceError::Other(format!(
+            "The server library scan failed: {error}"
+        )))
+    } else {
+        Ok(())
     }
 }
 

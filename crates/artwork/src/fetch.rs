@@ -60,10 +60,10 @@ impl FetchContext {
                     })
                     .or_else(source_result)
             }
-            Candidate::Album(album) => album_lookup::lookup_album_cover(
+            Candidate::Album(album) => metadata_lookup::lookup_album_cover(
                 album,
                 size,
-                &album_lookup::AlbumCoverPolicy::new(
+                &metadata_lookup::AlbumCoverPolicy::new(
                     policy.lastfm_api_key.clone(),
                     policy.allow_musicbrainz,
                 ),

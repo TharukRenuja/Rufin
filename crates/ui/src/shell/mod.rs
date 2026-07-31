@@ -36,6 +36,20 @@ mod window_state;
 
 use route::RouteViewport;
 
+impl Shell {
+    pub(crate) fn metadata_editing_available(&self, item_id: library::MetadataItemId) -> bool {
+        self.library
+            .selected
+            .borrow()
+            .as_ref()
+            .is_some_and(|selected| {
+                self.products
+                    .source
+                    .metadata_editing_available(selected.metadata_request(item_id))
+            })
+    }
+}
+
 pub(crate) struct Shell {
     pub(crate) diagnostics: DiagnosticsHandle,
     pub(crate) settings: SettingsState,

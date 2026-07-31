@@ -6,34 +6,42 @@ use crate::layout::{AllocationOwner, width_allocation_owner};
 
 const COMPACT_FIELD_ROW_STACK_WIDTH: i32 = 560;
 
-pub(super) fn style_compact_field_row(row: &impl IsA<gtk::Widget>) {
+pub(crate) fn style_compact_field_row(row: &impl IsA<gtk::Widget>) {
     row.add_css_class("compact-field-row");
 }
 
-pub(super) fn compact_field_row_group(row: &impl IsA<gtk::Widget>) -> adw::PreferencesGroup {
+pub(crate) fn compact_field_row_group(row: &impl IsA<gtk::Widget>) -> adw::PreferencesGroup {
     let group = adw::PreferencesGroup::new();
     group.set_hexpand(true);
     group.add(row);
     group
 }
 
-pub(super) fn install_compact_field_row_responsiveness(fields: &gtk::Box) -> AllocationOwner {
+pub(crate) fn install_compact_field_row_responsiveness(fields: &gtk::Box) -> AllocationOwner {
+    install_compact_field_row_responsiveness_at(fields, COMPACT_FIELD_ROW_STACK_WIDTH)
+}
+
+pub(crate) fn install_compact_field_row_responsiveness_at(
+    fields: &gtk::Box,
+    stack_width: i32,
+) -> AllocationOwner {
     let resize_fields = fields.clone();
+    let horizontal_spacing = fields.spacing();
     let stacked = Cell::new(false);
     width_allocation_owner(fields, move |width| {
-        let stack = width < COMPACT_FIELD_ROW_STACK_WIDTH;
+        let stack = width < stack_width;
         if stacked.replace(stack) != stack {
-            apply_compact_field_row_layout(&resize_fields, stack);
+            apply_compact_field_row_layout(&resize_fields, stack, horizontal_spacing);
         }
     })
 }
 
-fn apply_compact_field_row_layout(fields: &gtk::Box, stack: bool) {
+fn apply_compact_field_row_layout(fields: &gtk::Box, stack: bool, horizontal_spacing: i32) {
     fields.set_orientation(if stack {
         gtk::Orientation::Vertical
     } else {
         gtk::Orientation::Horizontal
     });
     fields.set_homogeneous(!stack);
-    fields.set_spacing(if stack { 8 } else { 12 });
+    fields.set_spacing(if stack { 8 } else { horizontal_spacing });
 }

@@ -579,11 +579,30 @@ pub(crate) fn write_settings(path: &Path, value: &StoredSettings) -> Result<(), 
     file.write_all(format!("{json}\n").as_bytes())
         .and_then(|()| file.sync_all())
         .map_err(|error| error.to_string())?;
-    fs::rename(&temporary, path).map_err(|error| error.to_string())?;
+    commit_settings_file(&temporary, path)?;
+    Ok(())
+}
+
+fn commit_settings_file(temporary: &Path, path: &Path) -> Result<(), String> {
+    commit_settings_file_with(temporary, path, |parent| {
+        fs::File::open(parent).and_then(|directory| directory.sync_all())
+    })
+}
+
+fn commit_settings_file_with(
+    temporary: &Path,
+    path: &Path,
+    sync_directory: impl FnOnce(&Path) -> std::io::Result<()>,
+) -> Result<(), String> {
+    fs::rename(temporary, path).map_err(|error| error.to_string())?;
     if let Some(parent) = path.parent() {
-        fs::File::open(parent)
-            .and_then(|directory| directory.sync_all())
-            .map_err(|error| error.to_string())?;
+        if let Err(error) = sync_directory(parent) {
+            warn!(
+                %error,
+                path = %path.display(),
+                "could not sync the settings directory after saving"
+            );
+        }
     }
     Ok(())
 }
@@ -682,6 +701,26 @@ mod tests {
                 .remove(key);
             Ok(())
         }
+    }
+
+    #[test]
+    fn settings_rename_is_the_commit_point_even_if_directory_sync_fails() {
+        let directory = tempfile::tempdir().expect("temporary settings directory");
+        let path = directory.path().join("settings.json");
+        let temporary = directory.path().join("settings.json.tmp");
+        fs::write(&path, "old").expect("write old settings");
+        fs::write(&temporary, "new").expect("write new settings");
+
+        commit_settings_file_with(&temporary, &path, |_| {
+            Err(std::io::Error::other("injected directory sync failure"))
+        })
+        .expect("renamed settings are committed");
+
+        assert_eq!(
+            fs::read_to_string(path).expect("read committed settings"),
+            "new"
+        );
+        assert!(!temporary.exists());
     }
 
     #[test]

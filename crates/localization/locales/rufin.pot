@@ -288,13 +288,22 @@ msgstr ""
 msgid "Change"
 msgstr ""
 
+#, rust-format
+msgid "Changes apply to {count} track"
+msgid_plural "Changes apply to {count} tracks"
+msgstr[0] ""
+msgstr[1] ""
+
+msgid "Checking\342\200\246"
+msgstr ""
+
 msgid "Choose a configured source or add another."
 msgstr ""
 
 msgid "Choose a local music folder"
 msgstr ""
 
-msgid "Choose a local prefix."
+msgid "Choose a local music folder."
 msgstr ""
 
 msgid "Choose an existing local prefix."
@@ -307,6 +316,9 @@ msgid "Choose one or more folders to scan and play directly from this computer"
 msgstr ""
 
 msgid "Choose the current page layout."
+msgstr ""
+
+msgid "Choose the local music folder."
 msgstr ""
 
 msgid "Choose"
@@ -354,7 +366,7 @@ msgstr ""
 msgid "Compact"
 msgstr ""
 
-msgid "Configure saved music sources and local playback mappings."
+msgid "Configure saved music sources and local file access."
 msgstr ""
 
 msgid "Connect"
@@ -374,6 +386,9 @@ msgid "Connection"
 msgstr ""
 
 msgid "Context Menus"
+msgstr ""
+
+msgid "Continue"
 msgstr ""
 
 msgid "Control notifications"
@@ -445,6 +460,9 @@ msgstr ""
 msgid "Disable private mode"
 msgstr ""
 
+msgid "Disc number"
+msgstr ""
+
 msgid "Disc"
 msgstr ""
 
@@ -505,6 +523,9 @@ msgstr ""
 msgid "Edit Smart Playlist"
 msgstr ""
 
+msgid "Edit metadata"
+msgstr ""
+
 msgid "Edit"
 msgstr ""
 
@@ -517,13 +538,13 @@ msgstr ""
 msgid "Enter API credentials first"
 msgstr ""
 
-msgid "Enter a local prefix."
-msgstr ""
-
 msgid "Enter a matching server prefix to map this path."
 msgstr ""
 
 msgid "Enter a new playlist name."
+msgstr ""
+
+msgid "Enter a positive number."
 msgstr ""
 
 msgid "Enter a server address, username, and password"
@@ -569,6 +590,9 @@ msgid "Favorites"
 msgstr ""
 
 msgid "Featured genres"
+msgstr ""
+
+msgid "File path replacement"
 msgstr ""
 
 msgid "Files need Mood/BPM tags written on them. Not supported for Jellyfin"
@@ -670,6 +694,12 @@ msgstr ""
 msgid "Home"
 msgstr ""
 
+msgid "Identify"
+msgstr ""
+
+msgid "Identifying\342\200\246"
+msgstr ""
+
 msgid "If the page doesn't load, then Libre.fm blocks your IP range/VPN"
 msgstr ""
 
@@ -763,19 +793,28 @@ msgstr ""
 msgid "Loading folders..."
 msgstr ""
 
-msgid "Local Folder"
+msgid "Local File Access"
+msgstr ""
+
+msgid "Local File Mapping"
 msgstr ""
 
 msgid "Local Folders"
 msgstr ""
 
-msgid "Local Playback Access"
-msgstr ""
-
-msgid "Local Playback Mapping"
-msgstr ""
-
 msgid "Local Prefix"
+msgstr ""
+
+msgid "Local file access configured"
+msgstr ""
+
+msgid "Local file mapping is no longer available"
+msgstr ""
+
+msgid "Local file mapping saved. Sync to preview matches."
+msgstr ""
+
+msgid "Local file mapping"
 msgstr ""
 
 msgid "Local library folder is saved."
@@ -784,16 +823,13 @@ msgstr ""
 msgid "Local library"
 msgstr ""
 
-msgid "Local mapping saved. Sync to preview matches."
-msgstr ""
-
-msgid "Local mapping"
-msgstr ""
-
-msgid "Local playback mapping configured"
+msgid "Local music folder"
 msgstr ""
 
 msgid "Local"
+msgstr ""
+
+msgid "Lock metadata"
 msgstr ""
 
 msgid "Lyrics offset (ms)"
@@ -808,9 +844,6 @@ msgstr ""
 msgid "Manage"
 msgstr ""
 
-msgid "Map server tracks to local files"
-msgstr ""
-
 msgid "Mapped Local Path"
 msgstr ""
 
@@ -818,6 +851,9 @@ msgid "Maximum year"
 msgstr ""
 
 msgid "Menu"
+msgstr ""
+
+msgid "Metadata editing is no longer available"
 msgstr ""
 
 msgid "Metadata source"
@@ -862,10 +898,28 @@ msgstr ""
 msgid "Move up"
 msgstr ""
 
+msgid "Multiple values"
+msgstr ""
+
 msgid "Music Folder"
 msgstr ""
 
 msgid "MusicBrainz + Last.fm"
+msgstr ""
+
+msgid "MusicBrainz artist ID"
+msgstr ""
+
+msgid "MusicBrainz recording ID"
+msgstr ""
+
+msgid "MusicBrainz release ID"
+msgstr ""
+
+msgid "MusicBrainz release group ID"
+msgstr ""
+
+msgid "MusicBrainz release track ID"
 msgstr ""
 
 msgid "MusicBrainz"
@@ -949,10 +1003,10 @@ msgstr ""
 msgid "No limit"
 msgstr ""
 
-msgid "No local folders configured"
+msgid "No local file mapping"
 msgstr ""
 
-msgid "No local playback mapping"
+msgid "No local folders configured"
 msgstr ""
 
 msgid "No lyrics for the current track."
@@ -1052,6 +1106,9 @@ msgid "Original"
 msgstr ""
 
 msgid "Other"
+msgstr ""
+
+msgid "Overview"
 msgstr ""
 
 msgid "Password"
@@ -1163,6 +1220,9 @@ msgid "Preparing library..."
 msgstr ""
 
 msgid "Preset"
+msgstr ""
+
+msgid "Prevent automatic metadata refreshes from replacing these values"
 msgstr ""
 
 msgid "Previous Track"
@@ -1279,6 +1339,9 @@ msgstr ""
 msgid "Remove from playlist"
 msgstr ""
 
+msgid "Remove prefix"
+msgstr ""
+
 msgid "Remove rule"
 msgstr ""
 
@@ -1375,6 +1438,12 @@ msgstr ""
 msgid "Saved to"
 msgstr ""
 
+msgid "Saved"
+msgstr ""
+
+msgid "Saving\342\200\246"
+msgstr ""
+
 msgid "Scrobbling"
 msgstr ""
 
@@ -1464,6 +1533,9 @@ msgstr ""
 
 #, rust-format
 msgid "Server discovery failed: {error}"
+msgstr ""
+
+msgid "Server path"
 msgstr ""
 
 msgid "Server sample does not match the server prefix."
@@ -1571,6 +1643,9 @@ msgstr ""
 msgid "Song"
 msgstr ""
 
+msgid "Sort title"
+msgstr ""
+
 msgid "Sort"
 msgstr ""
 
@@ -1613,6 +1688,9 @@ msgstr ""
 msgid "This removes the folder from the Local source."
 msgstr ""
 
+msgid "This source cannot edit this field"
+msgstr ""
+
 msgid "Timed out waiting for Last.fm authorization."
 msgstr ""
 
@@ -1622,10 +1700,16 @@ msgstr ""
 msgid "Title (merged)"
 msgstr ""
 
+msgid "Title cannot be empty."
+msgstr ""
+
 msgid "Title"
 msgstr ""
 
 msgid "Toggle Fullscreen"
+msgstr ""
+
+msgid "Track number"
 msgstr ""
 
 msgid "Track radio"
@@ -1661,6 +1745,9 @@ msgstr ""
 msgid "Type to search"
 msgstr ""
 
+msgid "Undo identified value"
+msgstr ""
+
 msgid "Unmuted"
 msgstr ""
 
@@ -1674,6 +1761,9 @@ msgid "Use different layout below a threshold width"
 msgstr ""
 
 msgid "Use listening activity"
+msgstr ""
+
+msgid "Use local files for playback, lyrics, and supported metadata editing"
 msgstr ""
 
 msgid "User token"

@@ -8,7 +8,7 @@ use lofty::probe::Probe;
 use lofty::tag::ItemKey;
 
 use super::discoverer;
-use crate::{TrackMetadataEditing, TrackMetadataField};
+use library::{MetadataEditing, MetadataField};
 
 const LOFTY_ALLOCATION_MAX_BYTES: usize = 32 * 1024 * 1024;
 
@@ -76,31 +76,85 @@ impl AudioFormat {
         }
     }
 
-    pub(super) fn metadata_editing(self) -> Option<TrackMetadataEditing> {
+    pub(super) fn metadata_editing(self) -> Option<MetadataEditing> {
         let MetadataWriter::Lofty(file_types) = self.metadata_writer()?;
-        let mut fields = [
-            (TrackMetadataField::Title, ItemKey::TrackTitle),
-            (TrackMetadataField::Artist, ItemKey::TrackArtist),
-            (TrackMetadataField::Album, ItemKey::AlbumTitle),
-            (TrackMetadataField::AlbumArtist, ItemKey::AlbumArtist),
-            (TrackMetadataField::TrackNumber, ItemKey::TrackNumber),
-            (TrackMetadataField::DiscNumber, ItemKey::DiscNumber),
-            (TrackMetadataField::Year, ItemKey::RecordingDate),
-            (TrackMetadataField::Genre, ItemKey::Genre),
-            (TrackMetadataField::Comment, ItemKey::Comment),
-            (TrackMetadataField::Bpm, ItemKey::IntegerBpm),
+        let fields = [
+            (MetadataField::Title, ItemKey::TrackTitle),
+            (MetadataField::SortTitle, ItemKey::TrackTitleSortOrder),
+            (MetadataField::Artist, ItemKey::TrackArtist),
+            (MetadataField::Album, ItemKey::AlbumTitle),
+            (MetadataField::AlbumArtist, ItemKey::AlbumArtist),
+            (MetadataField::TrackNumber, ItemKey::TrackNumber),
+            (MetadataField::DiscNumber, ItemKey::DiscNumber),
+            (MetadataField::Year, ItemKey::RecordingDate),
+            (MetadataField::Genre, ItemKey::Genre),
+            (MetadataField::Comment, ItemKey::Comment),
+            (MetadataField::Bpm, ItemKey::IntegerBpm),
+            (
+                MetadataField::MusicBrainzRecordingId,
+                ItemKey::MusicBrainzRecordingId,
+            ),
+            (
+                MetadataField::MusicBrainzReleaseTrackId,
+                ItemKey::MusicBrainzTrackId,
+            ),
+            (
+                MetadataField::MusicBrainzAlbumId,
+                ItemKey::MusicBrainzReleaseId,
+            ),
+            (
+                MetadataField::MusicBrainzReleaseGroupId,
+                ItemKey::MusicBrainzReleaseGroupId,
+            ),
         ]
         .into_iter()
         .filter_map(|(field, key)| {
             file_types
                 .iter()
-                .all(|file_type| key.map_key(file_type.primary_tag_type()).is_some())
+                .all(|file_type| {
+                    metadata_field_is_writable(file_type.primary_tag_type(), field, key)
+                })
                 .then_some(field)
         })
         .collect::<Vec<_>>();
-        fields.push(TrackMetadataField::Artwork);
-        Some(TrackMetadataEditing::new(fields))
+        (!fields.is_empty()).then(|| MetadataEditing::new(fields))
     }
+
+    pub(super) fn metadata_key_is_writable(self, key: ItemKey) -> bool {
+        let Some(MetadataWriter::Lofty(file_types)) = self.metadata_writer() else {
+            return false;
+        };
+        file_types
+            .iter()
+            .all(|file_type| metadata_key_is_writable(file_type.primary_tag_type(), key))
+    }
+}
+
+fn metadata_key_is_writable(tag_type: lofty::tag::TagType, key: ItemKey) -> bool {
+    key.map_key(tag_type).is_some()
+        || tag_type == lofty::tag::TagType::Id3v2 && key == ItemKey::MusicBrainzRecordingId
+}
+
+fn metadata_field_is_writable(
+    tag_type: lofty::tag::TagType,
+    field: MetadataField,
+    key: ItemKey,
+) -> bool {
+    if field == MetadataField::Bpm {
+        return bpm_key(tag_type).is_some();
+    }
+    metadata_key_is_writable(tag_type, key)
+}
+
+pub(super) fn bpm_key(tag_type: lofty::tag::TagType) -> Option<ItemKey> {
+    // Lofty's generic MP4 conversion writes `tmpo` as text and can preserve an
+    // existing integer atom beside it, so that path is not a safe BPM writer.
+    if tag_type == lofty::tag::TagType::Mp4Ilst {
+        return None;
+    }
+    [ItemKey::IntegerBpm, ItemKey::Bpm]
+        .into_iter()
+        .find(|key| metadata_key_is_writable(tag_type, *key))
 }
 
 const AUDIO_FORMATS: &[AudioFormat] = &[
@@ -146,6 +200,27 @@ pub(super) fn read_lofty(
     let options = ParseOptions::new().read_cover_art(read_cover_art);
     let probe = Probe::new(BufReader::new(fs::File::open(path)?))
         .options(options)
+        .guess_file_type()?;
+    let Some(file_type) = probe.file_type() else {
+        return Ok(None);
+    };
+    if !file_types.contains(&file_type) {
+        return Ok(None);
+    }
+    probe.read().map(Some)
+}
+
+pub(super) fn read_lofty_for_edit(
+    path: &Path,
+    file_types: &[FileType],
+) -> lofty::error::Result<Option<TaggedFile>> {
+    apply_global_options(
+        GlobalOptions::new()
+            .allocation_limit(LOFTY_ALLOCATION_MAX_BYTES)
+            .preserve_format_specific_items(true),
+    );
+    let probe = Probe::new(BufReader::new(fs::File::open(path)?))
+        .options(ParseOptions::new().read_cover_art(true))
         .guess_file_type()?;
     let Some(file_type) = probe.file_type() else {
         return Ok(None);
@@ -215,16 +290,33 @@ mod tests {
     #[test]
     fn metadata_editing_follows_the_exact_registered_writer() {
         let editable_fields = [
-            (TrackMetadataField::Title, ItemKey::TrackTitle),
-            (TrackMetadataField::Artist, ItemKey::TrackArtist),
-            (TrackMetadataField::Album, ItemKey::AlbumTitle),
-            (TrackMetadataField::AlbumArtist, ItemKey::AlbumArtist),
-            (TrackMetadataField::TrackNumber, ItemKey::TrackNumber),
-            (TrackMetadataField::DiscNumber, ItemKey::DiscNumber),
-            (TrackMetadataField::Year, ItemKey::RecordingDate),
-            (TrackMetadataField::Genre, ItemKey::Genre),
-            (TrackMetadataField::Comment, ItemKey::Comment),
-            (TrackMetadataField::Bpm, ItemKey::IntegerBpm),
+            (MetadataField::Title, ItemKey::TrackTitle),
+            (MetadataField::SortTitle, ItemKey::TrackTitleSortOrder),
+            (MetadataField::Artist, ItemKey::TrackArtist),
+            (MetadataField::Album, ItemKey::AlbumTitle),
+            (MetadataField::AlbumArtist, ItemKey::AlbumArtist),
+            (MetadataField::TrackNumber, ItemKey::TrackNumber),
+            (MetadataField::DiscNumber, ItemKey::DiscNumber),
+            (MetadataField::Year, ItemKey::RecordingDate),
+            (MetadataField::Genre, ItemKey::Genre),
+            (MetadataField::Comment, ItemKey::Comment),
+            (MetadataField::Bpm, ItemKey::IntegerBpm),
+            (
+                MetadataField::MusicBrainzRecordingId,
+                ItemKey::MusicBrainzRecordingId,
+            ),
+            (
+                MetadataField::MusicBrainzReleaseTrackId,
+                ItemKey::MusicBrainzTrackId,
+            ),
+            (
+                MetadataField::MusicBrainzAlbumId,
+                ItemKey::MusicBrainzReleaseId,
+            ),
+            (
+                MetadataField::MusicBrainzReleaseGroupId,
+                ItemKey::MusicBrainzReleaseGroupId,
+            ),
         ];
         for format in AUDIO_FORMATS {
             match format.metadata_reader() {
@@ -240,7 +332,11 @@ mod tests {
                             assert_eq!(
                                 editing.includes(field),
                                 file_types.iter().all(|file_type| {
-                                    key.map_key(file_type.primary_tag_type()).is_some()
+                                    metadata_field_is_writable(
+                                        file_type.primary_tag_type(),
+                                        field,
+                                        key,
+                                    )
                                 }),
                                 "{file_type:?} field mismatch for {key:?} in {tag_type:?}"
                             );
@@ -265,11 +361,21 @@ mod tests {
             audio_format(Path::new("track.wma")).and_then(|format| format.metadata_writer()),
             None
         );
+        for extension in ["flac", "mp3", "ogg"] {
+            assert!(
+                audio_format(Path::new(&format!("track.{extension}")))
+                    .and_then(|format| format.metadata_editing())
+                    .expect("Lofty metadata editing")
+                    .includes(MetadataField::Bpm),
+                "{extension} should expose its writable BPM key"
+            );
+        }
         assert!(
-            !audio_format(Path::new("track.ape"))
+            !audio_format(Path::new("track.m4a"))
                 .and_then(|format| format.metadata_editing())
-                .expect("APE metadata editing")
-                .includes(TrackMetadataField::Bpm)
+                .expect("MP4 metadata editing")
+                .includes(MetadataField::Bpm),
+            "MP4 BPM stays read-only until Lofty can write an integer tmpo atom"
         );
     }
 

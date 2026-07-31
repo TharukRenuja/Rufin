@@ -162,9 +162,11 @@ pub(crate) fn runtime_inputs(diagnostics: DiagnosticsHandle) -> Result<RuntimeIn
         {
             settings_lyrics.settings_changed(current.ui.lyrics.clone(), current.ui.private_mode);
         }
-        if previous.ui.allows_external_album_lookup() != current.ui.allows_external_album_lookup() {
+        if previous.ui.allows_external_metadata_lookup()
+            != current.ui.allows_external_metadata_lookup()
+        {
             settings_source
-                .album_release_settings_changed(current.ui.allows_external_album_lookup());
+                .album_release_settings_changed(current.ui.allows_external_metadata_lookup());
         }
         if previous.ui.downloads != current.ui.downloads {
             settings_source.download_settings_changed();

@@ -31,7 +31,10 @@ pub(crate) fn client() -> Result<&'static Client, String> {
 }
 
 pub(crate) fn fetch_json(client: &Client, url: Url, context: &str) -> Result<Value, String> {
-    let response = get(client, url, context)?;
+    decode_json(get(client, url, context)?, context)
+}
+
+fn decode_json(response: Response, context: &str) -> Result<Value, String> {
     if !response.status().is_success() {
         return Err(format!(
             "{context} failed with status {}",
@@ -40,6 +43,18 @@ pub(crate) fn fetch_json(client: &Client, url: Url, context: &str) -> Result<Val
     }
     let bytes = read_response_bounded(response, JSON_MAX_BYTES, context)?;
     serde_json::from_slice(&bytes).map_err(|error| error.to_string())
+}
+
+pub(crate) fn fetch_optional_json(
+    client: &Client,
+    url: Url,
+    context: &str,
+) -> Result<Option<Value>, String> {
+    let response = get(client, url, context)?;
+    if response.status() == reqwest::StatusCode::NOT_FOUND {
+        return Ok(None);
+    }
+    decode_json(response, context).map(Some)
 }
 
 pub(crate) fn download(
@@ -64,16 +79,23 @@ pub(crate) fn download(
 
 fn get(client: &Client, url: Url, context: &str) -> Result<Response, String> {
     debug!(
-        service = "album-lookup",
+        service = "metadata-lookup",
         method = "GET",
         public_url = %url,
         %context,
         "sending remote request"
     );
     let started = Instant::now();
-    let response = client.get(url).send().map_err(|error| error.to_string())?;
+    let response = client.get(url).send().map_err(|error| {
+        debug!(%error, %context, "remote request failed");
+        if error.is_timeout() {
+            format!("{context} timed out")
+        } else {
+            format!("{context} request failed")
+        }
+    })?;
     debug!(
-        service = "album-lookup",
+        service = "metadata-lookup",
         method = "GET",
         status = response.status().as_u16(),
         elapsed_ms = started.elapsed().as_millis(),

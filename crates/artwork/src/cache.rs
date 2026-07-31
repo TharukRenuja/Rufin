@@ -514,7 +514,7 @@ mod tests {
         let second = SourceId::new("source-two");
         let native = Candidate::Native(library::ImageRef::new("native-cover", None));
         let external = Candidate::Album(
-            album_lookup::AlbumCover::new("Artist", "Album", None, None)
+            metadata_lookup::AlbumCover::new("Artist", "Album", None, None)
                 .expect("album cover candidate"),
         );
         cache

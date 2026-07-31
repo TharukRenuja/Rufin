@@ -79,6 +79,18 @@ pub(crate) struct ItemReplacement {
     pub(crate) removed_genres: Vec<GenreId>,
 }
 
+#[derive(Debug)]
+pub(crate) struct LocalFavoriteUpdate {
+    pub(crate) targets: Vec<FavoriteItemId>,
+    pub(crate) transfers: Vec<LocalFavoriteTransfer>,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct LocalFavoriteTransfer {
+    pub(crate) removed: FavoriteItemId,
+    pub(crate) replacement: FavoriteItemId,
+}
+
 impl ItemReplacement {
     pub(crate) fn is_empty(&self) -> bool {
         self.albums.is_empty()
@@ -1272,10 +1284,10 @@ impl LoadedLibrary {
         Ok(accepted)
     }
 
-    pub(crate) fn local_favorite_targets(
+    pub(crate) fn local_favorite_update(
         &self,
         replacement: &ItemReplacement,
-    ) -> LoadedLibraryResult<Vec<FavoriteItemId>> {
+    ) -> LoadedLibraryResult<LocalFavoriteUpdate> {
         let state = self.read()?;
         let mut targets = HashSet::new();
         for id in &replacement.removed_tracks {
@@ -1310,6 +1322,12 @@ impl LoadedLibrary {
         for artist in &replacement.artists {
             targets.insert(FavoriteItemId::Artist(artist.id.clone()));
         }
+        let transfers = local_favorite_transfers(&state, replacement);
+        targets.extend(
+            transfers
+                .iter()
+                .map(|transfer| transfer.replacement.clone()),
+        );
         let mut targets = targets.into_iter().collect::<Vec<_>>();
         targets.sort_by(|left, right| {
             left.kind()
@@ -1317,7 +1335,7 @@ impl LoadedLibrary {
                 .cmp(right.kind().as_str())
                 .then_with(|| left.as_str().cmp(right.as_str()))
         });
-        Ok(targets)
+        Ok(LocalFavoriteUpdate { targets, transfers })
     }
 
     pub(crate) fn read_state(&self) -> LoadedLibraryResult<RwLockReadGuard<'_, LoadedState>> {
@@ -1862,6 +1880,200 @@ fn collect_album_favorite_targets(album: &Album, targets: &mut HashSet<FavoriteI
             .chain(album.relations.artists.iter())
             .map(|credit| FavoriteItemId::Artist(credit.id.clone())),
     );
+}
+
+fn local_favorite_transfers(
+    state: &LoadedState,
+    replacement: &ItemReplacement,
+) -> Vec<LocalFavoriteTransfer> {
+    let incoming_tracks = replacement
+        .tracks
+        .iter()
+        .map(|track| (track.id.clone(), track))
+        .collect::<HashMap<_, _>>();
+    let incoming_albums = replacement
+        .albums
+        .iter()
+        .map(|album| (album.id.clone(), album))
+        .collect::<HashMap<_, _>>();
+    let removed_tracks = replacement
+        .removed_tracks
+        .iter()
+        .cloned()
+        .collect::<HashSet<_>>();
+    let removed_albums = replacement
+        .removed_albums
+        .iter()
+        .cloned()
+        .collect::<HashSet<_>>();
+    let removed_artists = replacement
+        .removed_artists
+        .iter()
+        .cloned()
+        .collect::<HashSet<_>>();
+    let mut candidates = HashMap::<FavoriteItemId, HashSet<FavoriteItemId>>::new();
+
+    for album_id in &replacement.removed_albums {
+        let Some(album) = state.albums.get(album_id) else {
+            continue;
+        };
+        let removed = FavoriteItemId::Album(album_id.clone());
+        let mut replacements = album
+            .tracks
+            .iter()
+            .filter_map(|slot| state.tracks.get_slot(*slot))
+            .filter_map(|track| {
+                final_local_track(state, &incoming_tracks, &removed_tracks, &track.id)
+            })
+            .filter_map(|track| track.album_id.clone())
+            .map(FavoriteItemId::Album)
+            .collect::<HashSet<_>>();
+        if replacements.remove(&removed) || replacements.len() != 1 {
+            continue;
+        }
+        candidates.insert(removed, replacements);
+    }
+
+    for artist_id in &replacement.removed_artists {
+        let Some(artist) = state.artists.get(artist_id) else {
+            continue;
+        };
+        let removed = FavoriteItemId::Artist(artist_id.clone());
+        let mut track_ids = artist
+            .tracks
+            .iter()
+            .filter_map(|slot| state.tracks.get_slot(*slot))
+            .map(|track| track.id.clone())
+            .collect::<HashSet<_>>();
+        for album in artist
+            .albums
+            .iter()
+            .filter_map(|slot| state.albums.get_slot(*slot))
+        {
+            track_ids.extend(
+                album
+                    .tracks
+                    .iter()
+                    .filter_map(|slot| state.tracks.get_slot(*slot))
+                    .map(|track| track.id.clone()),
+            );
+        }
+        let mut stable_tracks = HashSet::new();
+        let mut coverage = HashMap::<ArtistId, HashSet<TrackId>>::new();
+        let mut retained = false;
+        for track_id in track_ids {
+            let Some(previous) = state.tracks.get(&track_id) else {
+                continue;
+            };
+            let Some(final_track) =
+                final_local_track(state, &incoming_tracks, &removed_tracks, &track_id)
+            else {
+                continue;
+            };
+            let previous_artists = loaded_track_artist_ids(state, previous);
+            let final_artists =
+                final_track_artist_ids(state, &incoming_albums, &removed_albums, &final_track);
+            if final_artists.contains(artist_id) {
+                retained = true;
+                break;
+            }
+            stable_tracks.insert(track_id.clone());
+            for candidate in final_artists.difference(&previous_artists) {
+                if !removed_artists.contains(candidate) {
+                    coverage
+                        .entry(candidate.clone())
+                        .or_default()
+                        .insert(track_id.clone());
+                }
+            }
+        }
+        if retained || stable_tracks.is_empty() {
+            continue;
+        }
+        let replacements = if coverage.len() == 1 {
+            coverage
+                .into_iter()
+                .filter(|(_, tracks)| tracks == &stable_tracks)
+                .map(|(artist_id, _)| FavoriteItemId::Artist(artist_id))
+                .collect()
+        } else {
+            HashSet::new()
+        };
+        if !replacements.is_empty() {
+            candidates.insert(removed, replacements);
+        }
+    }
+
+    let mut transfers = candidates
+        .into_iter()
+        .filter_map(|(removed, replacements)| {
+            if replacements.len() != 1 {
+                return None;
+            }
+            let replacement = replacements.into_iter().next()?;
+            Some(LocalFavoriteTransfer {
+                removed,
+                replacement,
+            })
+        })
+        .collect::<Vec<_>>();
+    transfers.sort_by(|left, right| {
+        left.removed
+            .kind()
+            .as_str()
+            .cmp(right.removed.kind().as_str())
+            .then_with(|| left.removed.as_str().cmp(right.removed.as_str()))
+    });
+    transfers
+}
+
+fn final_local_track(
+    state: &LoadedState,
+    incoming: &HashMap<TrackId, &Track>,
+    removed: &HashSet<TrackId>,
+    track_id: &TrackId,
+) -> Option<Track> {
+    incoming
+        .get(track_id)
+        .map(|track| (*track).clone())
+        .or_else(|| {
+            (!removed.contains(track_id))
+                .then(|| state.tracks.get(track_id).cloned())
+                .flatten()
+        })
+}
+
+fn final_track_artist_ids(
+    state: &LoadedState,
+    incoming_albums: &HashMap<AlbumId, &Album>,
+    removed_albums: &HashSet<AlbumId>,
+    track: &Track,
+) -> HashSet<ArtistId> {
+    let album = track.album_id.as_ref().and_then(|album_id| {
+        incoming_albums.get(album_id).copied().or_else(|| {
+            (!removed_albums.contains(album_id))
+                .then(|| state.albums.get(album_id).map(|album| album.album.as_ref()))
+                .flatten()
+        })
+    });
+    track_artist_ids(track, album)
+}
+
+fn loaded_track_artist_ids(state: &LoadedState, track: &Track) -> HashSet<ArtistId> {
+    let album = track
+        .album_id
+        .as_ref()
+        .and_then(|album_id| state.albums.get(album_id))
+        .map(|album| album.album.as_ref());
+    track_artist_ids(track, album)
+}
+
+fn track_artist_ids(track: &Track, album: Option<&Album>) -> HashSet<ArtistId> {
+    distinct_artist_credits(track)
+        .into_iter()
+        .chain(album.into_iter().flat_map(distinct_album_artist_credits))
+        .map(|credit| credit.id.clone())
+        .collect()
 }
 
 fn apply_track_activity_to_replacement(tracks: &mut [Track], activity: Vec<TrackActivity>) {

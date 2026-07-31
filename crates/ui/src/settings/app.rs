@@ -42,8 +42,8 @@ pub struct Settings {
     pub secret_storage_mode: SecretStorageMode,
     #[serde(flatten)]
     pub lyrics: LyricsSettings,
-    #[serde(default = "default_true", rename = "external_metadata_enabled")]
-    pub external_album_lookup_enabled: bool,
+    #[serde(default = "default_true")]
+    pub external_metadata_enabled: bool,
     #[serde(default)]
     pub external_site_links: ExternalSiteLinkSettings,
     #[serde(default)]
@@ -107,7 +107,7 @@ impl Default for Settings {
             release_notification_seen_version: None,
             secret_storage_mode: SecretStorageMode::default(),
             lyrics: LyricsSettings::default(),
-            external_album_lookup_enabled: true,
+            external_metadata_enabled: true,
             external_site_links: ExternalSiteLinkSettings::default(),
             prefer_server_playlist_covers: false,
             show_downloaded_badges: true,
@@ -144,8 +144,8 @@ impl Settings {
         self.external_site_links.enabled
     }
 
-    pub fn allows_external_album_lookup(&self) -> bool {
-        self.external_album_lookup_enabled && !self.private_mode
+    pub fn allows_external_metadata_lookup(&self) -> bool {
+        self.external_metadata_enabled && !self.private_mode
     }
 
     pub fn sanitize(&mut self) {

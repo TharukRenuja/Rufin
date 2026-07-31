@@ -1,3 +1,4 @@
+pub(crate) mod metadata;
 mod new_playlist;
 pub(crate) mod popup;
 pub(crate) mod release_notes;

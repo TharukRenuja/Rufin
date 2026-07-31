@@ -5,8 +5,8 @@ use std::time::Duration;
 
 use library::{
     AcceptedPlay, AcceptedSkip, CandidateBatch, CandidateFinish, CandidateHeader, HomeFacts,
-    HomeSectionKind, MusicFolder, MusicFolderId, PlaybackLoad, Track, TrackData, TrackRelations,
-    TrackSort,
+    HomeSectionKind, MetadataChange, MetadataEdit, MetadataItemId, MusicFolder, MusicFolderId,
+    PlaybackLoad, Track, TrackData, TrackRelations, TrackSort,
 };
 use secrets::{MemorySecretStore, SecretStorageMode, SwitchableSecretStore};
 use sources::{LocalFilesystemChange, LocalFolderHostInput, SourceConfiguration, SourceSetupInput};
@@ -38,6 +38,126 @@ fn playback_activity_does_not_rebuild_download_policy() {
         &NextHome::AcceptedPlay(library::TrackId::new("track")),
         rules
     ));
+}
+
+#[test]
+fn upgraded_navidrome_reader_selects_the_generic_cache_before_refreshing() {
+    let directory = tempfile::tempdir().expect("temporary Navidrome cache");
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_time()
+        .build()
+        .expect("build test runtime");
+    let source_id = SourceId::new("navidrome:server:reader-upgrade");
+    let configuration = |library_version| SourceConfiguration {
+        source_id: source_id.clone(),
+        kind: "navidrome".to_string(),
+        name: "Navidrome".to_string(),
+        provider_payload: serde_json::json!({
+            "version": 1,
+            "base_url": "http://127.0.0.1:9",
+            "username": "Listener",
+            "trust_invalid_cert": false,
+            "navidrome_library_version": library_version,
+        })
+        .to_string(),
+    };
+    let generic_configuration = configuration(0);
+    let full_configuration = configuration(1);
+    let generic = generic_configuration
+        .input_identity()
+        .expect("generic Navidrome identity");
+    let library = Library::open(directory.path().join("library.db")).expect("open test Library");
+    let accepted = library
+        .begin_source_candidate(CandidateHeader {
+            source_id: source_id.clone(),
+            input_version: generic.version,
+            input_digest: generic.digest,
+        })
+        .and_then(|candidate| {
+            candidate.finish(
+                CandidateFinish {
+                    freshness: None,
+                    home: HomeFacts::Source {
+                        sections: Vec::new(),
+                    },
+                    accepted_at: 1,
+                },
+                None,
+            )
+        })
+        .and_then(|candidate| candidate.accept())
+        .expect("accept generic Navidrome cache");
+    let settings =
+        SettingsFile::open(directory.path().join("settings.json")).expect("open test Settings");
+    let credential_ref = CredentialRef::new("navidrome-reader-upgrade");
+    let configured = ConfiguredSource {
+        configuration: full_configuration,
+        credential_ref: Some(credential_ref.clone()),
+        music_folder_id: None,
+        local_access: None,
+    };
+    settings
+        .update(|stored| {
+            stored.sources.configured = vec![configured.clone()];
+            Ok(())
+        })
+        .expect("save inactive Navidrome");
+    let artwork = artwork::Artwork::new(directory.path().join("artwork"), runtime.handle().clone())
+        .expect("open Artwork");
+    let (events, _event_receiver) = async_channel::unbounded();
+    let (discovery, _discovery_receiver) = async_channel::unbounded();
+    let secrets = Arc::new(SwitchableSecretStore::new(Arc::new(
+        MemorySecretStore::new(),
+    )));
+    save_provider_secret(
+        &secrets,
+        &credential_ref,
+        serde_json::json!({
+            "version": 1,
+            "salt": "salt",
+            "token": "token",
+            "navidrome_password": "password"
+        })
+        .to_string(),
+    )
+    .expect("save Navidrome password");
+    let scrobbler = Arc::new(
+        Scrobbler::new(library.clone(), ::scrobbling::Settings::default(), false)
+            .expect("open Scrobbler"),
+    );
+    let bootstrap = SourceOwner::open_dormant(
+        artwork,
+        library.clone(),
+        test_downloads(directory.path().join("downloads"), runtime.handle().clone()),
+        settings.clone(),
+        secrets,
+        scrobbler,
+        runtime.handle().clone(),
+        SourceOutputs { events, discovery },
+    );
+    let prepared = runtime
+        .block_on(prepare_select(
+            Arc::clone(&bootstrap.owner.shared),
+            configured,
+            Arc::new(|_| {}),
+            Arc::new(AtomicBool::new(false)),
+        ))
+        .expect("prepare cached Navidrome selection");
+
+    let PreparedReplacement {
+        reason:
+            ReplacementReason::Select {
+                cached: true,
+                refresh_after_select: true,
+            },
+        source: Some(_),
+        library: ReplacementLibrary::Cached(cached),
+        ..
+    } = prepared
+    else {
+        panic!("the reader upgrade must select its cache and schedule a full refresh");
+    };
+    assert_eq!(cached.library_id(), accepted.loaded.library_id());
 }
 
 #[test]
@@ -736,6 +856,66 @@ fn selected_same_account_update_keeps_playback_and_source_epoch() {
     assert_eq!(selected.source_id(), &source_id);
     assert_eq!(selected.source_session_epoch, initial_epoch);
     assert_eq!(selected.configuration, replacement_configuration);
+
+    let progress = SourceReadProgress {
+        stage: SourceReadStage::Artwork,
+        completed: 2,
+        total: Some(3),
+    };
+    actor.active = Some(ActiveWork {
+        token: 99,
+        purpose: WorkPurpose::Update {
+            selected: true,
+            progress_source: None,
+        },
+        activity_updates: Vec::new(),
+        cancelled: Arc::new(AtomicBool::new(false)),
+        handle: runtime
+            .spawn(async { Err::<PreparedWork, String>("unused progress test work".to_string()) }),
+    });
+    runtime.block_on(actor.publish_progress(99, progress));
+    assert!(
+        event_receiver.try_recv().is_err(),
+        "a remote settings update must not publish foreground artwork progress"
+    );
+
+    actor.active.as_mut().expect("active update").purpose = WorkPurpose::Update {
+        selected: true,
+        progress_source: Some(source_id.clone()),
+    };
+    runtime.block_on(actor.publish_progress(99, progress));
+    assert!(matches!(
+        event_receiver.try_recv(),
+        Ok(SourceEvent::Operation(SourceOperation::Refreshing {
+            source_id: visible_source,
+            progress: SourceProgress {
+                stage: SourceProgressStage::Artwork,
+                completed: 2,
+                total: Some(3),
+            },
+        })) if visible_source == source_id
+    ));
+
+    actor.active.as_mut().expect("active update").purpose = WorkPurpose::Refresh {
+        qualifier: selected.qualifier(),
+        visible: true,
+    };
+    runtime.block_on(actor.publish_progress(99, progress));
+    assert!(matches!(
+        event_receiver.try_recv(),
+        Ok(SourceEvent::Operation(SourceOperation::Refreshing {
+            source_id: visible_source,
+            progress: SourceProgress {
+                stage: SourceProgressStage::Artwork,
+                completed: 2,
+                total: Some(3),
+            },
+        })) if visible_source == source_id
+    ));
+    if let Some(active) = actor.active.take() {
+        active.handle.abort();
+    }
+
     assert_eq!(
         selected
             .loaded
@@ -1648,16 +1828,15 @@ fn local_file_change_updates_only_the_changed_component() {
 
     let second_path = music_root.join("Second.mp3");
     std::fs::write(&second_path, []).expect("write changed Local Track");
-    let prepared = runtime
-        .block_on(run_point(
-            selected.clone(),
-            PointOperation::LocalFiles(LocalFilesystemChange::Paths(BTreeSet::from([second_path]))),
+    let replacement = runtime
+        .block_on(prepare_local_change(
+            Arc::clone(&source),
+            Arc::clone(&selected.loaded),
+            LocalFilesystemChange::Paths(BTreeSet::from([second_path])),
             Arc::new(AtomicBool::new(false)),
         ))
-        .expect("read changed Local component");
-    let PointPrepared::LocalComponent(replacement) = prepared else {
-        panic!("changed Local path did not produce an exact component");
-    };
+        .expect("read changed Local component")
+        .expect("changed Local path produced an exact component");
     assert_eq!(replacement.tracks.len(), 1);
     assert!(
         replacement
@@ -1691,13 +1870,314 @@ fn local_file_change_updates_only_the_changed_component() {
     );
 
     let unchanged = runtime
-        .block_on(run_point(
-            selected,
-            PointOperation::LocalFiles(LocalFilesystemChange::Rescan),
+        .block_on(prepare_local_change(
+            source,
+            Arc::clone(&selected.loaded),
+            LocalFilesystemChange::Rescan,
             Arc::new(AtomicBool::new(false)),
         ))
         .expect("verify unchanged Local source");
-    assert!(matches!(unchanged, PointPrepared::Unchanged));
+    assert!(unchanged.is_none());
+}
+
+#[test]
+fn metadata_reply_reports_stale_and_interrupted_work() {
+    let (sender, receiver) = async_channel::bounded(1);
+    drop(MetadataReply::new(sender));
+    assert_eq!(receiver.try_recv(), Ok(Err(MetadataError::Unavailable)));
+
+    let (sender, receiver) = async_channel::bounded(1);
+    let mut reply = MetadataReply::new(sender);
+    reply.mark_write_started();
+    drop(reply);
+    assert_eq!(
+        receiver.try_recv(),
+        Ok(Err(MetadataError::SavedRefreshFailed(
+            "Metadata editing was interrupted before the written metadata was accepted."
+                .to_string()
+        )))
+    );
+
+    let (sender, receiver) = async_channel::bounded(1);
+    MetadataReply::new(sender).finish(Ok(()));
+    assert_eq!(receiver.try_recv(), Ok(Ok(())));
+    assert!(receiver.try_recv().is_err());
+}
+
+#[test]
+fn selected_work_collects_activity_only_from_the_same_source_session() {
+    let qualifier = SourceQualifier {
+        source_id: SourceId::new("selected"),
+        epoch: SourceSessionEpoch::new(4),
+    };
+    let purpose = WorkPurpose::Selected {
+        qualifier: qualifier.clone(),
+        automatic: false,
+    };
+    assert!(work_accepts_activity(&purpose, &qualifier));
+    assert!(!work_accepts_activity(
+        &purpose,
+        &SourceQualifier {
+            source_id: qualifier.source_id,
+            epoch: SourceSessionEpoch::new(5),
+        }
+    ));
+}
+
+#[test]
+fn local_metadata_edit_prepares_the_written_file_for_library_acceptance() {
+    let directory = tempfile::tempdir().expect("temporary Local source");
+    let music_root = directory.path().join("music");
+    std::fs::create_dir(&music_root).expect("create Local music folder");
+    let path = music_root.join("Before.wav");
+    write_silent_wav(&path).expect("write WAV");
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .build()
+        .expect("build test runtime");
+    let connected = runtime
+        .block_on(Source::connect(SourceSetupInput::Local(
+            LocalFolderHostInput {
+                roots: vec![music_root],
+            },
+        )))
+        .expect("open Local source");
+    let (configuration, source, _) = connected.into_parts();
+    let identity = configuration.input_identity().expect("source identity");
+    let source = Arc::new(source);
+    let library = Library::open(directory.path().join("library.db")).expect("open test Library");
+    let prepared = runtime
+        .block_on(acquisition::read_source(
+            library.clone(),
+            identity,
+            Arc::clone(&source),
+            None,
+            Arc::new(|_: SourceReadProgress| {}),
+            Arc::new(AtomicBool::new(false)),
+        ))
+        .expect("read initial Local source");
+    let accepted = prepared.accept().expect("accept initial Local source");
+    let edited_track = accepted
+        .loaded
+        .track_list(None, TrackSort::Title, false)
+        .expect("read initial Tracks")
+        .track(0)
+        .expect("resolve initial Track")
+        .expect("initial Track");
+    let draft = runtime
+        .block_on(source.read_metadata(library::MetadataSubject::track(edited_track.clone()), None))
+        .expect("read metadata draft");
+    let refresh = runtime
+        .block_on(source.write_metadata(
+            library::MetadataSubject::track(edited_track.clone()),
+            MetadataEdit {
+                item_id: MetadataItemId::Track(edited_track.id.clone()),
+                revision: draft.revision,
+                changes: vec![MetadataChange::Title("After".to_string())],
+            },
+            None,
+        ))
+        .expect("write Local metadata");
+    let MetadataRefresh::Local(change) = refresh else {
+        panic!("Local metadata write did not request a Local refresh");
+    };
+    let check = source
+        .check_local(change, &|| false)
+        .expect("check written Local metadata");
+    let accepted_files = accepted
+        .loaded
+        .local_file_baseline(check.file_seeds())
+        .expect("read accepted Local file baseline");
+    let change = source
+        .confirm_local_change(check, accepted_files, &|_| {}, &|| false)
+        .expect("confirm written Local metadata")
+        .expect("written Local metadata changed");
+    let baseline = accepted
+        .loaded
+        .local_component_baseline(change.component_seeds())
+        .expect("read accepted Local component baseline");
+    let replacement = source
+        .complete_local_change(change, baseline, 1, &|| false)
+        .expect("prepare Local metadata replacement");
+    let change = library
+        .accept_local_component(&accepted.loaded, replacement)
+        .expect("accept metadata component")
+        .expect("changed metadata component");
+
+    assert!(change.tracks.iter().any(|replacement| {
+        replacement
+            .track
+            .as_ref()
+            .is_some_and(|track| track.id == edited_track.id && track.title == "After")
+    }));
+    assert_eq!(
+        accepted
+            .loaded
+            .track(&edited_track.id)
+            .expect("read accepted Track")
+            .expect("accepted Track")
+            .title,
+        "After"
+    );
+}
+
+#[test]
+fn private_mode_still_uses_source_metadata_search() {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .build()
+        .expect("build test runtime");
+    let editing = MetadataEditing::new(vec![library::MetadataField::Title]);
+    let current = library::MetadataValues {
+        title: "Current".to_string(),
+        ..library::MetadataValues::default()
+    };
+    let source_candidate = library::MetadataValues {
+        title: "Source candidate".to_string(),
+        ..library::MetadataValues::default()
+    };
+
+    let identified = runtime
+        .block_on(resolve_identification(
+            false,
+            true,
+            &editing,
+            &current,
+            async { panic!("private mode must not poll direct MusicBrainz lookup") },
+            async { Ok(Some(source_candidate)) },
+        ))
+        .expect("source metadata search")
+        .expect("source metadata search candidate");
+    assert_eq!(identified.title, "Source candidate");
+}
+
+#[test]
+fn direct_metadata_candidate_short_circuits_source_search() {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .build()
+        .expect("build test runtime");
+    let editing = MetadataEditing::new(vec![library::MetadataField::Title]);
+    let current = library::MetadataValues {
+        title: "Current".to_string(),
+        ..library::MetadataValues::default()
+    };
+    let direct = library::MetadataValues {
+        title: "Direct".to_string(),
+        ..library::MetadataValues::default()
+    };
+
+    let identified = runtime
+        .block_on(resolve_identification(
+            true,
+            true,
+            &editing,
+            &current,
+            async { Ok(Some(direct)) },
+            async { panic!("an applicable direct candidate must not poll the source fallback") },
+        ))
+        .expect("direct identification")
+        .expect("direct candidate");
+    assert_eq!(identified.title, "Direct");
+}
+
+#[test]
+fn direct_miss_or_unchanged_candidate_falls_back_once() {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .build()
+        .expect("build test runtime");
+    let editing = MetadataEditing::new(vec![library::MetadataField::Title]);
+    let current = library::MetadataValues {
+        title: "Current".to_string(),
+        ..library::MetadataValues::default()
+    };
+    let source_candidate = || library::MetadataValues {
+        title: "Source candidate".to_string(),
+        ..library::MetadataValues::default()
+    };
+
+    let identified = runtime
+        .block_on(resolve_identification(
+            true,
+            true,
+            &editing,
+            &current,
+            async { Ok(None) },
+            async { Ok(Some(source_candidate())) },
+        ))
+        .expect("source fallback after direct miss")
+        .expect("source fallback candidate");
+    assert_eq!(identified.title, "Source candidate");
+
+    let identified = runtime
+        .block_on(resolve_identification(
+            true,
+            true,
+            &editing,
+            &current,
+            async { Ok(Some(current.clone())) },
+            async { Ok(Some(source_candidate())) },
+        ))
+        .expect("source fallback after unchanged direct candidate")
+        .expect("source fallback candidate");
+    assert_eq!(identified.title, "Source candidate");
+}
+
+#[test]
+fn metadata_identification_failure_arbitration_uses_the_applicable_request() {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .build()
+        .expect("build test runtime");
+    let editing = MetadataEditing::new(vec![library::MetadataField::Title]);
+    let current = library::MetadataValues {
+        title: "Current".to_string(),
+        ..library::MetadataValues::default()
+    };
+
+    let identified = runtime
+        .block_on(resolve_identification(
+            true,
+            true,
+            &editing,
+            &current,
+            async { Err("MusicBrainz request failed".to_string()) },
+            async { Ok(None) },
+        ))
+        .expect("successful source miss suppresses a direct failure");
+    assert_eq!(identified, None);
+
+    let error = runtime
+        .block_on(resolve_identification(
+            true,
+            true,
+            &editing,
+            &current,
+            async { Err("MusicBrainz request failed".to_string()) },
+            async { Err("Jellyfin request failed".to_string()) },
+        ))
+        .expect_err("native failure wins");
+    assert_eq!(error, "Jellyfin request failed");
+
+    let error = runtime
+        .block_on(resolve_identification(
+            true,
+            false,
+            &editing,
+            &current,
+            async { Err("MusicBrainz request failed".to_string()) },
+            async { panic!("unsupported native search must not be polled") },
+        ))
+        .expect_err("direct-only failure remains visible");
+    assert_eq!(error, "MusicBrainz request failed");
+
+    let identified = runtime
+        .block_on(resolve_identification(
+            false,
+            false,
+            &editing,
+            &current,
+            async { panic!("inapplicable direct search must not be polled") },
+            async { panic!("inapplicable native search must not be polled") },
+        ))
+        .expect("no applicable lookup is silent");
+    assert_eq!(identified, None);
 }
 
 #[test]
@@ -1928,6 +2408,534 @@ fn first_local_folder_enters_the_source_add_transition() {
     runtime.block_on(actor.cancel_all_work());
 }
 
+#[test]
+fn failed_metadata_access_setting_save_restores_the_accepted_mapping() {
+    let directory = tempfile::tempdir().expect("temporary Local access transaction");
+    let store_path = directory.path().join("library.db");
+    let library = Library::open(&store_path).expect("open test Library");
+    let source_id = SourceId::new("navidrome:server:local-access-transaction");
+    let track_id = library::TrackId::new("navidrome:track:local-access-transaction");
+    let mut candidate = library
+        .begin_source_candidate(CandidateHeader {
+            source_id: source_id.clone(),
+            input_version: 1,
+            input_digest: [11; 32],
+        })
+        .expect("begin source candidate");
+    candidate
+        .write(CandidateBatch::Tracks(vec![test_track(
+            track_id.clone(),
+            "Track",
+            PathBuf::from("/server/music/Artist/Track.wav"),
+        )]))
+        .expect("write mapped Track");
+    let accepted = candidate
+        .finish(
+            CandidateFinish {
+                freshness: None,
+                home: HomeFacts::RufinDefined,
+                accepted_at: 1,
+            },
+            None,
+        )
+        .and_then(|prepared| prepared.accept())
+        .expect("accept mapped source");
+    let previous_root = directory.path().join("previous");
+    let previous_path = previous_root.join("Artist/Track.wav");
+    let previous_access = ConfiguredLocalAccess {
+        root_path: previous_root.clone(),
+        server_prefix: Some("/server/music".to_string()),
+        local_prefix: Some(previous_root.to_string_lossy().into_owned()),
+    };
+    let previous_files = vec![library::LocalAccessFile {
+        path: previous_path.to_string_lossy().into_owned(),
+        root: previous_root.to_string_lossy().into_owned(),
+        relative_path: "Artist/Track.wav".to_string(),
+        size_bytes: 1,
+        mtime_ns: 1,
+        device_id: None,
+        inode: None,
+        parser_version: 1,
+        title: "Track".to_string(),
+        album: String::new(),
+        artist: "Artist".to_string(),
+        disc_number: 1,
+        track_number: 1,
+        duration_seconds: 180,
+    }];
+    library
+        .replace_local_access(
+            &accepted.loaded,
+            configured_local_access_mapping(&previous_access),
+            previous_files.clone(),
+        )
+        .expect("accept previous Local access");
+
+    let proposed_root = directory.path().join("proposed");
+    let error = accept_metadata_local_access_mapping(
+        &library,
+        &accepted.loaded,
+        library::LocalAccessMapping {
+            root_path: proposed_root.clone(),
+            server_prefix: Some("/server/music".to_string()),
+            local_prefix: Some(proposed_root.to_string_lossy().into_owned()),
+        },
+        Some(previous_access),
+        || Err("settings write failed".to_string()),
+    )
+    .expect_err("failed Settings save rolls back Local access");
+
+    assert_eq!(error, "settings write failed");
+    assert_eq!(
+        accepted
+            .loaded
+            .local_access_files()
+            .expect("read restored Local access"),
+        previous_files
+    );
+    let (_, targets) = accepted
+        .loaded
+        .metadata_subject_with_local_access(&MetadataItemId::Track(track_id.clone()), None)
+        .expect("resolve restored Local access")
+        .expect("restored metadata Track");
+    assert_eq!(
+        targets
+            .first()
+            .expect("previous Local access remains accepted")
+            .path(),
+        previous_path
+    );
+
+    drop(accepted);
+    drop(library);
+    let reopened = Library::open(store_path)
+        .expect("reopen Library")
+        .load_source(&source_id)
+        .expect("load restored source")
+        .expect("restored source");
+    assert_eq!(
+        reopened
+            .local_access_files()
+            .expect("read durable restored Local access"),
+        previous_files
+    );
+}
+
+#[test]
+fn metadata_mapping_is_session_scoped_and_normal_save_does_not_wait_for_scan() {
+    let directory = tempfile::tempdir().expect("temporary stale mapping");
+    let music_root = directory.path().join("music");
+    std::fs::create_dir(&music_root).expect("create Local music folder");
+    let source_id = SourceId::new("local:server:stale-mapping");
+    let track_id = library::TrackId::new("local:track:stale-mapping");
+    let configuration = SourceConfiguration {
+        source_id: source_id.clone(),
+        kind: "local".to_string(),
+        name: "Local".to_string(),
+        provider_payload: serde_json::json!({
+            "version": 1,
+            "roots": [music_root],
+        })
+        .to_string(),
+    };
+    let identity = configuration.input_identity().expect("source identity");
+    let library = Library::open(directory.path().join("library.db")).expect("open test Library");
+    let mut candidate = library
+        .begin_source_candidate(CandidateHeader {
+            source_id: source_id.clone(),
+            input_version: identity.version,
+            input_digest: identity.digest,
+        })
+        .expect("begin source candidate");
+    candidate
+        .write(CandidateBatch::Tracks(vec![test_track(
+            track_id.clone(),
+            "Track",
+            music_root.join("Track.flac"),
+        )]))
+        .expect("write cached Track");
+    let accepted = candidate
+        .finish(
+            CandidateFinish {
+                freshness: None,
+                home: HomeFacts::RufinDefined,
+                accepted_at: 1,
+            },
+            None,
+        )
+        .and_then(|prepared| prepared.accept())
+        .expect("accept cached source");
+
+    let settings =
+        SettingsFile::open(directory.path().join("settings.json")).expect("open Settings");
+    settings
+        .update(|stored| {
+            stored.sources.configured = vec![ConfiguredSource {
+                configuration: configuration.clone(),
+                credential_ref: None,
+                music_folder_id: None,
+                local_access: None,
+            }];
+            stored.sources.selected_source_id = Some(source_id.clone());
+            Ok(())
+        })
+        .expect("save selected source");
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_time()
+        .build()
+        .expect("build test runtime");
+    let artwork = artwork::Artwork::new(directory.path().join("artwork"), runtime.handle().clone())
+        .expect("open Artwork");
+    let (events, _event_receiver) = async_channel::unbounded();
+    let (discovery, _discovery_receiver) = async_channel::unbounded();
+    let secrets = Arc::new(SwitchableSecretStore::new(Arc::new(
+        MemorySecretStore::new(),
+    )));
+    let scrobbler = Arc::new(
+        Scrobbler::new(library.clone(), ::scrobbling::Settings::default(), false)
+            .expect("open Scrobbler"),
+    );
+    let bootstrap = SourceOwner::open_dormant(
+        artwork,
+        library.clone(),
+        test_downloads(directory.path().join("downloads"), runtime.handle().clone()),
+        settings.clone(),
+        secrets,
+        scrobbler,
+        runtime.handle().clone(),
+        SourceOutputs { events, discovery },
+    );
+    let selected = SelectedSourceRuntime {
+        configuration,
+        source: None,
+        source_session_epoch: SourceSessionEpoch::new(1),
+        home: library
+            .home(&accepted.loaded, None)
+            .expect("prepare cached Home"),
+        loaded: Arc::clone(&accepted.loaded),
+        music_folder_id: None,
+    };
+    *bootstrap
+        .owner
+        .shared
+        .selected
+        .write()
+        .unwrap_or_else(|poisoned| poisoned.into_inner()) =
+        Some(SelectedSourceSession::new(selected));
+    let mut actor = actor_for_test(&bootstrap.owner);
+    let (completion, result) = async_channel::bounded(1);
+    runtime.block_on(actor.save_local_access(
+        SourceLocalAccess {
+            source_id: source_id.clone(),
+            root_path: music_root.clone(),
+            server_prefix: None,
+            local_prefix: Some(music_root.to_string_lossy().into_owned()),
+        },
+        Some(MetadataRequest {
+            source_id: source_id.clone(),
+            source_session_epoch: SourceSessionEpoch::new(2),
+            item_id: MetadataItemId::Track(track_id),
+        }),
+        completion,
+    ));
+
+    assert!(
+        runtime
+            .block_on(result.recv())
+            .expect("stale mapping reply")
+            .expect_err("stale mapping rejected")
+            .contains("inactive source session")
+    );
+    assert!(settings.load().sources.configured[0].local_access.is_none());
+
+    let access = SourceLocalAccess {
+        source_id,
+        root_path: music_root.clone(),
+        server_prefix: None,
+        local_prefix: Some(music_root.to_string_lossy().into_owned()),
+    };
+    let (completion, result) = async_channel::bounded(1);
+    runtime.block_on(actor.save_local_access(access.clone(), None, completion));
+    assert_eq!(result.try_recv(), Ok(Ok(())));
+    assert_eq!(
+        settings.load().sources.configured[0].local_access,
+        Some(ConfiguredLocalAccess {
+            root_path: access.root_path,
+            server_prefix: access.server_prefix,
+            local_prefix: access.local_prefix,
+        })
+    );
+    assert!(
+        actor.local_access.is_some(),
+        "the accepted setting replies before its background folder scan finishes"
+    );
+    runtime.block_on(actor.cancel_all_work());
+}
+
+#[test]
+fn failed_metadata_mapping_preflight_preserves_the_accepted_mapping() {
+    let directory = tempfile::tempdir().expect("temporary failed mapping recovery");
+    let previous_root = directory.path().join("previous");
+    let proposed_root = directory.path().join("proposed");
+    let previous_path = previous_root.join("Artist/Track.flac");
+    std::fs::create_dir_all(
+        previous_path
+            .parent()
+            .expect("previous Local access parent"),
+    )
+    .expect("create previous Local access folder");
+    std::fs::create_dir(&proposed_root).expect("create proposed Local access folder");
+    std::fs::write(&previous_path, []).expect("write previous Local access file");
+    let source_id = SourceId::new("navidrome:server:failed-mapping-recovery");
+    let track_id = library::TrackId::new("navidrome:track:failed-mapping-recovery");
+    let configuration = SourceConfiguration {
+        source_id: source_id.clone(),
+        kind: "navidrome".to_string(),
+        name: "Navidrome".to_string(),
+        provider_payload: serde_json::json!({
+            "version": 1,
+            "base_url": "https://navidrome.example",
+            "username": "listener",
+            "trust_invalid_cert": false,
+        })
+        .to_string(),
+    };
+    let identity = configuration.input_identity().expect("source identity");
+    let library = Library::open(directory.path().join("library.db")).expect("open test Library");
+    let mut candidate = library
+        .begin_source_candidate(CandidateHeader {
+            source_id: source_id.clone(),
+            input_version: identity.version,
+            input_digest: identity.digest,
+        })
+        .expect("begin source candidate");
+    candidate
+        .write(CandidateBatch::Tracks(vec![test_track(
+            track_id.clone(),
+            "Track",
+            PathBuf::from("/server/music/Artist/Track.flac"),
+        )]))
+        .expect("write cached Track");
+    let accepted = candidate
+        .finish(
+            CandidateFinish {
+                freshness: None,
+                home: HomeFacts::RufinDefined,
+                accepted_at: 1,
+            },
+            None,
+        )
+        .and_then(|prepared| prepared.accept())
+        .expect("accept cached source");
+    let previous_access = ConfiguredLocalAccess {
+        root_path: previous_root.clone(),
+        server_prefix: Some("/server/music".to_string()),
+        local_prefix: Some(previous_root.to_string_lossy().into_owned()),
+    };
+    let previous_files = vec![library::LocalAccessFile {
+        path: previous_path.to_string_lossy().into_owned(),
+        root: previous_root.to_string_lossy().into_owned(),
+        relative_path: "Artist/Track.flac".to_string(),
+        size_bytes: 0,
+        mtime_ns: 1,
+        device_id: None,
+        inode: None,
+        parser_version: 1,
+        title: "Track".to_string(),
+        album: String::new(),
+        artist: "Artist".to_string(),
+        disc_number: 1,
+        track_number: 1,
+        duration_seconds: 180,
+    }];
+    library
+        .replace_local_access(
+            &accepted.loaded,
+            configured_local_access_mapping(&previous_access),
+            previous_files.clone(),
+        )
+        .expect("accept previous Local access");
+
+    let settings =
+        SettingsFile::open(directory.path().join("settings.json")).expect("open Settings");
+    settings
+        .update(|stored| {
+            stored.sources.configured = vec![ConfiguredSource {
+                configuration: configuration.clone(),
+                credential_ref: None,
+                music_folder_id: None,
+                local_access: Some(previous_access.clone()),
+            }];
+            stored.sources.selected_source_id = Some(source_id.clone());
+            Ok(())
+        })
+        .expect("save selected source");
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_time()
+        .build()
+        .expect("build test runtime");
+    let artwork = artwork::Artwork::new(directory.path().join("artwork"), runtime.handle().clone())
+        .expect("open Artwork");
+    let (events, _event_receiver) = async_channel::unbounded();
+    let (discovery, _discovery_receiver) = async_channel::unbounded();
+    let secrets = Arc::new(SwitchableSecretStore::new(Arc::new(
+        MemorySecretStore::new(),
+    )));
+    let scrobbler = Arc::new(
+        Scrobbler::new(library.clone(), ::scrobbling::Settings::default(), false)
+            .expect("open Scrobbler"),
+    );
+    let bootstrap = SourceOwner::open_dormant(
+        artwork,
+        library,
+        test_downloads(directory.path().join("downloads"), runtime.handle().clone()),
+        settings.clone(),
+        secrets,
+        scrobbler,
+        runtime.handle().clone(),
+        SourceOutputs { events, discovery },
+    );
+    let selected = SelectedSourceRuntime {
+        configuration,
+        source: None,
+        source_session_epoch: SourceSessionEpoch::new(1),
+        home: bootstrap
+            .owner
+            .shared
+            .library
+            .home(&accepted.loaded, None)
+            .expect("prepare cached Home"),
+        loaded: Arc::clone(&accepted.loaded),
+        music_folder_id: None,
+    };
+    *bootstrap
+        .owner
+        .shared
+        .selected
+        .write()
+        .unwrap_or_else(|poisoned| poisoned.into_inner()) =
+        Some(SelectedSourceSession::new(selected));
+    let mut actor = actor_for_test(&bootstrap.owner);
+    let (completion, result) = async_channel::bounded(1);
+    runtime.block_on(actor.save_local_access(
+        SourceLocalAccess {
+            source_id: source_id.clone(),
+            root_path: proposed_root.clone(),
+            server_prefix: Some("/server/music".to_string()),
+            local_prefix: Some(proposed_root.to_string_lossy().into_owned()),
+        },
+        Some(MetadataRequest {
+            source_id,
+            source_session_epoch: SourceSessionEpoch::new(1),
+            item_id: MetadataItemId::Track(track_id.clone()),
+        }),
+        completion,
+    ));
+
+    assert!(
+        runtime
+            .block_on(result.recv())
+            .expect("failed mapping preflight reply")
+            .expect_err("an unavailable source rejects the mapping")
+            .contains("source is unavailable")
+    );
+    assert!(
+        actor.local_access.is_none(),
+        "a metadata preflight must not start a whole-folder scan"
+    );
+    assert_eq!(
+        settings.load().sources.configured[0].local_access,
+        Some(previous_access)
+    );
+    assert_eq!(
+        accepted
+            .loaded
+            .local_access_files()
+            .expect("read accepted Local access"),
+        previous_files
+    );
+    let (_, targets) = accepted
+        .loaded
+        .metadata_subject_with_local_access(&MetadataItemId::Track(track_id.clone()), None)
+        .expect("resolve previous Local access")
+        .expect("previous metadata Track");
+    assert_eq!(
+        targets
+            .first()
+            .expect("previous Local access remains accepted")
+            .path(),
+        previous_path
+    );
+}
+
+#[test]
+fn standardized_results_reuse_accepted_track_facts_without_a_source_mirror() {
+    let directory = tempfile::tempdir().expect("temporary Rufin data directory");
+    let library = Library::open(directory.path().join("library.db")).expect("open test Library");
+    let track_id = library::TrackId::new("navidrome:track:known");
+    let accepted_track = test_track(
+        track_id.clone(),
+        "Accepted",
+        PathBuf::from("/music/Artist/Accepted.flac"),
+    );
+    let mut candidate = library
+        .begin_source_candidate(CandidateHeader {
+            source_id: SourceId::new("navidrome:server:test"),
+            input_version: 1,
+            input_digest: [1; 32],
+        })
+        .expect("begin source candidate");
+    candidate
+        .write(CandidateBatch::Tracks(vec![accepted_track]))
+        .expect("write accepted Track");
+    let accepted = candidate
+        .finish(
+            CandidateFinish {
+                freshness: None,
+                home: HomeFacts::RufinDefined,
+                accepted_at: 1,
+            },
+            None,
+        )
+        .and_then(|prepared| prepared.accept())
+        .expect("accept source");
+    let reported = test_track(
+        track_id,
+        "Reported",
+        PathBuf::from("generated/Reported.flac"),
+    );
+    let unknown = test_track(
+        library::TrackId::new("navidrome:track:unknown"),
+        "Unknown",
+        PathBuf::from("generated/Unknown.flac"),
+    );
+
+    let search = reconcile_search_results(
+        &accepted.loaded,
+        library::SearchResults {
+            tracks: vec![reported.clone(), unknown.clone()],
+            ..library::SearchResults::default()
+        },
+    )
+    .expect("reconcile search");
+    assert_eq!(search.tracks[0].title, "Accepted");
+    assert_eq!(
+        search.tracks[0].source_path.as_deref(),
+        Some("/music/Artist/Accepted.flac")
+    );
+    assert_eq!(search.tracks[1], unknown);
+
+    let folder = reconcile_folder_contents(
+        &accepted.loaded,
+        FolderContents {
+            folders: Arc::from([]),
+            tracks: vec![reported].into(),
+        },
+    )
+    .expect("reconcile folder");
+    assert_eq!(folder.tracks[0].title, "Accepted");
+}
+
 fn actor_for_test(owner: &SourceOwner) -> Actor {
     Actor {
         shared: Arc::clone(&owner.shared),
@@ -2034,4 +3042,28 @@ fn attach_test_playback(
     );
     bootstrap.owner.attach_playback(&playback);
     playback
+}
+
+fn write_silent_wav(path: &Path) -> std::io::Result<()> {
+    let sample_rate = 8_000_u32;
+    let bits_per_sample = 16_u16;
+    let channels = 1_u16;
+    let data_len = sample_rate * u32::from(channels) * u32::from(bits_per_sample / 8);
+    let byte_rate = sample_rate * u32::from(channels) * u32::from(bits_per_sample / 8);
+    let block_align = channels * (bits_per_sample / 8);
+    let mut bytes = Vec::new();
+    bytes.extend_from_slice(b"RIFF");
+    bytes.extend_from_slice(&(36 + data_len).to_le_bytes());
+    bytes.extend_from_slice(b"WAVEfmt ");
+    bytes.extend_from_slice(&16_u32.to_le_bytes());
+    bytes.extend_from_slice(&1_u16.to_le_bytes());
+    bytes.extend_from_slice(&channels.to_le_bytes());
+    bytes.extend_from_slice(&sample_rate.to_le_bytes());
+    bytes.extend_from_slice(&byte_rate.to_le_bytes());
+    bytes.extend_from_slice(&block_align.to_le_bytes());
+    bytes.extend_from_slice(&bits_per_sample.to_le_bytes());
+    bytes.extend_from_slice(b"data");
+    bytes.extend_from_slice(&data_len.to_le_bytes());
+    bytes.resize(bytes.len() + data_len as usize, 0);
+    std::fs::write(path, bytes)
 }

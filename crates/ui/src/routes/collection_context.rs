@@ -2,8 +2,8 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use ::library::{
-    AlbumSummary, ArtistSummary, FavoriteItemId, GenreSummary, PlaylistEdit, PlaylistSummary,
-    RadioSeed, SmartPlaylistSummary, Track, TrackList,
+    AlbumSummary, ArtistSummary, FavoriteItemId, GenreSummary, MetadataItemId, PlaylistEdit,
+    PlaylistSummary, RadioSeed, SmartPlaylistSummary, Track, TrackList,
 };
 use adw::prelude::*;
 use downloads::DownloadSubject;
@@ -17,10 +17,13 @@ use crate::interactions::{
     install_context_menu_openers, radio_context_submenu,
 };
 use crate::player::state::current_playback_track;
+use crate::preferences::dialogs::metadata::present_metadata_dialog;
 use crate::preferences::dialogs::popup::present_light_dismiss_dialog;
 use crate::settings::ContextMenuItem;
 use crate::shell::Shell;
-use crate::shell::actions::{ADD_ICON, PLAY_ICON, PLAY_LATER_ICON, PLAY_NEXT_ICON, REMOVE_ICON};
+use crate::shell::actions::{
+    ADD_ICON, EDIT_ICON, PLAY_ICON, PLAY_LATER_ICON, PLAY_NEXT_ICON, REMOVE_ICON,
+};
 use localization::{msgid, tr};
 
 use super::collections::PlaybackTarget;
@@ -195,6 +198,28 @@ fn present_track_context_menu_inner(
     remove_action: Option<PlaylistEntryContextMenuAction>,
     popover_position: Option<gtk::PositionType>,
 ) {
+    let metadata_editable =
+        shell.metadata_editing_available(MetadataItemId::Track(track.id.clone()));
+    present_resolved_track_context_menu(
+        target,
+        shell,
+        track,
+        position,
+        remove_action,
+        popover_position,
+        metadata_editable,
+    );
+}
+
+fn present_resolved_track_context_menu(
+    target: &gtk::Widget,
+    shell: &Rc<Shell>,
+    track: Track,
+    position: Option<(f64, f64)>,
+    remove_action: Option<PlaylistEntryContextMenuAction>,
+    popover_position: Option<gtk::PositionType>,
+    metadata_editable: bool,
+) {
     let playback_target = PlaybackTarget::Track(track.id.clone());
     let surface = ContextMenuSurface::new(target, "track", position);
     surface.append_configurable_action(ContextMenuItem::Play, msgid("Play"), "play", PLAY_ICON);
@@ -245,6 +270,14 @@ fn present_track_context_menu_inner(
             FAVORITE_ADD_ICON
         },
     );
+    if metadata_editable {
+        surface.append_configurable_action(
+            ContextMenuItem::EditMetadata,
+            msgid("Edit metadata"),
+            "edit-metadata",
+            EDIT_ICON,
+        );
+    }
     let artist_route = track_artist_route(&track);
     if artist_route.is_some() {
         surface.append_configurable_action(
@@ -311,6 +344,13 @@ fn present_track_context_menu_inner(
             }
         });
     }
+    if metadata_editable {
+        surface.add_action("edit-metadata", {
+            let shell = Rc::clone(shell);
+            let track = track.clone();
+            move || present_metadata_dialog(&shell, MetadataItemId::Track(track.id.clone()))
+        });
+    }
     if let Some(remove_action) = remove_action {
         surface.add_action("remove-from-playlist", {
             let shell = Rc::clone(shell);
@@ -343,6 +383,26 @@ fn present_album_context_menu_inner(
     album: AlbumSummary,
     playback_target: PlaybackTarget,
     position: Option<(f64, f64)>,
+) {
+    let metadata_editable =
+        shell.metadata_editing_available(MetadataItemId::Album(album.album.id.clone()));
+    present_resolved_album_context_menu_inner(
+        target,
+        shell,
+        album,
+        playback_target,
+        position,
+        metadata_editable,
+    );
+}
+
+fn present_resolved_album_context_menu_inner(
+    target: &gtk::Widget,
+    shell: &Rc<Shell>,
+    album: AlbumSummary,
+    playback_target: PlaybackTarget,
+    position: Option<(f64, f64)>,
+    metadata_editable: bool,
 ) {
     let surface = ContextMenuSurface::new(target, "album", position);
     surface.append_configurable_action(ContextMenuItem::Play, msgid("Play"), "play", PLAY_ICON);
@@ -389,6 +449,14 @@ fn present_album_context_menu_inner(
             FAVORITE_ADD_ICON
         },
     );
+    if metadata_editable {
+        surface.append_configurable_action(
+            ContextMenuItem::EditMetadata,
+            msgid("Edit metadata"),
+            "edit-metadata",
+            EDIT_ICON,
+        );
+    }
     install_sidebar_pin_action(
         &surface,
         shell,
@@ -435,6 +503,15 @@ fn present_album_context_menu_inner(
             );
         }
     });
+    if metadata_editable {
+        surface.add_action("edit-metadata", {
+            let shell = Rc::clone(shell);
+            let album_id = album.album.id.clone();
+            move || {
+                present_metadata_dialog(&shell, MetadataItemId::Album(album_id.clone()));
+            }
+        });
+    }
     if let Some(route) = artist_route {
         surface.add_action("go-artist", {
             let shell = Rc::clone(shell);
@@ -464,6 +541,26 @@ pub(crate) fn present_artist_context_menu(
     position: Option<(f64, f64)>,
 ) {
     let playback_target = PlaybackTarget::Artist(artist.artist.id.clone());
+    let metadata_editable =
+        shell.metadata_editing_available(MetadataItemId::Artist(artist.artist.id.clone()));
+    present_resolved_artist_context_menu(
+        target,
+        shell,
+        artist,
+        playback_target,
+        position,
+        metadata_editable,
+    );
+}
+
+fn present_resolved_artist_context_menu(
+    target: &gtk::Widget,
+    shell: &Rc<Shell>,
+    artist: ArtistSummary,
+    playback_target: PlaybackTarget,
+    position: Option<(f64, f64)>,
+    metadata_editable: bool,
+) {
     let surface = ContextMenuSurface::new(target, "artist", position);
     surface.append_configurable_action(ContextMenuItem::Play, msgid("Play"), "play", PLAY_ICON);
     surface.append_configurable_action(
@@ -509,6 +606,14 @@ pub(crate) fn present_artist_context_menu(
             FAVORITE_ADD_ICON
         },
     );
+    if metadata_editable {
+        surface.append_configurable_action(
+            ContextMenuItem::EditMetadata,
+            msgid("Edit metadata"),
+            "edit-metadata",
+            EDIT_ICON,
+        );
+    }
     install_sidebar_pin_action(
         &surface,
         shell,
@@ -546,6 +651,15 @@ pub(crate) fn present_artist_context_menu(
             );
         }
     });
+    if metadata_editable {
+        surface.add_action("edit-metadata", {
+            let shell = Rc::clone(shell);
+            let artist_id = artist.artist.id.clone();
+            move || {
+                present_metadata_dialog(&shell, MetadataItemId::Artist(artist_id.clone()));
+            }
+        });
+    }
     surface.add_action("go-artist", {
         let shell = Rc::clone(shell);
         let artist_id = artist.artist.id.clone();

@@ -50,6 +50,18 @@ impl ScanFacts {
             .collect()
     }
 
+    fn artists(&self) -> Vec<library::Artist> {
+        self.batches
+            .iter()
+            .filter_map(|batch| match batch {
+                CandidateBatch::Artists(values) => Some(values.as_slice()),
+                _ => None,
+            })
+            .flatten()
+            .cloned()
+            .collect()
+    }
+
     fn files(&self) -> Vec<LocalFile> {
         self.batches
             .iter()
@@ -162,7 +174,7 @@ fn album_classification_combines_track_tags_in_stable_order() {
 }
 
 #[test]
-fn metadata_editing_is_offered_only_for_writable_non_cue_local_files() {
+fn metadata_availability_uses_accepted_paths_and_registered_lofty_writers() {
     let root = tempfile::tempdir().expect("Local root");
     let wav = root.path().join("editable.wav");
     write_tagged_wav(&wav, "Editable", "Artist", "Album", 1).expect("write editable WAV");
@@ -174,20 +186,33 @@ fn metadata_editing_is_offered_only_for_writable_non_cue_local_files() {
         .next()
         .expect("scanned WAV Track");
 
-    let editing = source
-        .track_metadata_editing(&track)
-        .expect("Lofty-backed WAV metadata editing");
-    assert!(editing.includes(crate::TrackMetadataField::Title));
-    assert!(editing.includes(crate::TrackMetadataField::Artwork));
+    let subject = library::MetadataSubject::track(track.clone());
+    let draft = source
+        .read_metadata(&subject)
+        .expect("read Lofty-backed WAV metadata");
+    assert!(draft.editing.includes(library::MetadataField::Title));
+    assert!(source.metadata_entry_available(subject.item()));
+    assert!(super::metadata::mapped_editing_available(
+        &library::MetadataItem::Track(track.clone())
+    ));
 
-    let mut discoverer_track = track.clone();
-    discoverer_track.make_mut().source_path = Some(
-        root.path()
-            .join("read-only.mka")
-            .to_string_lossy()
-            .into_owned(),
-    );
-    assert_eq!(source.track_metadata_editing(&discoverer_track), None);
+    for extension in ["mka", "wma"] {
+        let path = root.path().join(format!("read-only.{extension}"));
+        fs::write(&path, []).expect("write discoverer-backed format");
+        let mut discoverer_track = track.clone();
+        discoverer_track.make_mut().source_path = Some(path.to_string_lossy().into_owned());
+        assert!(matches!(
+            source.read_metadata(&library::MetadataSubject::track(discoverer_track.clone())),
+            Err(library::MetadataError::Unavailable)
+        ));
+        assert!(
+            !source
+                .metadata_entry_available(&library::MetadataItem::Track(discoverer_track.clone()))
+        );
+        assert!(!super::metadata::mapped_editing_available(
+            &library::MetadataItem::Track(discoverer_track)
+        ));
+    }
 
     let mut cue_track = track.clone();
     cue_track.make_mut().cue = Some(library::CueSegment {
@@ -195,18 +220,581 @@ fn metadata_editing_is_offered_only_for_writable_non_cue_local_files() {
         start_millis: 0,
         end_millis: 1_000,
     });
-    assert_eq!(source.track_metadata_editing(&cue_track), None);
+    assert!(matches!(
+        source.read_metadata(&library::MetadataSubject::track(cue_track.clone())),
+        Err(library::MetadataError::Unavailable)
+    ));
+    assert!(!source.metadata_entry_available(&library::MetadataItem::Track(cue_track.clone())));
+    assert!(!super::metadata::mapped_editing_available(
+        &library::MetadataItem::Track(cue_track)
+    ));
 
     let outside = tempfile::tempdir().expect("outside directory");
+    let outside_path = outside.path().join("outside.wav");
+    write_tagged_wav(&outside_path, "Outside", "Artist", "Album", 1).expect("write outside WAV");
     let mut outside_track = track;
-    outside_track.make_mut().source_path = Some(
-        outside
-            .path()
-            .join("outside.flac")
+    outside_track.make_mut().source_path = Some(outside_path.to_string_lossy().into_owned());
+    assert!(matches!(
+        source.read_metadata(&library::MetadataSubject::track(outside_track.clone())),
+        Err(library::MetadataError::Unavailable)
+    ));
+    assert!(!source.metadata_entry_available(&library::MetadataItem::Track(outside_track.clone())));
+
+    let mut non_normal_track = outside_track.clone();
+    non_normal_track.make_mut().source_path = Some(
+        root.path()
+            .join("nested")
+            .join("..")
+            .join("editable.wav")
             .to_string_lossy()
             .into_owned(),
     );
-    assert_eq!(source.track_metadata_editing(&outside_track), None);
+    assert!(!source.metadata_entry_available(&library::MetadataItem::Track(non_normal_track)));
+
+    #[cfg(unix)]
+    {
+        let link = root.path().join("outside-link.wav");
+        std::os::unix::fs::symlink(&outside_path, &link).expect("link outside WAV");
+        outside_track.make_mut().source_path = Some(link.to_string_lossy().into_owned());
+        assert!(matches!(
+            source.read_metadata(&library::MetadataSubject::track(outside_track.clone())),
+            Err(library::MetadataError::Unavailable)
+        ));
+        assert!(
+            source.metadata_entry_available(&library::MetadataItem::Track(outside_track.clone()))
+        );
+
+        let link = root.path().join("inside-link.wav");
+        std::os::unix::fs::symlink(&wav, &link).expect("link inside WAV");
+        outside_track.make_mut().source_path = Some(link.to_string_lossy().into_owned());
+        assert!(matches!(
+            source.read_metadata(&library::MetadataSubject::track(outside_track.clone())),
+            Err(library::MetadataError::Unavailable)
+        ));
+        assert!(source.metadata_entry_available(&library::MetadataItem::Track(outside_track)));
+    }
+}
+
+#[test]
+fn mapped_metadata_reads_only_the_exact_projected_file() {
+    let root = tempfile::tempdir().expect("mapped metadata root");
+    let path = root.path().join("Artist/Track.wav");
+    fs::create_dir_all(path.parent().expect("mapped Track parent"))
+        .expect("create mapped Track parent");
+    write_tagged_wav(&path, "Track", "Artist", "Album", 1).expect("write mapped WAV");
+    let source =
+        LocalSource::from_roots(vec![root.path().to_path_buf()]).expect("open Local source");
+    let mut track = complete_scan(&source)
+        .tracks()
+        .into_iter()
+        .next()
+        .expect("scanned mapped Track");
+    track.make_mut().id = library::TrackId::new("navidrome:track:mapped");
+    track.make_mut().source_path = Some("/music/Artist/Track.wav".to_string());
+    let mut missing = track.clone();
+    missing.make_mut().id = library::TrackId::new("navidrome:track:missing");
+    missing.make_mut().source_path = Some("/music/Artist/Missing.wav".to_string());
+
+    let store = tempfile::tempdir().expect("mapped metadata Store");
+    let library = Library::open(store.path().join("library.db")).expect("open Library");
+    let mut candidate = library
+        .begin_source_candidate(CandidateHeader {
+            source_id: SourceId::new("navidrome:server:mapped"),
+            input_version: 1,
+            input_digest: [12; 32],
+        })
+        .expect("begin mapped candidate");
+    candidate
+        .write(CandidateBatch::Tracks(vec![track, missing]))
+        .expect("write mapped Tracks");
+    let accepted = candidate
+        .finish(
+            CandidateFinish {
+                freshness: None,
+                home: HomeFacts::RufinDefined,
+                accepted_at: 1,
+            },
+            None,
+        )
+        .and_then(library::PreparedSourceCandidate::accept)
+        .expect("accept mapped library");
+    let mapping = library::LocalAccessMapping {
+        root_path: root.path().to_path_buf(),
+        server_prefix: Some("/music".to_string()),
+        local_prefix: None,
+    };
+    let (subject, targets) = accepted
+        .loaded
+        .metadata_subject_with_local_access(
+            &library::MetadataItemId::Track(library::TrackId::new("navidrome:track:mapped")),
+            Some(&mapping),
+        )
+        .expect("project mapped metadata")
+        .expect("mapped Track");
+
+    let draft = read_mapped_metadata(&subject, &targets).expect("read exact mapped metadata");
+
+    assert_eq!(draft.values.title, "Track");
+    assert!(
+        accepted
+            .loaded
+            .local_access_files()
+            .expect("read Local access facts")
+            .is_empty(),
+        "an exact mapped read must not need a whole-folder scan"
+    );
+    let (missing, targets) = accepted
+        .loaded
+        .metadata_subject_with_local_access(
+            &library::MetadataItemId::Track(library::TrackId::new("navidrome:track:missing")),
+            Some(&mapping),
+        )
+        .expect("project missing metadata")
+        .expect("missing Track");
+    assert!(matches!(
+        read_mapped_metadata(&missing, &targets),
+        Err(library::MetadataError::Unavailable)
+    ));
+}
+
+#[test]
+fn metadata_availability_does_not_probe_an_unavailable_accepted_root() {
+    let parent = tempfile::tempdir().expect("temporary parent");
+    let root = parent.path().join("Music");
+    fs::create_dir(&root).expect("create Local root");
+    let path = root.join("Track.wav");
+    write_tagged_wav(&path, "Track", "Artist", "Album", 1).expect("write tagged WAV");
+    let source = LocalSource::from_roots(vec![root.clone()]).expect("open Local source");
+    let track = complete_scan(&source)
+        .tracks()
+        .into_iter()
+        .next()
+        .expect("scanned Track");
+    let subject = library::MetadataSubject::track(track);
+
+    assert!(source.metadata_entry_available(subject.item()));
+    fs::rename(&root, parent.path().join("Unavailable")).expect("make Local root unavailable");
+
+    assert!(source.metadata_entry_available(subject.item()));
+    assert!(matches!(
+        source.read_metadata(&subject),
+        Err(library::MetadataError::Unavailable)
+    ));
+}
+
+#[test]
+fn aggregate_metadata_read_requires_every_backing_track() {
+    let root = tempfile::tempdir().expect("Local root");
+    let first = root.path().join("First.wav");
+    let second = root.path().join("Second.wav");
+    write_tagged_wav_fields(&first, "First", "Artist", "Album", 1, 1).expect("write first WAV");
+    write_tagged_wav_fields(&second, "Second", "Artist", "Album", 1, 2).expect("write second WAV");
+    let source =
+        LocalSource::from_roots(vec![root.path().to_path_buf()]).expect("open Local source");
+    let mut facts = complete_scan(&source);
+    let album_id = facts.albums().into_iter().next().expect("scanned Album").id;
+    let store = tempfile::tempdir().expect("Store directory");
+    let library = Library::open(store.path().join("library.db")).expect("open Library");
+    let mut candidate = library
+        .begin_source_candidate(CandidateHeader {
+            source_id: SourceId::new(LOCAL_LIBRARY_SOURCE_ID),
+            input_version: 1,
+            input_digest: [9; 32],
+        })
+        .expect("begin Local candidate");
+    for batch in facts.batches.clone() {
+        candidate.write(batch).expect("write Local facts");
+    }
+    let accepted = candidate
+        .finish(
+            CandidateFinish {
+                freshness: None,
+                home: HomeFacts::RufinDefined,
+                accepted_at: 1,
+            },
+            None,
+        )
+        .and_then(library::PreparedSourceCandidate::accept)
+        .expect("accept Local library");
+    let album = accepted
+        .loaded
+        .album(&album_id)
+        .expect("read accepted Album")
+        .expect("accepted Album");
+    let subject = library::MetadataSubject::aggregate(
+        library::MetadataItem::Album((*album).clone()),
+        accepted.loaded.album_track_selection(&album_id, None),
+    );
+    assert!(source.metadata_entry_available(subject.item()));
+    source
+        .read_metadata(&subject)
+        .expect("read metadata from every supported backing Track");
+
+    let unsupported = root.path().join("Second.wma");
+    fs::write(&unsupported, []).expect("write unsupported backing file");
+    for batch in &mut facts.batches {
+        if let CandidateBatch::Tracks(tracks) = batch {
+            tracks[1].make_mut().source_path = Some(unsupported.to_string_lossy().into_owned());
+        }
+    }
+    let mut candidate = library
+        .begin_source_candidate(CandidateHeader {
+            source_id: SourceId::new("local:unsupported"),
+            input_version: 1,
+            input_digest: [10; 32],
+        })
+        .expect("begin unsupported Local candidate");
+    for batch in facts.batches {
+        candidate
+            .write(batch)
+            .expect("write unsupported Local facts");
+    }
+    let unsupported = candidate
+        .finish(
+            CandidateFinish {
+                freshness: None,
+                home: HomeFacts::RufinDefined,
+                accepted_at: 2,
+            },
+            None,
+        )
+        .and_then(library::PreparedSourceCandidate::accept)
+        .expect("accept unsupported Local library");
+    let album = unsupported
+        .loaded
+        .album(&album_id)
+        .expect("read unsupported Album")
+        .expect("unsupported Album");
+    let subject = library::MetadataSubject::aggregate(
+        library::MetadataItem::Album((*album).clone()),
+        unsupported.loaded.album_track_selection(&album_id, None),
+    );
+    assert!(source.metadata_entry_available(subject.item()));
+    assert!(matches!(
+        source.read_metadata(&subject),
+        Err(library::MetadataError::Unavailable)
+    ));
+}
+
+#[test]
+fn metadata_write_preserves_unrelated_tags_and_artwork() {
+    let root = tempfile::tempdir().expect("Local root");
+    let path = root.path().join("Tagged.wav");
+    write_complete_tagged_wav(&path).expect("write tagged WAV");
+    let source =
+        LocalSource::from_roots(vec![root.path().to_path_buf()]).expect("open Local source");
+    let track = complete_scan(&source)
+        .tracks()
+        .into_iter()
+        .next()
+        .expect("scanned Track");
+    let subject = library::MetadataSubject::track(track.clone());
+    let draft = source.read_metadata(&subject).expect("read metadata draft");
+    source
+        .write_metadata(
+            &subject,
+            &library::MetadataEdit {
+                item_id: library::MetadataItemId::Track(track.id.clone()),
+                revision: draft.revision,
+                changes: vec![
+                    library::MetadataChange::Title("Updated title".to_string()),
+                    library::MetadataChange::SortTitle(Some("Title, Updated".to_string())),
+                    library::MetadataChange::Comment(Some("Updated comment".to_string())),
+                    library::MetadataChange::Year(Some(2026)),
+                    library::MetadataChange::MusicBrainzRecordingId(Some(
+                        "01234567-89ab-cdef-0123-456789abcdef".to_string(),
+                    )),
+                    library::MetadataChange::MusicBrainzReleaseGroupId(Some(
+                        "11234567-89ab-cdef-0123-456789abcdef".to_string(),
+                    )),
+                ],
+            },
+        )
+        .expect("write metadata");
+
+    let format = super::format::audio_format(&path).expect("registered WAV format");
+    let tagged = super::format::read_lofty_for_edit(
+        &path,
+        match format.metadata_writer().expect("WAV writer") {
+            super::format::MetadataWriter::Lofty(types) => types,
+        },
+    )
+    .expect("read written WAV")
+    .expect("matching WAV contents");
+    let tag = tagged.primary_tag().expect("written primary tag");
+    assert_eq!(tag.title().as_deref(), Some("Updated title"));
+    assert_eq!(
+        tag.get_string(ItemKey::TrackTitleSortOrder),
+        Some("Title, Updated")
+    );
+    assert_eq!(tag.comment().as_deref(), Some("Updated comment"));
+    assert_eq!(tag.date().map(|date| date.year), Some(2026));
+    assert_eq!(
+        tag.get_string(ItemKey::MusicBrainzRecordingId),
+        Some("01234567-89ab-cdef-0123-456789abcdef")
+    );
+    assert_eq!(
+        tag.get_string(ItemKey::MusicBrainzReleaseId),
+        Some("release-id")
+    );
+    assert_eq!(
+        tag.get_string(ItemKey::MusicBrainzReleaseGroupId),
+        Some("11234567-89ab-cdef-0123-456789abcdef")
+    );
+    assert_eq!(tag.pictures().len(), 1);
+    assert_eq!(tag.pictures()[0].data(), TEST_PNG);
+}
+
+#[cfg(unix)]
+#[test]
+fn opening_metadata_does_not_require_write_permission() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let root = tempfile::tempdir().expect("Local root");
+    let path = root.path().join("Read only.wav");
+    write_tagged_wav(&path, "Read only", "Artist", "Album", 1).expect("write tagged WAV");
+    let source =
+        LocalSource::from_roots(vec![root.path().to_path_buf()]).expect("open Local source");
+    let track = complete_scan(&source)
+        .tracks()
+        .into_iter()
+        .next()
+        .expect("scanned Track");
+    fs::set_permissions(&path, fs::Permissions::from_mode(0o444))
+        .expect("make metadata file read only");
+
+    let read = source.read_metadata(&library::MetadataSubject::track(track));
+
+    fs::set_permissions(&path, fs::Permissions::from_mode(0o644))
+        .expect("restore metadata file permissions");
+    read.expect("read metadata without probing write access");
+}
+
+#[test]
+fn metadata_conflict_keeps_the_concurrent_file_change() {
+    let root = tempfile::tempdir().expect("Local root");
+    let path = root.path().join("Conflict.wav");
+    write_tagged_wav(&path, "Before", "Artist", "Album", 1).expect("write tagged WAV");
+    let source =
+        LocalSource::from_roots(vec![root.path().to_path_buf()]).expect("open Local source");
+    let track = complete_scan(&source)
+        .tracks()
+        .into_iter()
+        .next()
+        .expect("scanned Track");
+    let target = super::metadata::target(source.roots(), &track).expect("writable metadata target");
+    let draft = super::metadata::read(&target, &track).expect("read metadata draft");
+    let edit = library::MetadataEdit {
+        item_id: library::MetadataItemId::Track(track.id.clone()),
+        revision: draft.revision,
+        changes: vec![library::MetadataChange::Title("Editor title".to_string())],
+    };
+    let concurrent = fs::read(&path)
+        .expect("read original")
+        .into_iter()
+        .chain([1, 2, 3, 4])
+        .collect::<Vec<_>>();
+
+    let error = super::metadata::write_with_test_hook(&target, &track, &edit, |_| {
+        fs::write(&path, &concurrent)
+            .map_err(|error| library::MetadataError::Write(error.to_string()))
+    })
+    .expect_err("concurrent change must conflict");
+
+    assert_eq!(error, library::MetadataError::Conflict);
+    assert_eq!(fs::read(&path).expect("read conflicted file"), concurrent);
+}
+
+#[test]
+fn metadata_failure_before_replace_leaves_the_original_unchanged() {
+    let root = tempfile::tempdir().expect("Local root");
+    let path = root.path().join("Failure.wav");
+    write_tagged_wav(&path, "Before", "Artist", "Album", 1).expect("write tagged WAV");
+    let original = fs::read(&path).expect("read original");
+    let source =
+        LocalSource::from_roots(vec![root.path().to_path_buf()]).expect("open Local source");
+    let track = complete_scan(&source)
+        .tracks()
+        .into_iter()
+        .next()
+        .expect("scanned Track");
+    let target = super::metadata::target(source.roots(), &track).expect("writable metadata target");
+    let draft = super::metadata::read(&target, &track).expect("read metadata draft");
+    let edit = library::MetadataEdit {
+        item_id: library::MetadataItemId::Track(track.id.clone()),
+        revision: draft.revision,
+        changes: vec![library::MetadataChange::Title("Editor title".to_string())],
+    };
+
+    let error = super::metadata::write_with_test_hook(&target, &track, &edit, |_| {
+        Err(library::MetadataError::Write(
+            "injected failure".to_string(),
+        ))
+    })
+    .expect_err("injected failure");
+
+    assert_eq!(
+        error,
+        library::MetadataError::Write("injected failure".to_string())
+    );
+    assert_eq!(
+        fs::read(&path).expect("read original after failure"),
+        original
+    );
+}
+
+#[test]
+fn album_metadata_edit_prepares_every_track_and_preserves_track_tags() {
+    let root = tempfile::tempdir().expect("Local root");
+    let first = root.path().join("First.wav");
+    let second = root.path().join("Second.wav");
+    write_tagged_wav_fields(&first, "First track", "Artist", "Album", 1, 1)
+        .expect("write first WAV");
+    write_tagged_wav_fields(&second, "Second track", "Artist", "Album", 1, 2)
+        .expect("write second WAV");
+    set_album_test_tags(&first, "Artist", 2001, "Electronic").expect("tag first WAV");
+    set_album_test_tags(&second, "Artist", 2002, "Ambient").expect("tag second WAV");
+    let source =
+        LocalSource::from_roots(vec![root.path().to_path_buf()]).expect("open Local source");
+    let facts = complete_scan(&source);
+    let album = facts.albums().into_iter().next().expect("scanned Album");
+    let tracks = facts.tracks();
+    let item = library::MetadataItem::Album(album.clone());
+    let draft = super::metadata::read_aggregate_with_tracks(source.roots(), &item, tracks.clone())
+        .expect("read aggregate album metadata");
+    assert_eq!(draft.scope, library::MetadataScope::Tracks(2));
+    assert!(draft.mixed_fields.contains(&library::MetadataField::Year));
+    assert!(draft.mixed_fields.contains(&library::MetadataField::Genre));
+
+    super::metadata::write_aggregate_with_test_hook(
+        source.roots(),
+        &item,
+        tracks,
+        &library::MetadataEdit {
+            item_id: library::MetadataItemId::Album(album.id),
+            revision: draft.revision,
+            changes: vec![
+                library::MetadataChange::Title("Renamed album".to_string()),
+                library::MetadataChange::Year(Some(2024)),
+                library::MetadataChange::Genre(Some("Jazz".to_string())),
+            ],
+        },
+        |_| Ok(()),
+    )
+    .expect("write aggregate album metadata");
+
+    for (path, title) in [(&first, "First track"), (&second, "Second track")] {
+        let tagged = Probe::open(path)
+            .expect("open written WAV")
+            .read()
+            .expect("read written WAV");
+        let tag = tagged.primary_tag().expect("written tag");
+        assert_eq!(tag.title().as_deref(), Some(title));
+        assert_eq!(tag.album().as_deref(), Some("Renamed album"));
+        assert_eq!(tag.date().map(|date| date.year), Some(2024));
+        assert_eq!(tag.genre().as_deref(), Some("Jazz"));
+    }
+}
+
+#[test]
+fn artist_metadata_edit_replaces_only_the_selected_credit() {
+    let root = tempfile::tempdir().expect("Local root");
+    let first = root.path().join("First.wav");
+    let second = root.path().join("Second.wav");
+    for (path, title, track) in [(&first, "First", 1), (&second, "Second", 2)] {
+        write_tagged_wav_fields(path, title, "Lead; Guest", "Album", 1, track)
+            .expect("write multi-artist WAV");
+        set_album_test_tags(path, "Lead", 2020, "Rock").expect("tag album artist");
+    }
+    let source =
+        LocalSource::from_roots(vec![root.path().to_path_buf()]).expect("open Local source");
+    let facts = complete_scan(&source);
+    let artist = facts
+        .artists()
+        .into_iter()
+        .find(|artist| artist.name == "Lead")
+        .expect("Lead artist");
+    let tracks = facts.tracks();
+    let item = library::MetadataItem::Artist(artist.clone());
+    let draft = super::metadata::read_aggregate_with_tracks(source.roots(), &item, tracks.clone())
+        .expect("read aggregate artist metadata");
+    assert!(draft.editing.includes(library::MetadataField::Title));
+    assert!(
+        !draft
+            .editing
+            .includes(library::MetadataField::MusicBrainzArtistId)
+    );
+
+    super::metadata::write_aggregate_with_test_hook(
+        source.roots(),
+        &item,
+        tracks,
+        &library::MetadataEdit {
+            item_id: library::MetadataItemId::Artist(artist.id),
+            revision: draft.revision,
+            changes: vec![library::MetadataChange::Title("Renamed".to_string())],
+        },
+        |_| Ok(()),
+    )
+    .expect("write aggregate artist metadata");
+
+    for path in [&first, &second] {
+        let tagged = Probe::open(path)
+            .expect("open written WAV")
+            .read()
+            .expect("read written WAV");
+        let tag = tagged.primary_tag().expect("written tag");
+        assert_eq!(tag.artist().as_deref(), Some("Renamed; Guest"));
+        assert_eq!(tag.get_string(ItemKey::AlbumArtist), Some("Renamed"));
+    }
+}
+
+#[test]
+fn aggregate_commit_failure_restores_every_original_file() {
+    let root = tempfile::tempdir().expect("Local root");
+    let first = root.path().join("First.wav");
+    let second = root.path().join("Second.wav");
+    write_tagged_wav_fields(&first, "First", "Artist", "Album", 1, 1).expect("write first WAV");
+    write_tagged_wav_fields(&second, "Second", "Artist", "Album", 1, 2).expect("write second WAV");
+    let originals = [
+        fs::read(&first).expect("read first original"),
+        fs::read(&second).expect("read second original"),
+    ];
+    let source =
+        LocalSource::from_roots(vec![root.path().to_path_buf()]).expect("open Local source");
+    let facts = complete_scan(&source);
+    let album = facts.albums().into_iter().next().expect("scanned Album");
+    let tracks = facts.tracks();
+    let item = library::MetadataItem::Album(album.clone());
+    let draft = super::metadata::read_aggregate_with_tracks(source.roots(), &item, tracks.clone())
+        .expect("read aggregate album metadata");
+
+    let error = super::metadata::write_aggregate_with_test_hook(
+        source.roots(),
+        &item,
+        tracks,
+        &library::MetadataEdit {
+            item_id: library::MetadataItemId::Album(album.id),
+            revision: draft.revision,
+            changes: vec![library::MetadataChange::Title("Renamed".to_string())],
+        },
+        |index| {
+            (index == 0).then_some(()).ok_or_else(|| {
+                library::MetadataError::Write("injected second-file failure".to_string())
+            })
+        },
+    )
+    .expect_err("second exchange must fail");
+
+    assert_eq!(
+        error,
+        library::MetadataError::Write("injected second-file failure".to_string())
+    );
+    assert_eq!(fs::read(&first).expect("read restored first"), originals[0]);
+    assert_eq!(
+        fs::read(&second).expect("read untouched second"),
+        originals[1]
+    );
 }
 
 #[test]
@@ -1349,6 +1937,23 @@ fn write_tagged_wav_fields(
     tag.set_disk(disc);
     tag.set_track(track);
     tagged.insert_tag(tag);
+    tagged.save_to_path(path, WriteOptions::default())?;
+    Ok(())
+}
+
+fn set_album_test_tags(
+    path: &Path,
+    album_artist: &str,
+    year: u16,
+    genre: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let mut tagged = Probe::open(path)?.read()?;
+    let tag = tagged.primary_tag_mut().ok_or("missing primary tag")?;
+    tag.insert_text(ItemKey::AlbumArtist, album_artist.to_string());
+    let mut date = tag.date().unwrap_or_default();
+    date.year = year;
+    tag.set_date(date);
+    tag.set_genre(genre.to_string());
     tagged.save_to_path(path, WriteOptions::default())?;
     Ok(())
 }

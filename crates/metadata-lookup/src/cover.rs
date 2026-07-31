@@ -1,3 +1,5 @@
+//! External album artwork discovery.
+
 use reqwest::Url;
 use serde_json::Value;
 
@@ -155,11 +157,13 @@ pub fn public_album_cover_url(
         }
     }
     if policy.allow_musicbrainz {
-        if let Some(id) = album.release_id.as_deref() {
-            return Ok(Some(cover_art_url(RELEASE_URL, id, size)));
-        }
-        if let Some(id) = album.release_group_id.as_deref() {
-            return Ok(Some(cover_art_url(RELEASE_GROUP_URL, id, size)));
+        for (root, id) in [
+            (RELEASE_GROUP_URL, album.release_group_id.as_deref()),
+            (RELEASE_URL, album.release_id.as_deref()),
+        ] {
+            if let Some(id) = id {
+                return Ok(Some(cover_art_url(root, id, size)));
+            }
         }
         if let Some((artist, title)) = album.text() {
             match search_album_release_ids(artist, title) {
@@ -301,7 +305,7 @@ mod tests {
     }
 
     #[test]
-    fn public_url_uses_the_accepted_release_without_text_lookup() {
+    fn public_url_prefers_the_release_group_without_a_remote_lookup() {
         let album = AlbumCover::new(
             "Artist",
             "Album",
@@ -311,10 +315,11 @@ mod tests {
         .expect("album cover");
         let url = public_album_cover_url(&album, 250, &AlbumCoverPolicy::new("", true))
             .unwrap_or_else(|error| panic!("public URL: {error}"));
+
         assert_eq!(
             url.as_deref(),
             Some(
-                "https://coverartarchive.org/release/22222222-2222-2222-2222-222222222222/front-250"
+                "https://coverartarchive.org/release-group/11111111-1111-1111-1111-111111111111/front-250"
             )
         );
     }

@@ -17,7 +17,7 @@ fn private_mode_blocks_automatic_external_activity_but_keeps_passive_links() {
 
     assert!(settings.allows_notifications());
     assert!(settings.shows_external_site_links());
-    assert!(!settings.allows_external_album_lookup());
+    assert!(!settings.allows_external_metadata_lookup());
 }
 
 #[test]
@@ -279,7 +279,7 @@ fn download_folder_is_optional_and_source_scoped() {
 }
 
 #[test]
-fn split_lyrics_and_album_lookup_settings_keep_the_released_flat_keys() {
+fn split_lyrics_and_metadata_settings_keep_the_released_flat_keys() {
     let value = serde_json::to_value(Settings::default()).expect("serialize settings");
 
     assert_eq!(value["external_metadata_enabled"], true);
@@ -291,7 +291,7 @@ fn split_lyrics_and_album_lookup_settings_keep_the_released_flat_keys() {
     disabled["external_metadata_enabled"] = false.into();
     let disabled =
         serde_json::from_value::<Settings>(disabled).expect("deserialize released setting");
-    assert!(!disabled.external_album_lookup_enabled);
+    assert!(!disabled.external_metadata_enabled);
 
     let mut missing = value;
     missing
@@ -299,7 +299,7 @@ fn split_lyrics_and_album_lookup_settings_keep_the_released_flat_keys() {
         .expect("settings object")
         .remove("external_metadata_enabled");
     let missing = serde_json::from_value::<Settings>(missing).expect("deserialize sparse settings");
-    assert!(missing.external_album_lookup_enabled);
+    assert!(missing.external_metadata_enabled);
 }
 
 #[test]

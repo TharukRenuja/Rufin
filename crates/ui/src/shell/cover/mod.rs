@@ -895,8 +895,8 @@ fn disconnect_route_artwork_adjustment_handler(interaction: &RouteArtworkInterac
 
 fn artwork_external_policy(settings: &UiSettings) -> artwork::ExternalPolicy {
     artwork::ExternalPolicy::new(
-        settings.external_album_lookup_enabled,
-        settings.allows_external_album_lookup(),
+        settings.external_metadata_enabled,
+        settings.allows_external_metadata_lookup(),
         settings.lastfm_api_key.clone(),
     )
 }

@@ -196,9 +196,8 @@ pub(super) fn track_from_item(item: JellyfinItem) -> Track {
         track_number: u16_from_option(item.index_number),
         image_ref,
         local_artwork: None,
-        musicbrainz_recording_id: source_id(&item.provider_ids, "MusicBrainzTrack")
-            .or_else(|| source_id(&item.provider_ids, "MusicBrainzRecording")),
-        musicbrainz_release_track_id: source_id(&item.provider_ids, "MusicBrainzReleaseTrack"),
+        musicbrainz_recording_id: source_id(&item.provider_ids, "MusicBrainzRecording"),
+        musicbrainz_release_track_id: source_id(&item.provider_ids, "MusicBrainzTrack"),
         source_path: item.path,
         cue: None,
         source_format,

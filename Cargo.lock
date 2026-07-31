@@ -30,15 +30,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "album-lookup"
-version = "0.11.1"
-dependencies = [
- "reqwest",
- "serde_json",
- "tracing",
-]
-
-[[package]]
 name = "allocator-api2"
 version = "0.2.21"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -60,11 +51,11 @@ checksum = "d3fb67a6e08acf24fdeccbac2cb6ac4305825bd1f117462e0e6f2f193345ad56"
 name = "artwork"
 version = "0.11.1"
 dependencies = [
- "album-lookup",
  "async-trait",
  "image",
  "library",
  "md5",
+ "metadata-lookup",
  "sources",
  "tempfile",
  "thiserror",
@@ -684,13 +675,13 @@ checksum = "092966b41edc516079bdf31ec78a2e0588d1d0c08f78b91d8307215928642b2b"
 name = "desktop-integration"
 version = "0.11.1"
 dependencies = [
- "album-lookup",
  "artwork",
  "gio",
  "glib",
  "ksni",
  "library",
  "localization",
+ "metadata-lookup",
  "mpris-server",
  "playback",
  "serde",
@@ -2267,6 +2258,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "metadata-lookup"
+version = "0.11.1"
+dependencies = [
+ "library",
+ "reqwest",
+ "serde_json",
+ "tracing",
+]
+
+[[package]]
 name = "mime"
 version = "0.3.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3087,7 +3088,6 @@ dependencies = [
 name = "rufin"
 version = "0.11.1"
 dependencies = [
- "album-lookup",
  "artwork",
  "async-channel",
  "desktop-integration",
@@ -3099,6 +3099,7 @@ dependencies = [
  "localization",
  "lyrics",
  "md5",
+ "metadata-lookup",
  "playback",
  "playback-gstreamer",
  "reqwest",
@@ -3550,6 +3551,7 @@ dependencies = [
  "notify",
  "percent-encoding",
  "reqwest",
+ "rustix",
  "serde",
  "serde_json",
  "serde_path_to_error",

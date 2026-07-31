@@ -1,7 +1,11 @@
 use std::collections::BTreeSet;
+use std::sync::Arc;
 
-use library::{PlaylistId, RadioSeed, TrackId};
-use wiremock::matchers::{header_regex, method, path, query_param};
+use library::{
+    AlbumArtworkFacts, MetadataChange, MetadataEdit, MetadataField, MetadataItem, MetadataItemId,
+    MetadataValues, PlaylistId, RadioSeed, TrackId,
+};
+use wiremock::matchers::{body_json, header_regex, method, path, query_param};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 use super::*;
@@ -83,6 +87,678 @@ fn provider(server: &MockServer, token: &str) -> JellyfinSource {
         Some("rufin-install-one".to_string()),
     )
     .expect("open Jellyfin provider")
+}
+
+const METADATA_TRACK_ID: &str = "11111111111111111111111111111111";
+const METADATA_ALBUM_ID: &str = "22222222222222222222222222222222";
+const METADATA_ARTIST_ID: &str = "33333333333333333333333333333333";
+const METADATA_SECOND_TRACK_ID: &str = "44444444444444444444444444444444";
+
+async fn metadata_editor(server: &MockServer, item_id: &str, external_ids: &[&str]) {
+    let external_id_infos = external_ids
+        .iter()
+        .map(|key| serde_json::json!({ "Key": key }))
+        .collect::<Vec<_>>();
+    Mock::given(method("GET"))
+        .and(path(format!("/Items/{item_id}/MetadataEditor")))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "ExternalIdInfos": external_id_infos
+        })))
+        .expect(1)
+        .mount(server)
+        .await;
+}
+
+fn metadata_track() -> library::Track {
+    track_from_item(
+        serde_json::from_value::<JellyfinItem>(serde_json::json!({
+            "Id": METADATA_TRACK_ID,
+            "Name": "Before",
+            "Type": "Audio",
+            "Album": "Album",
+            "Artists": ["Artist"]
+        }))
+        .expect("Jellyfin metadata Track"),
+    )
+}
+
+pub(super) fn metadata_album() -> library::Album {
+    album_from_item(
+        serde_json::from_value::<JellyfinItem>(serde_json::json!({
+            "Id": METADATA_ALBUM_ID,
+            "Name": "Album",
+            "Type": "MusicAlbum",
+            "AlbumArtist": "Artist"
+        }))
+        .expect("Jellyfin metadata Album"),
+    )
+}
+
+fn metadata_artist() -> library::Artist {
+    artist_from_item(
+        serde_json::from_value::<JellyfinItem>(serde_json::json!({
+            "Id": METADATA_ARTIST_ID,
+            "Name": "Artist",
+            "Type": "MusicArtist"
+        }))
+        .expect("Jellyfin metadata Artist"),
+    )
+}
+
+#[tokio::test]
+async fn metadata_editor_maps_fields_from_the_exact_item() {
+    let server = MockServer::start().await;
+    let source = provider(&server, "secret-token");
+    metadata_editor(
+        &server,
+        METADATA_TRACK_ID,
+        &["MusicBrainzRecording", "MusicBrainzTrack", "UnsupportedId"],
+    )
+    .await;
+    let item = MetadataItem::Track(metadata_track());
+
+    let editing = source
+        .metadata_editing(&item)
+        .await
+        .expect("editable Jellyfin Track");
+    assert_eq!(
+        editing.fields(),
+        [
+            MetadataField::Title,
+            MetadataField::SortTitle,
+            MetadataField::Artist,
+            MetadataField::Album,
+            MetadataField::AlbumArtist,
+            MetadataField::TrackNumber,
+            MetadataField::DiscNumber,
+            MetadataField::Year,
+            MetadataField::Genre,
+            MetadataField::Comment,
+            MetadataField::LockData,
+            MetadataField::MusicBrainzRecordingId,
+            MetadataField::MusicBrainzReleaseTrackId,
+        ]
+    );
+
+    let forbidden_server = MockServer::start().await;
+    let forbidden = provider(&forbidden_server, "secret-token");
+    Mock::given(method("GET"))
+        .and(path(format!("/Items/{METADATA_TRACK_ID}/MetadataEditor")))
+        .respond_with(ResponseTemplate::new(403))
+        .expect(1)
+        .mount(&forbidden_server)
+        .await;
+    assert_eq!(forbidden.metadata_editing(&item).await, None);
+}
+
+#[tokio::test]
+async fn metadata_menu_capability_uses_the_cached_admin_policy() {
+    let server = MockServer::start().await;
+    let source = provider(&server, "secret-token");
+    let item = MetadataItem::Track(metadata_track());
+    assert!(!source.metadata_entry_available(&item));
+
+    Mock::given(method("GET"))
+        .and(path("/Users/user-one"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "Id": "user-one",
+            "Name": "Listener",
+            "Policy": { "IsAdministrator": true }
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+    source.refresh_metadata_editing().await;
+
+    assert!(source.metadata_entry_available(&item));
+    let mut synthetic = metadata_track();
+    synthetic.make_mut().id = TrackId::new("jellyfin:track:not-a-provider-id");
+    assert!(!source.metadata_entry_available(&MetadataItem::Track(synthetic)));
+}
+
+#[tokio::test]
+async fn synthetic_and_non_provider_item_ids_are_rejected_without_a_request() {
+    let server = MockServer::start().await;
+    let source = provider(&server, "secret-token");
+    let mut synthetic_artist = metadata_artist();
+    synthetic_artist.id =
+        library::ArtistId::new("jellyfin:artist:musicbrainz:aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee");
+    let mut non_provider_track = metadata_track();
+    non_provider_track.make_mut().id = TrackId::new("jellyfin:track:not-a-provider-id");
+
+    assert_eq!(
+        source
+            .metadata_editing(&MetadataItem::Artist(synthetic_artist.clone()))
+            .await,
+        None
+    );
+    assert!(!source.metadata_source_search(&MetadataItem::Artist(synthetic_artist)));
+    assert_eq!(
+        source
+            .metadata_editing(&MetadataItem::Track(non_provider_track))
+            .await,
+        None
+    );
+    assert!(
+        server
+            .received_requests()
+            .await
+            .expect("recorded Jellyfin requests")
+            .is_empty()
+    );
+}
+
+#[tokio::test]
+async fn metadata_editor_fields_cover_jellyfin_albums_and_artists() {
+    let server = MockServer::start().await;
+    let source = provider(&server, "secret-token");
+    metadata_editor(
+        &server,
+        METADATA_ALBUM_ID,
+        &["MusicBrainzAlbum", "MusicBrainzReleaseGroup"],
+    )
+    .await;
+    metadata_editor(&server, METADATA_ARTIST_ID, &["MusicBrainzArtist"]).await;
+
+    let album = source
+        .metadata_editing(&MetadataItem::Album(metadata_album()))
+        .await
+        .expect("editable Jellyfin Album");
+    assert!(album.includes(MetadataField::AlbumArtist));
+    assert!(album.includes(MetadataField::MusicBrainzAlbumId));
+    assert!(!album.includes(MetadataField::TrackNumber));
+
+    let artist = source
+        .metadata_editing(&MetadataItem::Artist(metadata_artist()))
+        .await
+        .expect("editable Jellyfin Artist");
+    assert!(artist.includes(MetadataField::MusicBrainzArtistId));
+    assert!(artist.includes(MetadataField::LockData));
+    assert!(!artist.includes(MetadataField::Album));
+}
+
+#[tokio::test]
+async fn artist_identification_uses_jellyfin_remote_search_without_applying() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/Items/RemoteSearch/MusicArtist"))
+        .and(body_json(serde_json::json!({
+            "ItemId": METADATA_ARTIST_ID,
+            "SearchInfo": {
+                "Name": "Artist",
+                "Year": null,
+                "ProviderIds": {}
+            }
+        })))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(serde_json::json!([{
+                "Name": "Identified artist",
+                "Overview": "Identified overview",
+                "ProviderIds": {
+                    "MusicBrainzArtist": "identified-artist-id"
+                }
+            }])),
+        )
+        .expect(1)
+        .mount(&server)
+        .await;
+    let source = provider(&server, "secret-token");
+
+    let identified = source
+        .identify_metadata(
+            &MetadataItem::Artist(metadata_artist()),
+            &MetadataValues {
+                title: "Artist".to_string(),
+                ..MetadataValues::default()
+            },
+        )
+        .await
+        .expect("identify Jellyfin artist")
+        .expect("Jellyfin artist remote search candidate");
+
+    assert_eq!(identified.title, "Identified artist");
+    assert_eq!(identified.comment.as_deref(), Some("Identified overview"));
+    assert_eq!(
+        identified.musicbrainz_artist_id.as_deref(),
+        Some("identified-artist-id")
+    );
+}
+
+#[tokio::test]
+async fn album_identification_selects_the_exact_provider_match() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/Items/RemoteSearch/MusicAlbum"))
+        .and(body_json(serde_json::json!({
+            "ItemId": METADATA_ALBUM_ID,
+            "SearchInfo": {
+                "Name": "Album",
+                "Year": 1999,
+                "AlbumArtists": ["Expected artist"],
+                "ProviderIds": {
+                    "MusicBrainzAlbum": "expected-release-id"
+                }
+            }
+        })))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([
+            {
+                "Name": "Album",
+                "ProductionYear": 1999,
+                "ProviderIds": {
+                    "MusicBrainzAlbum": "other-release-id"
+                }
+            },
+            {
+                "Name": "Identified album",
+                "ProductionYear": 2000,
+                "Overview": "Identified overview",
+                "AlbumArtist": { "Name": "Identified album artist" },
+                "ProviderIds": {
+                    "MusicBrainzAlbum": "expected-release-id",
+                    "MusicBrainzReleaseGroup": "identified-release-group-id"
+                }
+            }
+        ])))
+        .expect(1)
+        .mount(&server)
+        .await;
+    let source = provider(&server, "secret-token");
+
+    let identified = source
+        .identify_metadata(
+            &MetadataItem::Album(metadata_album()),
+            &MetadataValues {
+                title: "Album".to_string(),
+                year: Some(1999),
+                album_artist: Some("Expected artist".to_string()),
+                musicbrainz_album_id: Some("expected-release-id".to_string()),
+                ..MetadataValues::default()
+            },
+        )
+        .await
+        .expect("identify Jellyfin album")
+        .expect("Jellyfin album remote search candidate");
+
+    assert_eq!(identified.title, "Identified album");
+    assert_eq!(identified.year, Some(2000));
+    assert_eq!(
+        identified.artist.as_deref(),
+        Some("Identified album artist")
+    );
+    assert_eq!(
+        identified.album_artist.as_deref(),
+        Some("Identified album artist")
+    );
+    assert_eq!(
+        identified.musicbrainz_album_id.as_deref(),
+        Some("expected-release-id")
+    );
+    assert_eq!(
+        identified.musicbrainz_release_group_id.as_deref(),
+        Some("identified-release-group-id")
+    );
+}
+
+#[tokio::test]
+async fn empty_identification_result_is_no_candidate() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/Items/RemoteSearch/MusicArtist"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([])))
+        .expect(1)
+        .mount(&server)
+        .await;
+    let source = provider(&server, "secret-token");
+    let values = MetadataValues {
+        title: "Unknown artist".to_string(),
+        ..MetadataValues::default()
+    };
+
+    let identified = source
+        .identify_metadata(&MetadataItem::Artist(metadata_artist()), &values)
+        .await
+        .expect("empty Jellyfin identification is not an error");
+
+    assert_eq!(identified, None);
+}
+
+#[tokio::test]
+async fn metadata_source_search_is_an_item_capability() {
+    let server = MockServer::start().await;
+    let source = provider(&server, "secret-token");
+
+    assert!(!source.metadata_source_search(&MetadataItem::Track(metadata_track())));
+    assert!(source.metadata_source_search(&MetadataItem::Album(metadata_album())));
+    assert!(source.metadata_source_search(&MetadataItem::Artist(metadata_artist())));
+}
+
+#[tokio::test]
+async fn failed_native_identification_is_an_error() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/Items/RemoteSearch/MusicArtist"))
+        .respond_with(ResponseTemplate::new(401))
+        .expect(1)
+        .mount(&server)
+        .await;
+    let source = provider(&server, "secret-token");
+
+    assert_eq!(
+        source
+            .identify_metadata(
+                &MetadataItem::Artist(metadata_artist()),
+                &MetadataValues {
+                    title: "Artist".to_string(),
+                    ..MetadataValues::default()
+                },
+            )
+            .await,
+        Err("Jellyfin could not search for metadata.".to_string())
+    );
+}
+
+#[tokio::test]
+async fn metadata_write_preserves_fields_required_by_jellyfin_updates() {
+    let server = MockServer::start().await;
+    metadata_editor(&server, METADATA_TRACK_ID, &[]).await;
+    Mock::given(method("GET"))
+        .and(path(format!("/Items/{METADATA_TRACK_ID}")))
+        .and(query_param("Fields", super::metadata::METADATA_ITEM_FIELDS))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "Id": METADATA_TRACK_ID,
+            "Etag": "before-revision",
+            "Name": "Before",
+            "ForcedSortName": "Keep sort name",
+            "OriginalTitle": "Keep original title",
+            "CustomRating": "Keep custom rating",
+            "LockData": true,
+            "LockedFields": ["Name"],
+            "PreferredMetadataCountryCode": "JP",
+            "PreferredMetadataLanguage": "ja",
+            "IndexNumber": 2,
+            "ParentIndexNumber": 1,
+            "ProductionYear": 2024,
+            "Overview": "Before comment",
+            "Artists": ["Resolved artist", "Pending artist"],
+            "ArtistItems": [{ "Name": "Resolved artist", "Id": "resolved-id" }],
+            "ProviderIds": { "MusicBrainzTrack": "release-track-id" },
+        })))
+        .expect(2)
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path(format!("/Items/{METADATA_TRACK_ID}")))
+        .and(body_json(serde_json::json!({
+            "Id": METADATA_TRACK_ID,
+            "Etag": "before-revision",
+            "Name": "After",
+            "ForcedSortName": "Keep sort name",
+            "OriginalTitle": "Keep original title",
+            "CustomRating": "Keep custom rating",
+            "LockData": true,
+            "LockedFields": ["Name"],
+            "PreferredMetadataCountryCode": "JP",
+            "PreferredMetadataLanguage": "ja",
+            "IndexNumber": 7,
+            "ParentIndexNumber": 1,
+            "ProductionYear": 2024,
+            "Overview": null,
+            "Artists": ["Resolved artist", "Pending artist"],
+            "ArtistItems": [
+                { "Name": "Resolved artist" },
+                { "Name": "Pending artist" }
+            ],
+            "ProviderIds": { "MusicBrainzTrack": "release-track-id" },
+        })))
+        .respond_with(ResponseTemplate::new(204))
+        .expect(1)
+        .mount(&server)
+        .await;
+    let source = provider(&server, "secret-token");
+    let track = metadata_track();
+
+    let raw_ids = source
+        .write_metadata(
+            &MetadataItem::Track(track.clone()),
+            &MetadataEdit {
+                item_id: MetadataItemId::Track(track.id.clone()),
+                revision: Some("etag:before-revision".to_string()),
+                changes: vec![
+                    MetadataChange::Title("After".to_string()),
+                    MetadataChange::TrackNumber(Some(7)),
+                    MetadataChange::Comment(None),
+                ],
+            },
+        )
+        .await
+        .expect("write Jellyfin metadata");
+
+    assert_eq!(raw_ids, [METADATA_TRACK_ID]);
+}
+
+#[tokio::test]
+async fn album_metadata_write_refreshes_the_album_and_its_tracks() {
+    let server = MockServer::start().await;
+    metadata_editor(&server, METADATA_ALBUM_ID, &[]).await;
+    Mock::given(method("GET"))
+        .and(path(format!("/Items/{METADATA_ALBUM_ID}")))
+        .and(query_param("Fields", super::metadata::METADATA_ITEM_FIELDS))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "Id": METADATA_ALBUM_ID,
+            "Etag": "before-revision",
+            "Name": "Before"
+        })))
+        .expect(2)
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/Items"))
+        .and(query_param("UserId", "user-one"))
+        .and(query_param("Recursive", "true"))
+        .and(query_param("IncludeItemTypes", "Audio"))
+        .and(query_param("AlbumIds", METADATA_ALBUM_ID))
+        .and(query_param("StartIndex", "0"))
+        .and(query_param("Limit", "500"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "Items": [
+                { "Id": METADATA_SECOND_TRACK_ID },
+                { "Id": METADATA_TRACK_ID }
+            ],
+            "TotalRecordCount": 2
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path(format!("/Items/{METADATA_ALBUM_ID}")))
+        .and(body_json(serde_json::json!({
+            "Id": METADATA_ALBUM_ID,
+            "Etag": "before-revision",
+            "Name": "After"
+        })))
+        .respond_with(ResponseTemplate::new(204))
+        .expect(1)
+        .mount(&server)
+        .await;
+    let source = provider(&server, "secret-token");
+    let album = metadata_album();
+
+    let raw_ids = source
+        .write_metadata(
+            &MetadataItem::Album(album.clone()),
+            &MetadataEdit {
+                item_id: MetadataItemId::Album(album.id.clone()),
+                revision: Some("etag:before-revision".to_string()),
+                changes: vec![MetadataChange::Title("After".to_string())],
+            },
+        )
+        .await
+        .expect("write Jellyfin album metadata");
+
+    assert_eq!(
+        raw_ids,
+        [
+            METADATA_TRACK_ID,
+            METADATA_ALBUM_ID,
+            METADATA_SECOND_TRACK_ID
+        ]
+    );
+}
+
+#[tokio::test]
+async fn metadata_write_rejects_a_changed_jellyfin_etag_before_posting() {
+    let server = MockServer::start().await;
+    metadata_editor(&server, METADATA_TRACK_ID, &[]).await;
+    Mock::given(method("GET"))
+        .and(path(format!("/Items/{METADATA_TRACK_ID}")))
+        .and(query_param("Fields", super::metadata::METADATA_ITEM_FIELDS))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "Id": METADATA_TRACK_ID,
+            "Etag": "changed-revision",
+            "Name": "Changed elsewhere"
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+    let source = provider(&server, "secret-token");
+    let track = metadata_track();
+
+    let error = source
+        .write_metadata(
+            &MetadataItem::Track(track.clone()),
+            &MetadataEdit {
+                item_id: MetadataItemId::Track(track.id.clone()),
+                revision: Some("etag:original-revision".to_string()),
+                changes: vec![MetadataChange::Title("After".to_string())],
+            },
+        )
+        .await
+        .expect_err("stale Jellyfin edit");
+
+    assert_eq!(error, library::MetadataError::Conflict);
+}
+
+#[tokio::test]
+async fn metadata_read_requires_a_nonempty_jellyfin_etag() {
+    let server = MockServer::start().await;
+    metadata_editor(&server, METADATA_TRACK_ID, &[]).await;
+    Mock::given(method("GET"))
+        .and(path(format!("/Items/{METADATA_TRACK_ID}")))
+        .and(query_param("Fields", super::metadata::METADATA_ITEM_FIELDS))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "Id": METADATA_TRACK_ID,
+            "Etag": " ",
+            "Name": "Track"
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+    let source = provider(&server, "secret-token");
+    let item = MetadataItem::Track(metadata_track());
+    let editing = source
+        .metadata_editing(&item)
+        .await
+        .expect("editable Jellyfin metadata");
+
+    source
+        .read_metadata(&item, editing)
+        .await
+        .expect_err("Jellyfin metadata without an Etag");
+}
+
+#[tokio::test]
+async fn metadata_read_maps_music_fields_and_lists() {
+    let server = MockServer::start().await;
+    metadata_editor(
+        &server,
+        METADATA_TRACK_ID,
+        &["MusicBrainzRecording", "MusicBrainzTrack"],
+    )
+    .await;
+    Mock::given(method("GET"))
+        .and(path(format!("/Items/{METADATA_TRACK_ID}")))
+        .and(query_param("Fields", super::metadata::METADATA_ITEM_FIELDS))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "Id": METADATA_TRACK_ID,
+            "Etag": "mapped-revision",
+            "Name": "Mapped title",
+            "IndexNumber": 4,
+            "ParentIndexNumber": 2,
+            "ProductionYear": 2025,
+            "Overview": "Mapped comment",
+            "ForcedSortName": "Mapped sort title",
+            "Artists": ["First artist", "Second artist"],
+            "ArtistItems": [
+                { "Name": "First artist", "Id": "artist-one" },
+                { "Name": "Second artist", "Id": "artist-two" }
+            ],
+            "Album": "Mapped album",
+            "AlbumArtists": [{ "Name": "Album artist", "Id": "album-artist" }],
+            "Genres": ["Rock", "Alternative"],
+            "LockData": true,
+            "ProviderIds": {
+                "MusicBrainzRecording": "recording-id",
+                "MusicBrainzTrack": "release-track-id"
+            }
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+    let source = provider(&server, "secret-token");
+
+    let mut track = metadata_track();
+    track.make_mut().album_artwork = Some(Arc::new(AlbumArtworkFacts {
+        local_artwork: None,
+        image_ref: None,
+        musicbrainz_release_group_id: Some("release-group-id".to_string()),
+        musicbrainz_album_id: Some("release-id".to_string()),
+        artist: "Album artist".to_string(),
+        title: "Mapped album".to_string(),
+    }));
+    let item = MetadataItem::Track(track);
+    let editing = source
+        .metadata_editing(&item)
+        .await
+        .expect("editable Jellyfin metadata");
+    let draft = source
+        .read_metadata(&item, editing)
+        .await
+        .expect("read Jellyfin metadata");
+
+    assert_eq!(draft.revision.as_deref(), Some("etag:mapped-revision"));
+    assert_eq!(draft.values.title, "Mapped title");
+    assert_eq!(
+        draft.values.sort_title.as_deref(),
+        Some("Mapped sort title")
+    );
+    assert_eq!(
+        draft.values.artist.as_deref(),
+        Some("First artist; Second artist")
+    );
+    assert_eq!(draft.values.album.as_deref(), Some("Mapped album"));
+    assert_eq!(draft.values.album_artist.as_deref(), Some("Album artist"));
+    assert_eq!(draft.values.track_number, Some(4));
+    assert_eq!(draft.values.disc_number, Some(2));
+    assert_eq!(draft.values.year, Some(2025));
+    assert_eq!(draft.values.comment.as_deref(), Some("Mapped comment"));
+    assert_eq!(draft.values.genre.as_deref(), Some("Rock; Alternative"));
+    assert_eq!(draft.values.lock_data, Some(true));
+    assert_eq!(
+        draft.values.musicbrainz_recording_id.as_deref(),
+        Some("recording-id")
+    );
+    assert_eq!(
+        draft.values.musicbrainz_release_track_id.as_deref(),
+        Some("release-track-id")
+    );
+    assert_eq!(
+        draft.values.musicbrainz_album_id.as_deref(),
+        Some("release-id")
+    );
+    assert_eq!(
+        draft.values.musicbrainz_release_group_id.as_deref(),
+        Some("release-group-id")
+    );
 }
 
 fn saved_configuration(
@@ -274,7 +950,10 @@ async fn login_uses_server_and_account_identity_with_the_app_device() {
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
             "AccessToken": "secret-token",
             "ServerId": "server-one",
-            "User": { "Id": "user-one", "Name": "Listener" }
+            "User": {
+                "Id": "user-one",
+                "Name": "Listener"
+            }
         })))
         .expect(1)
         .mount(&server)
@@ -490,6 +1169,30 @@ fn sparse_tracks_keep_the_relationships_the_server_did_provide() {
     assert_eq!(
         track.image_ref.as_ref().map(|image| image.item_id.as_str()),
         Some("jellyfin:album:album-missing-from-this-response")
+    );
+}
+
+#[test]
+fn jellyfin_musicbrainz_track_is_the_release_track_identity() {
+    let item = serde_json::from_value::<JellyfinItem>(serde_json::json!({
+        "Id": "track-one",
+        "Name": "First",
+        "Type": "Audio",
+        "ProviderIds": {
+            "MusicBrainzRecording": "recording-id",
+            "MusicBrainzTrack": "release-track-id"
+        }
+    }))
+    .expect("Jellyfin track");
+    let track = track_from_item(item);
+
+    assert_eq!(
+        track.musicbrainz_recording_id.as_deref(),
+        Some("recording-id")
+    );
+    assert_eq!(
+        track.musicbrainz_release_track_id.as_deref(),
+        Some("release-track-id")
     );
 }
 

@@ -1,7 +1,7 @@
 use crate::SettingsHandle;
 use library::{
     AcceptedLibraryChange, FavoriteItemId, HomeSectionKind, HomeSnapshot, LoadedLibrary,
-    MusicFolderId, SourceId, Track, TrackSelection,
+    MetadataItemId, MusicFolderId, SourceId, Track, TrackSelection,
 };
 use playback::{LoadedPlayRequest, PlaybackProjection, QueuePlacement, SourceSessionEpoch};
 use std::sync::Arc;
@@ -10,6 +10,7 @@ use super::source::{ConfiguredSources, SourceOperation};
 use downloads::DownloadSubject;
 
 use super::source::{DownloadRequest, RemoveDownloadRequest};
+use super::source::{MetadataEditRequest, MetadataIdentificationRequest, MetadataRequest};
 use super::{DiagnosticsHandle, ProductHandles, ProductReceivers};
 
 #[derive(Clone)]
@@ -70,6 +71,37 @@ impl SelectedLibrary {
             source_id: self.source_id.clone(),
             source_session_epoch: self.source_session_epoch,
             track_id,
+        }
+    }
+
+    pub fn metadata_request(&self, item_id: MetadataItemId) -> MetadataRequest {
+        MetadataRequest {
+            source_id: self.source_id.clone(),
+            source_session_epoch: self.source_session_epoch,
+            item_id,
+        }
+    }
+
+    pub fn metadata_edit_request(&self, edit: library::MetadataEdit) -> MetadataEditRequest {
+        MetadataEditRequest {
+            source_id: self.source_id.clone(),
+            source_session_epoch: self.source_session_epoch,
+            edit,
+        }
+    }
+
+    pub fn metadata_identification_request(
+        &self,
+        item_id: MetadataItemId,
+        editing: library::MetadataEditing,
+        values: library::MetadataValues,
+    ) -> MetadataIdentificationRequest {
+        MetadataIdentificationRequest {
+            source_id: self.source_id.clone(),
+            source_session_epoch: self.source_session_epoch,
+            item_id,
+            editing,
+            values,
         }
     }
 }

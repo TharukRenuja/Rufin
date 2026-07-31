@@ -17,10 +17,12 @@ use library::{
 use reqwest::{Client, Url};
 use serde::Deserialize;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use tracing::instrument;
 
 mod client;
 mod item;
+mod navidrome;
 mod refresh;
 
 use client::*;
@@ -30,6 +32,7 @@ use item::*;
 mod tests;
 
 const SOURCE_CONFIG_VERSION: u32 = 1;
+const NAVIDROME_LIBRARY_VERSION: u32 = 1;
 
 #[derive(Deserialize)]
 struct SubsonicSourcePayload {
@@ -40,6 +43,8 @@ struct SubsonicSourcePayload {
     #[serde(default)]
     username: String,
     trust_invalid_cert: bool,
+    #[serde(default)]
+    navidrome_library_version: u32,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -47,6 +52,7 @@ pub struct SubsonicSourceConfig {
     pub(crate) base_url: String,
     pub(crate) username: String,
     pub(crate) trust_invalid_cert: bool,
+    pub(crate) navidrome_library_version: u32,
 }
 
 impl SubsonicSourceConfig {
@@ -73,6 +79,7 @@ impl SubsonicSourceConfig {
             base_url: payload.base_url,
             username,
             trust_invalid_cert: payload.trust_invalid_cert,
+            navidrome_library_version: payload.navidrome_library_version,
         })
     }
 
@@ -82,6 +89,7 @@ impl SubsonicSourceConfig {
             "base_url": self.base_url,
             "username": self.username,
             "trust_invalid_cert": self.trust_invalid_cert,
+            "navidrome_library_version": self.navidrome_library_version,
         })
     }
 
@@ -184,6 +192,7 @@ pub(crate) async fn edit(
             base_url: saved.base_url,
             username: saved.username,
             trust_invalid_cert: credentials.trust_invalid_cert,
+            navidrome_library_version: saved.navidrome_library_version,
         }
         .into_payload(),
     );
@@ -237,8 +246,11 @@ pub struct SubsonicSource {
     base_url: Url,
     username: String,
     credential: Arc<SubsonicCredential>,
+    navidrome_session: navidrome::NavidromeSession,
+    navidrome_library_version: u32,
     flavor: SubsonicFlavor,
     trust_invalid_cert: bool,
+    metadata_editing: AtomicBool,
 }
 impl SubsonicSource {
     fn open(
@@ -249,13 +261,29 @@ impl SubsonicSource {
         let base_url = normalize_base_url(&config.base_url)?;
         let client = build_client(config.trust_invalid_cert)?;
         let credential = SubsonicCredential::parse(&credential)?;
+        if config.navidrome_library_version > NAVIDROME_LIBRARY_VERSION {
+            return Err(SourceError::InvalidConfig(format!(
+                "Navidrome library version {} is not supported.",
+                config.navidrome_library_version
+            )));
+        }
+        if config.navidrome_library_version > 0
+            && (flavor != SubsonicFlavor::Navidrome || credential.navidrome_password().is_none())
+        {
+            return Err(SourceError::InvalidConfig(
+                "Saved Navidrome access needs the server password.".to_string(),
+            ));
+        }
         Ok(Self {
             client,
             base_url,
             username: config.username,
             credential: Arc::new(credential),
+            navidrome_session: navidrome::NavidromeSession::default(),
+            navidrome_library_version: config.navidrome_library_version,
             flavor,
             trust_invalid_cert: config.trust_invalid_cert,
+            metadata_editing: AtomicBool::new(false),
         })
     }
 
@@ -273,25 +301,29 @@ impl SubsonicSource {
         } = credentials;
         let base_url = normalize_base_url(&server_url)?;
         let client = build_client(trust_invalid_cert)?;
-        let credential = SubsonicCredential::from_password(&password);
+        let credential = if flavor == SubsonicFlavor::Navidrome {
+            SubsonicCredential::from_navidrome_password(&password)
+        } else {
+            SubsonicCredential::from_password(&password)
+        };
         let mut auth_url = endpoint(&base_url, "getUser")?;
         auth_url
             .query_pairs_mut()
             .extend_pairs(credential.common_query(&username, &[("username", &username)]));
         let response = subsonic_json::<AuthenticateBody>(client.get(auth_url)).await?;
         let body = response.body;
-
         if body.user.username.trim().is_empty() {
             return Err(SourceError::Auth(
                 "OpenSubsonic returned an empty canonical username".to_string(),
             ));
         }
-        let source_kind = flavor.source_id();
+        let canonical_username = body.user.username;
         let provider_name = response
             .server_type
             .filter(|name| !name.trim().is_empty())
             .unwrap_or_else(|| flavor.display_name().to_string());
-        let canonical_username = body.user.username;
+        let metadata_editing = body.user.admin_role;
+        let source_kind = flavor.source_id();
         let rest_endpoint = rest_endpoint_identity(&base_url);
         let source_hash = stable_source_id(source_kind, &rest_endpoint, &canonical_username);
         let serialized_credential = credential.serialize();
@@ -303,6 +335,11 @@ impl SubsonicSource {
                 base_url: base_url.as_str().trim_end_matches('/').to_string(),
                 username: canonical_username.clone(),
                 trust_invalid_cert,
+                navidrome_library_version: if flavor == SubsonicFlavor::Navidrome {
+                    NAVIDROME_LIBRARY_VERSION
+                } else {
+                    0
+                },
             }
             .into_payload(),
         );
@@ -311,13 +348,32 @@ impl SubsonicSource {
             base_url,
             username: canonical_username,
             credential: Arc::new(credential),
+            navidrome_session: navidrome::NavidromeSession::default(),
+            navidrome_library_version: if flavor == SubsonicFlavor::Navidrome {
+                NAVIDROME_LIBRARY_VERSION
+            } else {
+                0
+            },
             flavor,
             trust_invalid_cert,
+            metadata_editing: AtomicBool::new(metadata_editing),
         };
         Ok(AuthenticatedSubsonic {
             configuration,
             source,
             credential: serialized_credential,
         })
+    }
+
+    pub(crate) fn metadata_editing_available(&self) -> bool {
+        self.metadata_editing.load(Ordering::Acquire)
+    }
+
+    pub(crate) async fn refresh_metadata_editing(&self) {
+        let available = self
+            .get_json::<AuthenticateBody>("getUser", &[("username", self.username.clone())])
+            .await
+            .is_ok_and(|body| body.user.admin_role);
+        self.metadata_editing.store(available, Ordering::Release);
     }
 }

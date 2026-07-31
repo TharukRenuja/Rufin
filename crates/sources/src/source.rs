@@ -7,10 +7,11 @@ use std::time::Duration;
 use async_channel::Sender;
 use library::{
     AlbumId, ArtistId, CandidateBatch, FavoriteAcceptance, FavoriteItemId, FolderContents,
-    FolderId, GenreId, HomeFacts, HomeSectionKind, ImageRef, LocalArtworkRef,
-    LocalComponentBaseline, LocalComponentReplacement, MusicFolderId, PlaylistAcceptance,
-    PlaylistEdit, PlaylistId, PlaylistSnapshot, ProviderFreshness, SearchRequest, SearchResults,
-    SourceHomeSection, SourceHomeSectionKind, SourceId, Track, TrackId,
+    FolderId, GenreId, HomeFacts, HomeSectionKind, ImageRef, LocalAccessTarget, LocalArtworkRef,
+    LocalComponentBaseline, LocalComponentReplacement, MetadataDraft, MetadataEdit, MetadataError,
+    MetadataValues, MusicFolderId, PlaylistAcceptance, PlaylistEdit, PlaylistId, PlaylistSnapshot,
+    ProviderFreshness, SearchRequest, SearchResults, SourceHomeSection, SourceHomeSectionKind,
+    SourceId, TrackId,
 };
 
 use crate::{
@@ -127,6 +128,12 @@ pub enum SourceLibraryChangeRead {
     Exact(library::SourceLibraryUpdate),
     Full,
     Ignored,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum MetadataRefresh {
+    Local(LocalFilesystemChange),
+    Source(SourceLibraryChange),
 }
 
 pub struct ConnectedSource {
@@ -491,10 +498,140 @@ impl Source {
         &self.source_id
     }
 
-    pub fn track_metadata_editing(&self, track: &Track) -> Option<crate::TrackMetadataEditing> {
+    pub fn metadata_editing_available(&self, item: &library::MetadataItem) -> bool {
         match &self.implementation {
-            Implementation::Local(source) => source.track_metadata_editing(track),
-            Implementation::Jellyfin(_) | Implementation::OpenSubsonic(_) => None,
+            Implementation::Local(local) => local.metadata_entry_available(item),
+            Implementation::Jellyfin(source) => source.metadata_entry_available(item),
+            Implementation::OpenSubsonic(source) => {
+                source.metadata_editing_available()
+                    && crate::local::mapped_metadata_editing_available(item)
+            }
+        }
+    }
+
+    pub async fn read_metadata(
+        self: &Arc<Self>,
+        subject: library::MetadataSubject,
+        local_access: Option<Vec<LocalAccessTarget>>,
+    ) -> Result<MetadataDraft, MetadataError> {
+        match &self.implementation {
+            Implementation::Local(_) => {
+                let source = Arc::clone(self);
+                tokio::task::spawn_blocking(move || {
+                    let Implementation::Local(local) = &source.implementation else {
+                        unreachable!("source implementation changed")
+                    };
+                    local.read_metadata(&subject)
+                })
+                .await
+                .map_err(|error| MetadataError::Write(error.to_string()))?
+            }
+            Implementation::Jellyfin(source) => {
+                let editing = source
+                    .metadata_editing(subject.item())
+                    .await
+                    .ok_or(MetadataError::Unavailable)?;
+                source
+                    .read_metadata(subject.item(), editing)
+                    .await
+                    .map_err(|error| MetadataError::Write(error.to_string()))
+            }
+            Implementation::OpenSubsonic(source) => {
+                if !source.metadata_editing_available() {
+                    return Err(MetadataError::Unavailable);
+                }
+                let local_access =
+                    local_access.ok_or_else(|| MetadataError::LocalAccessRequired {
+                        source_path: String::new(),
+                    })?;
+                tokio::task::spawn_blocking(move || {
+                    crate::local::read_mapped_metadata(&subject, &local_access)
+                })
+                .await
+                .map_err(|error| MetadataError::Write(error.to_string()))?
+            }
+        }
+    }
+
+    pub async fn identify_metadata(
+        &self,
+        subject: &library::MetadataSubject,
+        values: &MetadataValues,
+    ) -> Result<Option<MetadataValues>, String> {
+        if values.title.trim().is_empty() || !self.metadata_source_search(subject) {
+            return Ok(None);
+        }
+        match &self.implementation {
+            Implementation::Jellyfin(source) => {
+                source.identify_metadata(subject.item(), values).await
+            }
+            Implementation::Local(_) | Implementation::OpenSubsonic(_) => Ok(None),
+        }
+    }
+
+    pub fn metadata_source_search(&self, subject: &library::MetadataSubject) -> bool {
+        match &self.implementation {
+            Implementation::Jellyfin(source) => source.metadata_source_search(subject.item()),
+            Implementation::Local(_) | Implementation::OpenSubsonic(_) => false,
+        }
+    }
+
+    pub fn needs_metadata_local_access(&self) -> bool {
+        match &self.implementation {
+            Implementation::OpenSubsonic(source) => source.metadata_editing_available(),
+            Implementation::Local(_) | Implementation::Jellyfin(_) => false,
+        }
+    }
+
+    pub async fn write_metadata(
+        self: &Arc<Self>,
+        subject: library::MetadataSubject,
+        edit: MetadataEdit,
+        local_access: Option<Vec<LocalAccessTarget>>,
+    ) -> Result<MetadataRefresh, MetadataError> {
+        match &self.implementation {
+            Implementation::Local(_) => {
+                let source = Arc::clone(self);
+                tokio::task::spawn_blocking(move || {
+                    let Implementation::Local(local) = &source.implementation else {
+                        unreachable!("source implementation changed")
+                    };
+                    local
+                        .write_metadata(&subject, &edit)
+                        .map(|paths| MetadataRefresh::Local(LocalFilesystemChange::Paths(paths)))
+                })
+                .await
+                .map_err(|error| MetadataError::Write(error.to_string()))?
+            }
+            Implementation::Jellyfin(source) => source
+                .write_metadata(subject.item(), &edit)
+                .await
+                .map(|raw_ids| {
+                    MetadataRefresh::Source(SourceLibraryChange::jellyfin_items(raw_ids))
+                }),
+            Implementation::OpenSubsonic(source) => {
+                if !source.metadata_editing_available() {
+                    return Err(MetadataError::Unavailable);
+                }
+                let local_access =
+                    local_access.ok_or_else(|| MetadataError::LocalAccessRequired {
+                        source_path: String::new(),
+                    })?;
+                source
+                    .require_metadata_scan_idle()
+                    .await
+                    .map_err(|error| MetadataError::Write(error.to_string()))?;
+                tokio::task::spawn_blocking(move || {
+                    crate::local::write_mapped_metadata(&subject, &local_access, &edit)
+                })
+                .await
+                .map_err(|error| MetadataError::Write(error.to_string()))??;
+                source
+                    .start_metadata_scan_and_wait()
+                    .await
+                    .map_err(|error| MetadataError::SavedRefreshFailed(error.to_string()))?;
+                Ok(MetadataRefresh::Source(SourceLibraryChange::full()))
+            }
         }
     }
 
@@ -507,6 +644,7 @@ impl Source {
     ) -> SourceResult<NativeSourceResult<()>> {
         match &self.implementation {
             Implementation::Jellyfin(source) => {
+                source.refresh_metadata_editing().await;
                 let on_items = std::sync::Mutex::new(on_items);
                 let mut on_ready = |reconnecting| {
                     let request = feed_needs_catch_up(catch_up, reconnecting);
@@ -1036,6 +1174,7 @@ async fn edit_remote_playlist(
 #[cfg(test)]
 mod input_identity_tests {
     use super::*;
+    use crate::SourceCacheMatch;
     use wiremock::matchers::{method, path, query_param};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
@@ -1106,6 +1245,15 @@ mod input_identity_tests {
     }
 
     fn subsonic(base_url: &str, username: &str, trust_invalid_cert: bool) -> SourceConfiguration {
+        navidrome(base_url, username, trust_invalid_cert, 0)
+    }
+
+    fn navidrome(
+        base_url: &str,
+        username: &str,
+        trust_invalid_cert: bool,
+        library_version: u32,
+    ) -> SourceConfiguration {
         crate::config::encode_provider_payload(
             SourceId::new("configured:subsonic"),
             "navidrome",
@@ -1114,6 +1262,7 @@ mod input_identity_tests {
                 base_url: base_url.to_string(),
                 username: username.to_string(),
                 trust_invalid_cert,
+                navidrome_library_version: library_version,
             }
             .into_payload(),
         )
@@ -1172,6 +1321,16 @@ mod input_identity_tests {
             input_digest(&jellyfin_a),
             input_digest(&jellyfin_other_user)
         );
+        assert_eq!(
+            jellyfin_other_user
+                .cache_match(
+                    &jellyfin_a
+                        .input_identity()
+                        .expect("Jellyfin input identity")
+                )
+                .expect("classify another Jellyfin account's cache"),
+            SourceCacheMatch::Incompatible
+        );
 
         let subsonic_a = subsonic("https://one.example", "listener", false);
         let subsonic_b = subsonic("https://two.example", "listener", false);
@@ -1198,6 +1357,37 @@ mod input_identity_tests {
     }
 
     #[test]
+    fn navidrome_library_reader_qualifies_cached_source_facts() {
+        let generic = navidrome("https://music.example", "listener", false, 0);
+        let private_library = navidrome("https://music.example", "listener", false, 1);
+        let other_user = navidrome("https://music.example", "other", false, 0);
+
+        assert_ne!(input_digest(&generic), input_digest(&private_library));
+        assert_eq!(
+            private_library
+                .cache_match(&generic.input_identity().expect("generic input identity"))
+                .expect("classify generic Navidrome cache"),
+            SourceCacheMatch::ReaderUpgrade
+        );
+        assert_eq!(
+            private_library
+                .cache_match(
+                    &private_library
+                        .input_identity()
+                        .expect("native input identity")
+                )
+                .expect("classify native Navidrome cache"),
+            SourceCacheMatch::Exact
+        );
+        assert_eq!(
+            private_library
+                .cache_match(&other_user.input_identity().expect("other input identity"))
+                .expect("classify another account's cache"),
+            SourceCacheMatch::Incompatible
+        );
+    }
+
+    #[test]
     fn local_roots_qualify_cached_source_facts() {
         let first = SourceConfiguration::local(
             SourceId::new(crate::local::LOCAL_LIBRARY_SOURCE_ID),
@@ -1212,6 +1402,12 @@ mod input_identity_tests {
         )
         .expect("second Local configuration");
         assert_ne!(input_digest(&first), input_digest(&second));
+        assert_eq!(
+            second
+                .cache_match(&first.input_identity().expect("first Local input identity"))
+                .expect("classify another Local root cache"),
+            SourceCacheMatch::Incompatible
+        );
     }
 
     #[tokio::test]

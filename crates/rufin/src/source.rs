@@ -16,8 +16,9 @@ use artwork::{Artwork, SourceImages};
 use async_channel::{Receiver, Sender};
 use library::{
     AcceptedLibraryChange, CandidateChange, FavoriteAcceptance, FavoriteItemId, FolderContents,
-    HomeSectionKind, HomeSnapshot, Library, LoadedLibrary, MusicFolderId, PlaylistAcceptance,
-    PlaylistEdit, PlaylistTrackAdd, PreparedSourceCandidate, RecordedActivity,
+    HomeSectionKind, HomeSnapshot, Library, LoadedLibrary, LocalAccessTarget, MetadataDraft,
+    MetadataEdit, MetadataEditing, MetadataError, MetadataItemId, MusicFolderId,
+    PlaylistAcceptance, PlaylistEdit, PlaylistTrackAdd, PreparedSourceCandidate, RecordedActivity,
     SmartPlaylistBuiltin, SmartPlaylistDefinition, SmartPlaylistId, SourceHomeSection, SourceId,
     Track, TrackSort,
 };
@@ -26,17 +27,18 @@ use scrobbling::Scrobbler;
 use secrets::{SecretStorageMode, SwitchableSecretStore};
 use sources::{
     CredentialHostInput, CredentialSettingsInput, JellyfinSettingsInput, JellyfinSetupInput,
-    LocalFilesystemChange, LocalFolderHostInput, NativeSourceResult, Source, SourceConfiguration,
-    SourceEditResult, SourceFreshness, SourceInputIdentity, SourceLibraryChange,
-    SourceLibraryChangeRead, SourceLibraryItemId, SourceReadProgress, SourceReadStage,
-    SourceSettingsInput, SourceSetupInput, SubsonicFlavor,
+    LocalFilesystemChange, LocalFolderHostInput, MetadataRefresh, NativeSourceResult, Source,
+    SourceCacheMatch, SourceConfiguration, SourceEditResult, SourceFreshness, SourceInputIdentity,
+    SourceLibraryChange, SourceLibraryChangeRead, SourceLibraryItemId, SourceReadProgress,
+    SourceReadStage, SourceSettingsInput, SourceSetupInput, SubsonicFlavor,
 };
 use tokio::task::JoinHandle;
 use tracing::warn;
 use ui::runtime::source::{
     ConfiguredSources, CredentialInput, CredentialPreset, DiscoveredServer, DiscoveryStatus,
     DiscoveryUpdate, DownloadRequest, EditableSource, FolderRequest, LocalAccessStatus,
-    LocalFolder, OpenSubsonicKind, RemoveDownloadRequest, SearchRequest, SourceLocalAccess,
+    LocalFolder, MetadataEditRequest, MetadataIdentificationRequest, MetadataRequest,
+    OpenSubsonicKind, RemoveDownloadRequest, SearchRequest, SourceLocalAccess,
     SourceLocalAccessSummary, SourceOperation, SourcePort, SourceProgress, SourceProgressStage,
     SourceSettingsChange, SourceSetup, SourceSummary,
 };
@@ -80,6 +82,74 @@ impl SelectedSourceRuntime {
             epoch: self.source_session_epoch,
         }
     }
+
+    fn metadata_context(
+        &self,
+        item_id: &MetadataItemId,
+    ) -> Result<Option<MetadataContext>, library::LoadedLibraryError> {
+        let Some(source) = self.source.as_ref().cloned() else {
+            return Ok(None);
+        };
+        let Some(subject) = self.loaded.metadata_subject(item_id)? else {
+            return Ok(None);
+        };
+        Ok(Some(MetadataContext {
+            source,
+            subject,
+            local_access: None,
+        }))
+    }
+
+    fn metadata_editing_available(&self, item_id: &MetadataItemId) -> bool {
+        let Some(source) = self.source.as_ref() else {
+            return false;
+        };
+        self.loaded
+            .metadata_item(item_id)
+            .ok()
+            .flatten()
+            .is_some_and(|item| source.metadata_editing_available(&item))
+    }
+
+    fn metadata_access_context(
+        &self,
+        item_id: &MetadataItemId,
+    ) -> Result<Option<MetadataContext>, MetadataError> {
+        let Some(source) = self.source.as_ref().cloned() else {
+            return Ok(None);
+        };
+        if source.needs_metadata_local_access() {
+            let Some((subject, local_access)) = self
+                .loaded
+                .metadata_subject_with_local_access(item_id, None)?
+            else {
+                return Ok(None);
+            };
+            return Ok(Some(MetadataContext {
+                source,
+                subject,
+                local_access: Some(local_access),
+            }));
+        }
+        let Some(subject) = self
+            .loaded
+            .metadata_subject(item_id)
+            .map_err(|error| MetadataError::Write(error.to_string()))?
+        else {
+            return Ok(None);
+        };
+        Ok(Some(MetadataContext {
+            source,
+            subject,
+            local_access: None,
+        }))
+    }
+}
+
+struct MetadataContext {
+    source: Arc<Source>,
+    subject: library::MetadataSubject,
+    local_access: Option<Vec<LocalAccessTarget>>,
 }
 
 #[derive(Clone)]
@@ -222,10 +292,14 @@ enum WorkRequest {
     AddLocalFolder(PathBuf),
     RemoveLocalFolder(String),
     Refresh {
-        source_id: SourceId,
+        qualifier: SourceQualifier,
         visible: bool,
     },
-    SaveLocalAccess(SourceLocalAccess),
+    SaveLocalAccess {
+        input: SourceLocalAccess,
+        metadata: Option<MetadataRequest>,
+        result: Sender<Result<(), String>>,
+    },
     ClearLocalAccess(SourceId),
     Forget(SourceId),
     SetMusicFolder {
@@ -256,7 +330,52 @@ enum PointOperation {
     SmartPlaylist(SmartPlaylistOperation),
     ObservedItems(SourceLibraryChange),
     LocalFiles(LocalFilesystemChange),
+    EditMetadata {
+        edit: MetadataEdit,
+        reply: MetadataReply,
+    },
     CheckFreshness,
+}
+
+struct MetadataReply {
+    sender: Option<Sender<Result<(), MetadataError>>>,
+    write_started: bool,
+}
+
+impl MetadataReply {
+    fn new(sender: Sender<Result<(), MetadataError>>) -> Self {
+        Self {
+            sender: Some(sender),
+            write_started: false,
+        }
+    }
+
+    fn mark_write_started(&mut self) {
+        self.write_started = true;
+    }
+
+    fn finish(mut self, result: Result<(), MetadataError>) {
+        if let Some(sender) = self.sender.take() {
+            let _ = sender.try_send(result);
+        }
+    }
+}
+
+impl Drop for MetadataReply {
+    fn drop(&mut self) {
+        let Some(sender) = self.sender.take() else {
+            return;
+        };
+        let error = if self.write_started {
+            MetadataError::SavedRefreshFailed(
+                "Metadata editing was interrupted before the written metadata was accepted."
+                    .to_string(),
+            )
+        } else {
+            MetadataError::Unavailable
+        };
+        let _ = sender.try_send(Err(error));
+    }
 }
 
 enum NextHome {
@@ -286,7 +405,6 @@ enum SmartPlaylistOperation {
     },
 }
 
-#[derive(Clone)]
 enum WorkPurpose {
     Add,
     Select {
@@ -326,7 +444,10 @@ enum PreparedWork {
 #[derive(Clone, Copy)]
 enum ReplacementReason {
     Add,
-    Select { cached: bool },
+    Select {
+        cached: bool,
+        refresh_after_select: bool,
+    },
     DifferentAccount,
 }
 
@@ -382,10 +503,19 @@ enum PointPrepared {
     },
     Playlist(PlaylistAcceptance),
     SmartPlaylist(SmartPlaylistOperation),
-    SourceUpdate(library::SourceLibraryUpdate),
-    LocalComponent(library::LocalComponentReplacement),
+    LibraryUpdate(PreparedLibraryUpdate),
+    Metadata {
+        reply: MetadataReply,
+        acceptance: Result<PreparedLibraryUpdate, MetadataError>,
+    },
     RefreshRequired,
     Unchanged,
+}
+
+enum PreparedLibraryUpdate {
+    Source(library::SourceLibraryUpdate),
+    Local(library::LocalComponentReplacement),
+    Full(PreparedSourceCandidate),
 }
 
 struct ActiveObserver {
@@ -515,6 +645,22 @@ impl SourceOwner {
 
     pub(crate) fn selected(&self) -> Option<SelectedSourceRuntime> {
         self.shared.selected()
+    }
+
+    fn selected_metadata_context(
+        &self,
+        source_id: &SourceId,
+        source_session_epoch: SourceSessionEpoch,
+        item_id: &MetadataItemId,
+    ) -> Option<MetadataContext> {
+        self.selected()
+            .filter(|selected| {
+                selected.source_id() == source_id
+                    && selected.source_session_epoch == source_session_epoch
+            })?
+            .metadata_context(item_id)
+            .ok()
+            .flatten()
     }
 
     pub(crate) fn album_release_settings_changed(&self, enabled: bool) {
@@ -694,8 +840,8 @@ impl Actor {
 
     async fn queue_work(&mut self, request: WorkRequest) {
         match request {
-            WorkRequest::Refresh { source_id, visible } => {
-                self.queue_refresh(source_id, visible).await;
+            WorkRequest::Refresh { qualifier, visible } => {
+                self.queue_refresh(qualifier.source_id, visible).await;
                 return;
             }
             WorkRequest::Selected {
@@ -827,15 +973,15 @@ impl Actor {
             return;
         }
         if let Some(WorkRequest::Refresh {
-            source_id: _,
+            qualifier: _,
             visible: pending_visible,
         }) = self.pending.iter_mut().find(|request| {
             matches!(
                 request,
                 WorkRequest::Refresh {
-                    source_id: pending,
+                    qualifier: pending,
                     ..
-                } if pending == &source_id
+                } if pending == &qualifier
             )
         }) {
             *pending_visible |= visible;
@@ -850,7 +996,7 @@ impl Actor {
                 .await;
         }
         self.pending
-            .push_back(WorkRequest::Refresh { source_id, visible });
+            .push_back(WorkRequest::Refresh { qualifier, visible });
         self.start_next_work().await;
     }
 
@@ -900,15 +1046,10 @@ impl Actor {
                 WorkRequest::Forget(source_id) => {
                     self.forget_now(source_id).await;
                 }
-                WorkRequest::Refresh { source_id, visible } => {
-                    let Some(qualifier) = self
-                        .shared
-                        .selected()
-                        .filter(|selected| selected.source_id() == &source_id)
-                        .map(|selected| selected.qualifier())
-                    else {
+                WorkRequest::Refresh { qualifier, visible } => {
+                    if !self.shared.matches_selected(&qualifier) {
                         continue;
-                    };
+                    }
                     self.start_refresh(qualifier, visible).await;
                     if self.active.is_some() {
                         return;
@@ -932,8 +1073,8 @@ impl Actor {
                             qualifier,
                             automatic,
                         },
-                        move |_shared, _progress, cancelled| async move {
-                            run_point(selected, operation, cancelled)
+                        move |shared, progress, cancelled| async move {
+                            run_point(shared, selected, operation, progress, cancelled)
                                 .await
                                 .map(PreparedWork::Point)
                         },
@@ -944,8 +1085,12 @@ impl Actor {
                     let changed = self.change_secret_storage(mode).await;
                     let _ = result.send(changed).await;
                 }
-                WorkRequest::SaveLocalAccess(input) => {
-                    self.save_local_access(input).await;
+                WorkRequest::SaveLocalAccess {
+                    input,
+                    metadata,
+                    result,
+                } => {
+                    self.save_local_access(input, metadata, result).await;
                 }
                 WorkRequest::ClearLocalAccess(source_id) => {
                     self.clear_local_access(source_id).await;
@@ -1139,7 +1284,7 @@ impl Actor {
             .selected()
             .is_some_and(|selected| selected.source_id() == &source_id);
         let progress_source = (selected && local_roots_changed).then(|| source_id.clone());
-        if let Some(source_id) = &progress_source {
+        if local_roots_changed && let Some(source_id) = &progress_source {
             self.shared
                 .send_event(SourceEvent::Operation(SourceOperation::Refreshing {
                     source_id: source_id.clone(),
@@ -1384,7 +1529,7 @@ impl Actor {
     }
 
     async fn start_local_access_refresh(&mut self, selected: &SelectedSourceRuntime) {
-        let access = self
+        let Some(access) = self
             .shared
             .settings
             .load()
@@ -1392,9 +1537,15 @@ impl Actor {
             .configured
             .iter()
             .find(|configured| configured.configuration.source_id == *selected.source_id())
-            .and_then(|configured| configured.local_access.clone());
-        let Some(access) = access else {
+            .and_then(|configured| configured.local_access.clone())
+        else {
             return;
+        };
+        let input = SourceLocalAccess {
+            source_id: selected.source_id().clone(),
+            root_path: access.root_path,
+            server_prefix: access.server_prefix,
+            local_prefix: access.local_prefix,
         };
         let baseline = match selected.loaded.local_access_files() {
             Ok(files) => files,
@@ -1406,13 +1557,8 @@ impl Actor {
         self.cancel_local_access();
         let token = self.shared.next_work.fetch_add(1, Ordering::AcqRel);
         let qualifier = selected.qualifier();
-        let input = SourceLocalAccess {
-            source_id: selected.source_id().clone(),
-            root_path: access.root_path,
-            server_prefix: access.server_prefix,
-            local_prefix: access.local_prefix,
-        };
         let task_input = input.clone();
+        let task_baseline = baseline;
         let cancelled = Arc::new(AtomicBool::new(false));
         let task_cancelled = Arc::clone(&cancelled);
         let sender = self.sender.clone();
@@ -1420,7 +1566,7 @@ impl Actor {
             let root = task_input.root_path;
             let scan_cancelled = Arc::clone(&task_cancelled);
             let result = tokio::task::spawn_blocking(move || {
-                sources::read_local_access(&root, &baseline, &|_| {}, &|| {
+                sources::read_local_access(&root, &task_baseline, &|_| {}, &|| {
                     scan_cancelled.load(Ordering::Acquire)
                 })
                 .map_err(string_error)
@@ -1460,61 +1606,64 @@ impl Actor {
             .local_access
             .take()
             .expect("the checked Local access task is present");
-        let result = active
-            .handle
-            .await
-            .map_err(string_error)
-            .and_then(|result| result);
-        let Some(selected) = self
-            .shared
-            .selected()
-            .filter(|selected| selected.qualifier() == active.qualifier)
-        else {
-            return;
-        };
-        let still_configured = self
-            .shared
-            .settings
-            .load()
-            .sources
-            .configured
-            .iter()
-            .find(|configured| configured.configuration.source_id == active.input.source_id)
-            .and_then(|configured| configured.local_access.as_ref())
-            .is_some_and(|configured| {
-                configured.root_path == active.input.root_path
-                    && configured.server_prefix == active.input.server_prefix
-                    && configured.local_prefix == active.input.local_prefix
-            });
-        if !still_configured {
-            return;
-        }
-        let files = match result {
-            Ok(files) => files,
-            Err(error) => {
-                self.shared.send_notice(error).await;
-                return;
-            }
-        };
-        let library = self.shared.library.clone();
-        let loaded = Arc::clone(&selected.loaded);
-        let mapping = local_access_mapping(&active.input);
-        if let Err(error) = blocking(move || {
-            library
-                .replace_local_access(&loaded, mapping, files)
+        let ActiveLocalAccess {
+            qualifier,
+            input,
+            handle,
+            ..
+        } = active;
+        let outcome = async {
+            let files = handle
+                .await
                 .map_err(string_error)
-        })
-        .await
-        {
+                .and_then(|result| result)?;
+            let selected = self
+                .shared
+                .selected()
+                .filter(|selected| selected.qualifier() == qualifier)
+                .ok_or_else(|| {
+                    "the selected source changed before the local file mapping was ready"
+                        .to_string()
+                })?;
+            let still_configured = self
+                .shared
+                .settings
+                .load()
+                .sources
+                .configured
+                .iter()
+                .find(|configured| configured.configuration.source_id == input.source_id)
+                .and_then(|configured| configured.local_access.as_ref())
+                .is_some_and(|configured| {
+                    configured.root_path == input.root_path
+                        && configured.server_prefix == input.server_prefix
+                        && configured.local_prefix == input.local_prefix
+                });
+            if !still_configured {
+                return Err("the local file mapping changed before its scan finished".to_string());
+            }
+            let library = self.shared.library.clone();
+            let loaded = Arc::clone(&selected.loaded);
+            let mapping = local_access_mapping(&input);
+            blocking(move || {
+                library
+                    .replace_local_access(&loaded, mapping, files)
+                    .map(|_| ())
+                    .map_err(string_error)
+            })
+            .await?;
+            if let Err(error) = self.shared.playback().and_then(|playback| {
+                playback.stream_inputs_changed(selected.source_id(), selected.source_session_epoch)
+            }) {
+                warn!(%error, "could not update prepared playback after Local access changed");
+            }
+            self.shared.publish_configured().await;
+            Ok(())
+        }
+        .await;
+        if let Err(error) = outcome {
             self.shared.send_notice(error).await;
-            return;
         }
-        if let Err(error) = self.shared.playback().and_then(|playback| {
-            playback.stream_inputs_changed(selected.source_id(), selected.source_session_epoch)
-        }) {
-            warn!(%error, "could not update prepared playback after Local access changed");
-        }
-        self.shared.publish_configured().await;
     }
 
     fn queue_freshness_check(&mut self) {
@@ -1580,15 +1729,10 @@ impl Actor {
         self.shared.stop_playback().await;
         self.stop_observer();
         self.cancel_local_access();
-        self.pending.retain(|request| {
-            !matches!(request, WorkRequest::Refresh { .. })
-                && !matches!(
-                    request,
-                    WorkRequest::Selected {
-                        operation,
-                        ..
-                    } if automatic_point(operation)
-                )
+        self.pending.retain(|request| match request {
+            WorkRequest::Refresh { .. } => false,
+            WorkRequest::Selected { operation, .. } if automatic_point(operation) => false,
+            _ => true,
         });
     }
 
@@ -1607,7 +1751,7 @@ impl Actor {
                 .settings
                 .load()
                 .ui
-                .allows_external_album_lookup()
+                .allows_external_metadata_lookup()
         {
             return;
         }
@@ -1713,6 +1857,7 @@ impl Actor {
             WorkPurpose::Refresh {
                 qualifier,
                 visible: true,
+                ..
             } => SourceOperation::Refreshing {
                 source_id: qualifier.source_id.clone(),
                 progress: source_progress(progress),
@@ -1739,7 +1884,7 @@ impl Actor {
         let Some(active) = self.active.take().filter(|active| active.token == token) else {
             return;
         };
-        let purpose = active.purpose.clone();
+        let purpose = active.purpose;
         let activity_updates = active.activity_updates;
         let result = active
             .handle
@@ -1754,7 +1899,7 @@ impl Actor {
                 return;
             }
         };
-        match (purpose.clone(), prepared) {
+        match (purpose, prepared) {
             (
                 WorkPurpose::Add | WorkPurpose::Select { .. },
                 PreparedWork::Replacement(prepared),
@@ -1790,8 +1935,12 @@ impl Actor {
                     .selected()
                     .filter(|selected| selected.qualifier() == qualifier)
                 {
-                    self.commit_refresh(selected, prepared, visible, activity_updates)
-                        .await;
+                    if let Err(error) = self
+                        .commit_refresh(selected.clone(), prepared, visible, activity_updates)
+                        .await
+                    {
+                        self.refresh_failed(&selected, visible, error).await;
+                    }
                 }
             }
             (
@@ -1833,7 +1982,8 @@ impl Actor {
             }
             (WorkPurpose::Selected { qualifier, .. }, PreparedWork::Point(prepared)) => {
                 if self.shared.matches_selected(&qualifier) {
-                    self.commit_point(qualifier, prepared).await;
+                    self.commit_point(qualifier, prepared, activity_updates)
+                        .await;
                 }
             }
             _ => unreachable!("source preparation returned the wrong operation result"),
@@ -1850,6 +2000,14 @@ impl Actor {
             credential,
             library,
         } = replacement;
+        let refresh_after_select = matches!(
+            reason,
+            ReplacementReason::Select {
+                refresh_after_select: true,
+                ..
+            }
+        ) && source.is_some();
+        let selected_source_id = configuration.source_id.clone();
         let loaded = self.accept_replacement_library(library).await?;
         if matches!(reason, ReplacementReason::DifferentAccount)
             || matches!(reason, ReplacementReason::Add) && previous.is_none()
@@ -1933,14 +2091,24 @@ impl Actor {
             } else {
                 self.save_selected_configuration(configured.clone()).await?;
             }
-            let catch_up = matches!(reason, ReplacementReason::Select { cached: true });
+            let catch_up = matches!(
+                reason,
+                ReplacementReason::Select {
+                    cached: true,
+                    refresh_after_select: false,
+                }
+            );
             self.publish_new_selected(session, playback, catch_up).await;
-            self.shared
-                .send_event(SourceEvent::Operation(SourceOperation::Idle))
-                .await;
             self.fallback = None;
             if let Some(previous) = replaced_source_id {
                 self.remove_replaced_source_data(previous).await;
+            }
+            if refresh_after_select {
+                self.queue_refresh(selected_source_id, true).await;
+            } else {
+                self.shared
+                    .send_event(SourceEvent::Operation(SourceOperation::Idle))
+                    .await;
             }
             Ok(())
         }
@@ -2067,9 +2235,11 @@ impl Actor {
         prepared: PreparedSourceCandidate,
         visible: bool,
         activity_updates: Vec<RecordedActivity>,
-    ) {
+    ) -> Result<(), String> {
         if !self.shared.matches_selected(&previous.qualifier()) {
-            return;
+            return Err(
+                "the selected source changed before the refreshed library was accepted".to_string(),
+            );
         }
         let stored = self.shared.settings.load();
         let configured = stored
@@ -2080,7 +2250,7 @@ impl Actor {
         let requested_folder = configured.and_then(|configured| configured.music_folder_id.clone());
         let local_access =
             configured.and_then(|configured| configured.local_access.as_ref().cloned());
-        let prepared = match self
+        let Some(prepared) = self
             .prepare_same_source_candidate(
                 &previous,
                 previous.configuration.clone(),
@@ -2090,21 +2260,14 @@ impl Actor {
                 prepared,
                 activity_updates,
             )
-            .await
-        {
-            Ok(Some(prepared)) => prepared,
-            Ok(None) => {
-                if visible && self.shared.matches_selected(&previous.qualifier()) {
-                    self.shared
-                        .send_event(SourceEvent::Operation(SourceOperation::Idle))
-                        .await;
-                }
-                return;
+            .await?
+        else {
+            if visible && self.shared.matches_selected(&previous.qualifier()) {
+                self.shared
+                    .send_event(SourceEvent::Operation(SourceOperation::Idle))
+                    .await;
             }
-            Err(error) => {
-                self.refresh_failed(&previous, visible, error).await;
-                return;
-            }
+            return Ok(());
         };
         if prepared.selected.music_folder_id != requested_folder {
             let settings = self.shared.settings.clone();
@@ -2122,19 +2285,16 @@ impl Actor {
             }
         }
         if !self.shared.matches_selected(&prepared.selected.qualifier()) {
-            return;
+            return Err(
+                "the selected source changed before the refreshed library was accepted".to_string(),
+            );
         }
-        let selected = match self.publish_same_source_candidate(prepared).await {
-            Ok(selected) => selected,
-            Err(error) => {
-                self.refresh_failed(&previous, visible, error).await;
-                return;
-            }
-        };
+        let selected = self.publish_same_source_candidate(prepared).await?;
         self.start_local_access_refresh(&selected).await;
         self.shared
             .send_event(SourceEvent::Operation(SourceOperation::Idle))
             .await;
+        Ok(())
     }
 
     async fn prepare_same_source_candidate(
@@ -2320,7 +2480,12 @@ impl Actor {
         self.start_selected_access(true).await;
     }
 
-    async fn commit_point(&mut self, qualifier: SourceQualifier, prepared: PointPrepared) {
+    async fn commit_point(
+        &mut self,
+        qualifier: SourceQualifier,
+        prepared: PointPrepared,
+        activity_updates: Vec<RecordedActivity>,
+    ) {
         let Some(selected) = self
             .shared
             .selected()
@@ -2474,56 +2639,96 @@ impl Actor {
                     Err(error) => self.shared.send_notice(error).await,
                 }
             }
-            PointPrepared::SourceUpdate(update) => {
-                let next_home = if update.albums.is_empty()
-                    && update.tracks.is_empty()
-                    && update.removed_tracks.is_empty()
+            PointPrepared::LibraryUpdate(update) => {
+                if let Err(error) = self
+                    .accept_prepared_library_update(selected, update, activity_updates)
+                    .await
                 {
-                    NextHome::Keep
-                } else {
-                    NextHome::SourceFacts
-                };
-                let library = self.shared.library.clone();
-                let loaded = Arc::clone(&selected.loaded);
-                match blocking(move || {
-                    library
-                        .accept_source_update(&loaded, update)
-                        .map_err(string_error)
-                })
-                .await
-                {
-                    Ok(Some(change)) => self.publish_change(&selected, change, next_home).await,
-                    Ok(None) => {}
-                    Err(error) => {
-                        warn!(%error, "could not accept a selected source update");
-                    }
+                    warn!(%error, "could not accept a selected library update");
                 }
             }
-            PointPrepared::LocalComponent(replacement) => {
-                let library = self.shared.library.clone();
-                let loaded = Arc::clone(&selected.loaded);
-                match blocking(move || {
-                    library
-                        .accept_local_component(&loaded, replacement)
-                        .map_err(string_error)
-                })
-                .await
-                {
-                    Ok(Some(change)) => {
-                        self.publish_change(&selected, change, NextHome::SourceFacts)
-                            .await
-                    }
-                    Ok(None) => {}
-                    Err(error) => {
-                        warn!(%error, "could not accept a Local library update");
-                    }
-                }
+            PointPrepared::Metadata { reply, acceptance } => {
+                let accepted = match acceptance {
+                    Err(error) => Err(error),
+                    Ok(update) => self
+                        .accept_prepared_library_update(selected, update, activity_updates)
+                        .await
+                        .map_err(MetadataError::SavedRefreshFailed),
+                };
+                reply.finish(accepted);
             }
             PointPrepared::RefreshRequired => {
                 self.queue_refresh(qualifier.source_id, false).await;
             }
             PointPrepared::Unchanged => {}
         }
+    }
+
+    async fn accept_prepared_library_update(
+        &mut self,
+        selected: SelectedSourceRuntime,
+        update: PreparedLibraryUpdate,
+        activity_updates: Vec<RecordedActivity>,
+    ) -> Result<(), String> {
+        match update {
+            PreparedLibraryUpdate::Source(update) => {
+                self.accept_source_update(&selected, update).await
+            }
+            PreparedLibraryUpdate::Local(replacement) => {
+                self.accept_local_component(&selected, replacement).await
+            }
+            PreparedLibraryUpdate::Full(candidate) => {
+                self.commit_refresh(selected, candidate, false, activity_updates)
+                    .await
+            }
+        }
+    }
+
+    async fn accept_source_update(
+        &mut self,
+        selected: &SelectedSourceRuntime,
+        update: library::SourceLibraryUpdate,
+    ) -> Result<(), String> {
+        let next_home = if update.albums.is_empty()
+            && update.tracks.is_empty()
+            && update.removed_tracks.is_empty()
+        {
+            NextHome::Keep
+        } else {
+            NextHome::SourceFacts
+        };
+        let library = self.shared.library.clone();
+        let loaded = Arc::clone(&selected.loaded);
+        let change = blocking(move || {
+            library
+                .accept_source_update(&loaded, update)
+                .map_err(string_error)
+        })
+        .await?;
+        if let Some(change) = change {
+            self.publish_change(selected, change, next_home).await;
+        }
+        Ok(())
+    }
+
+    async fn accept_local_component(
+        &mut self,
+        selected: &SelectedSourceRuntime,
+        replacement: library::LocalComponentReplacement,
+    ) -> Result<(), String> {
+        let library = self.shared.library.clone();
+        let loaded = Arc::clone(&selected.loaded);
+        let change = blocking(move || {
+            library
+                .accept_local_component(&loaded, replacement)
+                .map_err(string_error)
+        })
+        .await?;
+        if let Some(change) = change {
+            self.publish_change(selected, change, NextHome::SourceFacts)
+                .await;
+        }
+        Ok(())
     }
 
     async fn publish_change(
@@ -2817,60 +3022,139 @@ impl Actor {
         }
     }
 
-    async fn save_local_access(&mut self, input: SourceLocalAccess) {
+    async fn save_local_access(
+        &mut self,
+        input: SourceLocalAccess,
+        metadata: Option<MetadataRequest>,
+        completion: Sender<Result<(), String>>,
+    ) {
+        if let Some(request) = metadata {
+            if request.source_id != input.source_id {
+                let _ = completion
+                    .send(Err(
+                        "the local file mapping belongs to a different source".to_string()
+                    ))
+                    .await;
+                return;
+            }
+            let Some(selected) = self.shared.selected().filter(|selected| {
+                selected.source_id() == &request.source_id
+                    && selected.source_session_epoch == request.source_session_epoch
+            }) else {
+                let _ = completion
+                    .send(Err(
+                        "the metadata item belongs to an inactive source session".to_string(),
+                    ))
+                    .await;
+                return;
+            };
+            let mapping = local_access_mapping(&input);
+            let context = match selected
+                .loaded
+                .metadata_subject_with_local_access(&request.item_id, Some(&mapping))
+            {
+                Ok(Some((subject, local_access))) => MetadataContext {
+                    source: match selected.source.as_ref().cloned() {
+                        Some(source) => source,
+                        None => {
+                            let _ = completion
+                                .send(Err("the selected source is unavailable".to_string()))
+                                .await;
+                            return;
+                        }
+                    },
+                    subject,
+                    local_access: Some(local_access),
+                },
+                Ok(None) => {
+                    let _ = completion
+                        .send(Err("the metadata item is no longer available".to_string()))
+                        .await;
+                    return;
+                }
+                Err(error) => {
+                    let _ = completion.send(Err(error.to_string())).await;
+                    return;
+                }
+            };
+            if let Err(error) = context
+                .source
+                .read_metadata(context.subject, context.local_access)
+                .await
+            {
+                let _ = completion.send(Err(error.to_string())).await;
+                return;
+            }
+            let previous_access = self
+                .shared
+                .settings
+                .load()
+                .sources
+                .configured
+                .iter()
+                .find(|configured| configured.configuration.source_id == input.source_id)
+                .and_then(|configured| configured.local_access.clone());
+            self.cancel_local_access();
+            let library = self.shared.library.clone();
+            let loaded = Arc::clone(&selected.loaded);
+            let settings = self.shared.settings.clone();
+            let saved = input.clone();
+            if let Err(error) = blocking(move || {
+                accept_metadata_local_access_mapping(
+                    &library,
+                    &loaded,
+                    mapping,
+                    previous_access,
+                    || save_local_access_setting(&settings, &saved),
+                )
+            })
+            .await
+            {
+                let _ = completion.send(Err(error)).await;
+                return;
+            }
+            if let Err(error) = self.shared.playback().and_then(|playback| {
+                playback.stream_inputs_changed(selected.source_id(), selected.source_session_epoch)
+            }) {
+                warn!(%error, "could not update prepared playback after Local access changed");
+            }
+            let _ = completion.send(Ok(())).await;
+            self.shared.publish_configured().await;
+            return;
+        }
         let settings = self.shared.settings.clone();
         let saved = input.clone();
-        let result = blocking(move || {
-            settings.update(|stored| {
-                let configured = stored
-                    .sources
-                    .configured
-                    .iter_mut()
-                    .find(|source| source.configuration.source_id == saved.source_id)
-                    .ok_or_else(|| "the configured source no longer exists".to_string())?;
-                configured.local_access = Some(crate::settings::ConfiguredLocalAccess {
-                    root_path: saved.root_path,
-                    server_prefix: saved.server_prefix,
-                    local_prefix: saved.local_prefix,
-                });
-                Ok(())
+        if let Err(error) = blocking(move || save_local_access_setting(&settings, &saved)).await {
+            let _ = completion.send(Err(error)).await;
+            return;
+        }
+        let _ = completion.send(Ok(())).await;
+        let selected = self
+            .shared
+            .selected()
+            .filter(|selected| selected.source_id() == &input.source_id);
+        if let Some(selected) = selected {
+            let library = self.shared.library.clone();
+            let loaded = Arc::clone(&selected.loaded);
+            let mapping = local_access_mapping(&input);
+            if let Err(error) = blocking(move || {
+                library
+                    .configure_local_access(&loaded, mapping)
+                    .map(|_| ())
+                    .map_err(string_error)
             })
-        })
-        .await;
-        match result {
-            Ok(()) => {
-                if let Some(selected) = self
-                    .shared
-                    .selected()
-                    .filter(|selected| selected.source_id() == &input.source_id)
-                {
-                    let library = self.shared.library.clone();
-                    let loaded = Arc::clone(&selected.loaded);
-                    let mapping = local_access_mapping(&input);
-                    if let Err(error) = blocking(move || {
-                        library
-                            .configure_local_access(&loaded, mapping)
-                            .map(|_| ())
-                            .map_err(string_error)
-                    })
-                    .await
-                    {
-                        self.shared.send_notice(error).await;
-                    } else if let Err(error) = self.shared.playback().and_then(|playback| {
-                        playback.stream_inputs_changed(
-                            selected.source_id(),
-                            selected.source_session_epoch,
-                        )
-                    }) {
-                        warn!(%error, "could not update prepared playback after Local access changed");
-                    }
-                    self.shared.publish_configured().await;
-                    self.start_local_access_refresh(&selected).await;
-                } else {
-                    self.shared.publish_configured().await;
-                }
+            .await
+            {
+                self.shared.send_notice(error).await;
+            } else if let Err(error) = self.shared.playback().and_then(|playback| {
+                playback.stream_inputs_changed(selected.source_id(), selected.source_session_epoch)
+            }) {
+                warn!(%error, "could not update prepared playback after Local access changed");
             }
-            Err(error) => self.shared.send_notice(error).await,
+            self.shared.publish_configured().await;
+            self.start_local_access_refresh(&selected).await;
+        } else {
+            self.shared.publish_configured().await;
         }
     }
 
@@ -3278,8 +3562,11 @@ fn work_accepts_activity(purpose: &WorkPurpose, qualifier: &SourceQualifier) -> 
         WorkPurpose::Refresh {
             qualifier: target, ..
         } => target == qualifier,
+        WorkPurpose::Selected {
+            qualifier: target, ..
+        } => target == qualifier,
         WorkPurpose::Update { selected, .. } => *selected,
-        WorkPurpose::Add | WorkPurpose::Select { .. } | WorkPurpose::Selected { .. } => false,
+        WorkPurpose::Add | WorkPurpose::Select { .. } => false,
     }
 }
 
@@ -3534,8 +3821,16 @@ async fn prepare_select(
     .unwrap_or_else(|error| {
         warn!(%error, "the selected source cache will be rebuilt");
         None
-    })
-    .filter(|loaded| cache_input_matches(&identity, loaded));
+    });
+    let cached = match cached {
+        Some(loaded) => {
+            let cache_match = configuration
+                .cache_match(&loaded_input_identity(&loaded))
+                .map_err(string_error)?;
+            (cache_match != SourceCacheMatch::Incompatible).then_some((loaded, cache_match))
+        }
+        None => None,
+    };
     let opened = match load_credential(&shared, &configured).await {
         Ok(credential) => Source::open(
             configuration.clone(),
@@ -3554,8 +3849,12 @@ async fn prepare_select(
         }
         Err(error) => return Err(error),
     };
-    let (library, cached) = if let Some(loaded) = cached {
-        (ReplacementLibrary::Cached(loaded), true)
+    let (library, cached, refresh_after_select) = if let Some((loaded, cache_match)) = cached {
+        (
+            ReplacementLibrary::Cached(loaded),
+            true,
+            cache_match == SourceCacheMatch::ReaderUpgrade,
+        )
     } else {
         let source = source.as_ref().ok_or_else(source_access_unavailable)?;
         let prepared = acquisition::read_source(
@@ -3579,10 +3878,14 @@ async fn prepare_select(
                 .await?,
             )),
             false,
+            false,
         )
     };
     Ok(PreparedReplacement {
-        reason: ReplacementReason::Select { cached },
+        reason: ReplacementReason::Select {
+            cached,
+            refresh_after_select,
+        },
         previous: Some(configured),
         configuration,
         source,
@@ -3597,6 +3900,17 @@ async fn prepare_refresh(
     progress: Arc<dyn Fn(SourceReadProgress) + Send + Sync>,
     cancelled: Arc<AtomicBool>,
 ) -> Result<PreparedWork, String> {
+    prepare_refresh_candidate(shared, selected, progress, cancelled)
+        .await
+        .map(PreparedWork::Refresh)
+}
+
+async fn prepare_refresh_candidate(
+    shared: Arc<Shared>,
+    selected: SelectedSourceRuntime,
+    progress: Arc<dyn Fn(SourceReadProgress) + Send + Sync>,
+    cancelled: Arc<AtomicBool>,
+) -> Result<PreparedSourceCandidate, String> {
     let source = selected
         .source
         .as_ref()
@@ -3617,7 +3931,7 @@ async fn prepare_refresh(
     .await?;
     let prepared =
         prepare_candidate_artwork(&shared, source, prepared, progress, cancelled).await?;
-    Ok(PreparedWork::Refresh(prepared))
+    Ok(prepared)
 }
 
 async fn prepare_update(
@@ -3801,8 +4115,10 @@ async fn prepare_candidate_artwork(
 }
 
 async fn run_point(
+    shared: Arc<Shared>,
     selected: SelectedSourceRuntime,
     operation: PointOperation,
+    progress: Arc<dyn Fn(SourceReadProgress) + Send + Sync>,
     cancelled: Arc<AtomicBool>,
 ) -> Result<PointPrepared, String> {
     match operation {
@@ -3856,14 +4172,10 @@ async fn run_point(
                 .source
                 .as_ref()
                 .ok_or_else(source_access_unavailable)?;
-            let loaded = Arc::clone(&selected.loaded);
-            let contains = |item: &SourceLibraryItemId| selected_contains(&loaded, item);
-            match source
-                .read_library_change(change, &contains)
-                .await
-                .map_err(string_error)?
-            {
-                SourceLibraryChangeRead::Exact(update) => Ok(PointPrepared::SourceUpdate(update)),
+            match prepare_source_change(source, &selected.loaded, change).await? {
+                SourceLibraryChangeRead::Exact(update) => Ok(PointPrepared::LibraryUpdate(
+                    PreparedLibraryUpdate::Source(update),
+                )),
                 SourceLibraryChangeRead::Full => Ok(PointPrepared::RefreshRequired),
                 SourceLibraryChangeRead::Ignored => Ok(PointPrepared::Unchanged),
             }
@@ -3875,30 +4187,20 @@ async fn run_point(
                 .cloned()
                 .ok_or_else(source_access_unavailable)?;
             let loaded = Arc::clone(&selected.loaded);
-            blocking(move || {
-                let should_stop = || cancelled.load(Ordering::Acquire);
-                let check = source
-                    .check_local(change, &should_stop)
-                    .map_err(string_error)?;
-                let accepted_files = loaded
-                    .local_file_baseline(check.file_seeds())
-                    .map_err(string_error)?;
-                let progress = |_: SourceReadProgress| {};
-                let Some(change) = source
-                    .confirm_local_change(check, accepted_files, &progress, &should_stop)
-                    .map_err(string_error)?
-                else {
-                    return Ok(PointPrepared::Unchanged);
-                };
-                let baseline = loaded
-                    .local_component_baseline(change.component_seeds())
-                    .map_err(string_error)?;
-                let replacement = source
-                    .complete_local_change(change, baseline, unix_seconds(), &should_stop)
-                    .map_err(string_error)?;
-                Ok(PointPrepared::LocalComponent(replacement))
-            })
-            .await
+            prepare_local_change(source, loaded, change, cancelled)
+                .await
+                .map(|replacement| {
+                    replacement.map_or(PointPrepared::Unchanged, |replacement| {
+                        PointPrepared::LibraryUpdate(PreparedLibraryUpdate::Local(replacement))
+                    })
+                })
+        }
+        PointOperation::EditMetadata { edit, mut reply } => {
+            let acceptance = prepare_metadata_acceptance(
+                shared, selected, edit, progress, cancelled, &mut reply,
+            )
+            .await;
+            Ok(PointPrepared::Metadata { reply, acceptance })
         }
         PointOperation::CheckFreshness => {
             let source = selected
@@ -3916,6 +4218,102 @@ async fn run_point(
                 | SourceFreshness::Unchanged
                 | SourceFreshness::Busy => Ok(PointPrepared::Unchanged),
             }
+        }
+    }
+}
+
+async fn prepare_source_change(
+    source: &Source,
+    loaded: &LoadedLibrary,
+    change: SourceLibraryChange,
+) -> Result<SourceLibraryChangeRead, String> {
+    let contains = |item: &SourceLibraryItemId| selected_contains(loaded, item);
+    source
+        .read_library_change(change, &contains)
+        .await
+        .map_err(string_error)
+}
+
+async fn prepare_local_change(
+    source: Arc<Source>,
+    loaded: Arc<LoadedLibrary>,
+    change: LocalFilesystemChange,
+    cancelled: Arc<AtomicBool>,
+) -> Result<Option<library::LocalComponentReplacement>, String> {
+    blocking(move || {
+        let should_stop = || cancelled.load(Ordering::Acquire);
+        let check = source
+            .check_local(change, &should_stop)
+            .map_err(string_error)?;
+        let accepted_files = loaded
+            .local_file_baseline(check.file_seeds())
+            .map_err(string_error)?;
+        let progress = |_: SourceReadProgress| {};
+        let Some(change) = source
+            .confirm_local_change(check, accepted_files, &progress, &should_stop)
+            .map_err(string_error)?
+        else {
+            return Ok(None);
+        };
+        let baseline = loaded
+            .local_component_baseline(change.component_seeds())
+            .map_err(string_error)?;
+        source
+            .complete_local_change(change, baseline, unix_seconds(), &should_stop)
+            .map(Some)
+            .map_err(string_error)
+    })
+    .await
+}
+
+async fn prepare_metadata_acceptance(
+    shared: Arc<Shared>,
+    selected: SelectedSourceRuntime,
+    edit: MetadataEdit,
+    progress: Arc<dyn Fn(SourceReadProgress) + Send + Sync>,
+    cancelled: Arc<AtomicBool>,
+    reply: &mut MetadataReply,
+) -> Result<PreparedLibraryUpdate, MetadataError> {
+    let context = selected.metadata_access_context(&edit.item_id)?;
+    let Some(context) = context else {
+        return Err(MetadataError::Unavailable);
+    };
+    let MetadataContext {
+        source,
+        subject,
+        local_access,
+    } = context;
+    reply.mark_write_started();
+    match source.write_metadata(subject, edit, local_access).await? {
+        MetadataRefresh::Source(change) => {
+            match prepare_source_change(&source, &selected.loaded, change).await {
+                Ok(SourceLibraryChangeRead::Exact(update)) => {
+                    Ok(PreparedLibraryUpdate::Source(update))
+                }
+                Ok(SourceLibraryChangeRead::Ignored) => Err(MetadataError::SavedRefreshFailed(
+                    "the source did not return the written item".to_string(),
+                )),
+                Ok(SourceLibraryChangeRead::Full) => {
+                    prepare_refresh_candidate(shared, selected, progress, cancelled)
+                        .await
+                        .map(PreparedLibraryUpdate::Full)
+                        .map_err(MetadataError::SavedRefreshFailed)
+                }
+                Err(error) => Err(MetadataError::SavedRefreshFailed(error.to_string())),
+            }
+        }
+        MetadataRefresh::Local(change) => {
+            let loaded = Arc::clone(&selected.loaded);
+            let source = Arc::clone(&source);
+            prepare_local_change(source, loaded, change, cancelled)
+                .await
+                .and_then(|replacement| {
+                    replacement.ok_or_else(|| {
+                        "the written files were not accepted by the Local source".to_string()
+                    })
+                })
+                .map(PreparedLibraryUpdate::Local)
+                .map_err(MetadataError::SavedRefreshFailed)
         }
     }
 }
@@ -4077,8 +4475,15 @@ impl SourcePort for SourceOwner {
     }
 
     fn refresh_source(&self, source_id: SourceId) {
+        let Some(qualifier) = self
+            .selected()
+            .filter(|selected| selected.source_id() == &source_id)
+            .map(|selected| selected.qualifier())
+        else {
+            return;
+        };
         self.send(Message::Request(WorkRequest::Refresh {
-            source_id,
+            qualifier,
             visible: true,
         }));
     }
@@ -4095,8 +4500,24 @@ impl SourcePort for SourceOwner {
         self.send_selected(|_| PointOperation::RefreshHome(kind));
     }
 
-    fn save_local_access(&self, input: SourceLocalAccess) {
-        self.send(Message::Request(WorkRequest::SaveLocalAccess(input)));
+    fn save_local_access(
+        &self,
+        input: SourceLocalAccess,
+        metadata: Option<MetadataRequest>,
+    ) -> Receiver<Result<(), String>> {
+        let (result, receiver) = async_channel::bounded(1);
+        if self
+            .messages
+            .try_send(Message::Request(WorkRequest::SaveLocalAccess {
+                input,
+                metadata,
+                result: result.clone(),
+            }))
+            .is_err()
+        {
+            let _ = result.try_send(Err("source operation lane is unavailable".to_string()));
+        }
+        receiver
     }
 
     fn clear_local_access(&self, source_id: SourceId) {
@@ -4211,7 +4632,9 @@ impl SourcePort for SourceOwner {
                         .folder(request.folder_id.as_ref(), request.music_folder_id.as_ref())
                         .await
                     {
-                        Ok(NativeSourceResult::Available(contents)) => Ok(contents),
+                        Ok(NativeSourceResult::Available(contents)) => {
+                            reconcile_folder_contents(&loaded, contents)
+                        }
                         Ok(NativeSourceResult::Unavailable) => {
                             cached_folder_contents(loaded, request.folder_id.as_ref())
                         }
@@ -4237,7 +4660,9 @@ impl SourcePort for SourceOwner {
             let search = request.search;
             let value = match selected {
                 Some((Some(source), loaded)) => match source.search(&search).await {
-                    Ok(NativeSourceResult::Available(results)) => Ok(results),
+                    Ok(NativeSourceResult::Available(results)) => {
+                        reconcile_search_results(&loaded, results)
+                    }
                     Ok(NativeSourceResult::Unavailable) => cached_search(loaded, search).await,
                     Err(error) => Err(error.to_string()),
                 },
@@ -4248,6 +4673,178 @@ impl SourcePort for SourceOwner {
         });
         receiver
     }
+
+    fn metadata_editing_available(&self, request: MetadataRequest) -> bool {
+        self.selected()
+            .filter(|selected| {
+                selected.source_id() == &request.source_id
+                    && selected.source_session_epoch == request.source_session_epoch
+            })
+            .is_some_and(|selected| selected.metadata_editing_available(&request.item_id))
+    }
+
+    fn metadata(&self, request: MetadataRequest) -> Receiver<Result<MetadataDraft, MetadataError>> {
+        let (result, receiver) = async_channel::bounded(1);
+        let selected = self.selected().filter(|selected| {
+            selected.source_id() == &request.source_id
+                && selected.source_session_epoch == request.source_session_epoch
+        });
+        self.shared.runtime.spawn(async move {
+            let value = match selected {
+                Some(selected) => match selected.metadata_access_context(&request.item_id) {
+                    Ok(Some(context)) => {
+                        context
+                            .source
+                            .read_metadata(context.subject, context.local_access)
+                            .await
+                    }
+                    Ok(None) => Err(MetadataError::Unavailable),
+                    Err(error) => Err(error),
+                },
+                None => Err(MetadataError::Unavailable),
+            };
+            let _ = result.send(value).await;
+        });
+        receiver
+    }
+
+    fn edit_metadata(&self, request: MetadataEditRequest) -> Receiver<Result<(), MetadataError>> {
+        let (result, receiver) = async_channel::bounded(1);
+        let reply = MetadataReply::new(result);
+        if request.edit.changes.is_empty() {
+            reply.finish(Ok(()));
+            return receiver;
+        }
+        let selected = self.selected().filter(|selected| {
+            selected.source_id() == &request.source_id
+                && selected.source_session_epoch == request.source_session_epoch
+        });
+        let Some(selected) = selected else {
+            return receiver;
+        };
+        let operation = PointOperation::EditMetadata {
+            edit: request.edit,
+            reply,
+        };
+        let _ = self
+            .messages
+            .try_send(Message::Request(WorkRequest::Selected {
+                qualifier: selected.qualifier(),
+                operation,
+            }));
+        receiver
+    }
+
+    fn identify_metadata(
+        &self,
+        request: MetadataIdentificationRequest,
+    ) -> Receiver<Result<Option<library::MetadataValues>, String>> {
+        let (result, receiver) = async_channel::bounded(1);
+        let external_lookup_allowed = self
+            .shared
+            .settings
+            .load()
+            .ui
+            .allows_external_metadata_lookup();
+        let context = self.selected_metadata_context(
+            &request.source_id,
+            request.source_session_epoch,
+            &request.item_id,
+        );
+        let Some(context) = context else {
+            return receiver;
+        };
+        self.shared.runtime.spawn(async move {
+            let direct_applicable = external_lookup_allowed
+                && request
+                    .item_id
+                    .has_exact_musicbrainz_identity(&request.values);
+            let source_search_applicable = context.source.metadata_source_search(&context.subject)
+                && !request.values.title.trim().is_empty();
+            let value = if !direct_applicable && !source_search_applicable {
+                Ok(None)
+            } else {
+                identify_metadata_with_fallback(
+                    context.source,
+                    context.subject,
+                    request,
+                    direct_applicable,
+                    source_search_applicable,
+                )
+                .await
+            };
+            let _ = result.send(value).await;
+        });
+        receiver
+    }
+}
+
+async fn identify_metadata_with_fallback(
+    source: Arc<Source>,
+    subject: library::MetadataSubject,
+    request: MetadataIdentificationRequest,
+    direct_applicable: bool,
+    source_search_applicable: bool,
+) -> Result<Option<library::MetadataValues>, String> {
+    let editing = request.editing;
+    let current = request.values;
+    let direct_item_id = request.item_id;
+    let direct_values = current.clone();
+    let direct = async move {
+        blocking(move || metadata_lookup::identify_metadata(&direct_item_id, &direct_values)).await
+    };
+    let source_search_values = current.clone();
+    let source_search = async move {
+        source
+            .identify_metadata(&subject, &source_search_values)
+            .await
+    };
+    resolve_identification(
+        direct_applicable,
+        source_search_applicable,
+        &editing,
+        &current,
+        direct,
+        source_search,
+    )
+    .await
+}
+
+async fn resolve_identification<Direct, SourceSearch>(
+    direct_applicable: bool,
+    source_search_applicable: bool,
+    editing: &MetadataEditing,
+    current: &library::MetadataValues,
+    direct: Direct,
+    source_search: SourceSearch,
+) -> Result<Option<library::MetadataValues>, String>
+where
+    Direct: Future<Output = Result<Option<library::MetadataValues>, String>>,
+    SourceSearch: Future<Output = Result<Option<library::MetadataValues>, String>>,
+{
+    let mut direct_failure = None;
+    if direct_applicable {
+        match direct.await {
+            Ok(Some(candidate)) if editing.identification_changes(current, &candidate) => {
+                return Ok(Some(candidate));
+            }
+            Ok(_) => {}
+            Err(error) => direct_failure = Some(error),
+        }
+    }
+    if source_search_applicable {
+        return match source_search.await {
+            Ok(Some(candidate)) if editing.identification_changes(current, &candidate) => {
+                Ok(Some(candidate))
+            }
+            Ok(_) => Ok(None),
+            Err(error) => Err(error),
+        };
+    }
+    match direct_failure {
+        Some(error) => Err(error),
+        None => Ok(None),
+    }
 }
 
 fn cached_folder_contents(
@@ -4257,6 +4854,47 @@ fn cached_folder_contents(
     loaded
         .local_folder_contents(folder_id)
         .map(|contents| contents.unwrap_or_default())
+        .map_err(string_error)
+}
+
+fn reconcile_folder_contents(
+    loaded: &LoadedLibrary,
+    mut contents: FolderContents,
+) -> Result<FolderContents, String> {
+    contents.tracks = contents
+        .tracks
+        .iter()
+        .cloned()
+        .map(|track| accepted_track_or(loaded, track))
+        .collect::<Result<Vec<_>, _>>()?
+        .into();
+    Ok(contents)
+}
+
+fn reconcile_search_results(
+    loaded: &LoadedLibrary,
+    mut results: library::SearchResults,
+) -> Result<library::SearchResults, String> {
+    for artist in &mut results.artists {
+        if let Some(accepted) = loaded.artist(&artist.id).map_err(string_error)? {
+            *artist = (*accepted).clone();
+        }
+    }
+    for album in &mut results.albums {
+        if let Some(accepted) = loaded.album(&album.id).map_err(string_error)? {
+            *album = (*accepted).clone();
+        }
+    }
+    for track in &mut results.tracks {
+        *track = accepted_track_or(loaded, track.clone())?;
+    }
+    Ok(results)
+}
+
+fn accepted_track_or(loaded: &LoadedLibrary, track: Track) -> Result<Track, String> {
+    loaded
+        .track(&track.id)
+        .map(|accepted| accepted.unwrap_or(track))
         .map_err(string_error)
 }
 
@@ -4319,7 +4957,15 @@ fn normalize_music_folder(
 }
 
 fn cache_input_matches(identity: &SourceInputIdentity, loaded: &LoadedLibrary) -> bool {
-    loaded.input_version() == identity.version && *loaded.input_digest() == identity.digest
+    loaded_input_identity(loaded) == *identity
+}
+
+fn loaded_input_identity(loaded: &LoadedLibrary) -> SourceInputIdentity {
+    SourceInputIdentity {
+        source_id: loaded.source_id().clone(),
+        version: loaded.input_version(),
+        digest: *loaded.input_digest(),
+    }
 }
 
 fn configured_source(
@@ -4395,6 +5041,55 @@ fn save_music_folder(
         configured.music_folder_id = folder_id;
         Ok(())
     })
+}
+
+fn save_local_access_setting(
+    settings: &SettingsFile,
+    access: &SourceLocalAccess,
+) -> Result<(), String> {
+    settings.update(|stored| {
+        let configured = stored
+            .sources
+            .configured
+            .iter_mut()
+            .find(|source| source.configuration.source_id == access.source_id)
+            .ok_or_else(|| "the configured source no longer exists".to_string())?;
+        configured.local_access = Some(ConfiguredLocalAccess {
+            root_path: access.root_path.clone(),
+            server_prefix: access.server_prefix.clone(),
+            local_prefix: access.local_prefix.clone(),
+        });
+        Ok(())
+    })
+}
+
+fn accept_metadata_local_access_mapping(
+    library: &Library,
+    loaded: &Arc<LoadedLibrary>,
+    mapping: library::LocalAccessMapping,
+    previous_access: Option<ConfiguredLocalAccess>,
+    save: impl FnOnce() -> Result<(), String>,
+) -> Result<(), String> {
+    library
+        .accept_local_access_mapping(loaded, mapping)
+        .map_err(string_error)?;
+    let Err(error) = save() else {
+        return Ok(());
+    };
+    let rollback = library
+        .configure_local_access_mapping(
+            loaded,
+            previous_access
+                .as_ref()
+                .map(configured_local_access_mapping),
+        )
+        .map_err(string_error);
+    match rollback {
+        Ok(()) => Err(error),
+        Err(rollback) => Err(format!(
+            "{error} The previous local file mapping could not be restored: {rollback}"
+        )),
+    }
 }
 
 fn configured_local_access_mapping(access: &ConfiguredLocalAccess) -> library::LocalAccessMapping {

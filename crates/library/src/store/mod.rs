@@ -25,8 +25,11 @@ use crate::{
     PlaybackProgressUpdate, PlaybackQueueSnapshot, PlaybackState, PlaybackStateUpdate,
     PlaybackWriteOutcome, Playlist, PlaylistEntry, PlaylistId, PlaylistSnapshot, ProviderFreshness,
     RecentPlay, ScrobbleService, SmartPlaylistBuiltin, SmartPlaylistId, SmartPlaylistRecord,
-    SourceId, Track, TrackActivity, TrackData, TrackId, TrackRelations, favorites::FavoriteValue,
-    items::color_seed, loaded::ItemReplacement, refresh::STORE_BYTE_BATCH_LIMIT,
+    SourceId, Track, TrackActivity, TrackData, TrackId, TrackRelations,
+    favorites::FavoriteValue,
+    items::color_seed,
+    loaded::{ItemReplacement, LocalFavoriteTransfer, LocalFavoriteUpdate},
+    refresh::STORE_BYTE_BATCH_LIMIT,
     refresh::STORE_ROW_BATCH_LIMIT,
 };
 
@@ -279,7 +282,7 @@ impl StoreLane {
         files: Vec<LocalFile>,
         removed_paths: Vec<String>,
         replacement: ItemReplacement,
-        favorite_targets: Vec<FavoriteItemId>,
+        favorite_update: LocalFavoriteUpdate,
     ) -> StoreResult<StoredLocalComponent> {
         self.execute(move |worker| {
             worker.replace_local_component(
@@ -289,7 +292,7 @@ impl StoreLane {
                 files,
                 removed_paths,
                 replacement,
-                favorite_targets,
+                favorite_update,
             )
         })
     }
@@ -1008,7 +1011,7 @@ impl Worker {
         files: Vec<LocalFile>,
         removed_paths: Vec<String>,
         mut replacement: ItemReplacement,
-        favorite_targets: Vec<FavoriteItemId>,
+        favorite_update: LocalFavoriteUpdate,
     ) -> StoreResult<StoredLocalComponent> {
         if self.current_library_id(source_id)? != Some(library_id) {
             return Err(StoreError::WrongCurrentLibrary {
@@ -1039,10 +1042,11 @@ impl Worker {
             &mut replacement,
             Some(observed_at),
         )?;
+        transfer_local_favorites(&transaction, source_id, &favorite_update.transfers)?;
         if !files.is_empty() || !removed_paths.is_empty() || !replacement.is_empty() {
             invalidate_content_digest(&transaction, library_id)?;
         }
-        let favorites = load_local_favorites_for(&transaction, source_id, favorite_targets)?;
+        let favorites = load_local_favorites_for(&transaction, source_id, favorite_update.targets)?;
         let activity = replacement
             .tracks
             .iter()
@@ -3984,6 +3988,38 @@ fn load_local_favorites(
         });
     }
     Ok(favorites)
+}
+
+fn transfer_local_favorites(
+    transaction: &Transaction<'_>,
+    source_id: &SourceId,
+    transfers: &[LocalFavoriteTransfer],
+) -> StoreResult<()> {
+    for transfer in transfers {
+        transaction.execute(
+            "INSERT OR IGNORE INTO local_favorites(source_id, item_kind, item_id)
+             SELECT source_id, ?4, ?5
+             FROM local_favorites
+             WHERE source_id = ?1 AND item_kind = ?2 AND item_id = ?3",
+            params![
+                source_id.as_str(),
+                transfer.removed.kind().as_str(),
+                transfer.removed.as_str(),
+                transfer.replacement.kind().as_str(),
+                transfer.replacement.as_str(),
+            ],
+        )?;
+        transaction.execute(
+            "DELETE FROM local_favorites
+             WHERE source_id = ?1 AND item_kind = ?2 AND item_id = ?3",
+            params![
+                source_id.as_str(),
+                transfer.removed.kind().as_str(),
+                transfer.removed.as_str(),
+            ],
+        )?;
+    }
+    Ok(())
 }
 
 fn load_local_favorites_for(
