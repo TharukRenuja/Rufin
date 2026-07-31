@@ -81,8 +81,6 @@ pub struct Settings {
     pub show_paused: bool,
     #[serde(rename = "discord_show_as_listening")]
     pub show_as_listening: bool,
-    #[serde(rename = "discord_show_state_icon")]
-    pub show_state_icon: bool,
 }
 
 impl Default for Settings {
@@ -94,7 +92,6 @@ impl Default for Settings {
             link_type: LinkType::MusicBrainz,
             show_paused: false,
             show_as_listening: true,
-            show_state_icon: true,
         }
     }
 }
@@ -112,23 +109,6 @@ impl Settings {
 pub(crate) enum PlaybackState {
     Playing,
     Paused,
-}
-
-#[cfg(unix)]
-impl PlaybackState {
-    const fn label(self) -> &'static str {
-        match self {
-            Self::Playing => "Playing",
-            Self::Paused => "Paused",
-        }
-    }
-
-    const fn image_key(self) -> &'static str {
-        match self {
-            Self::Playing => "playing",
-            Self::Paused => "paused",
-        }
-    }
 }
 
 #[derive(Clone)]
@@ -426,10 +406,6 @@ fn activity_json(activity: &Activity) -> Value {
     if let Some(state_url) = state_url {
         value["state_url"] = json!(state_url);
     }
-    if activity.playback_state == PlaybackState::Paused || activity.settings.show_state_icon {
-        value["assets"]["small_image"] = json!(activity.playback_state.image_key());
-        value["assets"]["small_text"] = json!(activity.playback_state.label());
-    }
     value
 }
 
@@ -568,11 +544,26 @@ fn connect_paths(paths: &[PathBuf]) -> Result<UnixStream, String> {
 
 #[cfg(all(unix, not(test)))]
 fn discord_ipc_paths() -> Vec<PathBuf> {
+    let xdg_runtime_dir = env::var_os("XDG_RUNTIME_DIR").map(PathBuf::from);
+    let temporary_roots = ["TMPDIR", "TMP", "TEMP"]
+        .into_iter()
+        .filter_map(|key| env::var_os(key).map(PathBuf::from))
+        .collect();
+    discord_ipc_paths_for(xdg_runtime_dir, temporary_roots)
+}
+
+#[cfg(unix)]
+fn discord_ipc_paths_for(
+    xdg_runtime_dir: Option<PathBuf>,
+    temporary_roots: Vec<PathBuf>,
+) -> Vec<PathBuf> {
     let mut roots = Vec::new();
-    for key in ["XDG_RUNTIME_DIR", "TMPDIR", "TMP", "TEMP"] {
-        if let Some(path) = env::var_os(key).map(PathBuf::from)
-            && !roots.contains(&path)
-        {
+    if let Some(path) = xdg_runtime_dir {
+        roots.push(path.clone());
+        roots.push(path.join("app/com.discordapp.Discord"));
+    }
+    for path in temporary_roots {
+        if !roots.contains(&path) {
             roots.push(path);
         }
     }
@@ -672,6 +663,8 @@ mod tests {
         assert_eq!(payload["state_url"], "https://www.last.fm/music/Artist");
         assert_eq!(payload["timestamps"]["end"], 52);
         assert_eq!(payload["assets"]["large_image"], APP_ICON_URL);
+        assert!(payload["assets"].get("small_image").is_none());
+        assert!(payload["assets"].get("small_text").is_none());
 
         activity.settings.link_type = LinkType::MusicBrainz;
         Arc::make_mut(&mut activity.media)
@@ -695,6 +688,23 @@ mod tests {
             payload["details_url"],
             "https://www.last.fm/music/Album%20Artist/Album/Track"
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn ipc_paths_include_native_and_flatpak_discord() {
+        let paths = discord_ipc_paths_for(
+            Some(PathBuf::from("/run/user/1000")),
+            vec![PathBuf::from("/tmp/discord")],
+        );
+
+        assert!(paths.contains(&PathBuf::from("/run/user/1000/discord-ipc-0")));
+        assert!(paths.contains(&PathBuf::from(
+            "/run/user/1000/app/com.discordapp.Discord/discord-ipc-0"
+        )));
+        assert!(paths.contains(&PathBuf::from(
+            "/run/user/1000/app/com.discordapp.Discord/discord-ipc-9"
+        )));
     }
 
     #[cfg(unix)]
