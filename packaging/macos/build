@@ -25,7 +25,7 @@ fi
 
 required_commands=(
     brew cargo codesign ditto dylibbundler file gio-querymodules
-    glib-compile-schemas hdiutil iconutil msgfmt otool pkg-config rsvg-convert rsync
+    glib-compile-schemas hdiutil iconutil msgfmt otool pkg-config rsvg-convert
 )
 for command_name in "${required_commands[@]}"; do
     if ! command -v "$command_name" >/dev/null 2>&1; then
@@ -87,8 +87,9 @@ copy_directory() {
     fi
 }
 
-rsync -aL --exclude='libgstnice.*' "$gstreamer_plugins/" \
+cp -R "$gstreamer_plugins"/. \
     "$app_path/Contents/Resources/lib/gstreamer-1.0/"
+rm -f "$app_path/Contents/Resources/lib/gstreamer-1.0/libgstnice.dylib"
 copy_directory "$pixbuf_loaders" \
     "$app_path/Contents/Resources/lib/gdk-pixbuf-2.0/loaders"
 copy_directory "${brew_prefix}/lib/gio/modules" \
