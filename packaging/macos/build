@@ -169,7 +169,11 @@ dylibbundler "${dylib_args[@]}" -s "${brew_prefix}/lib"
 while IFS= read -r -d '' bundled_file; do
     if file "$bundled_file" | grep -q 'Mach-O'; then
         codesign --force --sign - "$bundled_file"
-        if otool -L "$bundled_file" | grep -E "${brew_prefix}|/Cellar/"; then
+        install_name="$(otool -D "$bundled_file" 2>/dev/null | sed -n '2p' || true)"
+        if otool -L "$bundled_file" \
+            | sed -n '2,$s/^[[:space:]]*\([^[:space:]]*\).*/\1/p' \
+            | grep -vFx "$install_name" \
+            | grep -E "${brew_prefix}|/Cellar/"; then
             echo "Homebrew library path remains in ${bundled_file}." >&2
             exit 1
         fi

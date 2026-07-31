@@ -129,7 +129,10 @@ jobs:
         shell: pwsh
         run: |
           choco install nsis --no-progress -y
-          $makensis = (Get-Command makensis.exe).Source
+          $makensis = Join-Path ${env:ProgramFiles(x86)} "NSIS\makensis.exe"
+          if (-not (Test-Path $makensis)) {
+            throw "NSIS was not installed at $makensis"
+          }
           "RUFIN_MAKENSIS=$makensis" | Out-File -FilePath $env:GITHUB_ENV -Append
 
       - name: Build Windows installer
