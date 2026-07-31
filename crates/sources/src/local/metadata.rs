@@ -219,9 +219,10 @@ fn accepted_target(roots: &[PathBuf], track: &Track) -> Option<MetadataTarget> {
     }
     let path = PathBuf::from(track.source_path.as_deref()?);
     if !path.is_absolute()
-        || path
-            .components()
-            .any(|component| matches!(component, Component::CurDir | Component::ParentDir))
+        || path.components().any(|component| {
+            matches!(component, Component::CurDir | Component::ParentDir)
+                || matches!(component, Component::Normal(part) if part == "." || part == "..")
+        })
         || !roots.iter().any(|root| path.starts_with(root))
     {
         return None;
