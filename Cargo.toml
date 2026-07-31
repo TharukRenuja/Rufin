@@ -19,7 +19,7 @@ async-channel = "2.5.0"
 async-trait = "0.1.89"
 artwork = { path = "crates/artwork" }
 album-lookup = { path = "crates/album-lookup" }
-base64 = "0.22.1"
+base64 = "0.23.0"
 blake3 = "1.8.2"
 csv = "1.4.0"
 directories = "6.0.0"
