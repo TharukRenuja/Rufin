@@ -41,6 +41,17 @@ copy_directory() {
     fi
 }
 
+copy_required_file() {
+    local source_path="$1"
+    local destination_path="$2"
+    if [[ ! -f "$source_path" ]]; then
+        echo "Required Windows runtime file is unavailable: ${source_path}" >&2
+        exit 1
+    fi
+    mkdir -p "$(dirname "$destination_path")"
+    cp -L "$source_path" "$destination_path"
+}
+
 rm -rf "$stage_dir"
 mkdir -p "$stage_dir"
 
@@ -64,25 +75,96 @@ copy_file \
     "$repo_root/data/io.github.screwys.Rufin.metainfo.xml" \
     "$app_share/metainfo/io.github.screwys.Rufin.metainfo.xml"
 
-shopt -s nullglob
-runtime_dlls=("$runtime_prefix"/bin/*.dll)
-if [[ ${#runtime_dlls[@]} -eq 0 ]]; then
-    echo "The Windows runtime contains no DLLs: ${runtime_prefix}/bin" >&2
-    exit 1
-fi
-cp -L "${runtime_dlls[@]}" "$app_bin/"
-
 for helper in gspawn-win64-helper.exe gspawn-win64-helper-console.exe; do
     copy_file "$runtime_prefix/bin/$helper" "$app_bin/$helper"
 done
 
-copy_directory "$runtime_prefix/lib/gstreamer-1.0" "$stage_dir/lib/gstreamer-1.0"
+gstreamer_plugins="$stage_dir/lib/gstreamer-1.0"
+mkdir -p "$gstreamer_plugins"
+gstreamer_plugin_names=(
+    libgstaiff.dll
+    libgstalaw.dll
+    libgstapetag.dll
+    libgstasf.dll
+    libgstaudioconvert.dll
+    libgstaudioparsers.dll
+    libgstaudioresample.dll
+    libgstautodetect.dll
+    libgstcoreelements.dll
+    libgstdirectsound.dll
+    libgstequalizer.dll
+    libgstfdkaac.dll
+    libgstflac.dll
+    libgstid3demux.dll
+    libgstisomp4.dll
+    libgstlevel.dll
+    libgstlibav.dll
+    libgstmatroska.dll
+    libgstmpg123.dll
+    libgstmusepack.dll
+    libgstmulaw.dll
+    libgstogg.dll
+    libgstopus.dll
+    libgstopusparse.dll
+    libgstpbtypes.dll
+    libgstplayback.dll
+    libgstreplaygain.dll
+    libgstsoup.dll
+    libgstspeex.dll
+    libgsttypefindfunctions.dll
+    libgstvolume.dll
+    libgstvorbis.dll
+    libgstwasapi.dll
+    libgstwavpack.dll
+    libgstwavparse.dll
+)
+for plugin_name in "${gstreamer_plugin_names[@]}"; do
+    copy_required_file \
+        "$runtime_prefix/lib/gstreamer-1.0/$plugin_name" \
+        "$gstreamer_plugins/$plugin_name"
+done
 copy_directory "$runtime_prefix/lib/gdk-pixbuf-2.0" "$stage_dir/lib/gdk-pixbuf-2.0"
 copy_directory "$runtime_prefix/lib/gio/modules" "$stage_dir/lib/gio/modules"
 copy_directory \
     "$runtime_prefix/libexec/gstreamer-1.0" \
     "$stage_dir/libexec/gstreamer-1.0"
 find "$stage_dir/lib" -type f -name '*.dll.a' -delete
+
+objdump_command="${RUFIN_WINDOWS_OBJDUMP:-x86_64-w64-mingw32-objdump}"
+if ! command -v "$objdump_command" >/dev/null 2>&1; then
+    objdump_command=objdump
+fi
+command -v "$objdump_command" >/dev/null
+
+mapfile -d '' dependency_queue < <(
+    find "$stage_dir" -type f \( -iname '*.dll' -o -iname '*.exe' \) -print0
+)
+dependency_index=0
+while (( dependency_index < ${#dependency_queue[@]} )); do
+    dependency_owner="${dependency_queue[$dependency_index]}"
+    dependency_index=$((dependency_index + 1))
+    while IFS= read -r dependency_name; do
+        [[ -n "$dependency_name" ]] || continue
+        if find "$app_bin" -maxdepth 1 -type f -iname "$dependency_name" -print -quit \
+            | grep -q .; then
+            continue
+        fi
+        dependency_source="$(
+            find "$runtime_prefix/bin" -maxdepth 1 -type f -iname "$dependency_name" \
+                -print -quit 2>/dev/null || true
+        )"
+        if [[ -z "$dependency_source" ]]; then
+            continue
+        fi
+        dependency_destination="$app_bin/$(basename "$dependency_source")"
+        cp -L "$dependency_source" "$dependency_destination"
+        dependency_queue+=("$dependency_destination")
+    done < <(
+        "$objdump_command" -p "$dependency_owner" \
+            | sed -n 's/^[[:space:]]*DLL Name:[[:space:]]*//p' \
+            | tr -d '\r'
+    )
+done
 
 copy_directory "$runtime_prefix/share/glib-2.0/schemas" "$app_share/glib-2.0/schemas"
 copy_directory "$runtime_prefix/share/gstreamer-1.0" "$app_share/gstreamer-1.0"
@@ -91,7 +173,6 @@ copy_directory "$runtime_prefix/share/icons/Adwaita" "$app_share/icons/Adwaita"
 copy_directory "$runtime_prefix/share/icons/AdwaitaLegacy" "$app_share/icons/AdwaitaLegacy"
 copy_directory "$runtime_prefix/share/icons/hicolor" "$app_share/icons/hicolor"
 copy_directory "$repo_root/data/icons/hicolor" "$app_share/icons/hicolor"
-copy_directory "$runtime_prefix/share/locale" "$app_share/locale"
 copy_directory "$runtime_prefix/share/mime" "$app_share/mime"
 copy_directory "$runtime_prefix/share/themes" "$app_share/themes"
 copy_directory "$runtime_prefix/share/licenses" "$app_share/licenses"
@@ -108,6 +189,9 @@ command -v "$schema_command" >/dev/null
 
 for po_file in "$repo_root"/crates/localization/locales/*.po; do
     language="$(basename "$po_file" .po)"
+    copy_directory \
+        "$runtime_prefix/share/locale/$language" \
+        "$app_share/locale/$language"
     locale_dir="$app_share/locale/$language/LC_MESSAGES"
     mkdir -p "$locale_dir"
     "$msgfmt_command" --check "$po_file" -o "$locale_dir/rufin.mo"

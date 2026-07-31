@@ -30,6 +30,8 @@ if [[ "$host_target" == *-windows-* ]]; then
 else
     runtime_prefix="${RUFIN_WINDOWS_PREFIX:-/usr/x86_64-w64-mingw32/sys-root/mingw}"
     windows_pkg_config="${RUFIN_WINDOWS_PKG_CONFIG:-x86_64-w64-mingw32-pkg-config}"
+    pkg_config_libdir="${RUFIN_WINDOWS_PKG_CONFIG_LIBDIR:-${runtime_prefix}/lib/pkgconfig:${runtime_prefix}/share/pkgconfig}"
+    pkg_config_sysroot="${RUFIN_WINDOWS_PKG_CONFIG_SYSROOT:-}"
     command -v x86_64-w64-mingw32-gcc >/dev/null
     command -v "$windows_pkg_config" >/dev/null
     AR_x86_64_pc_windows_gnu=x86_64-w64-mingw32-ar \
@@ -38,7 +40,9 @@ else
         CXX_x86_64_pc_windows_gnu=x86_64-w64-mingw32-g++ \
         PKG_CONFIG="$windows_pkg_config" \
         PKG_CONFIG_ALLOW_CROSS=1 \
+        PKG_CONFIG_LIBDIR="$pkg_config_libdir" \
         PKG_CONFIG_PATH='' \
+        PKG_CONFIG_SYSROOT_DIR="$pkg_config_sysroot" \
         RUSTC="$windows_rustc" \
         WINDRES=x86_64-w64-mingw32-windres \
         "$windows_cargo" build \
@@ -56,7 +60,7 @@ RUFIN_WINDOWS_STAGE_DIR="$stage_dir" \
 
 CARGO_TARGET_DIR="$verify_target_dir" \
     "$windows_cargo" run --locked -p xtask -- \
-        verify package-layout "$stage_dir" /
+        verify package-layout "$stage_dir" ""
 
 makensis_command="${RUFIN_MAKENSIS:-makensis}"
 if [[ ( "$(uname -s)" == MINGW* || "$(uname -s)" == MSYS* ) \

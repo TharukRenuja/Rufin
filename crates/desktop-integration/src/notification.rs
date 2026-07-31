@@ -1,16 +1,37 @@
 use gio::prelude::ApplicationExt;
+#[cfg(target_os = "windows")]
+use gio::prelude::FileExt;
 #[cfg(all(unix, not(any(target_os = "android", target_vendor = "apple"))))]
 use glib::prelude::*;
 use playback::{PlaybackView, TransportStatus};
 use std::cell::Cell;
+#[cfg(target_os = "windows")]
+use std::cell::RefCell;
+#[cfg(not(target_os = "windows"))]
 use std::fs;
-use std::path::{Path, PathBuf};
+#[cfg(not(target_os = "windows"))]
+use std::path::Path;
+use std::path::PathBuf;
 use std::rc::Rc;
-#[cfg(all(unix, not(any(target_os = "android", target_vendor = "apple"))))]
+#[cfg(any(
+    target_os = "windows",
+    all(unix, not(any(target_os = "android", target_vendor = "apple")))
+))]
 use tracing::warn;
+#[cfg(target_os = "windows")]
+use windows::Data::Xml::Dom::XmlDocument;
+#[cfg(target_os = "windows")]
+use windows::Foundation::TypedEventHandler;
+#[cfg(target_os = "windows")]
+use windows::UI::Notifications::{ToastNotification, ToastNotificationManager, ToastNotifier};
+#[cfg(target_os = "windows")]
+use windows::core::{HSTRING, IInspectable};
 
-#[cfg(all(unix, not(any(target_os = "android", target_vendor = "apple"))))]
-const APP_ID: &str = "io.github.screwys.Rufin";
+#[cfg(any(
+    target_os = "windows",
+    all(unix, not(any(target_os = "android", target_vendor = "apple")))
+))]
+use crate::APP_ID;
 #[cfg(all(unix, not(any(target_os = "android", target_vendor = "apple"))))]
 const APP_NAME: &str = "Rufin";
 #[cfg(all(unix, not(any(target_os = "android", target_vendor = "apple"))))]
@@ -21,16 +42,24 @@ const NOTIFICATIONS_BUS_NAME: &str = "org.freedesktop.Notifications";
 const NOTIFICATIONS_INTERFACE: &str = "org.freedesktop.Notifications";
 #[cfg(all(unix, not(any(target_os = "android", target_vendor = "apple"))))]
 const NOTIFICATIONS_OBJECT_PATH: &str = "/org/freedesktop/Notifications";
+#[cfg(not(target_os = "windows"))]
 const NOW_PLAYING_NOTIFICATION_ID: &str = "now-playing";
 #[cfg(all(unix, not(any(target_os = "android", target_vendor = "apple"))))]
 const NOW_PLAYING_NOTIFICATION_TIMEOUT_MSEC: i32 = -1;
+#[cfg(not(target_os = "windows"))]
 const NOTIFICATION_ARTWORK_SIZE: u32 = 96;
+#[cfg(target_os = "windows")]
+const WINDOWS_NOTIFICATION_TAG: &str = "now-playing";
+#[cfg(target_os = "windows")]
+const WINDOWS_NOTIFICATION_GROUP: &str = "rufin";
 
+#[cfg(not(target_os = "windows"))]
 fn notification_icon_path(path: &Path) -> Option<Vec<u8>> {
     let bytes = fs::read(path).ok()?;
     notification_icon_bytes(&bytes)
 }
 
+#[cfg(not(target_os = "windows"))]
 fn notification_icon_bytes(bytes: &[u8]) -> Option<Vec<u8>> {
     artwork::square_thumbnail_png(bytes, NOTIFICATION_ARTWORK_SIZE).ok()
 }
@@ -49,17 +78,43 @@ pub struct Notifications {
     notification_id: Cell<u32>,
     notification_run: Cell<Option<playback::RunId>>,
     sendable: Cell<bool>,
+    #[cfg(target_os = "windows")]
+    windows_toast: RefCell<Option<WindowsToast>>,
+    #[cfg(target_os = "windows")]
+    activation_tx: async_channel::Sender<()>,
 }
 
 impl Notifications {
     pub fn new(application: gio::Application) -> Rc<Self> {
-        Rc::new(Self {
+        #[cfg(target_os = "windows")]
+        let (activation_tx, activation_rx) = async_channel::bounded(1);
+        let notifications = Rc::new(Self {
             application,
             #[cfg(all(unix, not(any(target_os = "android", target_vendor = "apple"))))]
             notification_id: Cell::new(0),
             notification_run: Cell::new(None),
             sendable: Cell::new(false),
-        })
+            #[cfg(target_os = "windows")]
+            windows_toast: RefCell::new(None),
+            #[cfg(target_os = "windows")]
+            activation_tx,
+        });
+        #[cfg(target_os = "windows")]
+        {
+            let weak = Rc::downgrade(&notifications);
+            glib::spawn_future_local(async move {
+                while activation_rx.recv().await.is_ok() {
+                    let Some(notifications) = weak.upgrade() else {
+                        break;
+                    };
+                    notifications.application.activate();
+                }
+            });
+            if let Err(error) = remove_windows_notification_history() {
+                warn!(%error, "failed to clear Windows notification history");
+            }
+        }
+        notifications
     }
 
     pub fn observe(
@@ -146,7 +201,28 @@ impl Notifications {
                     }
                 }
             }
-            #[cfg(not(all(unix, not(any(target_os = "android", target_vendor = "apple")))))]
+            #[cfg(target_os = "windows")]
+            if notifications.matches(run) {
+                notifications.clear_windows_toast();
+                let artwork_uri = artwork_path
+                    .as_deref()
+                    .map(|path| gio::File::for_path(path).uri().to_string());
+                match send_windows_now_playing_notification(
+                    &title,
+                    &body,
+                    artwork_uri.as_deref(),
+                    notifications.activation_tx.clone(),
+                ) {
+                    Ok(toast) => {
+                        notifications.windows_toast.replace(Some(toast));
+                    }
+                    Err(error) => warn!(%error, "failed to send Windows now-playing notification"),
+                }
+            }
+            #[cfg(all(
+                not(target_os = "windows"),
+                not(all(unix, not(any(target_os = "android", target_vendor = "apple"))))
+            ))]
             if notifications.matches(run) {
                 send_gio_now_playing_notification(
                     &notifications.application,
@@ -160,8 +236,11 @@ impl Notifications {
     }
 
     pub fn withdraw(&self) {
+        #[cfg(not(target_os = "windows"))]
         self.application
             .withdraw_notification(NOW_PLAYING_NOTIFICATION_ID);
+        #[cfg(target_os = "windows")]
+        self.clear_windows_toast();
         self.notification_run.set(None);
         self.sendable.set(false);
         #[cfg(all(unix, not(any(target_os = "android", target_vendor = "apple"))))]
@@ -178,6 +257,108 @@ impl Notifications {
     fn matches(&self, run: playback::RunId) -> bool {
         self.sendable.get() && self.notification_run.get() == Some(run)
     }
+
+    #[cfg(target_os = "windows")]
+    fn clear_windows_toast(&self) {
+        if let Some(toast) = self.windows_toast.borrow_mut().take()
+            && let Err(error) = toast.notifier.Hide(&toast.notification)
+        {
+            warn!(%error, "failed to hide Windows now-playing notification");
+        }
+        if let Err(error) = remove_windows_notification_history() {
+            warn!(%error, "failed to remove Windows now-playing notification");
+        }
+    }
+}
+
+#[cfg(target_os = "windows")]
+impl Drop for Notifications {
+    fn drop(&mut self) {
+        self.clear_windows_toast();
+    }
+}
+
+#[cfg(target_os = "windows")]
+struct WindowsToast {
+    notifier: ToastNotifier,
+    notification: ToastNotification,
+}
+
+#[cfg(target_os = "windows")]
+fn send_windows_now_playing_notification(
+    title: &str,
+    body: &str,
+    artwork_uri: Option<&str>,
+    activation_tx: async_channel::Sender<()>,
+) -> Result<WindowsToast, String> {
+    let document = XmlDocument::new()
+        .map_err(|error| format!("failed to create the toast document: {error}"))?;
+    document
+        .LoadXml(&HSTRING::from(windows_toast_xml(title, body, artwork_uri)))
+        .map_err(|error| format!("failed to load the toast document: {error}"))?;
+    let notification = ToastNotification::CreateToastNotification(&document)
+        .map_err(|error| format!("failed to create the toast notification: {error}"))?;
+    notification
+        .SetTag(&HSTRING::from(WINDOWS_NOTIFICATION_TAG))
+        .map_err(|error| format!("failed to identify the toast notification: {error}"))?;
+    notification
+        .SetGroup(&HSTRING::from(WINDOWS_NOTIFICATION_GROUP))
+        .map_err(|error| format!("failed to group the toast notification: {error}"))?;
+    notification
+        .Activated(&TypedEventHandler::<ToastNotification, IInspectable>::new(
+            move |_, _| {
+                let _ = activation_tx.try_send(());
+                Ok(())
+            },
+        ))
+        .map_err(|error| format!("failed to listen for toast activation: {error}"))?;
+    let notifier = ToastNotificationManager::CreateToastNotifierWithId(&HSTRING::from(APP_ID))
+        .map_err(|error| format!("failed to create the toast notifier: {error}"))?;
+    notifier
+        .Show(&notification)
+        .map_err(|error| format!("failed to show the toast notification: {error}"))?;
+    Ok(WindowsToast {
+        notifier,
+        notification,
+    })
+}
+
+#[cfg(target_os = "windows")]
+fn remove_windows_notification_history() -> Result<(), String> {
+    let history = ToastNotificationManager::History()
+        .map_err(|error| format!("failed to access notification history: {error}"))?;
+    history
+        .RemoveGroupedTagWithId(
+            &HSTRING::from(WINDOWS_NOTIFICATION_TAG),
+            &HSTRING::from(WINDOWS_NOTIFICATION_GROUP),
+            &HSTRING::from(APP_ID),
+        )
+        .map_err(|error| format!("failed to remove notification history: {error}"))
+}
+
+#[cfg(target_os = "windows")]
+fn windows_toast_xml(title: &str, body: &str, artwork_uri: Option<&str>) -> String {
+    let artwork = artwork_uri.map_or_else(String::new, |uri| {
+        format!(
+            r#"<image placement="appLogoOverride" hint-crop="circle" src="{}"/>"#,
+            escape_xml(uri)
+        )
+    });
+    format!(
+        r#"<toast><visual><binding template="ToastGeneric"><text>{}</text><text>{}</text>{artwork}</binding></visual></toast>"#,
+        escape_xml(title),
+        escape_xml(body)
+    )
+}
+
+#[cfg(target_os = "windows")]
+fn escape_xml(value: &str) -> String {
+    value
+        .replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+        .replace('\'', "&apos;")
 }
 
 #[cfg(all(unix, not(any(target_os = "android", target_vendor = "apple"))))]
@@ -263,6 +444,7 @@ async fn close_freedesktop_now_playing_notification(notification_id: u32) {
         .await;
 }
 
+#[cfg(not(target_os = "windows"))]
 async fn send_gio_now_playing_notification(
     application: &gio::Application,
     title: String,
@@ -316,8 +498,28 @@ mod tests {
         now_playing_notification_artwork_uri, now_playing_notification_hints,
         now_playing_notification_parameters,
     };
+    #[cfg(not(target_os = "windows"))]
     use super::{NOTIFICATION_ARTWORK_SIZE, notification_icon_bytes};
 
+    #[cfg(target_os = "windows")]
+    use super::windows_toast_xml;
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn windows_toast_escapes_track_text_and_artwork_uri() {
+        let xml = windows_toast_xml(
+            "A & <B>",
+            "Artist's \"Album\"",
+            Some("file:///C:/Cover & Art.png"),
+        );
+
+        assert_eq!(
+            xml,
+            r#"<toast><visual><binding template="ToastGeneric"><text>A &amp; &lt;B&gt;</text><text>Artist&apos;s &quot;Album&quot;</text><image placement="appLogoOverride" hint-crop="circle" src="file:///C:/Cover &amp; Art.png"/></binding></visual></toast>"#
+        );
+    }
+
+    #[cfg(not(target_os = "windows"))]
     #[test]
     fn notification_artwork_is_square_and_thumbnail_sized() {
         let cover = include_bytes!(concat!(

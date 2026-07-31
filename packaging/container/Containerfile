@@ -3,8 +3,8 @@ FROM registry.fedoraproject.org/fedora-minimal:44
 LABEL org.opencontainers.image.source="https://github.com/screwys/Rufin" \
       org.opencontainers.image.description="Rufin development environment"
 
-ARG LIBADWAITA_VERSION=1.8.5.1
-ARG LIBADWAITA_SHA256=7a306296deda956207425b375355c212d254f27db6560733d08dca12fb5e52c3
+ARG MSYS2_KEYRING_VERSION=1~20260214-1
+ARG MSYS2_KEYRING_SHA256=c93044188c49f6f75e6f75709017ffa9234c2bdd8fe7c6a4c47d62a9cd8bfb1f
 
 RUN sed -i 's/^countme=1$/countme=0/' /etc/yum.repos.d/*.repo \
     && dnf -y \
@@ -18,24 +18,16 @@ RUN sed -i 's/^countme=1$/countme=0/' /etc/yum.repos.d/*.repo \
             findutils \
             gettext \
             git-core \
+            glib2 \
             gzip \
-            meson \
             mingw-nsis-base \
             mingw32-nsis \
-            mingw64-adwaita-icon-theme \
-            mingw64-appstream \
-            mingw64-fribidi \
             mingw64-gcc \
             mingw64-gcc-c++ \
-            mingw64-gstreamer1 \
-            mingw64-gstreamer1-plugins-bad-free \
-            mingw64-gstreamer1-plugins-base \
-            mingw64-gstreamer1-plugins-good \
-            mingw64-gtk4 \
-            mingw64-hicolor-icon-theme \
             mingw64-nsis \
             ninja-build \
             nix \
+            pacman \
             rust \
             rust-std-static-x86_64-pc-windows-gnu \
             sassc \
@@ -46,38 +38,53 @@ RUN sed -i 's/^countme=1$/countme=0/' /etc/yum.repos.d/*.repo \
     && dnf clean all \
     && rm -rf /var/cache/dnf
 
-RUN dnf -y \
-        --setopt=install_weak_deps=False \
-        --setopt=tsflags=nodocs \
-        install glib2-devel \
-    && dnf clean all \
-    && rm -rf /var/cache/dnf
+COPY --chmod=0644 msys2-pacman.conf /etc/pacman-msys2.conf
 
 RUN curl --fail --location --silent --show-error \
-        --output "/tmp/libadwaita-${LIBADWAITA_VERSION}.tar.xz" \
-        "https://download.gnome.org/sources/libadwaita/1.8/libadwaita-${LIBADWAITA_VERSION}.tar.xz" \
+        --output /tmp/msys2-keyring.pkg.tar.zst \
+        "https://repo.msys2.org/msys/x86_64/msys2-keyring-${MSYS2_KEYRING_VERSION}-any.pkg.tar.zst" \
     && printf '%s  %s\n' \
-        "${LIBADWAITA_SHA256}" \
-        "/tmp/libadwaita-${LIBADWAITA_VERSION}.tar.xz" \
+        "${MSYS2_KEYRING_SHA256}" \
+        /tmp/msys2-keyring.pkg.tar.zst \
         | sha256sum --check --strict - \
-    && tar --extract \
-        --file "/tmp/libadwaita-${LIBADWAITA_VERSION}.tar.xz" \
-        --directory /tmp \
-    && mingw64-meson \
-        /tmp/libadwaita-build \
-        "/tmp/libadwaita-${LIBADWAITA_VERSION}" \
-        --wrap-mode=nodownload \
-        -Ddocumentation=false \
-        -Dexamples=false \
-        -Dintrospection=disabled \
-        -Dtests=false \
-        -Dvapi=false \
-    && meson compile -C /tmp/libadwaita-build \
-    && meson install -C /tmp/libadwaita-build \
+    && mkdir -p /opt/msys2/var/lib/pacman \
+    && bsdtar \
+        --extract \
+        --file /tmp/msys2-keyring.pkg.tar.zst \
+        --directory /opt/msys2 \
+    && pacman-key \
+        --gpgdir /opt/msys2/etc/pacman.d/gnupg \
+        --init \
+    && pacman-key \
+        --gpgdir /opt/msys2/etc/pacman.d/gnupg \
+        --populate-from /opt/msys2/usr/share/pacman/keyrings \
+        --populate msys2 \
+    && pacman \
+        --config /etc/pacman-msys2.conf \
+        --dbpath /opt/msys2/var/lib/pacman \
+        --gpgdir /opt/msys2/etc/pacman.d/gnupg \
+        --noconfirm \
+        --root /opt/msys2 \
+        -Sy \
+            mingw-w64-ucrt-x86_64-adwaita-icon-theme \
+            mingw-w64-ucrt-x86_64-gdk-pixbuf2 \
+            mingw-w64-ucrt-x86_64-gettext-runtime \
+            mingw-w64-ucrt-x86_64-gst-libav \
+            mingw-w64-ucrt-x86_64-gst-plugins-bad \
+            mingw-w64-ucrt-x86_64-gst-plugins-base \
+            mingw-w64-ucrt-x86_64-gst-plugins-good \
+            mingw-w64-ucrt-x86_64-gst-plugins-ugly \
+            mingw-w64-ucrt-x86_64-gstreamer \
+            mingw-w64-ucrt-x86_64-gtk4 \
+            mingw-w64-ucrt-x86_64-hicolor-icon-theme \
+            mingw-w64-ucrt-x86_64-libadwaita \
+            mingw-w64-ucrt-x86_64-shared-mime-info \
+            mingw-w64-ucrt-x86_64-wavpack \
     && rm -rf \
-        /tmp/libadwaita-build \
-        "/tmp/libadwaita-${LIBADWAITA_VERSION}" \
-        "/tmp/libadwaita-${LIBADWAITA_VERSION}.tar.xz"
+        /opt/msys2/var/cache/pacman/pkg \
+        /tmp/msys2-keyring.pkg.tar.zst \
+    && dnf clean all \
+    && rm -rf /var/cache/dnf
 
 RUN groupadd --gid 1000 rufin \
     && useradd --uid 1000 --gid 1000 --create-home rufin \
@@ -90,7 +97,9 @@ ENV DO_NOT_TRACK=1 \
     HOME=/home/rufin \
     NIX_REMOTE=local \
     RUFIN_WINDOWS_CARGO=/usr/bin/cargo \
-    RUFIN_WINDOWS_PREFIX=/usr/x86_64-w64-mingw32/sys-root/mingw \
+    RUFIN_WINDOWS_PKG_CONFIG=/usr/bin/pkg-config \
+    RUFIN_WINDOWS_PKG_CONFIG_SYSROOT=/opt/msys2 \
+    RUFIN_WINDOWS_PREFIX=/opt/msys2/ucrt64 \
     RUFIN_WINDOWS_RUSTC=/usr/bin/rustc \
     USER=rufin
 

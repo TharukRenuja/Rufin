@@ -39,6 +39,8 @@ gstreamer_plugins="$(pkg-config --variable=pluginsdir gstreamer-1.0)"
 pixbuf_loaders="$(pkg-config --variable=gdk_pixbuf_moduledir gdk-pixbuf-2.0)"
 plugin_scanner_dir="$(pkg-config --variable=pluginscannerdir gstreamer-1.0)"
 plugin_scanner="${plugin_scanner_dir}/gst-plugin-scanner"
+gstreamer_framework="${RUFIN_MACOS_GSTREAMER_FRAMEWORK:-/Library/Frameworks/GStreamer.framework/Versions/1.0}"
+wavpack_plugin="${gstreamer_framework}/lib/gstreamer-1.0/libgstwavpack.dylib"
 
 if [[ -z "$gstreamer_plugins" || ! -d "$gstreamer_plugins" ]]; then
     echo "The Homebrew GStreamer plugin directory is unavailable: ${gstreamer_plugins:-not set}" >&2
@@ -52,8 +54,36 @@ if [[ -z "$plugin_scanner_dir" || ! -f "$plugin_scanner" ]]; then
     echo "The Homebrew GStreamer plugin scanner is unavailable: ${plugin_scanner}" >&2
     exit 1
 fi
+if [[ ! -f "$wavpack_plugin" ]]; then
+    echo "The GStreamer runtime WavPack decoder is unavailable: ${gstreamer_framework}" >&2
+    echo "Install the Homebrew gstreamer-runtime cask before building the disk image." >&2
+    exit 1
+fi
+homebrew_gstreamer_version="$(pkg-config --modversion gstreamer-1.0)"
+framework_gstreamer_version="$(
+    "$gstreamer_framework/bin/gst-launch-1.0" --version \
+        | sed -n 's/^GStreamer //p' \
+        | head -n 1
+)"
+if [[ -z "$framework_gstreamer_version" \
+    || "$framework_gstreamer_version" != "$homebrew_gstreamer_version" ]]; then
+    echo "The Homebrew and GStreamer runtime versions do not match." >&2
+    echo "Homebrew: ${homebrew_gstreamer_version}; runtime: ${framework_gstreamer_version:-unknown}" >&2
+    exit 1
+fi
+wavpack_library_name="$(
+    otool -L "$wavpack_plugin" \
+        | sed -n '2,$s/^[[:space:]]*\([^[:space:]]*libwavpack[^[:space:]]*\.dylib\).*/\1/p' \
+        | head -n 1
+)"
+wavpack_library="${gstreamer_framework}/lib/$(basename "$wavpack_library_name")"
+if [[ -z "$wavpack_library_name" || ! -f "$wavpack_library" ]]; then
+    echo "The GStreamer runtime WavPack library is unavailable: ${wavpack_library}" >&2
+    exit 1
+fi
 
 version="$(sed -n 's/^version = "\([^"]*\)"/\1/p' "${repo_root}/Cargo.toml" | head -n 1)"
+deployment_target="${MACOSX_DEPLOYMENT_TARGET:-15.0}"
 if [[ -z "$version" ]]; then
     echo "Could not read the Rufin version from Cargo.toml." >&2
     exit 1
@@ -68,14 +98,18 @@ mkdir -p \
     "$app_path/Contents/Resources/lib/gstreamer-1.0" \
     "$app_path/Contents/Resources/share"
 
-CARGO_TARGET_DIR="$target_dir" cargo build --locked --release -p rufin
+MACOSX_DEPLOYMENT_TARGET="$deployment_target" \
+    CARGO_TARGET_DIR="$target_dir" cargo build --locked --release -p rufin
 cp "$target_dir/release/rufin" "$app_path/Contents/MacOS/rufin-bin"
 cp "${repo_root}/packaging/macos/rufin" "$app_path/Contents/MacOS/rufin"
 cp "$plugin_scanner" "$app_path/Contents/MacOS/gst-plugin-scanner"
 cp "$(brew --prefix gdk-pixbuf)/bin/gdk-pixbuf-query-loaders" \
     "$app_path/Contents/MacOS/gdk-pixbuf-query-loaders"
 chmod +x "$app_path/Contents/MacOS/"*
-sed "s/@VERSION@/${version}/g" "${repo_root}/packaging/macos/Info.plist.in" \
+sed \
+    -e "s/@VERSION@/${version}/g" \
+    -e "s/@MINIMUM_SYSTEM_VERSION@/${deployment_target}/g" \
+    "${repo_root}/packaging/macos/Info.plist.in" \
     >"$app_path/Contents/Info.plist"
 
 copy_directory() {
@@ -87,9 +121,52 @@ copy_directory() {
     fi
 }
 
-cp -R "$gstreamer_plugins"/. \
-    "$app_path/Contents/Resources/lib/gstreamer-1.0/"
-rm -f "$app_path/Contents/Resources/lib/gstreamer-1.0/libgstnice.dylib"
+gstreamer_plugin_names=(
+    libgstaiff.dylib
+    libgstalaw.dylib
+    libgstapetag.dylib
+    libgstasf.dylib
+    libgstaudioconvert.dylib
+    libgstaudioparsers.dylib
+    libgstaudioresample.dylib
+    libgstautodetect.dylib
+    libgstcoreelements.dylib
+    libgstequalizer.dylib
+    libgstfdkaac.dylib
+    libgstflac.dylib
+    libgstid3demux.dylib
+    libgstisomp4.dylib
+    libgstlevel.dylib
+    libgstlibav.dylib
+    libgstmatroska.dylib
+    libgstmpg123.dylib
+    libgstmusepack.dylib
+    libgstmulaw.dylib
+    libgstogg.dylib
+    libgstopus.dylib
+    libgstopusparse.dylib
+    libgstosxaudio.dylib
+    libgstpbtypes.dylib
+    libgstplayback.dylib
+    libgstreplaygain.dylib
+    libgstsoup.dylib
+    libgstspeex.dylib
+    libgsttypefindfunctions.dylib
+    libgstvolume.dylib
+    libgstvorbis.dylib
+    libgstwavparse.dylib
+)
+for plugin_name in "${gstreamer_plugin_names[@]}"; do
+    plugin_path="$gstreamer_plugins/$plugin_name"
+    if [[ ! -f "$plugin_path" ]]; then
+        echo "Required GStreamer plugin is unavailable: ${plugin_path}" >&2
+        exit 1
+    fi
+    cp -L "$plugin_path" \
+        "$app_path/Contents/Resources/lib/gstreamer-1.0/$plugin_name"
+done
+cp -L "$wavpack_plugin" \
+    "$app_path/Contents/Resources/lib/gstreamer-1.0/libgstwavpack.dylib"
 copy_directory "$pixbuf_loaders" \
     "$app_path/Contents/Resources/lib/gdk-pixbuf-2.0/loaders"
 copy_directory "${brew_prefix}/lib/gio/modules" \
@@ -108,8 +185,6 @@ copy_directory "${brew_prefix}/share/icons/hicolor" \
     "$app_path/Contents/Resources/share/icons/hicolor"
 copy_directory "${repo_root}/data/icons/hicolor" \
     "$app_path/Contents/Resources/share/icons/hicolor"
-copy_directory "${brew_prefix}/share/locale" \
-    "$app_path/Contents/Resources/share/locale"
 copy_directory "${brew_prefix}/share/mime" \
     "$app_path/Contents/Resources/share/mime"
 
@@ -124,6 +199,9 @@ cp "${repo_root}/LICENSE" "$app_path/Contents/Resources/LICENSE"
 
 for po_file in "${repo_root}"/crates/localization/locales/*.po; do
     language="$(basename "$po_file" .po)"
+    copy_directory \
+        "${brew_prefix}/share/locale/${language}" \
+        "$app_path/Contents/Resources/share/locale/${language}"
     locale_dir="$app_path/Contents/Resources/share/locale/${language}/LC_MESSAGES"
     mkdir -p "$locale_dir"
     msgfmt --check "$po_file" -o "$locale_dir/rufin.mo"
@@ -160,21 +238,32 @@ done < <(
         -type f \( -name '*.dylib' -o -name '*.so' \) -print0
 )
 
+dependency_sources="$work_root/dependency-sources"
+rm -rf "$dependency_sources"
+mkdir -p "$dependency_sources"
+while IFS= read -r -d '' dependency; do
+    ln -s "$dependency" "$dependency_sources/$(basename "$dependency")"
+done < <(find -L "${brew_prefix}/lib" -maxdepth 1 -type f -name '*.dylib' -print0)
+ln -sfn "$wavpack_library" "$dependency_sources/$(basename "$wavpack_library")"
+
 dylib_args=(-od -b -d "$app_path/Contents/Frameworks" -p '@executable_path/../Frameworks/')
 for file_to_fix in "${files_to_fix[@]}"; do
     dylib_args+=(-x "$file_to_fix")
 done
-dylibbundler "${dylib_args[@]}" -s "${brew_prefix}/lib"
+dylibbundler "${dylib_args[@]}" -s "$dependency_sources"
 
 while IFS= read -r -d '' bundled_file; do
     if file "$bundled_file" | grep -q 'Mach-O'; then
         codesign --force --sign - "$bundled_file"
         install_name="$(otool -D "$bundled_file" 2>/dev/null | sed -n '2p' || true)"
-        if otool -L "$bundled_file" \
+        external_dependencies="$(otool -L "$bundled_file" \
             | sed -n '2,$s/^[[:space:]]*\([^[:space:]]*\).*/\1/p' \
             | grep -vFx "$install_name" \
-            | grep -E "${brew_prefix}|/Cellar/"; then
-            echo "Homebrew library path remains in ${bundled_file}." >&2
+            | grep '^/' \
+            | grep -Ev '^(/usr/lib/|/System/Library/)' || true)"
+        if [[ -n "$external_dependencies" ]]; then
+            echo "$external_dependencies" >&2
+            echo "External library path remains in ${bundled_file}." >&2
             exit 1
         fi
     fi

@@ -357,6 +357,7 @@ mod windows_macos {
     use tray_icon::{TrayIcon, TrayIconBuilder, TrayIconEvent};
 
     use super::TrayIntent;
+    use crate::APP_ID;
 
     const APP_ICON_BYTES: &[u8] = include_bytes!(concat!(
         env!("CARGO_MANIFEST_DIR"),
@@ -410,7 +411,7 @@ mod windows_macos {
             .map_err(|error| format!("failed to build the tray menu: {error}"))?;
 
             let builder = TrayIconBuilder::new()
-                .with_id("io.github.screwys.Rufin")
+                .with_id(APP_ID)
                 .with_tooltip(tr("Rufin is running in the tray"))
                 .with_menu(Box::new(menu))
                 .with_icon(build_tray_icon()?);

@@ -74,17 +74,11 @@ pub(super) fn build_content_chrome(
     main_well.set_width_request(1);
     main_well.set_hexpand(true);
     main_well.set_vexpand(true);
-    let main_measure_floor = gtk::Box::new(gtk::Orientation::Vertical, 0);
-    main_measure_floor.set_width_request(1);
-    main_measure_floor.set_hexpand(true);
-    main_measure_floor.set_vexpand(true);
-    main_well.set_child(Some(&main_measure_floor));
     main_area.set_width_request(1);
     main_area.set_halign(gtk::Align::Fill);
     main_area.set_valign(gtk::Align::Fill);
     main_area.set_overflow(gtk::Overflow::Hidden);
-    main_well.add_overlay(main_area);
-    main_well.set_measure_overlay(main_area, false);
+    main_well.set_child(Some(main_area));
     let drag_handle = window_drag_handle_with_margins(
         "window-drag-handle",
         WINDOW_DRAG_HANDLE_HEIGHT,

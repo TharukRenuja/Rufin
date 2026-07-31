@@ -24,6 +24,7 @@ fn main() -> ExitCode {
     if let Some(result) = verify_media_argument() {
         return result;
     }
+    let _desktop_platform = desktop_integration::Platform::initialize();
     let diagnostics = diagnostics::Diagnostics::install(paths::state_dir());
     info!("starting Rufin native shell");
 
