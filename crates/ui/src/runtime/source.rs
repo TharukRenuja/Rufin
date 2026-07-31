@@ -9,9 +9,9 @@ use std::sync::Arc;
 use async_channel::Receiver;
 use downloads::{DownloadRule, DownloadSubject};
 use library::{
-    FavoriteItemId, FolderContents, FolderId, HomeSectionKind, MusicFolderId, PlaylistEdit,
-    PlaylistTrackAdd, SearchRequest as LibrarySearchRequest, SearchResults, SourceId, TrackId,
-    TrackSelection,
+    FavoriteItemId, FolderContents, FolderId, HomeSectionKind, MetadataDraft, MetadataEdit,
+    MetadataError, MetadataItemId, MetadataValues, MusicFolderId, PlaylistEdit, PlaylistTrackAdd,
+    SearchRequest as LibrarySearchRequest, SearchResults, SourceId, TrackId, TrackSelection,
 };
 use secrets::SecretStorageMode;
 
@@ -217,6 +217,29 @@ pub struct SearchRequest {
 }
 
 #[derive(Clone, Debug)]
+pub struct MetadataRequest {
+    pub source_id: SourceId,
+    pub source_session_epoch: playback::SourceSessionEpoch,
+    pub item_id: MetadataItemId,
+}
+
+#[derive(Clone, Debug)]
+pub struct MetadataEditRequest {
+    pub source_id: SourceId,
+    pub source_session_epoch: playback::SourceSessionEpoch,
+    pub edit: MetadataEdit,
+}
+
+#[derive(Clone, Debug)]
+pub struct MetadataIdentificationRequest {
+    pub source_id: SourceId,
+    pub source_session_epoch: playback::SourceSessionEpoch,
+    pub item_id: MetadataItemId,
+    pub editing: library::MetadataEditing,
+    pub values: MetadataValues,
+}
+
+#[derive(Clone, Debug)]
 pub struct DownloadRequest {
     pub source_id: SourceId,
     pub source_session_epoch: playback::SourceSessionEpoch,
@@ -244,7 +267,11 @@ pub trait SourcePort: Send + Sync {
     fn check_for_source_changes(&self);
     fn selected_library_revealed(&self);
     fn refresh_home(&self, kind: HomeSectionKind);
-    fn save_local_access(&self, input: SourceLocalAccess);
+    fn save_local_access(
+        &self,
+        input: SourceLocalAccess,
+        metadata: Option<MetadataRequest>,
+    ) -> Receiver<Result<(), String>>;
     fn clear_local_access(&self, source_id: SourceId);
     fn forget_source(&self, source_id: SourceId);
     fn set_music_folder(&self, source_id: SourceId, folder_id: Option<MusicFolderId>);
@@ -265,6 +292,13 @@ pub trait SourcePort: Send + Sync {
     fn clear_downloads(&self, source_id: SourceId);
     fn folder(&self, request: FolderRequest) -> Receiver<Result<FolderContents, String>>;
     fn search(&self, request: SearchRequest) -> Receiver<Result<SearchResults, String>>;
+    fn metadata_editing_available(&self, request: MetadataRequest) -> bool;
+    fn metadata(&self, request: MetadataRequest) -> Receiver<Result<MetadataDraft, MetadataError>>;
+    fn edit_metadata(&self, request: MetadataEditRequest) -> Receiver<Result<(), MetadataError>>;
+    fn identify_metadata(
+        &self,
+        request: MetadataIdentificationRequest,
+    ) -> Receiver<Result<Option<MetadataValues>, String>>;
 }
 
 pub type SourceHandle = Arc<dyn SourcePort>;

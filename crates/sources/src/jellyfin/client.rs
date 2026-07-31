@@ -924,14 +924,14 @@ impl JellyfinSource {
         .await
     }
 
-    async fn send_json<T: DeserializeOwned>(
+    pub(super) async fn send_json<T: DeserializeOwned>(
         &self,
         request: reqwest::RequestBuilder,
     ) -> SourceResult<T> {
         send_json(request.header(header::AUTHORIZATION, self.authorization.clone())).await
     }
 
-    async fn send_unit(&self, request: reqwest::RequestBuilder) -> SourceResult<()> {
+    pub(super) async fn send_unit(&self, request: reqwest::RequestBuilder) -> SourceResult<()> {
         send_unit(request.header(header::AUTHORIZATION, self.authorization.clone())).await
     }
 
@@ -1025,6 +1025,14 @@ pub(super) struct AuthenticationResult {
 pub(super) struct JellyfinUser {
     pub(super) id: String,
     pub(super) name: String,
+    #[serde(default)]
+    pub(super) policy: JellyfinUserPolicy,
+}
+
+#[derive(Clone, Debug, Default, Deserialize)]
+#[serde(rename_all = "PascalCase")]
+pub(super) struct JellyfinUserPolicy {
+    pub(super) is_administrator: bool,
 }
 
 #[derive(Clone, Debug, Serialize)]

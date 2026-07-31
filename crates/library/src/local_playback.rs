@@ -10,7 +10,7 @@ use std::sync::Arc;
 
 use crate::{
     Library, LibraryError, LibraryResult, LoadedLibrary, LocalFile, LocalFileKind, LocalReadState,
-    SourceId, Track, TrackId,
+    MetadataError, MetadataItem, MetadataItemId, MetadataSubject, SourceId, Track, TrackId,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -36,6 +36,27 @@ pub struct LocalAccessMapping {
     pub root_path: PathBuf,
     pub server_prefix: Option<String>,
     pub local_prefix: Option<String>,
+}
+
+/// One exact file projected through the selected source's local-access mapping.
+///
+/// The file-backed source still canonicalizes this path, checks that it stays
+/// inside the selected root, and confirms writer support before reading or
+/// mutating it.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct LocalAccessTarget {
+    root_path: PathBuf,
+    path: PathBuf,
+}
+
+impl LocalAccessTarget {
+    pub fn root_path(&self) -> &Path {
+        &self.root_path
+    }
+
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -108,8 +129,26 @@ impl Library {
         loaded: &Arc<LoadedLibrary>,
         mapping: LocalAccessMapping,
     ) -> LibraryResult<LocalAccessStatus> {
-        loaded.configure_local_access(Some(mapping))?;
+        self.configure_local_access_mapping(loaded, Some(mapping))?;
         loaded.local_access_status().map_err(Into::into)
+    }
+
+    pub fn configure_local_access_mapping(
+        &self,
+        loaded: &Arc<LoadedLibrary>,
+        mapping: Option<LocalAccessMapping>,
+    ) -> LibraryResult<()> {
+        loaded.configure_local_access(mapping)?;
+        Ok(())
+    }
+
+    pub fn accept_local_access_mapping(
+        &self,
+        loaded: &Arc<LoadedLibrary>,
+        mapping: LocalAccessMapping,
+    ) -> LibraryResult<()> {
+        loaded.accept_local_access_mapping(mapping)?;
+        Ok(())
     }
 
     pub fn clear_local_access(
@@ -223,6 +262,23 @@ impl LoadedLibrary {
         Ok(())
     }
 
+    pub(crate) fn accept_local_access_mapping(
+        &self,
+        mapping: LocalAccessMapping,
+    ) -> crate::LoadedLibraryResult<()> {
+        let mut state = self.write_state()?;
+        let same_root = state
+            .local_access_mapping
+            .as_ref()
+            .is_some_and(|accepted| accepted.root_path == mapping.root_path);
+        state.local_access_mapping = Some(mapping);
+        if !same_root {
+            state.local_access_paths.clear();
+            state.local_access_index.clear();
+        }
+        Ok(())
+    }
+
     pub fn local_access_status(&self) -> crate::LoadedLibraryResult<LocalAccessStatus> {
         let state = self.read_state()?;
         let mut status = LocalAccessStatus {
@@ -258,6 +314,121 @@ impl LoadedLibrary {
 
     pub fn local_access_files(&self) -> crate::LoadedLibraryResult<Vec<LocalAccessFile>> {
         Ok(self.read_state()?.local_access.clone())
+    }
+
+    pub fn metadata_item(
+        &self,
+        item_id: &MetadataItemId,
+    ) -> crate::LoadedLibraryResult<Option<MetadataItem>> {
+        match item_id {
+            MetadataItemId::Track(id) => self.track(id).map(|item| item.map(MetadataItem::Track)),
+            MetadataItemId::Album(id) => self
+                .album(id)
+                .map(|item| item.map(|album| MetadataItem::Album((*album).clone()))),
+            MetadataItemId::Artist(id) => self
+                .artist(id)
+                .map(|item| item.map(|artist| MetadataItem::Artist((*artist).clone()))),
+        }
+    }
+
+    pub fn metadata_subject(
+        self: &Arc<Self>,
+        item_id: &MetadataItemId,
+    ) -> crate::LoadedLibraryResult<Option<MetadataSubject>> {
+        let Some(item) = self.metadata_item(item_id)? else {
+            return Ok(None);
+        };
+        match (item_id, item) {
+            (MetadataItemId::Track(_), MetadataItem::Track(track)) => {
+                Ok(Some(MetadataSubject::track(track)))
+            }
+            (MetadataItemId::Album(id), MetadataItem::Album(album)) => {
+                let tracks = self.album_track_selection(id, None);
+                Ok(Some(MetadataSubject::aggregate(
+                    MetadataItem::Album(album),
+                    tracks,
+                )))
+            }
+            (MetadataItemId::Artist(id), MetadataItem::Artist(artist)) => {
+                let tracks = self.artist_track_selection(id, None);
+                Ok(Some(MetadataSubject::aggregate(
+                    MetadataItem::Artist(artist),
+                    tracks,
+                )))
+            }
+            _ => unreachable!("metadata item kind follows its ID"),
+        }
+    }
+
+    pub fn metadata_subject_with_local_access(
+        self: &Arc<Self>,
+        item_id: &MetadataItemId,
+        proposed: Option<&LocalAccessMapping>,
+    ) -> Result<Option<(MetadataSubject, Vec<LocalAccessTarget>)>, MetadataError> {
+        let Some(mut subject) = self
+            .metadata_subject(item_id)
+            .map_err(|error| MetadataError::Write(error.to_string()))?
+        else {
+            return Ok(None);
+        };
+        let tracks = match subject.item() {
+            MetadataItem::Track(track) => vec![track.clone()],
+            MetadataItem::Album(_) | MetadataItem::Artist(_) => {
+                let prepared = subject
+                    .tracks()
+                    .cloned()
+                    .expect("aggregate metadata has a Track selection")
+                    .prepare()
+                    .map_err(|error| MetadataError::Write(error.to_string()))?;
+                if prepared.is_empty() {
+                    return Err(MetadataError::LocalAccessRequired {
+                        source_path: String::new(),
+                    });
+                }
+                let tracks = prepared
+                    .materialize_owned()
+                    .map_err(|error| MetadataError::Write(error.to_string()))?;
+                subject = MetadataSubject::aggregate(subject.into_item(), prepared.into());
+                tracks
+            }
+        };
+        let accepted_mapping = if proposed.is_none() {
+            self.read_state()
+                .map_err(|error| MetadataError::Write(error.to_string()))?
+                .local_access_mapping
+                .clone()
+        } else {
+            None
+        };
+        let mapping = proposed.or(accepted_mapping.as_ref());
+        let mut targets = Vec::with_capacity(tracks.len());
+        let mut push_target = |track: &Track| -> Result<(), MetadataError> {
+            let source_path = track.source_path.clone().unwrap_or_default();
+            if track.cue.is_some() {
+                return Err(MetadataError::LocalAccessRequired { source_path });
+            }
+            let target = mapping.and_then(|mapping| {
+                let direct = PathBuf::from(&source_path);
+                let path = if direct.is_absolute() && direct.starts_with(&mapping.root_path) {
+                    Some(direct)
+                } else {
+                    project_local_access_path(&source_path, mapping)
+                }?;
+                Some(LocalAccessTarget {
+                    root_path: mapping.root_path.clone(),
+                    path,
+                })
+            });
+            let Some(target) = target else {
+                return Err(MetadataError::LocalAccessRequired { source_path });
+            };
+            targets.push(target);
+            Ok(())
+        };
+        for track in &tracks {
+            push_target(track)?;
+        }
+        Ok(Some((subject, targets)))
     }
 
     pub fn playable_file(
@@ -391,20 +562,8 @@ fn local_access_file_for(
     index: &HashMap<LocalMatchKey, Vec<usize>>,
 ) -> Option<(PlayableFile, LocalAccessMatch)> {
     let mapping = mapping?;
-    if let Some(source_path) = track.source_path.as_deref() {
-        if paths.contains(source_path) {
-            return Some((
-                PlayableFile::File {
-                    path: source_path.into(),
-                },
-                LocalAccessMatch::Direct,
-            ));
-        }
-        if let Some(path) = project_local_access_path(source_path, mapping)
-            && paths.contains(path.to_string_lossy().as_ref())
-        {
-            return Some((PlayableFile::File { path }, LocalAccessMatch::Prefix));
-        }
+    if let Some((path, kind)) = exact_local_access_path(track, mapping, paths) {
+        return Some((PlayableFile::File { path }, kind));
     }
 
     unique_metadata_file(track, files, index).map(|file| {
@@ -415,6 +574,21 @@ fn local_access_file_for(
             LocalAccessMatch::Metadata,
         )
     })
+}
+
+fn exact_local_access_path(
+    track: &Track,
+    mapping: &LocalAccessMapping,
+    paths: &HashSet<String>,
+) -> Option<(PathBuf, LocalAccessMatch)> {
+    let source_path = track.source_path.as_deref()?;
+    if paths.contains(source_path) {
+        return Some((source_path.into(), LocalAccessMatch::Direct));
+    }
+    let path = project_local_access_path(source_path, mapping)?;
+    paths
+        .contains(path.to_string_lossy().as_ref())
+        .then_some((path, LocalAccessMatch::Prefix))
 }
 
 fn unique_metadata_file<'a>(
@@ -459,7 +633,9 @@ pub fn project_local_access_path(
         .filter(|prefix| !prefix.is_empty())
     {
         if let Some(suffix) = source_path.strip_prefix(prefix)
-            && (suffix.is_empty() || suffix.starts_with(['/', '\\']))
+            && (suffix.is_empty()
+                || prefix.ends_with(['/', '\\'])
+                || suffix.starts_with(['/', '\\']))
         {
             return Some(path_from_server_suffix(
                 &target,
@@ -471,9 +647,26 @@ pub fn project_local_access_path(
     let source = Path::new(source_path);
     if source.is_absolute() {
         Some(source.to_path_buf())
+    } else if reported_path_is_absolute(source_path) {
+        None
     } else {
         Some(target.join(source))
     }
+}
+
+/// Reports whether a source path is rooted in either Unix or Windows syntax.
+///
+/// A remote server may use a different path syntax from the client. A
+/// host-native absolute path can be used directly; a foreign rooted path needs
+/// a server prefix before it can be projected beneath the selected local root.
+pub fn reported_path_is_absolute(source_path: &str) -> bool {
+    let bytes = source_path.as_bytes();
+    source_path.starts_with(['/', '\\'])
+        || matches!(
+            bytes,
+            [drive, b':', separator, ..]
+                if drive.is_ascii_alphabetic() && matches!(separator, b'/' | b'\\')
+        )
 }
 
 fn path_from_server_suffix(target: &Path, suffix: &str) -> PathBuf {

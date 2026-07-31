@@ -27,7 +27,7 @@ const PANIC_FILE: &str = "rufin-panic.log";
 
 const NORMAL_FILTER: &str = concat!(
     "warn,",
-    "album_lookup=info,",
+    "metadata_lookup=info,",
     "artwork=info,",
     "desktop_integration=info,",
     "library=info,",
@@ -43,7 +43,7 @@ const NORMAL_FILTER: &str = concat!(
 );
 const DEBUG_FILTER: &str = concat!(
     "warn,",
-    "album_lookup=debug,",
+    "metadata_lookup=debug,",
     "artwork=debug,",
     "desktop_integration=debug,",
     "library=debug,",
@@ -763,7 +763,7 @@ mod tests {
                 "source URL"
             );
             tracing::debug!(
-                target: "album_lookup",
+                target: "metadata_lookup",
                 public_url = "https://coverartarchive.org/release/abc/front?size=250&token=secret",
                 "public request"
             );

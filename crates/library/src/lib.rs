@@ -75,6 +75,7 @@ mod loaded;
 mod local;
 mod local_playback;
 mod lyrics_cache;
+mod metadata;
 mod playback_state;
 mod playlists;
 mod radio;
@@ -94,6 +95,7 @@ pub use loaded::*;
 pub use local::*;
 pub use local_playback::*;
 pub use lyrics_cache::*;
+pub use metadata::*;
 pub use playback_state::*;
 pub use playlists::*;
 pub use radio::*;
@@ -205,10 +207,10 @@ impl Library {
         Ok(loaded)
     }
 
-    /// Removes all Library-owned data for one configured source.
+    /// Removes every Store row owned by one forgotten source.
     ///
-    /// Pending external scrobbles are intentionally account-scoped delivery
-    /// work and survive source removal.
+    /// Pending external scrobbles are account-scoped delivery work rather than
+    /// source data and survive.
     pub fn remove_source_data(&self, source_id: &SourceId) -> LibraryResult<()> {
         self.store.remove_source_data(source_id.clone())?;
         self.home_sessions.remove_source(source_id)?;

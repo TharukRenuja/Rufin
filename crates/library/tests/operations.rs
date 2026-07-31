@@ -2457,6 +2457,26 @@ fn local_retag_preserves_activity_and_smart_playlist_membership() {
         Vec::new(),
         42,
     );
+    library
+        .accept_favorite(
+            &accepted.loaded,
+            FavoriteAcceptance::RufinOwned {
+                item: FavoriteItemId::Track(original.id.clone()),
+                favorite: true,
+            },
+        )
+        .expect("favorite Local Track");
+    let playlist_id = created_playlist_id(
+        library
+            .accept_playlist(
+                &accepted.loaded,
+                PlaylistAcceptance::RufinOwned(PlaylistEdit::Create {
+                    name: "Retagged Local Track".to_string(),
+                    track_ids: vec![original.id.clone()],
+                }),
+            )
+            .expect("create Local playlist"),
+    );
     let play = library
         .record_play(
             &accepted.loaded,
@@ -2532,9 +2552,26 @@ fn local_retag_preserves_activity_and_smart_playlist_membership() {
         .expect("returned retagged Track");
     assert!(Track::ptr_eq(&effective, returned));
     assert_eq!(effective.title, "Retagged");
+    assert!(effective.favorite);
     assert_eq!(effective.play_count, Some(1));
     assert_eq!(effective.skip_count, Some(1));
     assert!(effective.last_played.is_some());
+    let playlist = accepted
+        .loaded
+        .playlist_detail(&playlist_id)
+        .expect("read Local playlist")
+        .expect("Local playlist");
+    assert_eq!(playlist.entries.len(), 1);
+    assert_eq!(
+        playlist
+            .entries
+            .entry(0)
+            .expect("read Local playlist entry")
+            .expect("Local playlist entry")
+            .track
+            .title,
+        "Retagged"
+    );
     assert_eq!(
         accepted
             .loaded
@@ -2567,8 +2604,18 @@ fn local_retag_preserves_activity_and_smart_playlist_membership() {
         .expect("read reopened Track")
         .expect("reopened Track");
     assert_eq!(reopened_track.title, "Retagged");
+    assert!(reopened_track.favorite);
     assert_eq!(reopened_track.play_count, Some(1));
     assert_eq!(reopened_track.skip_count, Some(1));
+    assert_eq!(
+        reopened
+            .playlist_detail(&playlist_id)
+            .expect("read reopened Local playlist")
+            .expect("reopened Local playlist")
+            .entries
+            .len(),
+        1
+    );
     assert_eq!(
         reopened
             .smart_playlist_detail(&smart_id, None)
@@ -2578,6 +2625,625 @@ fn local_retag_preserves_activity_and_smart_playlist_membership() {
             .len(),
         1
     );
+}
+
+#[test]
+fn local_retag_transfers_aggregate_favorites_to_unique_replacements() {
+    let directory = tempfile::tempdir().expect("temporary Store directory");
+    let path = directory.path().join("library.db");
+    let source_id = SourceId::new("local:server:aggregate-favorite-retag");
+    let library = Library::open(&path).expect("open Library");
+    let collaborator = ArtistCredit {
+        id: library::ArtistId::new("local:artist:collaborator"),
+        name: "Collaborator".to_string(),
+        musicbrainz_artist_id: None,
+    };
+    let mut original = track();
+    original.relations.artists.push(collaborator.clone());
+    original.relations.album_artists.push(collaborator.clone());
+    let old_album_id = original.album_id.clone().expect("old Album ID");
+    let old_artist_id = original.relations.artists[0].id.clone();
+    let accepted = accept_local_tracks(
+        &library,
+        source_id.clone(),
+        vec![original.clone()],
+        Vec::new(),
+        43,
+    );
+    for item in [
+        FavoriteItemId::Album(old_album_id.clone()),
+        FavoriteItemId::Artist(old_artist_id.clone()),
+    ] {
+        library
+            .accept_favorite(
+                &accepted.loaded,
+                FavoriteAcceptance::RufinOwned {
+                    item,
+                    favorite: true,
+                },
+            )
+            .expect("favorite Local aggregate");
+    }
+
+    let new_album_id = library::AlbumId::new("local:album:retagged");
+    let new_artist_id = library::ArtistId::new("local:artist:retagged");
+    let new_artist = ArtistCredit {
+        id: new_artist_id.clone(),
+        name: "Retagged Artist".to_string(),
+        musicbrainz_artist_id: None,
+    };
+    let mut retagged = original.clone();
+    retagged.album_id = Some(new_album_id.clone());
+    retagged.album = "Retagged Album".to_string();
+    retagged.artist = "Retagged Artist".to_string();
+    retagged.relations.artists = vec![new_artist.clone(), collaborator.clone()];
+    retagged.relations.album_artists = vec![new_artist, collaborator];
+    library
+        .accept_local_component(
+            &accepted.loaded,
+            LocalComponentReplacement {
+                observed_at: 2,
+                albums: vec![album_for_track(&retagged, 0)],
+                tracks: vec![retagged.clone()],
+                artists: vec![artist_for_track(&retagged)],
+                removed_album_ids: vec![old_album_id.clone()],
+                removed_artist_ids: vec![old_artist_id.clone()],
+                ..LocalComponentReplacement::default()
+            },
+        )
+        .expect("accept aggregate identity retag")
+        .expect("aggregate identity retag must change the library");
+
+    assert!(
+        accepted
+            .loaded
+            .album(&old_album_id)
+            .expect("read removed Album")
+            .is_none()
+    );
+    assert!(
+        accepted
+            .loaded
+            .artist(&old_artist_id)
+            .expect("read removed Artist")
+            .is_none()
+    );
+    assert!(
+        accepted
+            .loaded
+            .album(&new_album_id)
+            .expect("read replacement Album")
+            .expect("replacement Album")
+            .favorite
+    );
+    assert!(
+        accepted
+            .loaded
+            .artist(&new_artist_id)
+            .expect("read replacement Artist")
+            .expect("replacement Artist")
+            .favorite
+    );
+
+    drop(accepted);
+    drop(library);
+    let reopened = Library::open(&path)
+        .expect("reopen Library")
+        .load_source(&source_id)
+        .expect("load source")
+        .expect("source");
+    assert!(
+        reopened
+            .album(&new_album_id)
+            .expect("read reopened replacement Album")
+            .expect("reopened replacement Album")
+            .favorite
+    );
+    assert!(
+        reopened
+            .artist(&new_artist_id)
+            .expect("read reopened replacement Artist")
+            .expect("reopened replacement Artist")
+            .favorite
+    );
+    drop(reopened);
+
+    let connection = rusqlite::Connection::open(path).expect("inspect Local favorites");
+    let mut statement = connection
+        .prepare(
+            "SELECT item_kind, item_id
+             FROM local_favorites
+             WHERE source_id = ?1
+             ORDER BY item_kind, item_id",
+        )
+        .expect("prepare Local favorite read");
+    let favorites = statement
+        .query_map([source_id.as_str()], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })
+        .expect("read Local favorites")
+        .collect::<Result<Vec<_>, _>>()
+        .expect("collect Local favorites");
+    assert_eq!(
+        favorites,
+        [
+            ("album".to_string(), new_album_id.to_string()),
+            ("artist".to_string(), new_artist_id.to_string()),
+        ]
+    );
+}
+
+#[test]
+fn local_retag_transfers_favorites_to_existing_aggregates() {
+    let directory = tempfile::tempdir().expect("temporary Store directory");
+    let path = directory.path().join("library.db");
+    let source_id = SourceId::new("local:server:existing-aggregate-retag");
+    let library = Library::open(&path).expect("open Library");
+    let original = track();
+    let old_album_id = original.album_id.clone().expect("old Album ID");
+    let old_artist_id = original.relations.artists[0].id.clone();
+    let existing_album_id = library::AlbumId::new("local:album:existing");
+    let existing_artist_id = library::ArtistId::new("local:artist:existing");
+    let existing_artist = ArtistCredit {
+        id: existing_artist_id.clone(),
+        name: "Existing Artist".to_string(),
+        musicbrainz_artist_id: None,
+    };
+    let mut existing = original.clone();
+    existing.id = library::TrackId::new("local:track:existing");
+    existing.album_id = Some(existing_album_id.clone());
+    existing.title = "Existing Track".to_string();
+    existing.artist = existing_artist.name.clone();
+    existing.album = "Existing Album".to_string();
+    existing.source_path = Some("/music/Existing/Album/Track.flac".to_string());
+    existing.relations.artists = vec![existing_artist.clone()];
+    existing.relations.album_artists = vec![existing_artist.clone()];
+    let accepted = accept_local_tracks(
+        &library,
+        source_id.clone(),
+        vec![original.clone(), existing],
+        Vec::new(),
+        45,
+    );
+    for item in [
+        FavoriteItemId::Album(old_album_id.clone()),
+        FavoriteItemId::Artist(old_artist_id.clone()),
+    ] {
+        library
+            .accept_favorite(
+                &accepted.loaded,
+                FavoriteAcceptance::RufinOwned {
+                    item,
+                    favorite: true,
+                },
+            )
+            .expect("favorite Local aggregate");
+    }
+
+    let mut retagged = original;
+    retagged.album_id = Some(existing_album_id.clone());
+    retagged.artist = existing_artist.name.clone();
+    retagged.album = "Existing Album".to_string();
+    retagged.relations.artists = vec![existing_artist.clone()];
+    retagged.relations.album_artists = vec![existing_artist];
+    library
+        .accept_local_component(
+            &accepted.loaded,
+            LocalComponentReplacement {
+                observed_at: 2,
+                albums: vec![album_for_track(&retagged, 0)],
+                tracks: vec![retagged.clone()],
+                artists: vec![artist_for_track(&retagged)],
+                removed_album_ids: vec![old_album_id.clone()],
+                removed_artist_ids: vec![old_artist_id.clone()],
+                ..LocalComponentReplacement::default()
+            },
+        )
+        .expect("accept retag into existing aggregates")
+        .expect("aggregate retag must change the library");
+
+    assert!(
+        accepted
+            .loaded
+            .album(&existing_album_id)
+            .expect("read existing Album")
+            .expect("existing Album")
+            .favorite
+    );
+    assert!(
+        accepted
+            .loaded
+            .artist(&existing_artist_id)
+            .expect("read existing Artist")
+            .expect("existing Artist")
+            .favorite
+    );
+
+    drop(accepted);
+    drop(library);
+    let connection = rusqlite::Connection::open(path).expect("inspect transferred Local favorites");
+    for (kind, id) in [
+        ("album", old_album_id.as_str()),
+        ("artist", old_artist_id.as_str()),
+    ] {
+        assert_eq!(
+            connection
+                .query_row(
+                    "SELECT COUNT(*)
+                     FROM local_favorites
+                     WHERE source_id = ?1 AND item_kind = ?2 AND item_id = ?3",
+                    rusqlite::params![source_id.as_str(), kind, id],
+                    |row| row.get::<_, i64>(0),
+                )
+                .expect("read dormant Local favorite"),
+            0
+        );
+    }
+    for (kind, id) in [
+        ("album", existing_album_id.as_str()),
+        ("artist", existing_artist_id.as_str()),
+    ] {
+        assert_eq!(
+            connection
+                .query_row(
+                    "SELECT COUNT(*)
+                     FROM local_favorites
+                     WHERE source_id = ?1 AND item_kind = ?2 AND item_id = ?3",
+                    rusqlite::params![source_id.as_str(), kind, id],
+                    |row| row.get::<_, i64>(0),
+                )
+                .expect("read existing Local favorite"),
+            1
+        );
+    }
+}
+
+#[test]
+fn local_album_favorite_stays_dormant_when_tracks_split_between_new_and_existing_albums() {
+    let directory = tempfile::tempdir().expect("temporary Store directory");
+    let path = directory.path().join("library.db");
+    let source_id = SourceId::new("local:server:mixed-album-split");
+    let library = Library::open(&path).expect("open Library");
+    let first = track();
+    let old_album_id = first.album_id.clone().expect("old Album ID");
+    let mut second = first.clone();
+    second.id = library::TrackId::new("local:track:two");
+    second.title = "Second Track".to_string();
+    second.track_number = 2;
+    second.source_path = Some("/music/Artist/Album/Second.flac".to_string());
+
+    let existing_album_id = library::AlbumId::new("local:album:existing");
+    let mut existing = first.clone();
+    existing.id = library::TrackId::new("local:track:existing");
+    existing.album_id = Some(existing_album_id.clone());
+    existing.title = "Existing Track".to_string();
+    existing.album = "Existing Album".to_string();
+    existing.source_path = Some("/music/Artist/Existing/Track.flac".to_string());
+    let accepted = accept_local_tracks(
+        &library,
+        source_id.clone(),
+        vec![first.clone(), second.clone(), existing],
+        Vec::new(),
+        46,
+    );
+    library
+        .accept_favorite(
+            &accepted.loaded,
+            FavoriteAcceptance::RufinOwned {
+                item: FavoriteItemId::Album(old_album_id.clone()),
+                favorite: true,
+            },
+        )
+        .expect("favorite original Local Album");
+
+    let new_album_id = library::AlbumId::new("local:album:new");
+    let mut into_new = first;
+    into_new.album_id = Some(new_album_id.clone());
+    into_new.album = "New Album".to_string();
+    let mut into_existing = second;
+    into_existing.album_id = Some(existing_album_id.clone());
+    into_existing.album = "Existing Album".to_string();
+    library
+        .accept_local_component(
+            &accepted.loaded,
+            LocalComponentReplacement {
+                observed_at: 2,
+                albums: vec![
+                    album_for_track(&into_new, 0),
+                    album_for_track(&into_existing, 0),
+                ],
+                tracks: vec![into_new, into_existing],
+                removed_album_ids: vec![old_album_id.clone()],
+                ..LocalComponentReplacement::default()
+            },
+        )
+        .expect("accept mixed Album split")
+        .expect("mixed Album split must change the library");
+
+    for album_id in [&new_album_id, &existing_album_id] {
+        assert!(
+            !accepted
+                .loaded
+                .album(album_id)
+                .expect("read split Album")
+                .expect("split Album")
+                .favorite
+        );
+    }
+
+    drop(accepted);
+    drop(library);
+    let connection = rusqlite::Connection::open(path).expect("inspect dormant Local favorite");
+    assert_eq!(
+        connection
+            .query_row(
+                "SELECT COUNT(*)
+                 FROM local_favorites
+                 WHERE source_id = ?1 AND item_kind = 'album' AND item_id = ?2",
+                rusqlite::params![source_id.as_str(), old_album_id.as_str()],
+                |row| row.get::<_, i64>(0),
+            )
+            .expect("read dormant Local Album favorite"),
+        1
+    );
+}
+
+#[test]
+fn local_retag_keeps_split_favorites_dormant_and_merges_unique_targets() {
+    let directory = tempfile::tempdir().expect("temporary Store directory");
+    let path = directory.path().join("library.db");
+    let source_id = SourceId::new("local:server:ambiguous-aggregate-retag");
+    let library = Library::open(&path).expect("open Library");
+    let first = track();
+    let mut second = first.clone();
+    second.id = library::TrackId::new("local:track:two");
+    second.title = "Second Track".to_string();
+    second.track_number = 2;
+    second.source_path = Some("/music/Artist/Album/Second.flac".to_string());
+    let old_album_id = first.album_id.clone().expect("old Album ID");
+    let old_artist_id = first.relations.artists[0].id.clone();
+    let accepted = accept_local_tracks(
+        &library,
+        source_id.clone(),
+        vec![first.clone(), second.clone()],
+        Vec::new(),
+        44,
+    );
+    for item in [
+        FavoriteItemId::Album(old_album_id.clone()),
+        FavoriteItemId::Artist(old_artist_id.clone()),
+    ] {
+        library
+            .accept_favorite(
+                &accepted.loaded,
+                FavoriteAcceptance::RufinOwned {
+                    item,
+                    favorite: true,
+                },
+            )
+            .expect("favorite Local aggregate");
+    }
+
+    let first_album_id = library::AlbumId::new("local:album:split-one");
+    let second_album_id = library::AlbumId::new("local:album:split-two");
+    let first_artist_id = library::ArtistId::new("local:artist:split-one");
+    let second_artist_id = library::ArtistId::new("local:artist:split-two");
+    let common_artist_id = library::ArtistId::new("local:artist:split-common");
+    let common_artist = ArtistCredit {
+        id: common_artist_id.clone(),
+        name: "Common Split Artist".to_string(),
+        musicbrainz_artist_id: None,
+    };
+    let mut split_first = first.clone();
+    split_first.album_id = Some(first_album_id.clone());
+    split_first.album = "First Split Album".to_string();
+    split_first.artist = "First Split Artist".to_string();
+    let first_artist = ArtistCredit {
+        id: first_artist_id.clone(),
+        name: split_first.artist.clone(),
+        musicbrainz_artist_id: None,
+    };
+    split_first.relations.artists = vec![first_artist.clone(), common_artist.clone()];
+    split_first.relations.album_artists = vec![first_artist, common_artist.clone()];
+    let mut split_second = second.clone();
+    split_second.album_id = Some(second_album_id.clone());
+    split_second.album = "Second Split Album".to_string();
+    split_second.artist = "Second Split Artist".to_string();
+    let second_artist = ArtistCredit {
+        id: second_artist_id.clone(),
+        name: split_second.artist.clone(),
+        musicbrainz_artist_id: None,
+    };
+    split_second.relations.artists = vec![second_artist.clone(), common_artist.clone()];
+    split_second.relations.album_artists = vec![second_artist, common_artist.clone()];
+    let common_artist_row = Artist {
+        id: common_artist.id,
+        name: common_artist.name,
+        favorite: false,
+        last_played: None,
+        play_count: None,
+        user_rating: None,
+        musicbrainz_artist_id: None,
+        image_ref: None,
+        local_artwork: None,
+    };
+    library
+        .accept_local_component(
+            &accepted.loaded,
+            LocalComponentReplacement {
+                observed_at: 2,
+                albums: vec![
+                    album_for_track(&split_first, 0),
+                    album_for_track(&split_second, 0),
+                ],
+                tracks: vec![split_first.clone(), split_second.clone()],
+                artists: vec![
+                    artist_for_track(&split_first),
+                    artist_for_track(&split_second),
+                    common_artist_row,
+                ],
+                removed_album_ids: vec![old_album_id.clone()],
+                removed_artist_ids: vec![old_artist_id.clone()],
+                ..LocalComponentReplacement::default()
+            },
+        )
+        .expect("accept aggregate split");
+    for album_id in [&first_album_id, &second_album_id] {
+        assert!(
+            !accepted
+                .loaded
+                .album(album_id)
+                .expect("read split Album")
+                .expect("split Album")
+                .favorite
+        );
+    }
+    for artist_id in [&first_artist_id, &second_artist_id] {
+        assert!(
+            !accepted
+                .loaded
+                .artist(artist_id)
+                .expect("read split Artist")
+                .expect("split Artist")
+                .favorite
+        );
+    }
+    assert!(
+        !accepted
+            .loaded
+            .artist(&common_artist_id)
+            .expect("read common split Artist")
+            .expect("common split Artist")
+            .favorite
+    );
+
+    for item in [
+        FavoriteItemId::Album(first_album_id.clone()),
+        FavoriteItemId::Album(second_album_id.clone()),
+        FavoriteItemId::Artist(first_artist_id.clone()),
+        FavoriteItemId::Artist(second_artist_id.clone()),
+    ] {
+        library
+            .accept_favorite(
+                &accepted.loaded,
+                FavoriteAcceptance::RufinOwned {
+                    item,
+                    favorite: true,
+                },
+            )
+            .expect("favorite split aggregate");
+    }
+    let merged_album_id = library::AlbumId::new("local:album:merged");
+    let merged_artist_id = library::ArtistId::new("local:artist:merged");
+    let merged_artist = ArtistCredit {
+        id: merged_artist_id.clone(),
+        name: "Merged Artist".to_string(),
+        musicbrainz_artist_id: None,
+    };
+    let mut merged_first = split_first;
+    merged_first.album_id = Some(merged_album_id.clone());
+    merged_first.album = "Merged Album".to_string();
+    merged_first.artist = "Merged Artist".to_string();
+    merged_first.relations.artists = vec![merged_artist.clone()];
+    merged_first.relations.album_artists = vec![merged_artist.clone()];
+    let mut merged_second = split_second;
+    merged_second.album_id = Some(merged_album_id.clone());
+    merged_second.album = "Merged Album".to_string();
+    merged_second.artist = "Merged Artist".to_string();
+    merged_second.relations.artists = vec![merged_artist.clone()];
+    merged_second.relations.album_artists = vec![merged_artist];
+    let merged_artist_row = artist_for_track(&merged_first);
+    library
+        .accept_local_component(
+            &accepted.loaded,
+            LocalComponentReplacement {
+                observed_at: 3,
+                albums: vec![album_for_track(&merged_first, 0)],
+                tracks: vec![merged_first, merged_second],
+                artists: vec![merged_artist_row],
+                removed_album_ids: vec![first_album_id.clone(), second_album_id.clone()],
+                removed_artist_ids: vec![
+                    first_artist_id.clone(),
+                    second_artist_id.clone(),
+                    common_artist_id,
+                ],
+                ..LocalComponentReplacement::default()
+            },
+        )
+        .expect("accept aggregate merge");
+    assert!(
+        accepted
+            .loaded
+            .album(&merged_album_id)
+            .expect("read merged Album")
+            .expect("merged Album")
+            .favorite
+    );
+    assert!(
+        accepted
+            .loaded
+            .artist(&merged_artist_id)
+            .expect("read merged Artist")
+            .expect("merged Artist")
+            .favorite
+    );
+
+    drop(accepted);
+    drop(library);
+    let connection = rusqlite::Connection::open(path).expect("inspect dormant Local favorites");
+    for (kind, id) in [
+        ("album", old_album_id.as_str()),
+        ("artist", old_artist_id.as_str()),
+    ] {
+        assert_eq!(
+            connection
+                .query_row(
+                    "SELECT COUNT(*)
+                     FROM local_favorites
+                     WHERE source_id = ?1 AND item_kind = ?2 AND item_id = ?3",
+                    rusqlite::params![source_id.as_str(), kind, id],
+                    |row| row.get::<_, i64>(0),
+                )
+                .expect("read dormant split favorite"),
+            1
+        );
+    }
+    for (kind, id) in [
+        ("album", first_album_id.as_str()),
+        ("album", second_album_id.as_str()),
+        ("artist", first_artist_id.as_str()),
+        ("artist", second_artist_id.as_str()),
+    ] {
+        assert_eq!(
+            connection
+                .query_row(
+                    "SELECT COUNT(*)
+                     FROM local_favorites
+                     WHERE source_id = ?1 AND item_kind = ?2 AND item_id = ?3",
+                    rusqlite::params![source_id.as_str(), kind, id],
+                    |row| row.get::<_, i64>(0),
+                )
+                .expect("read transferred Local favorite"),
+            0
+        );
+    }
+    for (kind, id) in [
+        ("album", merged_album_id.as_str()),
+        ("artist", merged_artist_id.as_str()),
+    ] {
+        assert_eq!(
+            connection
+                .query_row(
+                    "SELECT COUNT(*)
+                     FROM local_favorites
+                     WHERE source_id = ?1 AND item_kind = ?2 AND item_id = ?3",
+                    rusqlite::params![source_id.as_str(), kind, id],
+                    |row| row.get::<_, i64>(0),
+                )
+                .expect("read merged Local favorite"),
+            1
+        );
+    }
 }
 
 #[test]

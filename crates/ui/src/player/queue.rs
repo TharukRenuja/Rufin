@@ -5,7 +5,7 @@ use std::time::Duration;
 
 use crate::format_duration;
 use crate::routes::route::Route;
-use ::library::{AcceptedTrackReplacement, RadioSeed, Track, TrackId};
+use ::library::{AcceptedTrackReplacement, MetadataItemId, RadioSeed, Track, TrackId};
 use adw::prelude::*;
 use artwork::ArtworkBinding;
 use gtk::{gio, glib};
@@ -23,10 +23,11 @@ use crate::interactions::{
     radio_context_submenu,
 };
 use crate::layout::width_allocation_owner;
+use crate::preferences::dialogs::metadata::present_metadata_dialog;
 use crate::routes::playlist_picker::{PlaylistTrackSource, install_context_menu_picker_action};
 use crate::settings::ContextMenuItem;
 use crate::shell::Shell;
-use crate::shell::actions::{PLAY_ICON, PLAY_LATER_ICON, PLAY_NEXT_ICON, REMOVE_ICON};
+use crate::shell::actions::{EDIT_ICON, PLAY_ICON, PLAY_LATER_ICON, PLAY_NEXT_ICON, REMOVE_ICON};
 use crate::shell::cover::{ArtworkTile, THUMB_COVER_SIZE};
 use localization::{msgid, tr};
 
@@ -1628,6 +1629,18 @@ fn show_queue_row_context_menu(
     entry: &SequenceEntry,
     pointing_to: Option<gtk::gdk::Rectangle>,
 ) {
+    let metadata_editable =
+        shell.metadata_editing_available(MetadataItemId::Track(entry.track.id.clone()));
+    show_resolved_queue_row_context_menu(row, shell, entry, pointing_to, metadata_editable);
+}
+
+fn show_resolved_queue_row_context_menu(
+    row: &gtk::Widget,
+    shell: &Rc<Shell>,
+    entry: &SequenceEntry,
+    pointing_to: Option<gtk::gdk::Rectangle>,
+    metadata_editable: bool,
+) {
     let track = entry.track.clone();
     let surface = ContextMenuSurface::new(row, "queue", None);
     surface.append_fixed_action(msgid("Remove from Queue"), "remove", REMOVE_ICON);
@@ -1681,6 +1694,14 @@ fn show_queue_row_context_menu(
             FAVORITE_ADD_ICON,
         );
     }
+    if metadata_editable {
+        surface.append_configurable_action(
+            ContextMenuItem::EditMetadata,
+            msgid("Edit metadata"),
+            "edit-metadata",
+            EDIT_ICON,
+        );
+    }
     let artist_route = queue_artist_route(entry);
     if artist_route.is_some() {
         surface.append_configurable_action(
@@ -1720,6 +1741,15 @@ fn show_queue_row_context_menu(
             remove_controller.remove(remove_id.clone());
         }
     });
+    if metadata_editable {
+        surface.add_action("edit-metadata", {
+            let shell = Rc::clone(shell);
+            let track = track.clone();
+            move || {
+                present_metadata_dialog(&shell, MetadataItemId::Track(track.id.clone()));
+            }
+        });
+    }
 
     surface.add_action("play-now", {
         let play_now_controller = controller.clone();

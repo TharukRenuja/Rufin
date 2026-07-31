@@ -3,8 +3,51 @@ use std::path::{Path, PathBuf};
 
 use library::{
     CandidateBatch, CandidateFinish, CandidateHeader, HomeFacts, Library, LocalAccessFile,
-    LocalAccessMapping, PlayableFile, SourceId, Track, TrackData, TrackId, TrackRelations,
+    LocalAccessMapping, MetadataError, MetadataItemId, PlayableFile, SourceId, Track, TrackData,
+    TrackId, TrackRelations, project_local_access_path, reported_path_is_absolute,
 };
+
+#[test]
+fn local_access_projection_uses_the_reported_server_path() {
+    let root = PathBuf::from("/portal/library");
+    let absolute = LocalAccessMapping {
+        root_path: root.clone(),
+        server_prefix: Some("/srv/navidrome/audio".to_string()),
+        local_prefix: None,
+    };
+    assert_eq!(
+        project_local_access_path("/srv/navidrome/audio/Artist/Album/Track.flac", &absolute,),
+        Some(root.join("Artist/Album/Track.flac"))
+    );
+
+    let relative = LocalAccessMapping {
+        root_path: root.clone(),
+        server_prefix: None,
+        local_prefix: None,
+    };
+    assert_eq!(
+        project_local_access_path("Artist/Album/Track.flac", &relative),
+        Some(root.join("Artist/Album/Track.flac"))
+    );
+    assert_eq!(
+        project_local_access_path("/music/Artist/Album/Track.flac", &absolute),
+        None
+    );
+    let server_root = LocalAccessMapping {
+        root_path: root.clone(),
+        server_prefix: Some("/".to_string()),
+        local_prefix: None,
+    };
+    assert_eq!(
+        project_local_access_path("/Artist/Album/Track.flac", &server_root),
+        Some(root.join("Artist/Album/Track.flac"))
+    );
+    assert!(reported_path_is_absolute(r"D:\Music\Artist\Track.flac"));
+    assert!(reported_path_is_absolute(
+        r"\\server\Music\Artist\Track.flac"
+    ));
+    assert!(reported_path_is_absolute("/srv/music/Artist/Track.flac"));
+}
 
 #[test]
 fn local_access_preserves_full_filesystem_identities() {
@@ -135,6 +178,21 @@ fn accepted_local_access_maps_tracks_and_reopens() {
         assert_playable(&loaded, "direct", &direct_path);
         assert_playable(&loaded, "prefix", &prefix_path);
         assert_playable(&loaded, "metadata", &metadata_path);
+        assert_eq!(
+            metadata_target(&loaded, "direct").expect("accepted direct metadata target"),
+            direct_path
+        );
+        assert_eq!(
+            metadata_target(&loaded, "prefix").expect("accepted prefix metadata target"),
+            prefix_path
+        );
+        assert_eq!(
+            metadata_target(&loaded, "metadata")
+                .expect_err("metadata-only playback matching cannot select a mutation target"),
+            MetadataError::LocalAccessRequired {
+                source_path: "/server/unknown/Metadata.flac".to_string(),
+            }
+        );
     }
 
     let library = Library::open(&store_path).expect("reopen Library");
@@ -158,12 +216,118 @@ fn accepted_local_access_maps_tracks_and_reopens() {
     assert_playable(&loaded, "direct", &direct_path);
     assert_playable(&loaded, "prefix", &prefix_path);
     assert_playable(&loaded, "metadata", &metadata_path);
+    assert_eq!(
+        metadata_target(&loaded, "prefix").expect("configured reopened prefix target"),
+        prefix_path
+    );
+    assert_eq!(
+        metadata_target(&loaded, "metadata")
+            .expect_err("reopened metadata-only match cannot select a mutation target"),
+        MetadataError::LocalAccessRequired {
+            source_path: "/server/unknown/Metadata.flac".to_string(),
+        }
+    );
 
     let status = library
         .clear_local_access(&loaded)
         .expect("clear local access");
     assert_eq!(status.unmatched_count, 3);
     assert!(loaded.local_access_files().expect("read files").is_empty());
+}
+
+#[test]
+fn proposed_metadata_access_projects_the_exact_file_without_scanning_the_root() {
+    let directory = tempfile::tempdir().expect("temporary Store directory");
+    let root = tempfile::tempdir().expect("proposed local access root");
+    let local_path = root.path().join("Artist/Track.flac");
+    std::fs::create_dir_all(local_path.parent().expect("Track parent"))
+        .expect("create Track parent");
+    std::fs::write(&local_path, []).expect("write proposed Track");
+    let reported_path = "/server/music/Artist/Track.flac";
+    let mut cue = track(
+        "cue",
+        "Cue",
+        "Album",
+        "Artist",
+        Some(reported_path.to_string()),
+    );
+    cue.make_mut().cue = Some(library::CueSegment {
+        cue_path: "/server/music/Album.cue".to_string(),
+        start_millis: 0,
+        end_millis: 1,
+    });
+    let library =
+        Library::open(directory.path().join("library.db")).expect("open temporary Library");
+    let loaded = accept_tracks(
+        &library,
+        SourceId::new("opensubsonic:server:metadata-proposal"),
+        vec![
+            track(
+                "proposed",
+                "Track",
+                "Album",
+                "Artist",
+                Some(reported_path.to_string()),
+            ),
+            track("absent", "Absent", "Album", "Artist", None),
+            cue,
+        ],
+    );
+    let mapping = LocalAccessMapping {
+        root_path: root.path().to_path_buf(),
+        server_prefix: Some("/server/music".to_string()),
+        local_prefix: None,
+    };
+    assert_eq!(
+        metadata_target(&loaded, "proposed").expect_err("accepted mapping is still absent"),
+        MetadataError::LocalAccessRequired {
+            source_path: reported_path.to_string(),
+        }
+    );
+    let (_, targets) = loaded
+        .metadata_subject_with_local_access(
+            &MetadataItemId::Track(TrackId::new("track:proposed")),
+            Some(&mapping),
+        )
+        .expect("resolve proposed mapping")
+        .expect("proposed metadata Track");
+    assert_eq!(targets[0].path(), local_path);
+    assert!(
+        loaded
+            .local_access_files()
+            .expect("read accepted mapping")
+            .is_empty(),
+        "validating a proposal must not accept it"
+    );
+
+    for (id, source_path) in [("absent", ""), ("cue", reported_path)] {
+        assert_eq!(
+            loaded
+                .metadata_subject_with_local_access(
+                    &MetadataItemId::Track(TrackId::new(format!("track:{id}"))),
+                    Some(&mapping),
+                )
+                .expect_err("non-exact metadata target rejected"),
+            MetadataError::LocalAccessRequired {
+                source_path: source_path.to_string(),
+            }
+        );
+    }
+    let wrong_prefix = LocalAccessMapping {
+        server_prefix: Some("/another/library".to_string()),
+        ..mapping
+    };
+    assert_eq!(
+        loaded
+            .metadata_subject_with_local_access(
+                &MetadataItemId::Track(TrackId::new("track:proposed")),
+                Some(&wrong_prefix),
+            )
+            .expect_err("a source path outside the configured prefix is rejected"),
+        MetadataError::LocalAccessRequired {
+            source_path: reported_path.to_string(),
+        }
+    );
 }
 
 #[test]
@@ -408,4 +572,21 @@ fn assert_playable(loaded: &library::LoadedLibrary, id: &str, expected: &PathBuf
             path: expected.clone()
         }
     );
+}
+
+fn metadata_target(
+    loaded: &std::sync::Arc<library::LoadedLibrary>,
+    id: &str,
+) -> Result<PathBuf, MetadataError> {
+    let (_, targets) = loaded
+        .metadata_subject_with_local_access(
+            &MetadataItemId::Track(TrackId::new(format!("track:{id}"))),
+            None,
+        )?
+        .ok_or(MetadataError::Unavailable)?;
+    targets
+        .into_iter()
+        .next()
+        .map(|target| target.path().to_path_buf())
+        .ok_or(MetadataError::Unavailable)
 }

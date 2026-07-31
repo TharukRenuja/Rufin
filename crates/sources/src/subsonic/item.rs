@@ -51,7 +51,7 @@ fn genre_credits_from_item(
         })
         .collect()
 }
-fn moods_from_item(source: &SubsonicSource, moods: Vec<String>) -> Vec<MoodCredit> {
+pub(super) fn moods_from_item(source: &SubsonicSource, moods: Vec<String>) -> Vec<MoodCredit> {
     let mut values = Vec::new();
     for mood in moods {
         let mood = mood.trim();
@@ -96,7 +96,7 @@ fn artist_credits_from_refs(
         .collect()
 }
 
-fn joined_artist_names(artists: &[ArtistCredit]) -> Option<String> {
+pub(super) fn joined_artist_names(artists: &[ArtistCredit]) -> Option<String> {
     let names = artists
         .iter()
         .map(|artist| artist.name.trim())

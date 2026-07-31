@@ -7,7 +7,7 @@ use crate::runtime::source::{
     SourceProgressStage, SourceSummary,
 };
 
-mod field_layout;
+pub(crate) mod field_layout;
 pub(super) mod local_access;
 pub(crate) mod login;
 pub(crate) mod selector;

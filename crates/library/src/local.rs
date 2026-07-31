@@ -194,7 +194,7 @@ impl Library {
         if files.is_empty() && removed_paths.is_empty() && replacement.is_empty() {
             return Ok(None);
         }
-        let favorite_targets = loaded.local_favorite_targets(&replacement)?;
+        let favorite_update = loaded.local_favorite_update(&replacement)?;
         let stored = self.store.replace_local_component(
             loaded.source_id().clone(),
             loaded.library_id(),
@@ -202,7 +202,7 @@ impl Library {
             files,
             removed_paths,
             replacement,
-            favorite_targets,
+            favorite_update,
         )?;
         let accepted = loaded.replace_local_component(
             stored.files,

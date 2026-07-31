@@ -10,6 +10,7 @@ pub enum ContextMenuItem {
     PlayRadio,
     AddToPlaylist,
     Favorites,
+    EditMetadata,
     Pins,
     GoToArtist,
     GoToAlbum,
@@ -17,7 +18,7 @@ pub enum ContextMenuItem {
 }
 
 impl ContextMenuItem {
-    pub const fn all() -> [Self; 10] {
+    pub const fn all() -> [Self; 11] {
         [
             Self::Play,
             Self::PlayNext,
@@ -25,6 +26,7 @@ impl ContextMenuItem {
             Self::PlayRadio,
             Self::AddToPlaylist,
             Self::Favorites,
+            Self::EditMetadata,
             Self::Pins,
             Self::GoToArtist,
             Self::GoToAlbum,

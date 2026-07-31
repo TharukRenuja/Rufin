@@ -54,7 +54,7 @@ pub(crate) fn run_selected_album_release_lookup(
             library::AlbumReleaseIdentity::ReleaseGroup(id) => (Some(id.as_str()), None),
             library::AlbumReleaseIdentity::Release(id) => (None, Some(id.as_str())),
         };
-        let result = match album_lookup::lookup_album_release(release_group_id, release_id) {
+        let result = match metadata_lookup::lookup_album_release(release_group_id, release_id) {
             Ok(Some(metadata)) => {
                 found += 1;
                 AlbumReleaseResult::Found {
@@ -113,5 +113,5 @@ pub(crate) fn run_selected_album_release_lookup(
 }
 
 fn lookup_allowed(settings: &SettingsFile, cancelled: &AtomicBool) -> bool {
-    !cancelled.load(Ordering::Acquire) && settings.load().ui.allows_external_album_lookup()
+    !cancelled.load(Ordering::Acquire) && settings.load().ui.allows_external_metadata_lookup()
 }

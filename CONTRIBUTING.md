@@ -33,7 +33,7 @@ Rufin's crates try to follow a product ownership model. The goal is to separate 
 
 | Crate | What it is for |
 | :--- | :--- |
-| `album-lookup` | external album release and cover lookups |
+| `metadata-lookup` | external metadata and artwork lookups |
 | `artwork` | artwork selection, loading, and caching |
 | `desktop-integration` | MPRIS, notifications, the tray, and Discord RPC |
 | `downloads` | server track downloads and download management |

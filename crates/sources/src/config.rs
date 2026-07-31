@@ -95,6 +95,13 @@ pub enum EditableSource {
     },
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum SourceCacheMatch {
+    Exact,
+    ReaderUpgrade,
+    Incompatible,
+}
+
 impl SourceConfiguration {
     pub fn playlist_tracks_can_repeat(&self) -> bool {
         self.kind != crate::jellyfin::JELLYFIN_SOURCE_ID
@@ -124,6 +131,33 @@ impl SourceConfiguration {
     /// Credentials and presentation settings do not participate, so Rufin can
     /// validate an existing cache even when live source access is unavailable.
     pub fn input_identity(&self) -> SourceResult<SourceInputIdentity> {
+        self.input_identity_with_navidrome_library_version(None)
+    }
+
+    /// Classify an accepted cache against this source's current fact reader.
+    ///
+    /// The only compatible mismatch is the released generic Navidrome reader
+    /// being upgraded to Navidrome's native library reader. Rufin may show
+    /// those already-observed facts while it performs an authoritative refresh.
+    pub fn cache_match(&self, cached: &SourceInputIdentity) -> SourceResult<SourceCacheMatch> {
+        if cached == &self.input_identity()? {
+            return Ok(SourceCacheMatch::Exact);
+        }
+        if self.kind == "navidrome" {
+            let config = crate::subsonic::SubsonicSourceConfig::from_configuration(self)?;
+            if config.navidrome_library_version > 0
+                && cached == &self.input_identity_with_navidrome_library_version(Some(0))?
+            {
+                return Ok(SourceCacheMatch::ReaderUpgrade);
+            }
+        }
+        Ok(SourceCacheMatch::Incompatible)
+    }
+
+    fn input_identity_with_navidrome_library_version(
+        &self,
+        navidrome_library_version: Option<u32>,
+    ) -> SourceResult<SourceInputIdentity> {
         let mut digest = blake3::Hasher::new();
         digest.update(b"rufin-source-input");
         digest.update(&SOURCE_FACTS_VERSION.to_le_bytes());
@@ -142,6 +176,12 @@ impl SourceConfiguration {
             "navidrome" | "subsonic" => {
                 let config = crate::subsonic::SubsonicSourceConfig::from_configuration(self)?;
                 digest_part(&mut digest, config.username.as_bytes());
+                let library_version =
+                    navidrome_library_version.unwrap_or(config.navidrome_library_version);
+                if library_version > 0 {
+                    digest_part(&mut digest, b"navidrome-library");
+                    digest.update(&library_version.to_le_bytes());
+                }
             }
             kind => {
                 return Err(SourceError::InvalidConfig(format!(

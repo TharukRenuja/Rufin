@@ -13,6 +13,7 @@ fn account(base_url: &str, username: &str) -> SubsonicSourceConfig {
         base_url: base_url.to_string(),
         username: username.to_string(),
         trust_invalid_cert: false,
+        navidrome_library_version: 0,
     }
 }
 
@@ -35,6 +36,52 @@ fn account_identity_normalizes_rest_endpoint_without_merging_users_or_servers() 
     );
 }
 
+#[test]
+fn released_navidrome_configuration_keeps_the_generic_library_reader() {
+    let configuration = SourceConfiguration {
+        source_id: SourceId::new("navidrome:server:released"),
+        kind: SubsonicFlavor::Navidrome.source_id().to_string(),
+        name: "Navidrome".to_string(),
+        provider_payload: serde_json::json!({
+            "version": 1,
+            "base_url": "https://music.example",
+            "username": "listener",
+            "trust_invalid_cert": false,
+        })
+        .to_string(),
+    };
+
+    assert_eq!(
+        SubsonicSourceConfig::from_configuration(&configuration)
+            .expect("released Navidrome configuration")
+            .navidrome_library_version,
+        0
+    );
+}
+
+#[test]
+fn saved_credentials_keep_legacy_subsonic_and_version_navidrome_passwords() {
+    let legacy =
+        SubsonicCredential::parse("fixed-salt:fixed-token").expect("released Subsonic credential");
+    assert_eq!(legacy.salt, "fixed-salt");
+    assert_eq!(legacy.token, "fixed-token");
+    assert_eq!(legacy.navidrome_password(), None);
+
+    let generic = SubsonicCredential::from_password("generic-secret");
+    assert!(!generic.serialize().contains("generic-secret"));
+
+    let navidrome = SubsonicCredential::from_navidrome_password("secret");
+    let serialized = navidrome.serialize();
+    let reopened = SubsonicCredential::parse(&serialized).expect("versioned Navidrome credential");
+    assert_eq!(reopened.salt, navidrome.salt);
+    assert_eq!(reopened.token, navidrome.token);
+    assert_eq!(reopened.navidrome_password(), Some("secret"));
+
+    let unsupported = SubsonicCredential::parse(r#"{"version":2,"salt":"salt","token":"token"}"#)
+        .expect_err("unknown credential versions must fail");
+    assert!(unsupported.to_string().contains("version 2"));
+}
+
 fn provider(server: &MockServer) -> SubsonicSource {
     let configuration = crate::config::encode_provider_payload(
         SourceId::new("subsonic:server:test"),
@@ -44,11 +91,29 @@ fn provider(server: &MockServer) -> SubsonicSource {
             base_url: server.uri(),
             username: "listener".to_string(),
             trust_invalid_cert: false,
+            navidrome_library_version: 0,
         }
         .into_payload(),
     );
     open(&configuration, Some("fixed-salt:fixed-token".to_string()))
         .expect("open OpenSubsonic provider")
+}
+
+fn navidrome_provider(server: &MockServer) -> SubsonicSource {
+    let configuration = crate::config::encode_provider_payload(
+        SourceId::new("navidrome:server:test"),
+        SubsonicFlavor::Navidrome.source_id(),
+        "Navidrome",
+        SubsonicSourceConfig {
+            base_url: server.uri(),
+            username: "listener".to_string(),
+            trust_invalid_cert: false,
+            navidrome_library_version: NAVIDROME_LIBRARY_VERSION,
+        }
+        .into_payload(),
+    );
+    let credential = SubsonicCredential::from_navidrome_password("password").serialize();
+    open(&configuration, Some(credential)).expect("open Navidrome provider")
 }
 
 fn saved_configuration(
@@ -64,6 +129,7 @@ fn saved_configuration(
             base_url: server.uri(),
             username: "Listener".to_string(),
             trust_invalid_cert,
+            navidrome_library_version: 0,
         }
         .into_payload(),
     )
@@ -82,6 +148,234 @@ fn settings_input(
         password: password.to_string(),
         trust_invalid_cert,
     }
+}
+
+#[tokio::test]
+async fn get_song_keeps_the_reported_absolute_path() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/rest/getSong.view"))
+        .and(query_param("id", "track-with-real-path"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(envelope(serde_json::json!({
+                "song": {
+                    "id": "track-with-real-path",
+                    "title": "Track",
+                    "album": "Album",
+                    "artist": "Artist",
+                    "path": "/music/Artist/Album/Track.flac"
+                }
+            }))),
+        )
+        .expect(1)
+        .mount(&server)
+        .await;
+    let source = provider(&server);
+    let track = source
+        .read_track(&TrackId::new(source.id("track", "track-with-real-path")))
+        .await
+        .expect("read OpenSubsonic track");
+
+    assert_eq!(
+        track.source_path.as_deref(),
+        Some("/music/Artist/Album/Track.flac")
+    );
+}
+
+#[tokio::test]
+async fn navidrome_acquisition_uses_real_file_paths_and_richer_metadata() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/auth/login"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "token": "native-token"
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/api/album"))
+        .and(query_param("_start", "0"))
+        .and(query_param("_end", "1000"))
+        .and(query_param("_sort", "id"))
+        .and(query_param("_order", "ASC"))
+        .and(query_param("missing", "false"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(serde_json::json!([{
+                "id": "album-one",
+                "name": "Album",
+                "updatedAt": "2025-04-04T12:00:00Z"
+            }])),
+        )
+        .expect(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/api/song"))
+        .and(query_param("_start", "0"))
+        .and(query_param("_end", "1000"))
+        .and(query_param("_sort", "id"))
+        .and(query_param("_order", "ASC"))
+        .and(query_param("missing", "false"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(serde_json::json!([{
+                "id": "track-two",
+                "title": "Second",
+                "artist": "Artist",
+                "artistId": "artist-one",
+                "album": "Album",
+                "albumId": "album-one",
+                "albumArtist": "Album Artist",
+                "albumArtistId": "album-artist-one",
+                "libraryId": 7,
+                "libraryPath": "/music",
+                "path": "Artist/Album/02 Second.flac",
+                "suffix": "flac",
+                "releaseDate": "2025-04-03",
+                "comment": "Native comment",
+                "bpm": 128,
+                "mbzRecordingID": "11111111-1111-1111-1111-111111111111",
+                "mbzReleaseTrackId": "22222222-2222-2222-2222-222222222222",
+                "mbzArtistId": "33333333-3333-3333-3333-333333333333",
+                "mbzAlbumArtistId": "44444444-4444-4444-4444-444444444444",
+                "participants": {
+                    "artist": [{
+                        "id": "artist-one",
+                        "name": "Artist",
+                        "mbzArtistId": "33333333-3333-3333-3333-333333333333"
+                    }, {
+                        "id": "guest-one",
+                        "name": "Guest"
+                    }],
+                    "albumartist": [{
+                        "id": "album-artist-one",
+                        "name": "Album Artist",
+                        "mbzArtistId": "44444444-4444-4444-4444-444444444444"
+                    }]
+                },
+                "tags": {
+                    "mood": ["Bright", "Calm"]
+                }
+            }, {
+                "id": "track-one",
+                "title": "First",
+                "artist": "Artist",
+                "album": "Album",
+                "libraryPath": "/music",
+                "path": "Artist/Album/01 First.flac"
+            }])),
+        )
+        .expect(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/api/artist"))
+        .and(query_param("_start", "0"))
+        .and(query_param("_end", "1000"))
+        .and(query_param("_sort", "id"))
+        .and(query_param("_order", "ASC"))
+        .and(query_param("missing", "false"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([])))
+        .expect(1)
+        .mount(&server)
+        .await;
+    let source = navidrome_provider(&server);
+    let mut batches = Vec::new();
+    let mut accept = |batch| {
+        batches.push(batch);
+        true
+    };
+    let mut emitter = BatchEmitter::new(&mut accept);
+    let progress = |_: SourceReadProgress| {};
+
+    source
+        .emit_navidrome_library(&mut emitter, &progress, &|| false)
+        .await
+        .expect("Navidrome library supplement");
+    drop(emitter);
+    let tracks = batches
+        .into_iter()
+        .find_map(|batch| match batch {
+            CandidateBatch::Tracks(tracks) => Some(tracks),
+            _ => None,
+        })
+        .expect("track batch");
+
+    assert_eq!(tracks[0].id.as_str(), "navidrome:track:track-two");
+    assert_eq!(
+        tracks[0].source_path.as_deref(),
+        Some("/music/Artist/Album/02 Second.flac")
+    );
+    assert_eq!(tracks[0].release_date.as_deref(), Some("2025-04-03"));
+    assert_eq!(tracks[0].comment.as_deref(), Some("Native comment"));
+    assert_eq!(tracks[0].bpm, Some(128));
+    assert_eq!(
+        tracks[0].musicbrainz_recording_id.as_deref(),
+        Some("11111111-1111-1111-1111-111111111111")
+    );
+    assert_eq!(
+        tracks[0].relations.artists[0]
+            .musicbrainz_artist_id
+            .as_deref(),
+        Some("33333333-3333-3333-3333-333333333333")
+    );
+    assert_eq!(
+        tracks[0]
+            .relations
+            .artists
+            .iter()
+            .map(|artist| artist.name.as_str())
+            .collect::<Vec<_>>(),
+        ["Artist", "Guest"]
+    );
+    assert_eq!(
+        tracks[0]
+            .relations
+            .moods
+            .iter()
+            .map(|mood| mood.name.as_str())
+            .collect::<Vec<_>>(),
+        ["Bright", "Calm"]
+    );
+    assert_eq!(
+        tracks[0].relations.music_folders[0].as_str(),
+        "navidrome:music-folder:7"
+    );
+    assert_eq!(
+        tracks[0]
+            .image_ref
+            .as_ref()
+            .map(|image| (image.item_id.as_str(), image.tag.as_deref())),
+        Some((
+            "navidrome:cover:al-album-one_0",
+            Some("2025-04-04T12:00:00Z")
+        ))
+    );
+
+    let generic: SubsonicSong = serde_json::from_value(serde_json::json!({
+        "id": "track-two",
+        "title": "Second",
+        "artist": "Artist",
+        "album": "Album",
+        "path": "generated/02 - Second.flac"
+    }))
+    .expect("generic Navidrome track");
+    assert_eq!(
+        track_from_dto(&source, generic).source_path.as_deref(),
+        Some("generated/02 - Second.flac")
+    );
+    let unmatched: SubsonicSong = serde_json::from_value(serde_json::json!({
+        "id": "unmatched",
+        "title": "Unmatched",
+        "artist": "Artist",
+        "album": "Album",
+        "path": "generated/Unmatched.flac"
+    }))
+    .expect("unmatched generic track");
+    assert_eq!(
+        track_from_dto(&source, unmatched).source_path.as_deref(),
+        Some("generated/Unmatched.flac")
+    );
 }
 
 #[tokio::test]
@@ -266,6 +560,117 @@ fn envelope(body: serde_json::Value) -> serde_json::Value {
 }
 
 #[tokio::test]
+async fn metadata_editing_requires_a_confirmed_admin_account() {
+    for (admin, expected) in [(true, true), (false, false)] {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/rest/getUser.view"))
+            .and(query_param("username", "listener"))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(envelope(serde_json::json!({
+                    "user": {
+                        "username": "listener",
+                        "adminRole": admin
+                    }
+                }))),
+            )
+            .expect(1)
+            .mount(&server)
+            .await;
+        let source = provider(&server);
+        assert!(!source.metadata_editing_available());
+
+        source.refresh_metadata_editing().await;
+
+        assert_eq!(source.metadata_editing_available(), expected);
+    }
+}
+
+#[tokio::test]
+async fn metadata_scan_uses_standard_parameterless_start_and_waits_for_completion() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/rest/startScan.view"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(envelope(serde_json::json!({
+                "scanStatus": {"scanning": true}
+            }))),
+        )
+        .expect(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/rest/getScanStatus.view"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(envelope(serde_json::json!({
+                "scanStatus": {"scanning": false}
+            }))),
+        )
+        .expect(1)
+        .mount(&server)
+        .await;
+    let source = provider(&server);
+
+    source
+        .start_metadata_scan_for_test(1)
+        .await
+        .expect("completed metadata scan");
+
+    let requests = server.received_requests().await.expect("recorded requests");
+    let start = requests
+        .iter()
+        .find(|request| request.url.path() == "/rest/startScan.view")
+        .expect("startScan request");
+    let parameters = start
+        .url
+        .query_pairs()
+        .map(|(name, _)| name.into_owned())
+        .collect::<Vec<_>>();
+    assert!(!parameters.iter().any(|name| name == "target"));
+    assert!(!parameters.iter().any(|name| name == "fullScan"));
+}
+
+#[tokio::test]
+async fn metadata_scan_rejects_busy_and_final_error_states() {
+    let busy_server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/rest/getScanStatus.view"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(envelope(serde_json::json!({
+                "scanStatus": {"scanning": true}
+            }))),
+        )
+        .expect(1)
+        .mount(&busy_server)
+        .await;
+    let busy = provider(&busy_server)
+        .require_metadata_scan_idle()
+        .await
+        .expect_err("busy scan must reject metadata editing");
+    assert!(busy.to_string().contains("already scanning"));
+
+    let failed_server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/rest/startScan.view"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(envelope(serde_json::json!({
+                "scanStatus": {
+                    "scanning": false,
+                    "error": "permission denied"
+                }
+            }))),
+        )
+        .expect(1)
+        .mount(&failed_server)
+        .await;
+    let failed = provider(&failed_server)
+        .start_metadata_scan_for_test(0)
+        .await
+        .expect_err("final scan error must reject refresh");
+    assert!(failed.to_string().contains("permission denied"));
+}
+
+#[tokio::test]
 async fn qualified_play_reports_the_original_start_time() {
     let server = MockServer::start().await;
     Mock::given(method("GET"))
@@ -395,15 +800,17 @@ async fn identity_normalizes_rest_url_and_uses_the_canonical_user() {
             .expect("OpenSubsonic configuration");
         assert_eq!(config.username, "Canonical Listener");
         assert_eq!(config.base_url, server.uri());
+        assert_eq!(config.navidrome_library_version, NAVIDROME_LIBRARY_VERSION);
         ids.push(configuration.source_id.clone());
 
         assert_eq!(source.source_id(), &configuration.source_id);
-        assert!(
-            !credential
-                .as_deref()
-                .expect("saved OpenSubsonic credential")
-                .contains("secret")
-        );
+        let saved = credential
+            .as_deref()
+            .map(SubsonicCredential::parse)
+            .transpose()
+            .expect("parse saved Navidrome credential")
+            .expect("saved Navidrome credential");
+        assert_eq!(saved.navidrome_password(), Some("secret"));
         open(&configuration, credential).expect("reopen OpenSubsonic provider");
     }
 
@@ -456,6 +863,7 @@ async fn password_backed_same_account_edit_keeps_the_configured_opensubsonic_sou
         .mount(&server)
         .await;
     let current = saved_configuration(&server, "Before", false);
+    let current_identity = current.input_identity().expect("legacy Navidrome identity");
     let input = settings_input(&server, "After", "new-password", false);
 
     let SourceEditResult::SameAccount(connected) = edit(
@@ -472,6 +880,41 @@ async fn password_backed_same_account_edit_keeps_the_configured_opensubsonic_sou
     assert_eq!(configuration.source_id, current.source_id);
     assert_eq!(source.source_id(), &configuration.source_id);
     assert_ne!(credential.as_deref(), Some("old-salt:old-token"));
+    assert_eq!(
+        SubsonicSourceConfig::from_configuration(&configuration)
+            .expect("upgraded Navidrome configuration")
+            .navidrome_library_version,
+        NAVIDROME_LIBRARY_VERSION
+    );
+    assert_ne!(
+        configuration
+            .input_identity()
+            .expect("full Navidrome identity"),
+        current_identity
+    );
+}
+
+#[test]
+fn full_navidrome_library_requires_the_saved_password() {
+    let configuration = crate::config::encode_provider_payload(
+        SourceId::new("navidrome:server:test"),
+        SubsonicFlavor::Navidrome.source_id(),
+        "Navidrome",
+        SubsonicSourceConfig {
+            base_url: "https://music.example".to_string(),
+            username: "listener".to_string(),
+            trust_invalid_cert: false,
+            navidrome_library_version: NAVIDROME_LIBRARY_VERSION,
+        }
+        .into_payload(),
+    );
+
+    let error = match open(&configuration, Some("legacy-salt:legacy-token".to_string())) {
+        Ok(_) => panic!("the full Navidrome reader needs the saved password"),
+        Err(error) => error,
+    };
+
+    assert!(error.to_string().contains("needs the server password"));
 }
 
 #[tokio::test]
@@ -768,6 +1211,7 @@ async fn stream_description_keeps_auth_for_playback_and_redacts_it_for_logs() {
             base_url: server.uri(),
             username: "listener".to_string(),
             trust_invalid_cert: true,
+            navidrome_library_version: 0,
         }
         .into_payload(),
     );

@@ -92,8 +92,8 @@ fn latest_slot<T>() -> (LatestSender<T>, LatestReceiver<T>) {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct ArtworkKey {
-    album: album_lookup::AlbumCover,
-    policy: album_lookup::AlbumCoverPolicy,
+    album: metadata_lookup::AlbumCover,
+    policy: metadata_lookup::AlbumCoverPolicy,
 }
 
 pub(crate) struct ArtworkRequest {
@@ -392,13 +392,13 @@ impl ArtworkKey {
             LinkType::MusicBrainz | LinkType::MusicBrainzLastFm
         );
         Some(Self {
-            album: album_lookup::AlbumCover::new(
+            album: metadata_lookup::AlbumCover::new(
                 &track.artist,
                 &track.album,
                 musicbrainz_release_group_id.as_deref(),
                 musicbrainz_album_id.as_deref(),
             )?,
-            policy: album_lookup::AlbumCoverPolicy::new(lastfm_api_key, allow_musicbrainz),
+            policy: metadata_lookup::AlbumCoverPolicy::new(lastfm_api_key, allow_musicbrainz),
         })
     }
 }
@@ -477,7 +477,7 @@ pub(crate) mod tests {
             .unwrap_or_else(|| panic!("stale completion must not discard newer artwork"));
         assert_eq!(
             second.key.album,
-            album_lookup::AlbumCover::new("Artist", "Album Two", None, None)
+            metadata_lookup::AlbumCover::new("Artist", "Album Two", None, None)
                 .expect("album cover input")
         );
 
@@ -622,7 +622,7 @@ pub(crate) mod tests {
             .unwrap_or_else(|| panic!("album should request artwork"));
         assert_eq!(
             first.key.album,
-            album_lookup::AlbumCover::new(
+            metadata_lookup::AlbumCover::new(
                 "Artist",
                 "Album",
                 Some("release-group-id"),

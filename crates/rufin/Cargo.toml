@@ -18,7 +18,7 @@ name = "rufin"
 path = "src/main.rs"
 
 [dependencies]
-album-lookup.workspace = true
+metadata-lookup.workspace = true
 async-channel.workspace = true
 artwork.workspace = true
 directories.workspace = true

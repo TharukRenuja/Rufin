@@ -36,13 +36,13 @@ impl Shell {
         self.render_lyrics_panel();
     }
 
-    pub(super) fn set_external_album_lookup_enabled(self: &Rc<Self>, enabled: bool) {
+    pub(super) fn set_external_metadata_enabled(self: &Rc<Self>, enabled: bool) {
         if self
             .update_app_settings("metadata setting", |settings| {
-                if settings.external_album_lookup_enabled == enabled {
+                if settings.external_metadata_enabled == enabled {
                     return false;
                 }
-                settings.external_album_lookup_enabled = enabled;
+                settings.external_metadata_enabled = enabled;
                 true
             })
             .is_none()

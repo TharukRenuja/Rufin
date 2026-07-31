@@ -3,7 +3,7 @@ use super::*;
 use crate::remote_http::{self, BodyLimit, RemoteHttpPolicy, RemoteTimeouts};
 use crate::source::RemotePlaylistSource;
 use serde::{
-    Deserialize,
+    Deserialize, Serialize,
     de::{self, DeserializeOwned, Visitor},
 };
 use std::fmt;
@@ -575,19 +575,72 @@ impl SubsonicSource {
         }
     }
 }
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub(super) struct SubsonicCredential {
     pub(super) salt: String,
     pub(super) token: String,
+    navidrome_password: Option<String>,
+}
+
+#[derive(Deserialize, Serialize)]
+struct StoredSubsonicCredential {
+    version: u32,
+    salt: String,
+    token: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    navidrome_password: Option<String>,
+}
+
+impl fmt::Debug for SubsonicCredential {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("SubsonicCredential")
+            .field("salt", &"<redacted>")
+            .field("token", &"<redacted>")
+            .field(
+                "navidrome_password",
+                &self.navidrome_password.as_ref().map(|_| "<redacted>"),
+            )
+            .finish()
+    }
 }
 impl SubsonicCredential {
     pub(super) fn from_password(password: &str) -> Self {
         let salt = random_salt();
         let token = format!("{:x}", md5::compute(format!("{password}{salt}")));
-        Self { salt, token }
+        Self {
+            salt,
+            token,
+            navidrome_password: None,
+        }
+    }
+
+    pub(super) fn from_navidrome_password(password: &str) -> Self {
+        let mut credential = Self::from_password(password);
+        credential.navidrome_password = Some(password.to_string());
+        credential
     }
 
     pub(super) fn parse(raw: &str) -> SourceResult<Self> {
+        if raw.trim_start().starts_with('{') {
+            let stored =
+                serde_json::from_str::<StoredSubsonicCredential>(raw).map_err(|error| {
+                    SourceError::Other(format!("saved Subsonic credential is invalid: {error}"))
+                })?;
+            if stored.version != 1 {
+                return Err(SourceError::Other(format!(
+                    "saved Subsonic credential version {} is not supported",
+                    stored.version
+                )));
+            }
+            let credential = Self {
+                salt: stored.salt,
+                token: stored.token,
+                navidrome_password: stored.navidrome_password,
+            };
+            credential.validate()?;
+            return Ok(credential);
+        }
         let Some((salt, token)) = raw.split_once(':') else {
             return Err(SourceError::Other(
                 "saved Subsonic credential is invalid".to_string(),
@@ -601,11 +654,40 @@ impl SubsonicCredential {
         Ok(Self {
             salt: salt.to_string(),
             token: token.to_string(),
+            navidrome_password: None,
         })
     }
 
     pub(super) fn serialize(&self) -> String {
-        format!("{}:{}", self.salt, self.token)
+        let Some(password) = self.navidrome_password.as_ref() else {
+            return format!("{}:{}", self.salt, self.token);
+        };
+        serde_json::to_string(&StoredSubsonicCredential {
+            version: 1,
+            salt: self.salt.clone(),
+            token: self.token.clone(),
+            navidrome_password: Some(password.clone()),
+        })
+        .expect("the Navidrome credential contains only JSON strings")
+    }
+
+    pub(super) fn navidrome_password(&self) -> Option<&str> {
+        self.navidrome_password.as_deref()
+    }
+
+    fn validate(&self) -> SourceResult<()> {
+        if self.salt.is_empty()
+            || self.token.is_empty()
+            || self
+                .navidrome_password
+                .as_ref()
+                .is_some_and(|password| password.is_empty())
+        {
+            return Err(SourceError::Other(
+                "saved Subsonic credential is invalid".to_string(),
+            ));
+        }
+        Ok(())
     }
 
     pub(super) fn common_query<'a>(
@@ -968,6 +1050,8 @@ pub(super) struct AuthenticateBody {
 #[derive(Clone, Debug, Deserialize)]
 pub(super) struct SubsonicUser {
     pub(super) username: String,
+    #[serde(default, rename = "adminRole")]
+    pub(super) admin_role: bool,
 }
 #[derive(Clone, Debug, Deserialize)]
 pub(super) struct ScanStatusBody {
@@ -983,6 +1067,8 @@ pub(super) struct ScanStatus {
     pub(super) folder_count: Option<i64>,
     #[serde(default, rename = "lastScan")]
     pub(super) last_scan: Option<String>,
+    #[serde(default)]
+    pub(super) error: Option<String>,
 }
 #[derive(Clone, Debug, Default, Deserialize)]
 pub(super) struct AlbumListBody {

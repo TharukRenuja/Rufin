@@ -48,22 +48,54 @@ pub async fn json<T: DeserializeOwned>(
     let checked = checked_response(request, policy).await?;
     let bytes =
         response_bytes_bounded(checked.response, policy, limit, Some(&checked.request)).await?;
+    deserialize_json(&bytes, &checked.request)
+}
+
+pub async fn json_with_header<T: DeserializeOwned>(
+    request: reqwest::RequestBuilder,
+    policy: RemoteHttpPolicy,
+    limit: BodyLimit,
+    header_name: &header::HeaderName,
+) -> SourceResult<(T, Option<String>)> {
+    let checked = checked_response(request, policy).await?;
+    let header = checked
+        .response
+        .headers()
+        .get(header_name)
+        .map(|value| {
+            value.to_str().map(str::to_string).map_err(|error| {
+                SourceError::Other(format!(
+                    "{} returned an invalid {} header: {error}",
+                    checked.request.service, header_name
+                ))
+            })
+        })
+        .transpose()?;
+    let bytes =
+        response_bytes_bounded(checked.response, policy, limit, Some(&checked.request)).await?;
+    deserialize_json(&bytes, &checked.request).map(|body| (body, header))
+}
+
+fn deserialize_json<T: DeserializeOwned>(
+    bytes: &[u8],
+    request: &RequestMetadata,
+) -> SourceResult<T> {
     let mut deserializer = serde_json::Deserializer::from_slice(&bytes);
     serde_path_to_error::deserialize::<_, T>(&mut deserializer).map_err(|error| {
         let field = error.path().to_string();
         warn!(
-            request = checked.request.id,
-            service = checked.request.service,
-            method = %checked.request.method,
-            endpoint = %checked.request.endpoint,
+            request = request.id,
+            service = request.service,
+            method = %request.method,
+            endpoint = %request.endpoint,
             %field,
             error = %error.inner(),
             "remote JSON response did not match the expected shape"
         );
         SourceError::Other(format!(
             "{} response at {} field {}: {}",
-            checked.request.service,
-            checked.request.endpoint,
+            request.service,
+            request.endpoint,
             field,
             error.inner()
         ))

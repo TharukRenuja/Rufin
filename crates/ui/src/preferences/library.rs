@@ -78,9 +78,7 @@ fn library_sources_page(
 
     let servers_group = adw::PreferencesGroup::builder()
         .title(tr("Servers"))
-        .description(tr(
-            "Configure saved music sources and local playback mappings.",
-        ))
+        .description(tr("Configure saved music sources and local file access."))
         .build();
 
     if remote_sources.is_empty() {
@@ -1002,18 +1000,18 @@ fn source_cache_line(summary: &SourceLocalAccessSummary) -> String {
 
 fn local_mapping_status(summary: Option<&SourceLocalAccessSummary>) -> String {
     let Some(summary) = summary else {
-        return tr("No local playback mapping");
+        return tr("No local file mapping");
     };
     if summary.access.is_none() {
-        return tr("No local playback mapping");
+        return tr("No local file mapping");
     }
     let status = &summary.status;
     if status.total_track_count == 0 {
-        return tr("Local mapping saved. Sync to preview matches.");
+        return tr("Local file mapping saved. Sync to preview matches.");
     }
     format!(
         "{}: {} direct, {} prefix, {} metadata, {} unmatched",
-        tr("Local mapping"),
+        tr("Local file mapping"),
         status.direct_match_count,
         status.prefix_match_count,
         status.metadata_match_count,

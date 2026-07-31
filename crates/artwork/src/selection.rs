@@ -14,7 +14,7 @@ const REPRESENTATIVE_ALBUM_LIMIT: usize = 16;
 pub(crate) enum Candidate {
     Native(ImageRef),
     Local(LocalArtworkRef),
-    Album(album_lookup::AlbumCover),
+    Album(metadata_lookup::AlbumCover),
 }
 
 impl Candidate {
@@ -366,7 +366,7 @@ impl CandidateBuilder {
         release_id: Option<&str>,
     ) {
         if let Some(album) =
-            album_lookup::AlbumCover::new(artist, album, release_group_id, release_id)
+            metadata_lookup::AlbumCover::new(artist, album, release_group_id, release_id)
         {
             self.push(Candidate::Album(album));
         }
@@ -403,7 +403,7 @@ mod tests {
         release_id: Option<&str>,
     ) -> Candidate {
         Candidate::Album(
-            album_lookup::AlbumCover::new(artist, album, release_group_id, release_id)
+            metadata_lookup::AlbumCover::new(artist, album, release_group_id, release_id)
                 .expect("album cover candidate"),
         )
     }

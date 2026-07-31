@@ -124,6 +124,7 @@ enum PreferencesPageKind {
     Playback,
     Library,
 }
+
 impl PreferencesPageKind {
     const ALL: [Self; 5] = [
         Self::General,
@@ -803,11 +804,11 @@ fn general_page(shell: &Rc<Shell>, dialog: &adw::Dialog) -> adw::PreferencesPage
 
     let external_metadata_row = adw::SwitchRow::builder()
         .title(tr("External metadata lookup"))
-        .active(settings.external_album_lookup_enabled)
+        .active(settings.external_metadata_enabled)
         .build();
     let metadata_shell = Rc::clone(shell);
     external_metadata_row.connect_active_notify(move |row| {
-        metadata_shell.set_external_album_lookup_enabled(row.is_active());
+        metadata_shell.set_external_metadata_enabled(row.is_active());
     });
 
     metadata_group.add(&prefer_server_playlist_row);

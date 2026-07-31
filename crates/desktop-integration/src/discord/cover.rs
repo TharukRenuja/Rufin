@@ -14,7 +14,7 @@ pub(super) fn start(requests: ArtworkRequests) {
             while let Some(request) = requests.recv() {
                 let queued_millis = request.queued_for().as_millis();
                 let started = Instant::now();
-                let result = album_lookup::public_album_cover_url(
+                let result = metadata_lookup::public_album_cover_url(
                     &request.key.album,
                     250,
                     &request.key.policy,
