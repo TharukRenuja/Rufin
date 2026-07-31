@@ -135,6 +135,22 @@ jobs:
             wavpack
           brew install --cask gstreamer-runtime
 
+      - name: Select Xcode 26
+        run: |
+          set -euo pipefail
+          xcode_app="$(
+            find /Applications -maxdepth 1 -type d -name 'Xcode_26.*.app' -print |
+              sort -V |
+              tail -n 1
+          )"
+          test -n "$xcode_app"
+          developer_dir="$xcode_app/Contents/Developer"
+          test -d "$developer_dir"
+          echo "DEVELOPER_DIR=$developer_dir" >> "$GITHUB_ENV"
+          sdk_version="$(DEVELOPER_DIR="$developer_dir" xcrun --sdk macosx --show-sdk-version)"
+          [[ "$sdk_version" == 26.* ]]
+          echo "Using $xcode_app with macOS SDK $sdk_version."
+
       - name: Test platform integrations
         run: |
           set -euo pipefail
