@@ -146,7 +146,6 @@ impl Shell {
         {
             return;
         }
-        #[cfg(unix)]
         self.refresh_tray_private_mode();
         self.reconcile_mounted_route();
         self.refresh_artwork_policy();
@@ -329,8 +328,7 @@ impl Shell {
 
     fn refresh_artwork_policy(self: &Rc<Self>) {
         self.refresh_artwork_bindings();
-        #[cfg(unix)]
-        self.update_mpris_player();
+        self.update_media_controls();
     }
 
     pub(super) fn set_discord_presence_enabled(self: &Rc<Self>, enabled: bool) {

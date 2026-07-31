@@ -1,0 +1,104 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(git rev-parse --show-toplevel)"
+artifact_root="${repo_root}/.local/artifacts"
+work_dir="${artifact_root}/arch"
+source_dir="${work_dir}/source"
+package_dir="${work_dir}/package"
+
+for command in bsdtar cargo fakeroot git makepkg msgfmt pacman pkg-config rustc zstd; do
+    if ! command -v "${command}" >/dev/null 2>&1; then
+        echo "${command} is required to build the Arch package." >&2
+        exit 1
+    fi
+done
+
+rm -rf "${work_dir}"
+mkdir -p "${source_dir}" "${package_dir}"
+
+bsdtar \
+    --exclude='./.flatpak-builder' \
+    --exclude='./.git' \
+    --exclude='./.local' \
+    --exclude='./.ruff_cache' \
+    --exclude='./build-dir' \
+    --exclude='./target' \
+    -cf - \
+    -C "${repo_root}" \
+    . \
+    | bsdtar -xf - -C "${source_dir}"
+
+git -C "${source_dir}" init --quiet
+git -C "${source_dir}" add .
+git -C "${source_dir}" \
+    -c user.name='Rufin package build' \
+    -c user.email='rufin@localhost' \
+    commit --quiet --message='Build local package'
+
+sed \
+    "s|git+https://github.com/screwys/Rufin.git|git+file://${source_dir}|" \
+    "${repo_root}/packaging/aur/rufin-git/PKGBUILD" \
+    > "${package_dir}/PKGBUILD"
+
+makepkg_config_source=/etc/makepkg.conf
+if [[ ! -r "${makepkg_config_source}" ]]; then
+    makepkg_root="$(dirname "$(dirname "$(readlink -f "$(command -v makepkg)")")")"
+    makepkg_config_source="${makepkg_root}/etc/makepkg.conf"
+    if [[ ! -r "${makepkg_config_source}" ]]; then
+        echo "makepkg.conf was not found." >&2
+        exit 1
+    fi
+fi
+makepkg_config="${work_dir}/makepkg.conf"
+sed "s|^PKGEXT=.*|PKGEXT='.pkg.tar.zst'|" \
+    "${makepkg_config_source}" \
+    > "${makepkg_config}"
+if [[ ! -r /etc/pacman.conf ]]; then
+    pacman_path="$(readlink -f "$(command -v pacman)")"
+    pacman_root="$(dirname "$(dirname "${pacman_path}")")"
+    pacman_config="${pacman_root}/etc/pacman.conf"
+    if [[ ! -r "${pacman_config}" ]]; then
+        echo "pacman.conf was not found." >&2
+        exit 1
+    fi
+    pacman_db="${work_dir}/pacman"
+    pacman_wrapper="${work_dir}/pacman-for-makepkg"
+    mkdir -p "${pacman_db}/local" "${pacman_db}/sync"
+    printf '#!/usr/bin/env bash\nexec %q --config %q --dbpath %q "$@"\n' \
+        "${pacman_path}" \
+        "${pacman_config}" \
+        "${pacman_db}" \
+        > "${pacman_wrapper}"
+    chmod 0755 "${pacman_wrapper}"
+    printf '\nPACMAN=%q\n' "${pacman_wrapper}" >> "${makepkg_config}"
+fi
+makepkg_args=(
+    --config "${makepkg_config}"
+    --cleanbuild
+    --clean
+    --nodeps
+    --noconfirm
+    --noprogressbar
+)
+
+(
+    cd "${package_dir}"
+    makepkg "${makepkg_args[@]}"
+)
+
+mapfile -t packages < <(
+    find "${package_dir}" \
+        -maxdepth 1 \
+        -type f \
+        -name 'rufin-git-*.pkg.tar.zst' \
+        ! -name '*-debug-*' \
+        -print
+)
+if [[ ${#packages[@]} -eq 0 ]]; then
+    echo "The Arch build did not produce an artifact." >&2
+    exit 1
+fi
+bsdtar -tf "${packages[0]}" | grep -qx 'usr/bin/rufin'
+cp "${packages[@]}" "${artifact_root}/"
+echo "Created the Arch package in ${artifact_root}"

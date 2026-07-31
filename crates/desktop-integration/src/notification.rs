@@ -1,19 +1,28 @@
 use gio::prelude::ApplicationExt;
+#[cfg(all(unix, not(any(target_os = "android", target_vendor = "apple"))))]
 use glib::prelude::*;
 use playback::{PlaybackView, TransportStatus};
 use std::cell::Cell;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
+#[cfg(all(unix, not(any(target_os = "android", target_vendor = "apple"))))]
 use tracing::warn;
 
+#[cfg(all(unix, not(any(target_os = "android", target_vendor = "apple"))))]
 const APP_ID: &str = "io.github.screwys.Rufin";
+#[cfg(all(unix, not(any(target_os = "android", target_vendor = "apple"))))]
 const APP_NAME: &str = "Rufin";
+#[cfg(all(unix, not(any(target_os = "android", target_vendor = "apple"))))]
 const DBUS_TIMEOUT_MSEC: i32 = 1_000;
+#[cfg(all(unix, not(any(target_os = "android", target_vendor = "apple"))))]
 const NOTIFICATIONS_BUS_NAME: &str = "org.freedesktop.Notifications";
+#[cfg(all(unix, not(any(target_os = "android", target_vendor = "apple"))))]
 const NOTIFICATIONS_INTERFACE: &str = "org.freedesktop.Notifications";
+#[cfg(all(unix, not(any(target_os = "android", target_vendor = "apple"))))]
 const NOTIFICATIONS_OBJECT_PATH: &str = "/org/freedesktop/Notifications";
 const NOW_PLAYING_NOTIFICATION_ID: &str = "now-playing";
+#[cfg(all(unix, not(any(target_os = "android", target_vendor = "apple"))))]
 const NOW_PLAYING_NOTIFICATION_TIMEOUT_MSEC: i32 = -1;
 const NOTIFICATION_ARTWORK_SIZE: u32 = 96;
 
@@ -26,6 +35,7 @@ fn notification_icon_bytes(bytes: &[u8]) -> Option<Vec<u8>> {
     artwork::square_thumbnail_png(bytes, NOTIFICATION_ARTWORK_SIZE).ok()
 }
 
+#[cfg(all(unix, not(any(target_os = "android", target_vendor = "apple"))))]
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct NativeNowPlayingNotification {
     title: String,
@@ -35,6 +45,7 @@ struct NativeNowPlayingNotification {
 
 pub struct Notifications {
     application: gio::Application,
+    #[cfg(all(unix, not(any(target_os = "android", target_vendor = "apple"))))]
     notification_id: Cell<u32>,
     notification_run: Cell<Option<playback::RunId>>,
     sendable: Cell<bool>,
@@ -44,6 +55,7 @@ impl Notifications {
     pub fn new(application: gio::Application) -> Rc<Self> {
         Rc::new(Self {
             application,
+            #[cfg(all(unix, not(any(target_os = "android", target_vendor = "apple"))))]
             notification_id: Cell::new(0),
             notification_run: Cell::new(None),
             sendable: Cell::new(false),
@@ -92,42 +104,57 @@ impl Notifications {
                 return;
             }
 
-            let artwork_uri = artwork_path
-                .as_deref()
-                .and_then(now_playing_notification_artwork_uri);
-            let native_notification = NativeNowPlayingNotification {
-                title: title.clone(),
-                body: body.clone(),
-                artwork_uri,
-            };
-            let replaces_id = notifications.notification_id.get();
-            match send_native_now_playing_notification(&native_notification, replaces_id).await {
-                Ok(notification_id) => {
-                    if notifications.matches(run) {
-                        notifications
-                            .application
-                            .withdraw_notification(NOW_PLAYING_NOTIFICATION_ID);
-                        notifications.notification_id.set(notification_id);
-                    } else {
-                        close_native_now_playing_notification(notification_id).await;
+            #[cfg(all(unix, not(any(target_os = "android", target_vendor = "apple"))))]
+            {
+                let artwork_uri = artwork_path
+                    .as_deref()
+                    .and_then(now_playing_notification_artwork_uri);
+                let native_notification = NativeNowPlayingNotification {
+                    title: title.clone(),
+                    body: body.clone(),
+                    artwork_uri,
+                };
+                let replaces_id = notifications.notification_id.get();
+                match send_freedesktop_now_playing_notification(&native_notification, replaces_id)
+                    .await
+                {
+                    Ok(notification_id) => {
+                        if notifications.matches(run) {
+                            notifications
+                                .application
+                                .withdraw_notification(NOW_PLAYING_NOTIFICATION_ID);
+                            notifications.notification_id.set(notification_id);
+                        } else {
+                            close_freedesktop_now_playing_notification(notification_id).await;
+                        }
+                    }
+                    Err(error) => {
+                        warn!(%error, "failed to send Freedesktop now-playing notification");
+                        if replaces_id != 0 {
+                            notifications.notification_id.set(0);
+                            close_freedesktop_now_playing_notification(replaces_id).await;
+                        }
+                        if notifications.matches(run) {
+                            send_gio_now_playing_notification(
+                                &notifications.application,
+                                title,
+                                body,
+                                artwork_path,
+                            )
+                            .await;
+                        }
                     }
                 }
-                Err(error) => {
-                    warn!(%error, "failed to send native now-playing notification");
-                    if replaces_id != 0 {
-                        notifications.notification_id.set(0);
-                        close_native_now_playing_notification(replaces_id).await;
-                    }
-                    if notifications.matches(run) {
-                        send_gio_now_playing_notification(
-                            &notifications.application,
-                            title,
-                            body,
-                            artwork_path,
-                        )
-                        .await;
-                    }
-                }
+            }
+            #[cfg(not(all(unix, not(any(target_os = "android", target_vendor = "apple")))))]
+            if notifications.matches(run) {
+                send_gio_now_playing_notification(
+                    &notifications.application,
+                    title,
+                    body,
+                    artwork_path,
+                )
+                .await;
             }
         });
     }
@@ -135,13 +162,16 @@ impl Notifications {
     pub fn withdraw(&self) {
         self.application
             .withdraw_notification(NOW_PLAYING_NOTIFICATION_ID);
-        let notification_id = self.notification_id.replace(0);
         self.notification_run.set(None);
         self.sendable.set(false);
-        if notification_id != 0 {
-            glib::spawn_future_local(async move {
-                close_native_now_playing_notification(notification_id).await;
-            });
+        #[cfg(all(unix, not(any(target_os = "android", target_vendor = "apple"))))]
+        {
+            let notification_id = self.notification_id.replace(0);
+            if notification_id != 0 {
+                glib::spawn_future_local(async move {
+                    close_freedesktop_now_playing_notification(notification_id).await;
+                });
+            }
         }
     }
 
@@ -150,12 +180,14 @@ impl Notifications {
     }
 }
 
+#[cfg(all(unix, not(any(target_os = "android", target_vendor = "apple"))))]
 fn now_playing_notification_artwork_uri(path: &Path) -> Option<String> {
     glib::filename_to_uri(path, None)
         .ok()
         .map(|uri| uri.to_string())
 }
 
+#[cfg(all(unix, not(any(target_os = "android", target_vendor = "apple"))))]
 fn now_playing_notification_hints(artwork_uri: Option<&str>) -> glib::VariantDict {
     let hints = glib::VariantDict::new(None);
     hints.insert("desktop-entry", APP_ID);
@@ -167,6 +199,7 @@ fn now_playing_notification_hints(artwork_uri: Option<&str>) -> glib::VariantDic
     hints
 }
 
+#[cfg(all(unix, not(any(target_os = "android", target_vendor = "apple"))))]
 fn now_playing_notification_parameters(
     notification: &NativeNowPlayingNotification,
     replaces_id: u32,
@@ -184,7 +217,8 @@ fn now_playing_notification_parameters(
         .to_variant()
 }
 
-async fn send_native_now_playing_notification(
+#[cfg(all(unix, not(any(target_os = "android", target_vendor = "apple"))))]
+async fn send_freedesktop_now_playing_notification(
     notification: &NativeNowPlayingNotification,
     replaces_id: u32,
 ) -> Result<u32, glib::Error> {
@@ -206,7 +240,8 @@ async fn send_native_now_playing_notification(
     Ok(reply.try_child_get::<u32>(0).ok().flatten().unwrap_or(0))
 }
 
-async fn close_native_now_playing_notification(notification_id: u32) {
+#[cfg(all(unix, not(any(target_os = "android", target_vendor = "apple"))))]
+async fn close_freedesktop_now_playing_notification(notification_id: u32) {
     if notification_id == 0 {
         return;
     }
@@ -272,14 +307,16 @@ pub fn now_playing_notification_should_withdraw(
 
 #[cfg(test)]
 mod tests {
+    #[cfg(all(unix, not(any(target_os = "android", target_vendor = "apple"))))]
     use std::path::Path;
 
+    #[cfg(all(unix, not(any(target_os = "android", target_vendor = "apple"))))]
     use super::{
-        APP_ID, APP_NAME, NOTIFICATION_ARTWORK_SIZE, NOW_PLAYING_NOTIFICATION_TIMEOUT_MSEC,
-        NativeNowPlayingNotification, notification_icon_bytes,
+        APP_ID, APP_NAME, NOW_PLAYING_NOTIFICATION_TIMEOUT_MSEC, NativeNowPlayingNotification,
         now_playing_notification_artwork_uri, now_playing_notification_hints,
         now_playing_notification_parameters,
     };
+    use super::{NOTIFICATION_ARTWORK_SIZE, notification_icon_bytes};
 
     #[test]
     fn notification_artwork_is_square_and_thumbnail_sized() {
@@ -294,8 +331,9 @@ mod tests {
         assert_eq!(icon.height(), NOTIFICATION_ARTWORK_SIZE);
     }
 
+    #[cfg(all(unix, not(any(target_os = "android", target_vendor = "apple"))))]
     #[test]
-    fn native_notification_hints_include_identity_and_artwork() {
+    fn freedesktop_notification_hints_include_identity_and_artwork() {
         let hints = now_playing_notification_hints(Some("file:///music/cover.png"));
 
         assert_eq!(
@@ -313,8 +351,9 @@ mod tests {
         );
     }
 
+    #[cfg(all(unix, not(any(target_os = "android", target_vendor = "apple"))))]
     #[test]
-    fn native_notification_parameters_replace_the_previous_notification() {
+    fn freedesktop_notification_parameters_replace_the_previous_notification() {
         let notification = NativeNowPlayingNotification {
             title: "Track".to_string(),
             body: "Artist - Album".to_string(),
@@ -341,6 +380,7 @@ mod tests {
         );
     }
 
+    #[cfg(all(unix, not(any(target_os = "android", target_vendor = "apple"))))]
     #[test]
     fn notification_artwork_path_becomes_a_file_uri() {
         let uri = now_playing_notification_artwork_uri(Path::new("/tmp/cover art.png"))

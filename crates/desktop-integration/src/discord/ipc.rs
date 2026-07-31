@@ -1,45 +1,183 @@
+use std::io::{Read, Write};
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::mpsc::RecvTimeoutError;
 use std::time::Duration;
 
-#[cfg(all(unix, not(test)))]
-use std::env;
-#[cfg(unix)]
-use std::{
-    io::{Read, Write},
-    os::unix::net::UnixStream,
-    path::PathBuf,
-};
-
 use playback::{CurrentMedia, PlaybackView, TransportStatus};
 use serde::{Deserialize, Serialize};
-#[cfg(unix)]
 use serde_json::{Value, json};
 use tracing::debug;
 
 use super::{LatestReceiver, LatestSender, latest_slot};
 
+#[cfg(unix)]
+mod transport {
+    #[cfg(not(test))]
+    use std::env;
+    use std::os::unix::net::UnixStream;
+    use std::path::PathBuf;
+    use std::time::Duration;
+
+    pub(super) type IpcStream = UnixStream;
+
+    pub(super) fn connect(paths: &[PathBuf]) -> Result<IpcStream, String> {
+        for path in paths {
+            if let Ok(stream) = UnixStream::connect(path) {
+                return Ok(stream);
+            }
+        }
+        Err("Discord IPC socket was not found".to_string())
+    }
+
+    pub(super) fn configure(stream: &IpcStream) -> Result<(), String> {
+        stream
+            .set_read_timeout(Some(Duration::from_millis(750)))
+            .and_then(|()| stream.set_write_timeout(Some(Duration::from_millis(750))))
+            .map_err(|error| error.to_string())
+    }
+
+    #[cfg(not(test))]
+    pub(super) fn paths() -> Vec<PathBuf> {
+        let xdg_runtime_dir = env::var_os("XDG_RUNTIME_DIR").map(PathBuf::from);
+        let temporary_roots = ["TMPDIR", "TMP", "TEMP"]
+            .into_iter()
+            .filter_map(|key| env::var_os(key).map(PathBuf::from))
+            .collect();
+        paths_for(xdg_runtime_dir, temporary_roots)
+    }
+
+    fn paths_for(xdg_runtime_dir: Option<PathBuf>, temporary_roots: Vec<PathBuf>) -> Vec<PathBuf> {
+        let mut roots = Vec::new();
+        if let Some(path) = xdg_runtime_dir {
+            roots.push(path.clone());
+            roots.push(path.join("app/com.discordapp.Discord"));
+        }
+        for path in temporary_roots {
+            if !roots.contains(&path) {
+                roots.push(path);
+            }
+        }
+        let tmp = PathBuf::from("/tmp");
+        if !roots.contains(&tmp) {
+            roots.push(tmp);
+        }
+        roots
+            .into_iter()
+            .flat_map(|root| (0..10).map(move |index| root.join(format!("discord-ipc-{index}"))))
+            .collect()
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use std::path::PathBuf;
+
+        use super::paths_for;
+
+        #[test]
+        fn paths_include_native_and_flatpak_discord() {
+            let paths = paths_for(
+                Some(PathBuf::from("/run/user/1000")),
+                vec![PathBuf::from("/tmp/discord")],
+            );
+
+            assert!(paths.contains(&PathBuf::from("/run/user/1000/discord-ipc-0")));
+            assert!(paths.contains(&PathBuf::from(
+                "/run/user/1000/app/com.discordapp.Discord/discord-ipc-0"
+            )));
+            assert!(paths.contains(&PathBuf::from(
+                "/run/user/1000/app/com.discordapp.Discord/discord-ipc-9"
+            )));
+        }
+    }
+}
+
+#[cfg(windows)]
+mod transport {
+    use std::fs::{File, OpenOptions};
+    use std::path::PathBuf;
+
+    pub(super) type IpcStream = File;
+
+    pub(super) fn connect(paths: &[PathBuf]) -> Result<IpcStream, String> {
+        for path in paths {
+            if let Ok(stream) = OpenOptions::new().read(true).write(true).open(path) {
+                return Ok(stream);
+            }
+        }
+        Err("Discord IPC named pipe was not found".to_string())
+    }
+
+    pub(super) fn configure(_stream: &IpcStream) -> Result<(), String> {
+        Ok(())
+    }
+
+    pub(super) fn paths() -> Vec<PathBuf> {
+        (0..10)
+            .map(|index| PathBuf::from(format!(r"\\?\pipe\discord-ipc-{index}")))
+            .collect()
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use std::path::PathBuf;
+
+        use super::paths;
+
+        #[test]
+        fn paths_cover_every_discord_named_pipe() {
+            let paths = paths();
+
+            assert_eq!(paths.len(), 10);
+            assert_eq!(
+                paths.first(),
+                Some(&PathBuf::from(r"\\?\pipe\discord-ipc-0"))
+            );
+            assert_eq!(
+                paths.last(),
+                Some(&PathBuf::from(r"\\?\pipe\discord-ipc-9"))
+            );
+        }
+    }
+}
+
+#[cfg(not(any(unix, windows)))]
+mod transport {
+    use std::io::Cursor;
+    #[cfg(not(test))]
+    use std::path::PathBuf;
+
+    pub(super) type IpcStream = Cursor<Vec<u8>>;
+
+    pub(super) fn connect(_paths: &[PathBuf]) -> Result<IpcStream, String> {
+        Err("Discord rich presence is unavailable on this platform".to_string())
+    }
+
+    pub(super) fn configure(_stream: &IpcStream) -> Result<(), String> {
+        Ok(())
+    }
+
+    #[cfg(not(test))]
+    pub(super) fn paths() -> Vec<PathBuf> {
+        Vec::new()
+    }
+}
+
+use transport::IpcStream;
+
 pub const DEFAULT_CLIENT_ID: &str = "1505345384686419979";
 pub(crate) const APP_ICON_URL: &str = "https://raw.githubusercontent.com/screwys/Rufin/main/data/icons/hicolor/scalable/apps/io.github.screwys.Rufin.svg";
-pub(crate) const SUPPORTED: bool = cfg!(unix);
+pub(crate) const SUPPORTED: bool = cfg!(any(unix, windows));
 
-#[cfg(unix)]
 const MAX_TEXT_LENGTH: usize = 127;
-#[cfg(unix)]
 const MAX_URL_LENGTH: usize = 256;
 const RECONNECT_DELAY: Duration = Duration::from_secs(2);
 
-#[cfg(unix)]
 const IPC_VERSION: u8 = 1;
-#[cfg(unix)]
 const OP_HANDSHAKE: u32 = 0;
-#[cfg(unix)]
 const OP_FRAME: u32 = 1;
-#[cfg(unix)]
 const OP_CLOSE: u32 = 2;
-#[cfg(unix)]
 const OP_PING: u32 = 3;
-#[cfg(unix)]
 const OP_PONG: u32 = 4;
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
@@ -112,7 +250,6 @@ pub(crate) enum PlaybackState {
 }
 
 #[derive(Clone)]
-#[cfg_attr(not(unix), allow(dead_code))]
 pub(crate) struct Activity {
     settings: Settings,
     media: Arc<CurrentMedia>,
@@ -247,73 +384,60 @@ fn run_worker(
 }
 
 struct Connection {
-    #[cfg(unix)]
-    stream: Option<UnixStream>,
-    #[cfg(unix)]
+    stream: Option<IpcStream>,
     client_id: Option<String>,
-    #[cfg(unix)]
     paths: Vec<PathBuf>,
-    #[cfg(unix)]
     nonce: u64,
 }
 
 impl Connection {
     fn new() -> Self {
         Self {
-            #[cfg(unix)]
             stream: None,
-            #[cfg(unix)]
             client_id: None,
-            #[cfg(unix)]
             paths: worker_ipc_paths(),
-            #[cfg(unix)]
             nonce: 0,
         }
     }
 
     fn apply(&mut self, activity: Option<&Activity>) -> bool {
-        #[cfg(not(unix))]
-        {
+        if !SUPPORTED {
             let _ = activity;
             debug!("Discord rich presence is not supported on this platform");
-            false
+            return false;
         }
-        #[cfg(unix)]
-        {
-            let Some(activity) = activity else {
-                if self.stream.is_some() {
-                    let payload = self.activity_payload(None);
-                    if self.send_payload(&payload).is_err() {
-                        self.disconnect();
-                    }
-                }
-                return false;
-            };
-            let client_id = activity.settings.client_id.as_str();
-            if self
-                .client_id
-                .as_deref()
-                .is_some_and(|old| old != client_id)
-            {
+        let Some(activity) = activity else {
+            if self.stream.is_some() {
                 let payload = self.activity_payload(None);
-                let _ = self.send_payload(&payload);
-                self.disconnect();
+                if self.send_payload(&payload).is_err() {
+                    self.disconnect();
+                }
             }
-            if let Err(error) = self.ensure_connected(client_id) {
-                debug!(%error, "Discord IPC connection unavailable");
-                return true;
-            }
-            let payload = self.activity_payload(Some(activity));
-            if let Err(error) = self.send_payload(&payload) {
-                debug!(%error, "Discord IPC update failed");
-                self.disconnect();
-                return true;
-            }
-            false
+            return false;
+        };
+        let client_id = activity.settings.client_id.as_str();
+        if self
+            .client_id
+            .as_deref()
+            .is_some_and(|old| old != client_id)
+        {
+            let payload = self.activity_payload(None);
+            let _ = self.send_payload(&payload);
+            self.disconnect();
         }
+        if let Err(error) = self.ensure_connected(client_id) {
+            debug!(%error, "Discord IPC connection unavailable");
+            return true;
+        }
+        let payload = self.activity_payload(Some(activity));
+        if let Err(error) = self.send_payload(&payload) {
+            debug!(%error, "Discord IPC update failed");
+            self.disconnect();
+            return true;
+        }
+        false
     }
 
-    #[cfg(unix)]
     fn activity_payload(&mut self, activity: Option<&Activity>) -> Value {
         self.nonce = self.nonce.wrapping_add(1);
         json!({
@@ -326,18 +450,12 @@ impl Connection {
         })
     }
 
-    #[cfg(unix)]
     fn ensure_connected(&mut self, client_id: &str) -> Result<(), String> {
         if self.stream.is_some() {
             return Ok(());
         }
-        let mut stream = connect_paths(&self.paths)?;
-        stream
-            .set_read_timeout(Some(Duration::from_millis(750)))
-            .map_err(|error| error.to_string())?;
-        stream
-            .set_write_timeout(Some(Duration::from_millis(750)))
-            .map_err(|error| error.to_string())?;
+        let mut stream = transport::connect(&self.paths)?;
+        transport::configure(&stream)?;
         write_packet(
             &mut stream,
             OP_HANDSHAKE,
@@ -349,7 +467,6 @@ impl Connection {
         Ok(())
     }
 
-    #[cfg(unix)]
     fn send_payload(&mut self, payload: &Value) -> Result<(), String> {
         let stream = self
             .stream
@@ -359,14 +476,12 @@ impl Connection {
         read_response(stream)
     }
 
-    #[cfg(unix)]
     fn disconnect(&mut self) {
         self.stream = None;
         self.client_id = None;
     }
 }
 
-#[cfg(unix)]
 fn worker_ipc_paths() -> Vec<PathBuf> {
     #[cfg(test)]
     {
@@ -374,11 +489,10 @@ fn worker_ipc_paths() -> Vec<PathBuf> {
     }
     #[cfg(not(test))]
     {
-        discord_ipc_paths()
+        transport::paths()
     }
 }
 
-#[cfg(unix)]
 fn activity_json(activity: &Activity) -> Value {
     let track = &activity.media.track;
     let mut value = json!({
@@ -409,7 +523,6 @@ fn activity_json(activity: &Activity) -> Value {
     value
 }
 
-#[cfg(unix)]
 const fn status_display_type(display_type: DisplayType) -> u8 {
     match display_type {
         DisplayType::Application => 0,
@@ -418,7 +531,6 @@ const fn status_display_type(display_type: DisplayType) -> u8 {
     }
 }
 
-#[cfg(unix)]
 fn activity_urls(activity: &Activity) -> (Option<String>, Option<String>) {
     let track = &activity.media.track;
     let track_artist = track
@@ -468,13 +580,11 @@ fn activity_urls(activity: &Activity) -> (Option<String>, Option<String>) {
     (details, state)
 }
 
-#[cfg(unix)]
 fn lastfm_artist_url(artist: &str) -> Option<String> {
     let artist = artist.trim();
     (!artist.is_empty()).then(|| format!("https://www.last.fm/music/{}", encode_segment(artist)))
 }
 
-#[cfg(unix)]
 fn lastfm_track_url(artist: &str, album: &str, title: &str) -> Option<String> {
     let artist = artist.trim();
     let title = title.trim();
@@ -491,7 +601,6 @@ fn lastfm_track_url(artist: &str, album: &str, title: &str) -> Option<String> {
     (url.len() <= MAX_URL_LENGTH).then_some(url)
 }
 
-#[cfg(unix)]
 fn musicbrainz_url(entity: &str, id: &str) -> Option<String> {
     let id = id.trim();
     if id.is_empty() {
@@ -503,7 +612,6 @@ fn musicbrainz_url(entity: &str, id: &str) -> Option<String> {
     ))
 }
 
-#[cfg(unix)]
 fn discord_text(value: &str, fallback: &str) -> String {
     let text = if value.trim().is_empty() {
         fallback
@@ -517,7 +625,6 @@ fn discord_text(value: &str, fallback: &str) -> String {
     text
 }
 
-#[cfg(unix)]
 fn encode_segment(value: &str) -> String {
     let mut encoded = String::with_capacity(value.len());
     for byte in value.as_bytes() {
@@ -532,56 +639,7 @@ fn encode_segment(value: &str) -> String {
     encoded
 }
 
-#[cfg(unix)]
-fn connect_paths(paths: &[PathBuf]) -> Result<UnixStream, String> {
-    for path in paths {
-        if let Ok(stream) = UnixStream::connect(path) {
-            return Ok(stream);
-        }
-    }
-    Err("Discord IPC socket was not found".to_string())
-}
-
-#[cfg(all(unix, not(test)))]
-fn discord_ipc_paths() -> Vec<PathBuf> {
-    let xdg_runtime_dir = env::var_os("XDG_RUNTIME_DIR").map(PathBuf::from);
-    let temporary_roots = ["TMPDIR", "TMP", "TEMP"]
-        .into_iter()
-        .filter_map(|key| env::var_os(key).map(PathBuf::from))
-        .collect();
-    discord_ipc_paths_for(xdg_runtime_dir, temporary_roots)
-}
-
-#[cfg(unix)]
-fn discord_ipc_paths_for(
-    xdg_runtime_dir: Option<PathBuf>,
-    temporary_roots: Vec<PathBuf>,
-) -> Vec<PathBuf> {
-    let mut roots = Vec::new();
-    if let Some(path) = xdg_runtime_dir {
-        roots.push(path.clone());
-        roots.push(path.join("app/com.discordapp.Discord"));
-    }
-    for path in temporary_roots {
-        if !roots.contains(&path) {
-            roots.push(path);
-        }
-    }
-    let tmp = PathBuf::from("/tmp");
-    if !roots.contains(&tmp) {
-        roots.push(tmp);
-    }
-    let mut paths = Vec::new();
-    for root in roots {
-        for index in 0..10 {
-            paths.push(root.join(format!("discord-ipc-{index}")));
-        }
-    }
-    paths
-}
-
-#[cfg(unix)]
-fn write_packet(stream: &mut UnixStream, opcode: u32, payload: &Value) -> Result<(), String> {
+fn write_packet(stream: &mut IpcStream, opcode: u32, payload: &Value) -> Result<(), String> {
     let bytes = serde_json::to_vec(payload).map_err(|error| error.to_string())?;
     let length = u32::try_from(bytes.len()).map_err(|_| "Discord IPC payload is too large")?;
     stream
@@ -591,8 +649,7 @@ fn write_packet(stream: &mut UnixStream, opcode: u32, payload: &Value) -> Result
         .map_err(|error| error.to_string())
 }
 
-#[cfg(unix)]
-fn read_packet(stream: &mut UnixStream) -> Result<(u32, Value), String> {
+fn read_packet(stream: &mut IpcStream) -> Result<(u32, Value), String> {
     let mut header = [0_u8; 8];
     stream
         .read_exact(&mut header)
@@ -610,8 +667,7 @@ fn read_packet(stream: &mut UnixStream) -> Result<(u32, Value), String> {
     Ok((opcode, value))
 }
 
-#[cfg(unix)]
-fn read_response(stream: &mut UnixStream) -> Result<(), String> {
+fn read_response(stream: &mut IpcStream) -> Result<(), String> {
     loop {
         match read_packet(stream)? {
             (OP_PING, _) => {}
@@ -649,7 +705,6 @@ mod tests {
         assert!(!disabled.enabled);
     }
 
-    #[cfg(unix)]
     #[test]
     fn payload_uses_musicbrainz_facts_without_a_lookup() {
         let mut activity = test_activity(1, "Track");
@@ -688,23 +743,6 @@ mod tests {
             payload["details_url"],
             "https://www.last.fm/music/Album%20Artist/Album/Track"
         );
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn ipc_paths_include_native_and_flatpak_discord() {
-        let paths = discord_ipc_paths_for(
-            Some(PathBuf::from("/run/user/1000")),
-            vec![PathBuf::from("/tmp/discord")],
-        );
-
-        assert!(paths.contains(&PathBuf::from("/run/user/1000/discord-ipc-0")));
-        assert!(paths.contains(&PathBuf::from(
-            "/run/user/1000/app/com.discordapp.Discord/discord-ipc-0"
-        )));
-        assert!(paths.contains(&PathBuf::from(
-            "/run/user/1000/app/com.discordapp.Discord/discord-ipc-9"
-        )));
     }
 
     #[cfg(unix)]

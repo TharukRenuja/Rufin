@@ -53,9 +53,12 @@ Rufin's crates try to follow a product ownership model. The goal is to separate 
 
 ```bash
 just build # builds the app
+just build arch # builds the Arch package
+just build dmg # builds the macOS disk image on macOS
 just build flatpak # builds the Flatpak
 just build rpm # builds Fedora RPMs for x86_64
 just build rpm arm # builds Fedora RPMs for AArch64
+just build windows # cross-compiles the Windows app
 just debug # runs the development app on the host
 just fmt # formats Rust code
 just test # runs the test suite
@@ -78,8 +81,8 @@ If you are testing natively, this also needs rustfmt, clippy, cargo-deny, and ge
 To enable the debug logging, refer to [README.md#troubleshooting](README.md#troubleshooting).
 
 These commands work the same for local and container development. If the container is set up,
-`just build`, `just fmt`, `just test`, and `just check` use the container environment. Its state
-is kept under `.local/container`. Use
+`just build`, `just fmt`, `just test`, and `just check` use the container environment. Container
+state is kept under `.local/container`, and build artifacts under `.local/artifacts`. Use
 `just container shell` for an interactive shell, `just container disable` to
 return those commands to the host, or `just container reset` to clear the
 container state. `just debug` always runs on the host and is unavailable inside

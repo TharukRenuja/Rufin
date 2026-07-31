@@ -146,12 +146,25 @@ sudo dnf install \
 For full codec coverage, enable RPM Fusion and install `gstreamer1-plugins-ugly`
 and `gstreamer1-plugin-libav`.
 
+macOS:
+
+```bash
+brew install \
+  rust just pkgconf gettext gtk4 libadwaita gstreamer \
+  dylibbundler librsvg
+```
+
 Then you can build and run:
 
 ```bash
 just build
-just run
+just debug
 ```
+
+The native build can also work on other distributions when they provide the
+required versions and development files, but those environments are not part of
+Rufin's tested support set. On macOS, `just build dmg` creates
+`.local/artifacts/Rufin.dmg` for installation and platform behavior testing.
 
 Testing, Nix, and container controls are documented in
 [CONTRIBUTING.md](CONTRIBUTING.md#development-environment).

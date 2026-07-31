@@ -356,18 +356,11 @@ pub(crate) fn platform_secret_store(settings: &StoredSettings) -> Arc<dyn Secret
     }
 }
 
-#[cfg(unix)]
 fn system_keyring_secret_store(scope_id: &str) -> Arc<dyn SecretStore> {
-    Arc::new(CachedSecretStore::new(Arc::new(
-        secrets::SecretServiceStore::new(scope_id.to_string()),
-    )))
-}
-
-#[cfg(not(unix))]
-fn system_keyring_secret_store(_scope_id: &str) -> Arc<dyn SecretStore> {
-    Arc::new(secrets::UnavailableSecretStore::new(
-        "system keyring is unavailable on this platform",
-    ))
+    match secrets::SystemKeyringStore::new(scope_id.to_string()) {
+        Ok(store) => Arc::new(CachedSecretStore::new(Arc::new(store))),
+        Err(error) => Arc::new(secrets::UnavailableSecretStore::new(error.to_string())),
+    }
 }
 
 pub(crate) fn provider_secret_key(reference: &CredentialRef) -> SecretKey {
@@ -676,9 +669,17 @@ pub(crate) fn write_settings(path: &Path, value: &StoredSettings) -> Result<(), 
 }
 
 fn commit_settings_file(temporary: &Path, path: &Path) -> Result<(), String> {
-    commit_settings_file_with(temporary, path, |parent| {
-        fs::File::open(parent).and_then(|directory| directory.sync_all())
-    })
+    commit_settings_file_with(temporary, path, sync_settings_directory)
+}
+
+#[cfg(unix)]
+fn sync_settings_directory(parent: &Path) -> std::io::Result<()> {
+    fs::File::open(parent).and_then(|directory| directory.sync_all())
+}
+
+#[cfg(not(unix))]
+fn sync_settings_directory(_parent: &Path) -> std::io::Result<()> {
+    Ok(())
 }
 
 fn commit_settings_file_with(
@@ -699,13 +700,16 @@ fn commit_settings_file_with(
     Ok(())
 }
 
+#[cfg(unix)]
 fn restrict_file(path: &Path) -> std::io::Result<()> {
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt as _;
+    use std::os::unix::fs::PermissionsExt as _;
 
-        fs::set_permissions(path, fs::Permissions::from_mode(0o600))?;
-    }
+    fs::set_permissions(path, fs::Permissions::from_mode(0o600))?;
+    Ok(())
+}
+
+#[cfg(not(unix))]
+fn restrict_file(_path: &Path) -> std::io::Result<()> {
     Ok(())
 }
 

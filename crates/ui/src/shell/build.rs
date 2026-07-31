@@ -21,7 +21,6 @@ use crate::player::{
     connect_player_controls, connect_queue_lyrics_overlay, connect_queue_panel_controls,
     default_audio_output_options, warm_audio_output_cache,
 };
-#[cfg(unix)]
 use crate::player::{install_tray, present_initial_window};
 use crate::preferences::PreferencesState;
 use crate::preferences::dialogs::release_notes::schedule_release_check;
@@ -506,7 +505,6 @@ pub fn build(app: &adw::Application, inputs: RuntimeInputs) {
         &shell.products.playback.transport,
     );
     install_window_state_persistence(&shell);
-    #[cfg(unix)]
     install_tray(&shell);
     connect_queue_panel_controls(&shell);
     connect_queue_lyrics_overlay(&shell);
@@ -535,10 +533,7 @@ pub fn build(app: &adw::Application, inputs: RuntimeInputs) {
     shell.request_initial_lyrics_if_needed();
     install_product_event_receivers(&shell, receivers);
 
-    #[cfg(unix)]
     present_initial_window(&shell);
-    #[cfg(not(unix))]
-    shell.chrome.window.present();
     schedule_release_check(&shell);
     if defer_initial_route && !shell.source.operation.borrow().blocks_library() {
         shell.schedule_startup_route_reveal();

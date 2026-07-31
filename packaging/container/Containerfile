@@ -3,24 +3,73 @@ FROM registry.fedoraproject.org/fedora-minimal:44
 LABEL org.opencontainers.image.source="https://github.com/screwys/Rufin" \
       org.opencontainers.image.description="Rufin development environment"
 
-RUN dnf -y \
+ARG LIBADWAITA_VERSION=1.8.5.1
+ARG LIBADWAITA_SHA256=7a306296deda956207425b375355c212d254f27db6560733d08dca12fb5e52c3
+
+RUN sed -i 's/^countme=1$/countme=0/' /etc/yum.repos.d/*.repo \
+    && dnf -y \
         --setopt=install_weak_deps=False \
         --setopt=tsflags=nodocs \
         install \
             bash \
             ca-certificates \
+            cargo \
             curl \
             findutils \
             git-core \
             gzip \
+            meson \
+            mingw64-appstream \
+            mingw64-fribidi \
+            mingw64-gcc \
+            mingw64-gcc-c++ \
+            mingw64-gstreamer1 \
+            mingw64-gstreamer1-plugins-base \
+            mingw64-gtk4 \
+            ninja-build \
             nix \
-            pacman \
+            rust \
+            rust-std-static-x86_64-pc-windows-gnu \
+            sassc \
             shadow-utils \
             tar \
             which \
             xz \
     && dnf clean all \
     && rm -rf /var/cache/dnf
+
+RUN dnf -y \
+        --setopt=install_weak_deps=False \
+        --setopt=tsflags=nodocs \
+        install glib2-devel \
+    && dnf clean all \
+    && rm -rf /var/cache/dnf
+
+RUN curl --fail --location --silent --show-error \
+        --output "/tmp/libadwaita-${LIBADWAITA_VERSION}.tar.xz" \
+        "https://download.gnome.org/sources/libadwaita/1.8/libadwaita-${LIBADWAITA_VERSION}.tar.xz" \
+    && printf '%s  %s\n' \
+        "${LIBADWAITA_SHA256}" \
+        "/tmp/libadwaita-${LIBADWAITA_VERSION}.tar.xz" \
+        | sha256sum --check --strict - \
+    && tar --extract \
+        --file "/tmp/libadwaita-${LIBADWAITA_VERSION}.tar.xz" \
+        --directory /tmp \
+    && mingw64-meson \
+        /tmp/libadwaita-build \
+        "/tmp/libadwaita-${LIBADWAITA_VERSION}" \
+        --wrap-mode=nodownload \
+        -Ddocumentation=false \
+        -Dexamples=false \
+        -Dintrospection=disabled \
+        -Dtests=false \
+        -Dvapi=false \
+    && meson compile -C /tmp/libadwaita-build \
+    && meson install -C /tmp/libadwaita-build \
+    && rm -rf \
+        /tmp/libadwaita-build \
+        "/tmp/libadwaita-${LIBADWAITA_VERSION}" \
+        "/tmp/libadwaita-${LIBADWAITA_VERSION}.tar.xz"
 
 RUN groupadd --gid 1000 rufin \
     && useradd --uid 1000 --gid 1000 --create-home rufin \
@@ -29,8 +78,11 @@ RUN groupadd --gid 1000 rufin \
 
 COPY --chmod=0644 nix.conf /etc/nix/nix.conf
 
-ENV HOME=/home/rufin \
+ENV DO_NOT_TRACK=1 \
+    HOME=/home/rufin \
     NIX_REMOTE=local \
+    RUFIN_WINDOWS_CARGO=/usr/bin/cargo \
+    RUFIN_WINDOWS_RUSTC=/usr/bin/rustc \
     USER=rufin
 
 USER rufin

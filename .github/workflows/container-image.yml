@@ -44,6 +44,8 @@ jobs:
         run: |
           scripts/container setup
           scripts/container run just check
+          just build arch
+          just build windows
 
       - name: Log in to GHCR
         if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')

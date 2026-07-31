@@ -441,7 +441,7 @@ pub(crate) mod tests {
 
     use super::*;
 
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     #[test]
     fn delivery_block_clears_without_starting_more_artwork() {
         let (presence, requests) = Presence::new();

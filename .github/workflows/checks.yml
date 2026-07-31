@@ -127,7 +127,7 @@ jobs:
             esac
 
             case "$path" in
-              .github/workflows/aur-build.yml|.github/workflows/aur.yml|packaging/aur/rufin-bin/PKGBUILD.template|packaging/aur/rufin-git/PKGBUILD|packaging/aur/rufin-git/.SRCINFO|scripts/aur-srcinfo|scripts/check-deps)
+              .github/workflows/aur-build.yml|.github/workflows/aur.yml|packaging/aur/rufin-bin/PKGBUILD.template|packaging/aur/rufin-git/PKGBUILD|packaging/aur/rufin-git/.SRCINFO|scripts/aur-srcinfo|scripts/build-arch|scripts/check-deps)
                 aur_required=true
                 ;;
             esac
@@ -169,7 +169,7 @@ jobs:
             esac
 
             case "$path" in
-              .github/workflows/aur-build.yml|.github/workflows/aur.yml|.github/workflows/checks.yml|.github/workflows/container-image.yml|.github/workflows/nix.yml|.github/workflows/rpm-source.yml|.github/workflows/rpm.yml|deny.toml|packaging/aur/*|packaging/container/*|packaging/rpm/*|scripts/aur-srcinfo|scripts/build-rpm|scripts/check-deps|scripts/container|scripts/retry-nix)
+              .github/workflows/aur-build.yml|.github/workflows/aur.yml|.github/workflows/checks.yml|.github/workflows/container-image.yml|.github/workflows/nix.yml|.github/workflows/rpm-source.yml|.github/workflows/rpm.yml|deny.toml|packaging/aur/*|packaging/container/*|packaging/rpm/*|scripts/aur-srcinfo|scripts/build-arch|scripts/build-rpm|scripts/check-deps|scripts/container|scripts/retry-nix)
                 ;;
               *.avif|*.gif|*.jpeg|*.jpg|*.md|*.png|*.po|*.pot|*.svg|*.webp)
                 ;;

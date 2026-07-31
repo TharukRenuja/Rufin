@@ -569,10 +569,15 @@ fn sync_file(path: &Path) -> StoreResult<()> {
 }
 
 fn sync_parent(path: &Path) -> StoreResult<()> {
-    let parent = path
-        .parent()
-        .filter(|path| !path.as_os_str().is_empty())
-        .unwrap_or_else(|| Path::new("."));
-    fs::File::open(parent)?.sync_all()?;
+    #[cfg(unix)]
+    {
+        let parent = path
+            .parent()
+            .filter(|path| !path.as_os_str().is_empty())
+            .unwrap_or_else(|| Path::new("."));
+        fs::File::open(parent)?.sync_all()?;
+    }
+    #[cfg(not(unix))]
+    let _ = path;
     Ok(())
 }
