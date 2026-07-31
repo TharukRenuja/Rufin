@@ -16,16 +16,24 @@ RUN sed -i 's/^countme=1$/countme=0/' /etc/yum.repos.d/*.repo \
             cargo \
             curl \
             findutils \
+            gettext \
             git-core \
             gzip \
             meson \
+            mingw-nsis-base \
+            mingw32-nsis \
+            mingw64-adwaita-icon-theme \
             mingw64-appstream \
             mingw64-fribidi \
             mingw64-gcc \
             mingw64-gcc-c++ \
             mingw64-gstreamer1 \
+            mingw64-gstreamer1-plugins-bad-free \
             mingw64-gstreamer1-plugins-base \
+            mingw64-gstreamer1-plugins-good \
             mingw64-gtk4 \
+            mingw64-hicolor-icon-theme \
+            mingw64-nsis \
             ninja-build \
             nix \
             rust \
@@ -82,6 +90,7 @@ ENV DO_NOT_TRACK=1 \
     HOME=/home/rufin \
     NIX_REMOTE=local \
     RUFIN_WINDOWS_CARGO=/usr/bin/cargo \
+    RUFIN_WINDOWS_PREFIX=/usr/x86_64-w64-mingw32/sys-root/mingw \
     RUFIN_WINDOWS_RUSTC=/usr/bin/rustc \
     USER=rufin
 

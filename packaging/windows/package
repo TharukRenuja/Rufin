@@ -1,0 +1,133 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+runtime_prefix="${RUFIN_WINDOWS_PREFIX:-${MINGW_PREFIX:-}}"
+binary="${RUFIN_WINDOWS_BINARY:-${repo_root}/target/release/rufin.exe}"
+stage_dir="${RUFIN_WINDOWS_STAGE_DIR:-${repo_root}/dist/windows/Rufin}"
+
+if [[ -z "$runtime_prefix" || ! -d "$runtime_prefix" ]]; then
+    echo "The Windows runtime prefix is unavailable: ${runtime_prefix:-not set}" >&2
+    exit 1
+fi
+if [[ ! -f "$binary" ]]; then
+    echo "The Rufin Windows executable is unavailable: ${binary}" >&2
+    exit 1
+fi
+case "$stage_dir" in
+    "$repo_root"/*/windows/Rufin)
+        ;;
+    *)
+        echo "Refusing unsafe Windows staging directory: ${stage_dir:-empty}" >&2
+        exit 1
+        ;;
+esac
+
+copy_file() {
+    local source_path="$1"
+    local destination_path="$2"
+    if [[ -f "$source_path" || -L "$source_path" ]]; then
+        mkdir -p "$(dirname "$destination_path")"
+        cp -L "$source_path" "$destination_path"
+    fi
+}
+
+copy_directory() {
+    local source_path="$1"
+    local destination_path="$2"
+    if [[ -d "$source_path" ]]; then
+        mkdir -p "$destination_path"
+        cp -R -L "$source_path"/. "$destination_path"/
+    fi
+}
+
+rm -rf "$stage_dir"
+mkdir -p "$stage_dir"
+
+cp "$binary" "$stage_dir/rufin.exe"
+copy_file "$repo_root/LICENSE" "$stage_dir/LICENSE"
+copy_file "$repo_root/packaging/windows/assets/rufin.ico" "$stage_dir/rufin.ico"
+
+app_share="$stage_dir/share"
+copy_file \
+    "$repo_root/data/japanese-readings.dic" \
+    "$app_share/rufin/japanese-readings.dic"
+copy_file \
+    "$repo_root/data/japanese-readings.LICENSE" \
+    "$app_share/licenses/rufin/japanese-readings.LICENSE"
+copy_file \
+    "$repo_root/data/io.github.screwys.Rufin.desktop" \
+    "$app_share/applications/io.github.screwys.Rufin.desktop"
+copy_file \
+    "$repo_root/data/io.github.screwys.Rufin.metainfo.xml" \
+    "$app_share/metainfo/io.github.screwys.Rufin.metainfo.xml"
+
+shopt -s nullglob
+runtime_dlls=("$runtime_prefix"/bin/*.dll)
+if [[ ${#runtime_dlls[@]} -eq 0 ]]; then
+    echo "The Windows runtime contains no DLLs: ${runtime_prefix}/bin" >&2
+    exit 1
+fi
+cp -L "${runtime_dlls[@]}" "$stage_dir/"
+
+for helper in gspawn-win64-helper.exe gspawn-win64-helper-console.exe; do
+    copy_file "$runtime_prefix/bin/$helper" "$stage_dir/$helper"
+done
+
+copy_directory "$runtime_prefix/lib/gstreamer-1.0" "$stage_dir/lib/gstreamer-1.0"
+copy_directory "$runtime_prefix/lib/gdk-pixbuf-2.0" "$stage_dir/lib/gdk-pixbuf-2.0"
+copy_directory "$runtime_prefix/lib/gio/modules" "$stage_dir/lib/gio/modules"
+copy_directory \
+    "$runtime_prefix/libexec/gstreamer-1.0" \
+    "$stage_dir/libexec/gstreamer-1.0"
+find "$stage_dir/lib" -type f -name '*.dll.a' -delete
+
+copy_directory "$runtime_prefix/share/glib-2.0/schemas" "$app_share/glib-2.0/schemas"
+copy_directory "$runtime_prefix/share/gstreamer-1.0" "$app_share/gstreamer-1.0"
+copy_directory "$runtime_prefix/share/gtk-4.0" "$app_share/gtk-4.0"
+copy_directory "$runtime_prefix/share/icons/Adwaita" "$app_share/icons/Adwaita"
+copy_directory "$runtime_prefix/share/icons/AdwaitaLegacy" "$app_share/icons/AdwaitaLegacy"
+copy_directory "$runtime_prefix/share/icons/hicolor" "$app_share/icons/hicolor"
+copy_directory "$repo_root/data/icons/hicolor" "$app_share/icons/hicolor"
+copy_directory "$runtime_prefix/share/locale" "$app_share/locale"
+copy_directory "$runtime_prefix/share/mime" "$app_share/mime"
+copy_directory "$runtime_prefix/share/themes" "$app_share/themes"
+copy_directory "$runtime_prefix/share/licenses" "$app_share/licenses"
+
+if [[ "$(uname -s)" == MINGW* || "$(uname -s)" == MSYS* ]]; then
+    msgfmt_command="$runtime_prefix/bin/msgfmt.exe"
+    schema_command="$runtime_prefix/bin/glib-compile-schemas.exe"
+else
+    msgfmt_command="${RUFIN_MSGFMT:-msgfmt}"
+    schema_command="${RUFIN_GLIB_COMPILE_SCHEMAS:-glib-compile-schemas}"
+fi
+command -v "$msgfmt_command" >/dev/null
+command -v "$schema_command" >/dev/null
+
+for po_file in "$repo_root"/crates/localization/locales/*.po; do
+    language="$(basename "$po_file" .po)"
+    locale_dir="$app_share/locale/$language/LC_MESSAGES"
+    mkdir -p "$locale_dir"
+    "$msgfmt_command" --check "$po_file" -o "$locale_dir/rufin.mo"
+done
+"$schema_command" "$app_share/glib-2.0/schemas"
+
+hicolor_dir="$app_share/icons/hicolor"
+rm -f "$hicolor_dir/icon-theme.cache"
+for icon_cache_command in \
+    "$runtime_prefix/bin/gtk4-update-icon-cache.exe" \
+    "$runtime_prefix/bin/gtk-update-icon-cache.exe"; do
+    if [[ -x "$icon_cache_command" \
+        && ( "$(uname -s)" == MINGW* || "$(uname -s)" == MSYS* ) ]]; then
+        "$icon_cache_command" -q -t -f "$hicolor_dir"
+        break
+    fi
+done
+
+settings_dir="$stage_dir/etc/gtk-4.0"
+mkdir -p "$settings_dir"
+printf '%s\n' '[Settings]' 'gtk-font-name=Segoe UI 9' >"$settings_dir/settings.ini"
+
+file_count="$(find "$stage_dir" -type f | wc -l)"
+size_mib="$(du -sm "$stage_dir" | awk '{print $1}')"
+echo "Staged Rufin Windows runtime at ${stage_dir} (${file_count} files, ${size_mib} MiB)"

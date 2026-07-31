@@ -165,6 +165,8 @@ The native build can also work on other distributions when they provide the
 required versions and development files, but those environments are not part of
 Rufin's tested support set. On macOS, `just build dmg` creates
 `.local/artifacts/Rufin.dmg` for installation and platform behavior testing.
+On Windows, `just build windows` creates the versioned setup executable in the
+same artifact directory.
 
 Testing, Nix, and container controls are documented in
 [CONTRIBUTING.md](CONTRIBUTING.md#development-environment).

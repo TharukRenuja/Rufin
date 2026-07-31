@@ -36,27 +36,7 @@ _build-arch:
     scripts/build-arch
 
 _build-windows:
-    windows_cargo="${RUFIN_WINDOWS_CARGO:-cargo}"; \
-    windows_rustc="${RUFIN_WINDOWS_RUSTC:-rustc}"; \
-    windows_pkg_config="${RUFIN_WINDOWS_PKG_CONFIG:-x86_64-w64-mingw32-pkg-config}"; \
-    windows_artifact="${RUFIN_WINDOWS_ARTIFACT:-$PWD/.local/artifacts/rufin.exe}"; \
-    windows_target_dir="${RUFIN_WINDOWS_TARGET_DIR:-$PWD/.local/artifacts/windows}"; \
-    command -v "$windows_cargo" >/dev/null; \
-    command -v "$windows_rustc" >/dev/null; \
-    command -v x86_64-w64-mingw32-gcc >/dev/null; \
-    command -v "$windows_pkg_config" >/dev/null; \
-    AR_x86_64_pc_windows_gnu=x86_64-w64-mingw32-ar \
-        CC_x86_64_pc_windows_gnu=x86_64-w64-mingw32-gcc \
-        CARGO_TARGET_DIR="$windows_target_dir" \
-        CXX_x86_64_pc_windows_gnu=x86_64-w64-mingw32-g++ \
-        PKG_CONFIG="$windows_pkg_config" \
-        PKG_CONFIG_ALLOW_CROSS=1 \
-        PKG_CONFIG_PATH= \
-        RUSTC="$windows_rustc" \
-        WINDRES=x86_64-w64-mingw32-windres \
-        "$windows_cargo" build --locked --target x86_64-pc-windows-gnu -p rufin; \
-    mkdir -p "$(dirname "$windows_artifact")"; \
-    cp "$windows_target_dir/x86_64-pc-windows-gnu/debug/rufin.exe" "$windows_artifact"
+    scripts/build-windows
 
 _build-flatpak:
     if [[ "${RUFIN_CONTAINER:-0}" == "1" ]]; then \

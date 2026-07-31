@@ -58,7 +58,7 @@ just build dmg # builds the macOS disk image on macOS
 just build flatpak # builds the Flatpak
 just build rpm # builds Fedora RPMs for x86_64
 just build rpm arm # builds Fedora RPMs for AArch64
-just build windows # cross-compiles the Windows app
+just build windows # builds the Windows installer
 just debug # runs the development app on the host
 just fmt # formats Rust code
 just test # runs the test suite
