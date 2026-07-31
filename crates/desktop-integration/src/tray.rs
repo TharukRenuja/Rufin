@@ -409,15 +409,13 @@ mod windows_macos {
             ])
             .map_err(|error| format!("failed to build the tray menu: {error}"))?;
 
-            let mut builder = TrayIconBuilder::new()
+            let builder = TrayIconBuilder::new()
                 .with_id("io.github.screwys.Rufin")
                 .with_tooltip(tr("Rufin is running in the tray"))
                 .with_menu(Box::new(menu))
                 .with_icon(build_tray_icon()?);
             #[cfg(target_os = "windows")]
-            {
-                builder = builder.with_menu_on_left_click(false);
-            }
+            let builder = builder.with_menu_on_left_click(false);
             let icon = builder
                 .build()
                 .map_err(|error| format!("failed to create the system tray icon: {error}"))?;
