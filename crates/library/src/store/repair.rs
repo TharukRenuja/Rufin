@@ -564,7 +564,7 @@ fn sidecar(path: &Path, suffix: &str) -> PathBuf {
 }
 
 fn sync_file(path: &Path) -> StoreResult<()> {
-    fs::File::open(path)?.sync_all()?;
+    fs::OpenOptions::new().write(true).open(path)?.sync_all()?;
     Ok(())
 }
 
