@@ -107,10 +107,7 @@ fn released_data_migrates_once_and_reattaches_after_source_rebuild() {
         .expect("decode migrated Local configuration")
     {
         EditableSource::Local { roots, .. } => {
-            assert_eq!(
-                roots,
-                vec![PathBuf::from("/music"), PathBuf::from("/archive")]
-            );
+            assert_eq!(roots, released_local_roots());
         }
         other => panic!("expected Local configuration, found {other:?}"),
     }
@@ -492,10 +489,7 @@ fn unsupported_released_store_recovers_local_settings_and_allows_a_fresh_store()
         .editable()
         .expect("decode recovered Local configuration")
     {
-        EditableSource::Local { roots, .. } => assert_eq!(
-            roots,
-            vec![PathBuf::from("/music"), PathBuf::from("/archive")]
-        ),
+        EditableSource::Local { roots, .. } => assert_eq!(roots, released_local_roots()),
         other => panic!("expected Local configuration, found {other:?}"),
     }
 
@@ -809,11 +803,14 @@ fn write_released_settings_without_selection(path: &Path) {
 }
 
 fn write_released_settings_value(path: &Path, selection: Option<serde_json::Value>) {
+    let roots = released_local_roots();
+    let music = roots[0].to_string_lossy();
+    let archive = roots[1].to_string_lossy();
     let mut sources = serde_json::json!({
         "local_folders": [
-            {"path": " /music "},
-            {"path": "/music"},
-            {"path": "/archive"}
+            {"path": format!(" {music} ")},
+            {"path": music},
+            {"path": archive}
         ]
     });
     if let Some(selection) = selection {
@@ -838,6 +835,14 @@ fn write_released_settings_value(path: &Path, selection: Option<serde_json::Valu
         ),
     )
     .expect("write released Settings");
+}
+
+fn released_local_roots() -> Vec<PathBuf> {
+    if cfg!(target_os = "windows") {
+        vec![PathBuf::from(r"C:\music"), PathBuf::from(r"C:\archive")]
+    } else {
+        vec![PathBuf::from("/music"), PathBuf::from("/archive")]
+    }
 }
 
 fn write_released_store(path: &Path) {

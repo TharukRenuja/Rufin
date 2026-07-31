@@ -9,6 +9,15 @@ app_path="${work_root}/Rufin.app"
 dmg_root="${work_root}/dmg"
 dmg_path="${RUFIN_DMG_ARTIFACT:-${artifact_root}/Rufin.dmg}"
 
+case "$work_root" in
+    "$repo_root"/*/macos)
+        ;;
+    *)
+        echo "Refusing unsafe macOS packaging directory: ${work_root:-empty}" >&2
+        exit 1
+        ;;
+esac
+
 if [[ "$(uname -s)" != "Darwin" ]]; then
     echo "just build dmg must run on macOS." >&2
     exit 1

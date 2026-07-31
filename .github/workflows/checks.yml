@@ -267,7 +267,7 @@ jobs:
         run: |
           scripts/container setup
           scripts/container run just check
-          just build windows
+          scripts/container run just _build-windows
 
   workspace:
     name: Workspace
