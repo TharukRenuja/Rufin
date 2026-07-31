@@ -210,8 +210,15 @@ impl Presence {
             self.clear(state);
             return;
         };
-        if state.settings.enabled && view.transport.state == TransportStatus::Resolving {
-            if matches!(state.artwork, ArtworkState::Pending { .. }) {
+        if state.settings.enabled
+            && matches!(
+                view.transport.state,
+                TransportStatus::Resolving | TransportStatus::Buffering
+            )
+        {
+            if view.transport.state == TransportStatus::Resolving
+                && matches!(state.artwork, ArtworkState::Pending { .. })
+            {
                 state.artwork = ArtworkState::Empty;
                 self.inner.artwork.clear();
             }
@@ -679,6 +686,23 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn initial_buffering_does_not_publish_activity() {
+        let (presence, requests) = Presence::new();
+        let view = test_view(1, "Album", TransportStatus::Buffering, 0);
+        refresh_presence(&presence, &view, "key", 100_000);
+
+        assert!(requests.try_recv().is_none());
+        let state = presence
+            .inner
+            .state
+            .lock()
+            .expect("presence state lock poisoned");
+        assert!(state.activity.is_none());
+        assert!(state.worker.is_none());
+        assert!(matches!(state.artwork, ArtworkState::Empty));
+    }
+
+    #[test]
     fn resolving_next_track_retains_the_current_activity() {
         let (presence, requests) = Presence::new();
         let first = test_view(1, "Album One", TransportStatus::Playing, 0);
@@ -704,9 +728,24 @@ pub(crate) mod tests {
 
         second.transport.state = TransportStatus::Buffering;
         presence.observe(Some(&second), false);
+        assert!(requests.try_recv().is_none());
+        {
+            let state = presence
+                .inner
+                .state
+                .lock()
+                .expect("presence state lock poisoned");
+            assert_eq!(
+                state.activity.as_ref().map(|activity| activity.run()),
+                Some(RunId::new(1))
+            );
+        }
+
+        second.transport.state = TransportStatus::Playing;
+        presence.observe(Some(&second), false);
         let request = requests
             .try_recv()
-            .unwrap_or_else(|| panic!("second album should request artwork"));
+            .unwrap_or_else(|| panic!("playing album should request artwork"));
         request.complete(Ok(Some("https://images.example/two.jpg".to_string())));
         let state = presence
             .inner
@@ -720,7 +759,7 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn newer_resolving_track_cancels_a_staged_replacement() {
+    fn unconfirmed_tracks_do_not_replace_the_current_activity() {
         let (presence, requests) = Presence::new();
         let first = test_view(1, "Album One", TransportStatus::Playing, 0);
         refresh_presence(&presence, &first, "key", 100_000);
@@ -731,34 +770,31 @@ pub(crate) mod tests {
 
         let second = test_view(2, "Album Two", TransportStatus::Buffering, 0);
         presence.observe(Some(&second), false);
-        let second_request = requests
-            .try_recv()
-            .unwrap_or_else(|| panic!("second album should request artwork"));
+        assert!(requests.try_recv().is_none());
 
         let mut third = test_view(3, "Album Three", TransportStatus::Resolving, 0);
         presence.observe(Some(&third), false);
-        second_request.complete(Ok(Some("https://images.example/two.jpg".to_string())));
         {
             let state = presence
                 .inner
                 .state
                 .lock()
                 .expect("presence state lock poisoned");
-            assert!(matches!(state.artwork, ArtworkState::Empty));
-            assert_ne!(
-                state
-                    .activity
-                    .as_ref()
-                    .map(|activity| activity.large_image.as_str()),
-                Some("https://images.example/two.jpg")
+            assert_eq!(
+                state.activity.as_ref().map(|activity| activity.run()),
+                Some(RunId::new(1))
             );
         }
 
         third.transport.state = TransportStatus::Buffering;
         presence.observe(Some(&third), false);
+        assert!(requests.try_recv().is_none());
+
+        third.transport.state = TransportStatus::Playing;
+        presence.observe(Some(&third), false);
         requests
             .try_recv()
-            .unwrap_or_else(|| panic!("third album should request artwork"))
+            .unwrap_or_else(|| panic!("playing album should request artwork"))
             .complete(Ok(Some("https://images.example/three.jpg".to_string())));
         let state = presence
             .inner

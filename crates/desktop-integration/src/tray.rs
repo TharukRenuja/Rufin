@@ -373,7 +373,7 @@ mod windows_macos {
     static EVENT_SENDER: OnceLock<Mutex<Option<Sender<TrayIntent>>>> = OnceLock::new();
 
     pub struct Tray {
-        _icon: TrayIcon,
+        icon: TrayIcon,
         private_mode_item: MenuItem,
     }
 
@@ -422,7 +422,7 @@ mod windows_macos {
             set_event_sender(Some(sender));
             Ok((
                 Self {
-                    _icon: icon,
+                    icon,
                     private_mode_item,
                 },
                 receiver,
@@ -435,6 +435,7 @@ mod windows_macos {
         }
 
         pub fn shutdown(self) {
+            let _ = self.icon.set_visible(false);
             set_event_sender(None);
         }
     }
