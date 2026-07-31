@@ -1,8 +1,8 @@
-//! Repair for an installed final Store.
+//! Recovery for an unusable installed Store.
 //!
-//! Repair is deliberately narrower than migration. It accepts only Rufin's
-//! final schema identity, preserves independently readable Rufin-owned rows,
-//! and publishes a fresh Store without any rebuildable source or cache facts.
+//! Every unusable Store is preserved and replaced. A recognizable current
+//! Store also contributes independently readable Rufin-owned rows; source and
+//! cache facts always return through the ordinary library refresh.
 
 use std::ffi::OsString;
 use std::fs;
@@ -32,18 +32,23 @@ pub struct StoreRepairReport {
     pub unreadable_families: Vec<&'static str>,
 }
 
-pub(crate) fn repair(path: &Path) -> StoreResult<StoreRepairReport> {
-    let source = Connection::open_with_flags(
-        path,
-        OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
-    )?;
-    source.pragma_update(None, "query_only", true)?;
-    require_final_identity(&source)?;
+pub(crate) fn caused_by_store_contents(error: &StoreError) -> bool {
+    match error {
+        StoreError::UnsupportedSchema { .. } | StoreError::InvalidFinalSchema(_) => true,
+        StoreError::Sqlite(SqliteError::SqliteFailure(code, _)) => matches!(
+            code.code,
+            ErrorCode::DatabaseCorrupt | ErrorCode::NotADatabase
+        ),
+        _ => false,
+    }
+}
 
+pub(crate) fn repair(path: &Path) -> StoreResult<StoreRepairReport> {
+    let source = salvage_source(path);
     let prepared_path = unique_sibling(path, "repairing")?;
     let preserved_path = unique_sibling(path, "damaged")?;
-    let result =
-        prepare_replacement(&source, &prepared_path, preserved_path.clone()).and_then(|report| {
+    let result = prepare_replacement(source.as_ref(), &prepared_path, preserved_path.clone())
+        .and_then(|report| {
             drop(source);
             publish_replacement(path, &prepared_path, &preserved_path)?;
             Ok(report)
@@ -54,26 +59,25 @@ pub(crate) fn repair(path: &Path) -> StoreResult<StoreRepairReport> {
     result
 }
 
-pub(crate) const fn is_final_identity(application_id: i64, user_version: i64) -> bool {
-    application_id == schema::APPLICATION_ID && user_version == schema::SCHEMA_VERSION
-}
-
-fn require_final_identity(connection: &Connection) -> StoreResult<()> {
-    let application_id =
-        connection.pragma_query_value(None, "application_id", |row| row.get::<_, i64>(0))?;
-    let user_version =
-        connection.pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))?;
-    if !is_final_identity(application_id, user_version) {
-        return Err(StoreError::UnsupportedSchema {
-            application_id,
-            user_version,
-        });
-    }
-    Ok(())
+fn salvage_source(path: &Path) -> Option<Connection> {
+    let source = Connection::open_with_flags(
+        path,
+        OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+    )
+    .ok()?;
+    source.pragma_update(None, "query_only", true).ok()?;
+    let application_id = source
+        .pragma_query_value(None, "application_id", |row| row.get::<_, i64>(0))
+        .ok()?;
+    let user_version = source
+        .pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))
+        .ok()?;
+    (application_id == schema::APPLICATION_ID && user_version == schema::SCHEMA_VERSION)
+        .then_some(source)
 }
 
 fn prepare_replacement(
-    source: &Connection,
+    source: Option<&Connection>,
     prepared_path: &Path,
     preserved_path: PathBuf,
 ) -> StoreResult<StoreRepairReport> {
@@ -91,110 +95,112 @@ fn prepare_replacement(
         preserved_store: preserved_path,
         ..StoreRepairReport::default()
     };
-    salvage_simple_family(
-        source,
-        &destination,
-        &mut report,
-        SimpleFamily {
-            name: "Local favorites",
-            select: "SELECT source_id, item_kind, item_id FROM local_favorites",
-            insert: "INSERT INTO local_favorites(source_id, item_kind, item_id)
+    if let Some(source) = source {
+        salvage_simple_family(
+            source,
+            &destination,
+            &mut report,
+            SimpleFamily {
+                name: "Local favorites",
+                select: "SELECT source_id, item_kind, item_id FROM local_favorites",
+                insert: "INSERT INTO local_favorites(source_id, item_kind, item_id)
                      VALUES (?1, ?2, ?3)",
-        },
-    )?;
-    salvage_simple_family(
-        source,
-        &destination,
-        &mut report,
-        SimpleFamily {
-            name: "Local playlists",
-            select: "SELECT source_id, playlist_id, name
+            },
+        )?;
+        salvage_simple_family(
+            source,
+            &destination,
+            &mut report,
+            SimpleFamily {
+                name: "Local playlists",
+                select: "SELECT source_id, playlist_id, name
                      FROM local_playlists
                      ORDER BY source_id, playlist_id",
-            insert: "INSERT INTO local_playlists(source_id, playlist_id, name)
+                insert: "INSERT INTO local_playlists(source_id, playlist_id, name)
                      VALUES (?1, ?2, ?3)",
-        },
-    )?;
-    salvage_simple_family(
-        source,
-        &destination,
-        &mut report,
-        SimpleFamily {
-            name: "Local playlist entries",
-            select: "SELECT
+            },
+        )?;
+        salvage_simple_family(
+            source,
+            &destination,
+            &mut report,
+            SimpleFamily {
+                name: "Local playlist entries",
+                select: "SELECT
                         source_id, playlist_id, position, occurrence_id, track_id
                      FROM local_playlist_entries
                      ORDER BY source_id, playlist_id, position",
-            insert: "INSERT INTO local_playlist_entries(
+                insert: "INSERT INTO local_playlist_entries(
                         source_id, playlist_id, position, occurrence_id, track_id
                      ) VALUES (?1, ?2, ?3, ?4, ?5)",
-        },
-    )?;
-    salvage_smart_playlists(source, &destination, &mut report)?;
-    salvage_simple_family(
-        source,
-        &destination,
-        &mut report,
-        SimpleFamily {
-            name: "Local imports",
-            select: "SELECT source_id, track_id, first_seen_at FROM local_imports",
-            insert: "INSERT INTO local_imports(source_id, track_id, first_seen_at)
+            },
+        )?;
+        salvage_smart_playlists(source, &destination, &mut report)?;
+        salvage_simple_family(
+            source,
+            &destination,
+            &mut report,
+            SimpleFamily {
+                name: "Local imports",
+                select: "SELECT source_id, track_id, first_seen_at FROM local_imports",
+                insert: "INSERT INTO local_imports(source_id, track_id, first_seen_at)
                      VALUES (?1, ?2, ?3)",
-        },
-    )?;
-    salvage_playback(source, &destination, &mut report)?;
-    salvage_simple_family(
-        source,
-        &destination,
-        &mut report,
-        SimpleFamily {
-            name: "listening aggregates",
-            select: "SELECT
+            },
+        )?;
+        salvage_playback(source, &destination, &mut report)?;
+        salvage_simple_family(
+            source,
+            &destination,
+            &mut report,
+            SimpleFamily {
+                name: "listening aggregates",
+                select: "SELECT
                         source_id, period, item_kind, item_id, display_name,
                         display_context, play_count, skip_count, last_played_at
                      FROM listening_aggregates",
-            insert: "INSERT INTO listening_aggregates(
+                insert: "INSERT INTO listening_aggregates(
                         source_id, period, item_kind, item_id, display_name,
                         display_context, play_count, skip_count, last_played_at
                      ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
-        },
-    )?;
-    salvage_simple_family(
-        source,
-        &destination,
-        &mut report,
-        SimpleFamily {
-            name: "recent plays",
-            select: "SELECT
+            },
+        )?;
+        salvage_simple_family(
+            source,
+            &destination,
+            &mut report,
+            SimpleFamily {
+                name: "recent plays",
+                select: "SELECT
                         play_id, source_id, track_id, track_title, artist_name,
                         album_title, played_at
                      FROM recent_plays",
-            insert: "INSERT INTO recent_plays(
+                insert: "INSERT INTO recent_plays(
                         play_id, source_id, track_id, track_title, artist_name,
                         album_title, played_at
                      ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-        },
-    )?;
-    salvage_simple_family(
-        source,
-        &destination,
-        &mut report,
-        SimpleFamily {
-            name: "pending external scrobbles",
-            select: "SELECT
+            },
+        )?;
+        salvage_simple_family(
+            source,
+            &destination,
+            &mut report,
+            SimpleFamily {
+                name: "pending external scrobbles",
+                select: "SELECT
                         service, account_id, play_id, track_title, artist_name,
                         album_title, duration_millis, started_at, attempts,
                         next_attempt_at, last_error
                      FROM pending_scrobbles",
-            insert: "INSERT INTO pending_scrobbles(
+                insert: "INSERT INTO pending_scrobbles(
                         service, account_id, play_id, track_title, artist_name,
                         album_title, duration_millis, started_at, attempts,
                         next_attempt_at, last_error
                      ) VALUES (
                         ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11
                      )",
-        },
-    )?;
+            },
+        )?;
+    }
 
     destination.execute_batch("PRAGMA optimize;")?;
     drop(destination);

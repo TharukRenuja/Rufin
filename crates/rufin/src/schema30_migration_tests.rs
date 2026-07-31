@@ -14,7 +14,7 @@ use secrets::{ConfigSecretStore, SecretStore as _, SwitchableSecretStore};
 use sources::{EditableSource, SourceConfiguration};
 
 use super::*;
-use crate::settings::load_provider_secret;
+use crate::settings::{load_provider_secret, read_settings};
 
 const LOCAL_ID: &str = "local:server:library";
 const REMOTE_ID: &str = "jellyfin:server:released";
@@ -446,16 +446,16 @@ fn albumless_legacy_queue_migrates_without_rebuildable_track_cache() {
 }
 
 #[test]
-fn unsupported_released_store_does_not_change_settings_or_create_a_final_store() {
+fn unsupported_released_store_recovers_local_settings_and_allows_a_fresh_store() {
     let directory = tempfile::tempdir().expect("temporary migration directory");
     let settings_path = directory.path().join("settings.json");
     let released_store = directory.path().join("rufin-cache.sqlite");
     let final_store = directory.path().join("rufin-store.sqlite");
-    write_released_settings(&settings_path);
+    write_released_settings_value(&settings_path, Some(serde_json::json!("Local")));
     let connection = Connection::open(&released_store).expect("open unsupported Store");
     connection
         .execute_batch(
-            "PRAGMA user_version = 31;
+            "PRAGMA user_version = 13;
              CREATE TABLE sources (
                  source_id TEXT PRIMARY KEY,
                  kind TEXT NOT NULL,
@@ -465,22 +465,72 @@ fn unsupported_released_store_does_not_change_settings_or_create_a_final_store()
         )
         .expect("create unsupported Store");
     drop(connection);
-    let settings_before = fs::read(&settings_path).expect("read Settings before failure");
     let store_before = fs::read(&released_store).expect("read Store before failure");
 
-    let error = install_if_needed(&settings_path, &released_store, &final_store)
-        .expect_err("unsupported Store must not migrate");
-
-    assert!(error.contains("application ID 0, schema 31"), "{error}");
-    assert_eq!(
-        fs::read(&settings_path).expect("read Settings after failure"),
-        settings_before
+    assert!(
+        install_if_needed(&settings_path, &released_store, &final_store)
+            .expect("skip unsupported released data")
+            .is_none()
     );
+
     assert_eq!(
         fs::read(&released_store).expect("read Store after failure"),
-        store_before
+        store_before,
+        "unsupported released data remains available without blocking startup"
     );
     assert!(!final_store.exists());
+
+    let stored = read_settings(&settings_path).expect("read recovered Settings");
+    assert_eq!(stored.sources.configured.len(), 1);
+    let local = &stored.sources.configured[0];
+    assert_eq!(
+        stored.sources.selected_source_id.as_ref(),
+        Some(&local.configuration.source_id)
+    );
+    match local
+        .configuration
+        .editable()
+        .expect("decode recovered Local configuration")
+    {
+        EditableSource::Local { roots, .. } => assert_eq!(
+            roots,
+            vec![PathBuf::from("/music"), PathBuf::from("/archive")]
+        ),
+        other => panic!("expected Local configuration, found {other:?}"),
+    }
+
+    let (library, repair) = Library::open_with_repair(&final_store)
+        .expect("open a fresh Store after skipping released data");
+    assert!(repair.is_none());
+    assert!(
+        library
+            .load_source(&local.configuration.source_id)
+            .expect("read fresh Store")
+            .is_none()
+    );
+}
+
+#[test]
+fn legacy_local_settings_are_recovered_independently_of_store_migration() {
+    let directory = tempfile::tempdir().expect("temporary migration directory");
+    let settings_path = directory.path().join("settings.json");
+    let released_store = directory.path().join("rufin-cache.sqlite");
+    let final_store = directory.path().join("rufin-store.sqlite");
+    write_released_settings_value(&settings_path, Some(serde_json::json!("Local")));
+    drop(Library::open(&final_store).expect("create an existing final Store"));
+
+    assert!(
+        install_if_needed(&settings_path, &released_store, &final_store)
+            .expect("recover settings independently of Store migration")
+            .is_none()
+    );
+
+    let stored = read_settings(&settings_path).expect("read recovered Settings");
+    assert_eq!(stored.sources.configured.len(), 1);
+    assert_eq!(
+        stored.sources.selected_source_id,
+        Some(stored.sources.configured[0].configuration.source_id.clone())
+    );
 }
 
 #[test]

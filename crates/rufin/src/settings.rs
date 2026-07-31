@@ -1,3 +1,4 @@
+use std::ffi::OsString;
 use std::fs;
 use std::io::{ErrorKind, Write as _};
 use std::path::{Path, PathBuf};
@@ -218,28 +219,45 @@ fn default_home_sections() -> Vec<HomeSectionKind> {
 
 #[derive(Clone)]
 pub(crate) struct SettingsFile {
-    path: PathBuf,
+    path: Option<PathBuf>,
     value: Arc<Mutex<StoredSettings>>,
 }
 
 impl SettingsFile {
     pub(crate) fn open(path: PathBuf) -> Result<Self, String> {
-        let mut value = read_settings(&path)?;
+        let mut value = read_startup_settings(&path)?.stored;
         value.migrate_defaults();
         let mut changed = false;
         if value.jellyfin_device_id.trim().is_empty() {
-            value.jellyfin_device_id = random_identity("rufin-")?;
-            changed = true;
+            match random_identity("rufin-") {
+                Ok(identity) => {
+                    value.jellyfin_device_id = identity;
+                    changed = true;
+                }
+                Err(error) => warn!(%error, "could not create a Jellyfin device identity"),
+            }
         }
         let file = Self {
-            path,
+            path: Some(path),
             value: Arc::new(Mutex::new(value)),
         };
         if changed {
             let current = file.load();
-            file.write(&current)?;
+            if let Err(error) = file.write(&current) {
+                warn!(%error, "could not save startup settings");
+            }
         }
         Ok(file)
+    }
+
+    pub(crate) fn memory() -> Self {
+        let mut value = StoredSettings::default();
+        value.migrate_defaults();
+        value.jellyfin_device_id = random_identity("rufin-").unwrap_or_default();
+        Self {
+            path: None,
+            value: Arc::new(Mutex::new(value)),
+        }
     }
 
     pub(crate) fn load(&self) -> StoredSettings {
@@ -269,13 +287,17 @@ impl SettingsFile {
         let mut next = current.clone();
         let output = operation(&mut next)?;
         next.migrate_defaults();
-        write_settings(&self.path, &next)?;
+        if let Some(path) = &self.path {
+            write_settings(path, &next)?;
+        }
         *current = next;
         Ok(output)
     }
 
     fn write(&self, value: &StoredSettings) -> Result<(), String> {
-        write_settings(&self.path, value)?;
+        if let Some(path) = &self.path {
+            write_settings(path, value)?;
+        }
         *self
             .value
             .lock()
@@ -560,11 +582,81 @@ fn random_identity(prefix: &str) -> Result<String, String> {
     Ok(value)
 }
 
+#[cfg(test)]
 pub(crate) fn read_settings(path: &Path) -> Result<StoredSettings, String> {
     match fs::read_to_string(path) {
         Ok(json) => serde_json::from_str(&json).map_err(|error| error.to_string()),
         Err(error) if error.kind() == ErrorKind::NotFound => Ok(StoredSettings::default()),
         Err(error) => Err(error.to_string()),
+    }
+}
+
+pub(crate) struct StartupSettings {
+    pub(crate) stored: StoredSettings,
+    pub(crate) raw: Option<serde_json::Value>,
+}
+
+pub(crate) fn read_startup_settings(path: &Path) -> Result<StartupSettings, String> {
+    let raw = match fs::read_to_string(path) {
+        Ok(raw) if raw.trim().is_empty() => {
+            return Ok(StartupSettings {
+                stored: StoredSettings::default(),
+                raw: None,
+            });
+        }
+        Ok(raw) => raw,
+        Err(error) if error.kind() == ErrorKind::NotFound => {
+            return Ok(StartupSettings {
+                stored: StoredSettings::default(),
+                raw: None,
+            });
+        }
+        Err(error) => return Err(error.to_string()),
+    };
+    let parsed = serde_json::from_str::<serde_json::Value>(&raw).and_then(|value| {
+        serde_json::from_value::<StoredSettings>(value.clone()).map(|stored| (stored, value))
+    });
+    match parsed {
+        Ok((stored, raw)) => Ok(StartupSettings {
+            stored,
+            raw: Some(raw),
+        }),
+        Err(error) => {
+            let preserved = preserve_unreadable_settings(path)?;
+            warn!(
+                %error,
+                path = %path.display(),
+                preserved_path = %preserved.display(),
+                "preserved unreadable settings and continued with defaults"
+            );
+            Ok(StartupSettings {
+                stored: StoredSettings::default(),
+                raw: None,
+            })
+        }
+    }
+}
+
+fn preserve_unreadable_settings(path: &Path) -> Result<PathBuf, String> {
+    let parent = path.parent().filter(|path| !path.as_os_str().is_empty());
+    let file_name = path
+        .file_name()
+        .ok_or_else(|| "settings path has no file name".to_string())?;
+    let mut number = 0_u64;
+    loop {
+        let mut candidate_name = OsString::from(file_name);
+        candidate_name.push(format!(".damaged-{}-{number}", std::process::id()));
+        let candidate = parent.map_or_else(
+            || PathBuf::from(&candidate_name),
+            |parent| parent.join(&candidate_name),
+        );
+        if !candidate.exists() {
+            fs::rename(path, &candidate).map_err(|error| error.to_string())?;
+            return Ok(candidate);
+        }
+        number = number
+            .checked_add(1)
+            .ok_or_else(|| "could not choose a preserved settings path".to_string())?;
     }
 }
 
@@ -721,6 +813,35 @@ mod tests {
             "new"
         );
         assert!(!temporary.exists());
+    }
+
+    #[test]
+    fn unreadable_settings_are_preserved_and_open_with_defaults() {
+        let directory = tempfile::tempdir().expect("temporary settings directory");
+        let path = directory.path().join("settings.json");
+        let unreadable = b"{not valid settings";
+        fs::write(&path, unreadable).expect("write unreadable settings");
+
+        let settings = SettingsFile::open(path.clone()).expect("recover settings");
+
+        assert!(settings.load().sources.configured.is_empty());
+        assert!(
+            read_settings(&path).is_ok(),
+            "startup writes usable defaults"
+        );
+        let preserved = fs::read_dir(directory.path())
+            .expect("read settings directory")
+            .map(|entry| entry.expect("settings entry").path())
+            .find(|path| {
+                path.file_name().is_some_and(|name| {
+                    name.to_string_lossy().starts_with("settings.json.damaged-")
+                })
+            })
+            .expect("preserved unreadable settings");
+        assert_eq!(
+            fs::read(preserved).expect("read preserved settings"),
+            unreadable
+        );
     }
 
     #[test]

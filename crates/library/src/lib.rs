@@ -113,9 +113,7 @@ pub use store::schema30::*;
 
 #[derive(Debug, Error)]
 pub enum LibraryError {
-    #[error(
-        "unsupported Store (application ID {application_id}, schema {user_version}); files were preserved"
-    )]
+    #[error("unsupported Store (application ID {application_id}, schema {user_version})")]
     UnsupportedStore {
         application_id: i64,
         user_version: i64,
@@ -168,30 +166,29 @@ impl Library {
         })
     }
 
-    /// Opens a healthy Store or repairs an identified current Store.
+    pub fn memory() -> LibraryResult<Self> {
+        Ok(Self {
+            store: store::StoreLane::memory()?,
+            home_sessions: Arc::new(home::HomeSessions::new()),
+        })
+    }
+
+    /// Opens a healthy Store or preserves and replaces an unusable Store.
     ///
-    /// Repair preserves the damaged database beside the replacement and
-    /// returns a report so Rufin can enter its ordinary source rebuild gate.
-    /// Unsupported or unidentifiable Stores are never translated.
+    /// Recognized current Stores contribute readable Rufin-owned rows. Every
+    /// other unusable Store starts clean so the source owner can rebuild its
+    /// ordinary facts without making persisted content a launch gate.
     pub fn open_with_repair(
         path: impl AsRef<Path>,
     ) -> LibraryResult<(Self, Option<StoreRepairReport>)> {
-        let path = path.as_ref();
-        match Self::open(path) {
-            Ok(library) => Ok((library, None)),
-            Err(LibraryError::InvalidStore(_)) => {
-                let report = store::repair::repair(path)?;
-                Ok((Self::open(path)?, Some(report)))
-            }
-            Err(LibraryError::UnsupportedStore {
-                application_id,
-                user_version,
-            }) if store::repair::is_final_identity(application_id, user_version) => {
-                let report = store::repair::repair(path)?;
-                Ok((Self::open(path)?, Some(report)))
-            }
-            Err(error) => Err(error),
-        }
+        let (store, repair) = store::StoreLane::open_with_repair(path.as_ref().to_path_buf())?;
+        Ok((
+            Self {
+                store,
+                home_sessions: Arc::new(home::HomeSessions::new()),
+            },
+            repair,
+        ))
     }
 
     pub fn load_source(&self, source_id: &SourceId) -> LibraryResult<Option<Arc<LoadedLibrary>>> {

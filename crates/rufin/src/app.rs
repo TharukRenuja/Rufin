@@ -21,18 +21,30 @@ use crate::source::{SourceBootstrap, SourceOutputs, SourceOwner};
 use crate::waveform::WaveformOwner;
 
 pub(crate) fn runtime_inputs(diagnostics: DiagnosticsHandle) -> Result<RuntimeInputs, String> {
-    paths::prepare()?;
-    crate::schema30_migration::install_if_needed(
+    if let Err(error) = paths::prepare() {
+        warn!(%error, "could not prepare every Rufin data directory");
+    }
+    if let Err(error) = crate::schema30_migration::install_if_needed(
         &paths::settings_file(),
         &paths::released_store_file(),
         &paths::store_file(),
-    )?;
+    ) {
+        warn!(%error, "could not import released Rufin data; startup will continue");
+    }
     let runtime = tokio::runtime::Handle::current();
-    let settings = SettingsFile::open(paths::settings_file())?;
+    let settings = SettingsFile::open(paths::settings_file()).unwrap_or_else(|error| {
+        warn!(%error, "could not use saved settings; startup will continue with defaults");
+        SettingsFile::memory()
+    });
     let stored = settings.load();
     let secrets = Arc::new(SwitchableSecretStore::new(platform_secret_store(&stored)));
-    let (library, repair) =
-        library::Library::open_with_repair(paths::store_file()).map_err(string_error)?;
+    let (library, repair) = match library::Library::open_with_repair(paths::store_file()) {
+        Ok(opened) => opened,
+        Err(error) => {
+            warn!(%error, "could not use the saved Store; startup will continue in memory");
+            (library::Library::memory().map_err(string_error)?, None)
+        }
+    };
     if let Some(repair) = repair {
         warn!(
             preserved_store_path = %repair.preserved_store.display(),
@@ -54,8 +66,13 @@ pub(crate) fn runtime_inputs(diagnostics: DiagnosticsHandle) -> Result<RuntimeIn
     let (waveform_events, waveform_receiver) = unbounded();
     let (lyrics_events, lyrics_receiver) = unbounded();
     let (release_update_events, release_update_receiver) = unbounded();
-    let artwork =
-        artwork::Artwork::new(paths::artwork_dir(), runtime.clone()).map_err(string_error)?;
+    let artwork = match artwork::Artwork::new(paths::artwork_dir(), runtime.clone()) {
+        Ok(artwork) => artwork,
+        Err(error) => {
+            warn!(%error, "could not use the artwork cache; startup will continue with a temporary cache");
+            artwork::Artwork::new(temporary_artwork_dir(), runtime.clone()).map_err(string_error)?
+        }
+    };
     let downloads =
         downloads::Downloads::new(paths::downloads_dir(), runtime.clone(), download_events);
     let download_source_events = source_events.clone();
@@ -211,4 +228,11 @@ pub(crate) fn runtime_inputs(diagnostics: DiagnosticsHandle) -> Result<RuntimeIn
 
 fn string_error(error: impl std::fmt::Display) -> String {
     error.to_string()
+}
+
+fn temporary_artwork_dir() -> std::path::PathBuf {
+    let started = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |duration| duration.as_nanos());
+    std::env::temp_dir().join(format!("rufin-artwork-{}-{started}", std::process::id()))
 }

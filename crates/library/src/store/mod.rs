@@ -51,9 +51,7 @@ pub(crate) enum StoreError {
     WorkerStopped,
     #[error("the Store worker panicked while opening")]
     WorkerPanicked,
-    #[error(
-        "unsupported Store (application ID {application_id}, schema {user_version}); files were preserved"
-    )]
+    #[error("unsupported Store (application ID {application_id}, schema {user_version})")]
     UnsupportedSchema {
         application_id: i64,
         user_version: i64,
@@ -155,6 +153,24 @@ impl Drop for StoreLaneInner {
 impl StoreLane {
     pub(crate) fn open(path: impl Into<PathBuf>) -> StoreResult<Self> {
         Self::spawn(StoreLocation::Path(path.into()))
+    }
+
+    pub(crate) fn memory() -> StoreResult<Self> {
+        Self::spawn(StoreLocation::Memory)
+    }
+
+    pub(crate) fn open_with_repair(
+        path: impl Into<PathBuf>,
+    ) -> StoreResult<(Self, Option<StoreRepairReport>)> {
+        let path = path.into();
+        match Self::open(path.clone()) {
+            Ok(store) => Ok((store, None)),
+            Err(error) if path.exists() && repair::caused_by_store_contents(&error) => {
+                let report = repair::repair(&path)?;
+                Ok((Self::open(path)?, Some(report)))
+            }
+            Err(error) => Err(error),
+        }
     }
 
     fn spawn(location: StoreLocation) -> StoreResult<Self> {
@@ -525,6 +541,7 @@ impl StoreLane {
 
 enum StoreLocation {
     Path(PathBuf),
+    Memory,
 }
 
 type Reply<T> = SyncSender<StoreResult<T>>;
@@ -539,6 +556,7 @@ impl Worker {
     fn open(location: StoreLocation) -> StoreResult<Self> {
         let connection = match location {
             StoreLocation::Path(path) => open_path(&path)?,
+            StoreLocation::Memory => Connection::open_in_memory()?,
         };
         connection.busy_timeout(Duration::from_secs(5))?;
         schema::initialize(&connection)?;
