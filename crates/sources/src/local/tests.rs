@@ -176,10 +176,10 @@ fn album_classification_combines_track_tags_in_stable_order() {
 #[test]
 fn metadata_availability_uses_accepted_paths_and_registered_lofty_writers() {
     let root = tempfile::tempdir().expect("Local root");
-    let wav = root.path().join("editable.wav");
+    let root_path = fs::canonicalize(root.path()).expect("canonical Local root");
+    let wav = root_path.join("editable.wav");
     write_tagged_wav(&wav, "Editable", "Artist", "Album", 1).expect("write editable WAV");
-    let source =
-        LocalSource::from_roots(vec![root.path().to_path_buf()]).expect("open Local source");
+    let source = LocalSource::from_roots(vec![root_path.clone()]).expect("open Local source");
     let track = complete_scan(&source)
         .tracks()
         .into_iter()
@@ -197,7 +197,7 @@ fn metadata_availability_uses_accepted_paths_and_registered_lofty_writers() {
     ));
 
     for extension in ["mka", "wma"] {
-        let path = root.path().join(format!("read-only.{extension}"));
+        let path = root_path.join(format!("read-only.{extension}"));
         fs::write(&path, []).expect("write discoverer-backed format");
         let mut discoverer_track = track.clone();
         discoverer_track.make_mut().source_path = Some(path.to_string_lossy().into_owned());
@@ -216,7 +216,7 @@ fn metadata_availability_uses_accepted_paths_and_registered_lofty_writers() {
 
     let mut cue_track = track.clone();
     cue_track.make_mut().cue = Some(library::CueSegment {
-        cue_path: root.path().join("album.cue").to_string_lossy().into_owned(),
+        cue_path: root_path.join("album.cue").to_string_lossy().into_owned(),
         start_millis: 0,
         end_millis: 1_000,
     });
@@ -242,7 +242,7 @@ fn metadata_availability_uses_accepted_paths_and_registered_lofty_writers() {
 
     let mut non_normal_track = outside_track.clone();
     non_normal_track.make_mut().source_path = Some(
-        root.path()
+        root_path
             .join("nested")
             .join("..")
             .join("editable.wav")
@@ -253,7 +253,7 @@ fn metadata_availability_uses_accepted_paths_and_registered_lofty_writers() {
 
     #[cfg(unix)]
     {
-        let link = root.path().join("outside-link.wav");
+        let link = root_path.join("outside-link.wav");
         std::os::unix::fs::symlink(&outside_path, &link).expect("link outside WAV");
         outside_track.make_mut().source_path = Some(link.to_string_lossy().into_owned());
         assert!(matches!(
@@ -264,7 +264,7 @@ fn metadata_availability_uses_accepted_paths_and_registered_lofty_writers() {
             source.metadata_entry_available(&library::MetadataItem::Track(outside_track.clone()))
         );
 
-        let link = root.path().join("inside-link.wav");
+        let link = root_path.join("inside-link.wav");
         std::os::unix::fs::symlink(&wav, &link).expect("link inside WAV");
         outside_track.make_mut().source_path = Some(link.to_string_lossy().into_owned());
         assert!(matches!(
@@ -278,12 +278,21 @@ fn metadata_availability_uses_accepted_paths_and_registered_lofty_writers() {
 #[test]
 fn mapped_metadata_reads_only_the_exact_projected_file() {
     let root = tempfile::tempdir().expect("mapped metadata root");
-    let path = root.path().join("Artist/Track.wav");
+    let actual_root = root.path().join("actual");
+    fs::create_dir(&actual_root).expect("create actual mapped metadata root");
+    #[cfg(unix)]
+    let mapping_root = {
+        let alias = root.path().join("alias");
+        std::os::unix::fs::symlink(&actual_root, &alias).expect("link mapped metadata root");
+        alias
+    };
+    #[cfg(not(unix))]
+    let mapping_root = actual_root.clone();
+    let path = actual_root.join("Artist/Track.wav");
     fs::create_dir_all(path.parent().expect("mapped Track parent"))
         .expect("create mapped Track parent");
     write_tagged_wav(&path, "Track", "Artist", "Album", 1).expect("write mapped WAV");
-    let source =
-        LocalSource::from_roots(vec![root.path().to_path_buf()]).expect("open Local source");
+    let source = LocalSource::from_roots(vec![actual_root.clone()]).expect("open Local source");
     let mut track = complete_scan(&source)
         .tracks()
         .into_iter()
@@ -294,6 +303,16 @@ fn mapped_metadata_reads_only_the_exact_projected_file() {
     let mut missing = track.clone();
     missing.make_mut().id = library::TrackId::new("navidrome:track:missing");
     missing.make_mut().source_path = Some("/music/Artist/Missing.wav".to_string());
+    #[cfg(unix)]
+    let _outside = {
+        let outside = tempfile::tempdir().expect("outside mapped metadata root");
+        let outside_path = outside.path().join("Outside.wav");
+        write_tagged_wav(&outside_path, "Outside", "Artist", "Album", 1)
+            .expect("write outside mapped WAV");
+        std::os::unix::fs::symlink(&outside_path, actual_root.join("Artist/Missing.wav"))
+            .expect("link outside mapped WAV");
+        outside
+    };
 
     let store = tempfile::tempdir().expect("mapped metadata Store");
     let library = Library::open(store.path().join("library.db")).expect("open Library");
@@ -319,7 +338,7 @@ fn mapped_metadata_reads_only_the_exact_projected_file() {
         .and_then(library::PreparedSourceCandidate::accept)
         .expect("accept mapped library");
     let mapping = library::LocalAccessMapping {
-        root_path: root.path().to_path_buf(),
+        root_path: mapping_root,
         server_prefix: Some("/music".to_string()),
         local_prefix: None,
     };
