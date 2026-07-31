@@ -244,7 +244,7 @@ fn mapped_target_in_roots(
 
 fn target_path(roots: &[PathBuf], source_path: &Path) -> Option<MetadataTarget> {
     let path = fs::canonicalize(source_path).ok()?;
-    if source_path != path {
+    if cfg!(not(target_os = "windows")) && source_path != path {
         return None;
     }
     if !roots.iter().any(|root| path.starts_with(root)) {
@@ -674,7 +674,7 @@ fn ensure_metadata_replacement_available() -> Result<(), MetadataError> {
 
 struct PreparedBatchFile {
     target: MetadataTarget,
-    temp: tempfile::NamedTempFile,
+    temp: tempfile::TempPath,
     expected_revision: String,
     #[cfg(target_os = "windows")]
     backup: WindowsBackupPath,
@@ -683,12 +683,12 @@ struct PreparedBatchFile {
 impl PreparedBatchFile {
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     fn replace_target(&self) -> std::io::Result<()> {
-        atomic_exchange(self.temp.path(), &self.target.path)
+        atomic_exchange(self.temp.as_ref(), &self.target.path)
     }
 
     #[cfg(target_os = "windows")]
     fn replace_target(&self) -> std::io::Result<()> {
-        windows_replace_with_backup(self.temp.path(), &self.target.path, &self.backup.path)
+        windows_replace_with_backup(self.temp.as_ref(), &self.target.path, &self.backup.path)
     }
 
     #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
@@ -698,7 +698,7 @@ impl PreparedBatchFile {
 
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     fn original_path(&self) -> &Path {
-        self.temp.path()
+        self.temp.as_ref()
     }
 
     #[cfg(target_os = "windows")]
@@ -708,17 +708,17 @@ impl PreparedBatchFile {
 
     #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
     fn original_path(&self) -> &Path {
-        self.temp.path()
+        self.temp.as_ref()
     }
 
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     fn restore_target(&self) -> std::io::Result<()> {
-        atomic_exchange(self.temp.path(), &self.target.path)
+        atomic_exchange(self.temp.as_ref(), &self.target.path)
     }
 
     #[cfg(target_os = "windows")]
     fn restore_target(&self) -> std::io::Result<()> {
-        windows_replace_with_backup(&self.backup.path, &self.target.path, self.temp.path())
+        windows_replace_with_backup(&self.backup.path, &self.target.path, self.temp.as_ref())
     }
 
     #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
@@ -728,8 +728,7 @@ impl PreparedBatchFile {
 
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     fn preserve_original(self) -> std::io::Result<PathBuf> {
-        let path = self.temp.path().to_path_buf();
-        self.temp.keep().map(|_| path).map_err(|error| error.error)
+        self.temp.keep().map_err(Into::into)
     }
 
     #[cfg(target_os = "windows")]
@@ -876,7 +875,7 @@ fn prepare_batch_file(
             path: target.path.clone(),
             format: target.format,
         },
-        temp,
+        temp: temp.into_temp_path(),
         expected_revision,
         #[cfg(target_os = "windows")]
         backup: WindowsBackupPath::reserve(parent)
