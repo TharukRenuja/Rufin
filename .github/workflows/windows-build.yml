@@ -109,10 +109,11 @@ jobs:
         shell: msys2 {0}
         run: |
           set -euo pipefail
-          cargo test --locked -p secrets
-          cargo test --locked -p desktop-integration
-          cargo test --locked -p sources metadata_
-          cargo test --locked -p rufin settings_
+          cargo test --locked --release --tests \
+            -p secrets \
+            -p desktop-integration \
+            -p sources \
+            -p rufin
 
       - name: Build Windows installer
         shell: msys2 {0}

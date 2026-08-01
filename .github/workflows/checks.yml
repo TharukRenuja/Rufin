@@ -83,6 +83,7 @@ jobs:
             aur_git:
               - '.github/workflows/aur-build.yml'
               - '.github/workflows/aur.yml'
+              - 'packaging/aur/build'
               - 'packaging/aur/rufin-git/**'
             rpm:
               - '.github/workflows/rpm-source.yml'
@@ -114,8 +115,9 @@ jobs:
               - 'scripts/rust-cache-command'
             container:
               - '.github/workflows/container-image.yml'
+              - 'flake.lock'
+              - 'flake.nix'
               - 'justfile'
-              - 'packaging/aur/build'
               - 'packaging/container/**'
               - 'scripts/container'
             container_image:
@@ -286,7 +288,7 @@ jobs:
         run: |
           set -euo pipefail
           scripts/container setup
-          scripts/container run just _check-container-image
+          scripts/container run default none just _check-all
 
   workspace:
     name: Workspace

@@ -41,6 +41,7 @@ jobs:
       CARGO_TARGET_DIR: ${{ github.workspace }}/.local/target
       HOMEBREW_NO_ANALYTICS: 1
       HOMEBREW_NO_AUTO_UPDATE: 1
+      MACOSX_DEPLOYMENT_TARGET: "15.0"
 
     steps:
       - name: Check out repository
@@ -113,10 +114,11 @@ jobs:
       - name: Test platform integrations
         run: |
           set -euo pipefail
-          cargo test --locked -p secrets
-          cargo test --locked -p desktop-integration
-          cargo test --locked -p sources metadata_
-          cargo test --locked -p rufin settings_
+          cargo test --locked --release --tests \
+            -p secrets \
+            -p desktop-integration \
+            -p sources \
+            -p rufin
 
       - name: Build macOS disk image
         run: |

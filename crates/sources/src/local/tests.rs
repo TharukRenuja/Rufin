@@ -1898,21 +1898,20 @@ fn source_input_rejects_missing_or_relative_roots_without_forgetting_saved_roots
         .expect_err("relative setup root is not accepted");
     assert!(matches!(relative, crate::SourceError::Other(_)));
 
+    let directory = tempfile::tempdir().expect("temporary missing root parent");
+    let missing_root = directory.path().join("rufin-music");
     let missing = SourceConfiguration {
         source_id: SourceId::new(LOCAL_LIBRARY_SOURCE_ID),
         kind: LOCAL_SOURCE_ID.to_string(),
         name: "Local".to_string(),
         provider_payload: LocalSourceConfig {
-            roots: vec![PathBuf::from("/definitely/missing/rufin-music")],
+            roots: vec![missing_root.clone()],
         }
         .into_payload()
         .to_string(),
     };
     let opened = LocalSource::from_configuration(&missing).expect("open saved Local source");
-    assert_eq!(
-        opened.roots(),
-        [PathBuf::from("/definitely/missing/rufin-music")]
-    );
+    assert_eq!(opened.roots(), [missing_root]);
     let mut accept = |_| true;
     let mut emitter = BatchEmitter::new(&mut accept);
     assert!(opened.read_facts(&mut emitter, &|_| {}, &|| false).is_err());
