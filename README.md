@@ -124,7 +124,7 @@ This makes just commands go through the container development. If you want to bu
 Rufin requires Rust 1.95 or newer, GTK 4.20 or newer, libadwaita 1.8 or
 newer, and GStreamer 1.26 or newer.
 
-Arch Linux:
+**Arch Linux:**
 
 ```bash
 sudo pacman -S --needed \
@@ -133,7 +133,7 @@ sudo pacman -S --needed \
   gst-plugins-ugly gst-libav
 ```
 
-Fedora:
+**Fedora:**
 
 ```bash
 sudo dnf install \
@@ -146,15 +146,7 @@ sudo dnf install \
 For full codec coverage, enable RPM Fusion and install `gstreamer1-plugins-ugly`
 and `gstreamer1-plugin-libav`.
 
-macOS:
-
-```bash
-brew install \
-  rust just pkgconf gettext gtk4 libadwaita gstreamer \
-  dylibbundler librsvg
-```
-
-Windows builds run natively in the MSYS2 UCRT64 environment. From its Windows
+**Windows:** Windows builds run natively in the MSYS2 UCRT64 environment. From its Windows
 UCRT64 terminal, use MSYS2's `pacman.exe` to install the build and packaging
 dependencies:
 
@@ -167,16 +159,22 @@ pacman -S --needed base-devel git \
   "$ucrt"-{just,ninja,nsis,perl,pkgconf,rust,shared-mime-info,toolchain,wavpack}
 ```
 
-Then you can build and run:
+**macOS:**
+
+```bash
+brew install \
+  rust just pkgconf gettext gtk4 libadwaita gstreamer \
+  dylibbundler librsvg
+```
+
+**Building:** After you installed dependencies for your operating system, you can build and run:
 
 ```bash
 just build
 just debug
 ```
 
-The native build can also work on other distributions when they provide the
-required versions and development files, but those environments are not part of
-Rufin's tested support set. On macOS, `just build dmg` creates
+On macOS, `just build dmg` creates
 `.local/artifacts/Rufin.dmg` for installation and platform behavior testing.
 On Windows, `just build windows` creates the versioned setup executable in the
 same artifact directory. These platform builds always use the host and do not
