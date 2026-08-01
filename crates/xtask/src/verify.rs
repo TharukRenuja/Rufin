@@ -43,6 +43,18 @@ fn package_layout(args: Vec<String>) -> Result<()> {
         if !unix_bin.is_file() && !windows_bin.is_file() {
             return Err(format!("missing executable under {}", args[0]).into());
         }
+        if windows_bin.is_file() {
+            require_file(&package_path(
+                &root,
+                &prefix,
+                "share/glib-2.0/schemas/gschemas.compiled",
+            ))?;
+            require_file(&package_path(
+                &root,
+                &prefix,
+                "share/icons/hicolor/icon-theme.cache",
+            ))?;
+        }
     } else {
         require_file(&package_path(&root, &prefix, "bin/rufin"))?;
     }
