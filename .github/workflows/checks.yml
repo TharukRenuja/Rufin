@@ -5,223 +5,185 @@ on:
   push:
     branches:
       - main
+    paths:
+      - .cargo/**
+      - Cargo.lock
+      - Cargo.toml
+      - crates/**
+      - data/**
+      - flake.lock
+      - flake.nix
+      - scripts/retry-nix
+      - scripts/rust-cache-command
+      - sgconfig.yml
   workflow_dispatch:
 
 permissions:
   contents: read
-
-env:
-  CACHIX_CACHE_NAME: rufin
+  pull-requests: read
 
 concurrency:
   group: checks-${{ github.ref }}
   cancel-in-progress: true
+
+env:
+  CACHIX_CACHE_NAME: rufin
 
 jobs:
   changes:
     name: Changes
     runs-on: ubuntu-latest
     outputs:
-      aur_required: ${{ steps.classify.outputs.aur_required }}
-      container_required: ${{ steps.classify.outputs.container_required }}
-      current_nix_required: ${{ steps.classify.outputs.current_nix_required }}
-      dependency_policy_required: ${{ steps.classify.outputs.dependency_policy_required }}
-      macos_required: ${{ steps.classify.outputs.macos_required }}
-      nix_package_required: ${{ steps.classify.outputs.nix_package_required }}
-      package_dependencies_required: ${{ steps.classify.outputs.package_dependencies_required }}
-      rpm_required: ${{ steps.classify.outputs.rpm_required }}
-      rust_cache_required: ${{ steps.classify.outputs.rust_cache_required }}
-      rust_required: ${{ steps.classify.outputs.rust_required }}
-      workflows_required: ${{ steps.classify.outputs.workflows_required }}
-      windows_required: ${{ steps.classify.outputs.windows_required }}
+      jobs: ${{ steps.select.outputs.jobs }}
+      use_current_nix: ${{ steps.select.outputs.use_current_nix }}
 
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
 
       - name: Classify changed paths
-        id: classify
+        if: github.event_name == 'pull_request'
+        id: paths
+        uses: dorny/paths-filter@7b450fff21473bca461d4b92ce414b9d0420d706 # v4.0.2
+        with:
+          filters: |
+            workflows:
+              - '.github/workflows/**'
+            all_builds:
+              - '.github/release-gpg.pub'
+              - '.github/workflows/checks.yml'
+            workspace:
+              - '.cargo/**'
+              - 'Cargo.lock'
+              - 'Cargo.toml'
+              - 'crates/**'
+              - 'data/**'
+              - 'flake.lock'
+              - 'flake.nix'
+              - 'sgconfig.yml'
+              - 'scripts/retry-nix'
+              - 'scripts/rust-cache-command'
+            cargo-deny:
+              - 'Cargo.lock'
+              - 'Cargo.toml'
+              - 'crates/*/Cargo.toml'
+              - 'deny.toml'
+            linux-packages:
+              - 'Cargo.lock'
+              - 'Cargo.toml'
+              - 'crates/*/Cargo.toml'
+              - 'crates/localization/locales/**'
+              - 'crates/xtask/**'
+              - 'data/**'
+            native:
+              - '.cargo/**'
+              - 'Cargo.lock'
+              - 'Cargo.toml'
+              - 'LICENSE'
+              - 'crates/**'
+              - 'data/**'
+            aur:
+              - '.github/workflows/aur-build.yml'
+              - '.github/workflows/aur.yml'
+              - 'packaging/aur/**'
+            rpm:
+              - '.github/workflows/rpm-source.yml'
+              - '.github/workflows/rpm.yml'
+              - 'LICENSE'
+              - 'README.md'
+              - 'packaging/rpm/**'
+            nix:
+              - '.github/workflows/nix.yml'
+              - 'LICENSE'
+              - 'README.md'
+              - 'flake.lock'
+              - 'flake.nix'
+              - 'scripts/retry-nix'
+            flatpak:
+              - '.github/workflows/flatpak-build.yml'
+              - '.github/workflows/flatpak.yml'
+              - 'LICENSE'
+              - 'packaging/flatpak/**'
+            macos:
+              - '.github/workflows/macos-build.yml'
+              - '.github/workflows/macos.yml'
+              - 'packaging/macos/**'
+            windows:
+              - '.github/workflows/windows-build.yml'
+              - '.github/workflows/windows.yml'
+              - 'packaging/windows/**'
+              - 'scripts/rust-cache-command'
+            container:
+              - '.github/workflows/container-image.yml'
+              - '.cargo/**'
+              - 'Cargo.lock'
+              - 'Cargo.toml'
+              - 'crates/*/Cargo.toml'
+              - 'justfile'
+              - 'packaging/aur/**'
+              - 'packaging/container/**'
+              - 'packaging/windows/**'
+              - 'scripts/container'
+            current_nix:
+              - 'flake.lock'
+              - 'flake.nix'
+
+      - name: Select build jobs
+        id: select
         env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          BEFORE_SHA: ${{ github.event.before }}
-          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
-          HEAD_SHA: ${{ github.sha }}
+          ALL_BUILDS: ${{ steps.paths.outputs.all_builds }}
+          CURRENT_NIX: ${{ steps.paths.outputs.current_nix }}
+          MATCHED_FILTERS: ${{ steps.paths.outputs.changes || '[]' }}
         run: |
           set -euo pipefail
-
-          if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]]; then
-            {
-              echo "aur_required=true"
-              echo "container_required=true"
-              echo "current_nix_required=true"
-              echo "dependency_policy_required=true"
-              echo "macos_required=true"
-              echo "nix_package_required=true"
-              echo "package_dependencies_required=true"
-              echo "rpm_required=true"
-              echo "rust_cache_required=true"
-              echo "rust_required=true"
-              echo "workflows_required=true"
-              echo "windows_required=true"
-            } >> "$GITHUB_OUTPUT"
-            echo "Manual runs execute the container and full Rust checks."
-            exit 0
-          fi
-
-          if [[ "$GITHUB_EVENT_NAME" == "pull_request" ]]; then
-            base="$BASE_SHA"
-          elif [[ "$BEFORE_SHA" =~ ^0+$ ]]; then
-            git fetch --no-tags --prune origin \
-              "refs/heads/${DEFAULT_BRANCH}:refs/remotes/origin/${DEFAULT_BRANCH}" || true
-            base="$(git merge-base "$HEAD_SHA" "origin/$DEFAULT_BRANCH" 2>/dev/null ||
-              git rev-list --max-parents=0 "$HEAD_SHA")"
+          all_jobs='["aur","container","flatpak","macos","nix","rpm","windows"]'
+          if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" || "$ALL_BUILDS" == "true" ]]; then
+            jobs="$all_jobs"
+          elif [[ "$GITHUB_EVENT_NAME" == "push" ]]; then
+            jobs='["workspace"]'
           else
-            base="$BEFORE_SHA"
+            jobs="$(
+              jq -c '
+                if index("linux-packages") then
+                  . + ["aur", "flatpak", "nix", "rpm"]
+                else
+                  .
+                end
+                | if index("native") then
+                    . + ["macos", "windows"]
+                  else
+                    .
+                  end
+                | map(select(
+                    . != "all_builds" and
+                    . != "current_nix" and
+                    . != "linux-packages" and
+                    . != "native" and
+                    . != "workflows"
+                  ))
+                | unique
+                | if index("container") then
+                    map(select(. != "cargo-deny" and . != "workspace"))
+                  else
+                    .
+                  end
+              ' <<< "$MATCHED_FILTERS"
+            )"
           fi
-
-          mapfile -t changed_paths < <(git diff --name-only "$base" "$HEAD_SHA")
-
-          rust_required=false
-          rust_cache_required=false
-          aur_required=false
-          rpm_required=false
-          container_required=false
-          current_nix_required=false
-          dependency_policy_required=false
-          macos_required=false
-          nix_package_required=false
-          package_dependencies_required=false
-          workflows_required=false
-          windows_required=false
-          if [[ "${#changed_paths[@]}" -eq 0 ]]; then
-            aur_required=true
-            container_required=true
-            dependency_policy_required=true
-            macos_required=true
-            rpm_required=true
-            rust_required=true
-            current_nix_required=true
-            nix_package_required=true
-            package_dependencies_required=true
-            windows_required=true
+          if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" || "$CURRENT_NIX" == "true" ]]; then
+            use_current_nix=true
+          else
+            use_current_nix=false
           fi
-
-          for path in "${changed_paths[@]}"; do
-            case "$path" in
-              .github/workflows/*.yml|.github/workflows/*.yaml)
-                workflows_required=true
-                ;;
-            esac
-
-            case "$path" in
-              .github/workflows/checks.yml)
-                aur_required=true
-                container_required=true
-                dependency_policy_required=true
-                nix_package_required=true
-                package_dependencies_required=true
-                rpm_required=true
-                rust_required=true
-                ;;
-            esac
-
-            case "$path" in
-              .cargo/*|.github/workflows/checks.yml|.github/workflows/macos.yml|.github/workflows/release-native.yml|Cargo.lock|Cargo.toml|crates/*|data/*|justfile|packaging/macos/*|scripts/create-media-verification-files)
-                macos_required=true
-                ;;
-            esac
-
-            case "$path" in
-              .cargo/*|.github/workflows/checks.yml|.github/workflows/release-native.yml|.github/workflows/windows.yml|Cargo.lock|Cargo.toml|crates/*|data/*|justfile|packaging/windows/*|scripts/create-media-verification-files)
-                windows_required=true
-                ;;
-            esac
-
-            case "$path" in
-              .github/workflows/container-image.yml|justfile|packaging/container/*|packaging/windows/*|scripts/container)
-                container_required=true
-                ;;
-            esac
-
-            case "$path" in
-              .github/workflows/aur-build.yml|.github/workflows/aur.yml|packaging/aur/*|scripts/aur-srcinfo|scripts/check-deps)
-                aur_required=true
-                ;;
-            esac
-
-            case "$path" in
-              .github/workflows/rpm-source.yml|.github/workflows/rpm.yml|crates/xtask/src/rpm.rs|packaging/rpm/*)
-                rpm_required=true
-                ;;
-            esac
-
-            case "$path" in
-              flake.lock|flake.nix)
-                current_nix_required=true
-                ;;
-            esac
-
-            case "$path" in
-              .github/workflows/nix.yml|Cargo.lock|Cargo.toml|crates/*/Cargo.toml|flake.lock|flake.nix|scripts/check-deps|scripts/retry-nix)
-                nix_package_required=true
-                ;;
-            esac
-
-            case "$path" in
-              Cargo.lock|Cargo.toml|crates/*/Cargo.toml|deny.toml)
-                dependency_policy_required=true
-                ;;
-            esac
-
-            case "$path" in
-              crates/*/Cargo.toml|flake.nix|justfile|scripts/check-deps|packaging/aur/rufin-bin/PKGBUILD.template|packaging/aur/rufin-git/PKGBUILD)
-                package_dependencies_required=true
-                ;;
-            esac
-
-            case "$path" in
-              .github/workflows/checks.yml|Cargo.lock|Cargo.toml|crates/*/Cargo.toml|flake.lock|flake.nix|scripts/rust-cache-command)
-                rust_cache_required=true
-                ;;
-            esac
-
-            case "$path" in
-              .github/workflows/aur-build.yml|.github/workflows/aur.yml|.github/workflows/checks.yml|.github/workflows/container-image.yml|.github/workflows/nix.yml|.github/workflows/rpm-source.yml|.github/workflows/rpm.yml|deny.toml|packaging/aur/*|packaging/container/*|packaging/rpm/*|packaging/windows/*|scripts/aur-srcinfo|scripts/check-deps|scripts/container|scripts/retry-nix)
-                ;;
-              *.avif|*.gif|*.jpeg|*.jpg|*.md|*.png|*.po|*.pot|*.svg|*.webp)
-                ;;
-              *)
-                rust_required=true
-                ;;
-            esac
-          done
-
-          printf 'Changed paths:\n'
-          printf '  %s\n' "${changed_paths[@]}"
-          {
-            echo "aur_required=$aur_required"
-            echo "container_required=$container_required"
-            echo "current_nix_required=$current_nix_required"
-            echo "dependency_policy_required=$dependency_policy_required"
-            echo "macos_required=$macos_required"
-            echo "nix_package_required=$nix_package_required"
-            echo "package_dependencies_required=$package_dependencies_required"
-            echo "rpm_required=$rpm_required"
-            echo "rust_cache_required=$rust_cache_required"
-            echo "rust_required=$rust_required"
-            echo "workflows_required=$workflows_required"
-            echo "windows_required=$windows_required"
-          } >> "$GITHUB_OUTPUT"
-
-      - name: Check Linux package dependencies
-        if: steps.classify.outputs.package_dependencies_required == 'true'
-        run: bash scripts/check-deps --check
+          echo "jobs=$jobs" >> "$GITHUB_OUTPUT"
+          echo "use_current_nix=$use_current_nix" >> "$GITHUB_OUTPUT"
+          echo "Selected build jobs: $jobs"
 
       - name: Check workflows
-        if: steps.classify.outputs.workflows_required == 'true'
+        if: github.event_name == 'workflow_dispatch' || steps.paths.outputs.workflows == 'true'
         env:
           ACTIONLINT_SHA256: 8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8
           ACTIONLINT_VERSION: 1.7.12
@@ -235,44 +197,72 @@ jobs:
           tar -xzf "$archive" -C "$RUNNER_TEMP" actionlint
           "$RUNNER_TEMP/actionlint"
 
-  aur-package:
-    name: AUR package
+  aur:
+    name: AUR
     needs: changes
-    if: github.event_name != 'push' && needs.changes.outputs.aur_required == 'true'
+    if: contains(fromJSON(needs.changes.outputs.jobs), 'aur')
     uses: ./.github/workflows/aur-build.yml
     with:
+      ref: ${{ github.event.pull_request.head.sha || github.sha }}
       package: both
       publish: false
 
-  rpm-package:
-    name: RPM source package
+  rpm:
+    name: RPM
     needs: changes
-    if: github.event_name != 'push' && needs.changes.outputs.rpm_required == 'true'
+    if: contains(fromJSON(needs.changes.outputs.jobs), 'rpm')
     uses: ./.github/workflows/rpm-source.yml
     with:
-      ref: ${{ github.sha }}
+      ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      upload_artifact: false
+      verify_binary: true
 
-  nix-package:
-    name: Nix package
+  nix:
+    name: Nix
     needs: changes
-    if: github.event_name != 'push' && needs.changes.outputs.nix_package_required == 'true'
+    if: contains(fromJSON(needs.changes.outputs.jobs), 'nix')
     uses: ./.github/workflows/nix.yml
     with:
-      ref: ${{ github.sha }}
+      ref: ${{ github.event.pull_request.head.sha || github.sha }}
       upload_cache: ${{ github.event.pull_request.head.repo.full_name == github.repository && github.actor == github.repository_owner }}
     secrets:
       CACHIX_AUTH_TOKEN: ${{ secrets.CACHIX_AUTH_TOKEN }}
 
+  flatpak:
+    name: Flatpak
+    needs: changes
+    if: contains(fromJSON(needs.changes.outputs.jobs), 'flatpak')
+    uses: ./.github/workflows/flatpak-build.yml
+    with:
+      ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+  macos:
+    name: macOS
+    needs: changes
+    if: contains(fromJSON(needs.changes.outputs.jobs), 'macos')
+    uses: ./.github/workflows/macos-build.yml
+    with:
+      ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+  windows:
+    name: Windows
+    needs: changes
+    if: contains(fromJSON(needs.changes.outputs.jobs), 'windows')
+    uses: ./.github/workflows/windows-build.yml
+    with:
+      ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
   container:
     name: Container
     needs: changes
-    if: needs.changes.outputs.container_required == 'true' && github.event_name != 'push'
+    if: contains(fromJSON(needs.changes.outputs.jobs), 'container')
     runs-on: ubuntu-latest
 
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
 
       - name: Build container image
@@ -288,34 +278,32 @@ jobs:
           RUFIN_CONTAINER_RUNTIME: docker
         run: |
           scripts/container setup
-          scripts/container run just check
-          scripts/container run just _build-windows
+          scripts/container run just _check-container-image
 
   workspace:
     name: Workspace
     needs: changes
-    if: >-
-      (github.event_name == 'push' && needs.changes.outputs.rust_cache_required == 'true') ||
-      (github.event_name != 'push' && needs.changes.outputs.rust_required == 'true' && needs.changes.outputs.container_required != 'true')
+    if: contains(fromJSON(needs.changes.outputs.jobs), 'workspace')
     runs-on: ubuntu-latest
 
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
 
       - name: Select Nix environment
         id: nix-environment
         env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          CURRENT_NIX_REQUIRED: ${{ needs.changes.outputs.current_nix_required }}
+          BASE_REF: ${{ github.event.pull_request.base.sha || '' }}
+          USE_CURRENT_NIX: ${{ needs.changes.outputs.use_current_nix }}
         run: |
           set -euo pipefail
-          if [[ "$GITHUB_EVENT_NAME" == "pull_request" && "$CURRENT_NIX_REQUIRED" != "true" ]]; then
-            echo "target=github:screwys/Rufin/$BASE_SHA" >> "$GITHUB_OUTPUT"
-          else
+          if [[ "$USE_CURRENT_NIX" == "true" || -z "$BASE_REF" ]]; then
             echo "target=." >> "$GITHUB_OUTPUT"
+          else
+            echo "target=github:screwys/Rufin/$BASE_REF" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Install Nix
@@ -335,11 +323,15 @@ jobs:
           cache-bin: "false"
           prefix-key: v1-rust
           save-if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
-          cmd-format: bash scripts/rust-cache-command "${{ steps.nix-environment.outputs.target }}" {0}
+          cmd-format: bash scripts/rust-cache-command nix "${{ steps.nix-environment.outputs.target }}" {0}
 
       - name: Check Flatpak cargo sources
         if: github.event_name != 'push'
         run: bash scripts/retry-nix nix --accept-flake-config develop "${{ steps.nix-environment.outputs.target }}" --command cargo run --locked -p xtask -- generate flatpak-sources --check
+
+      - name: Check Linux package dependencies
+        if: github.event_name != 'push'
+        run: bash scripts/retry-nix nix --accept-flake-config develop "${{ steps.nix-environment.outputs.target }}" --command cargo run --locked -p xtask -- generate linux-packaging --check
 
       - name: Check translation template
         if: github.event_name != 'push'
@@ -365,8 +357,6 @@ jobs:
         if: github.event_name != 'push'
         run: |
           bash scripts/retry-nix nix --accept-flake-config develop "${{ steps.nix-environment.outputs.target }}" --command \
-            cargo run --locked -p xtask -- verify icons
-          bash scripts/retry-nix nix --accept-flake-config develop "${{ steps.nix-environment.outputs.target }}" --command \
             bash -c 'nextest_jobs="${NEXTEST_JOBS:-4}"; if [[ ! "$nextest_jobs" =~ ^[1-9][0-9]*$ ]]; then echo "NEXTEST_JOBS must be a positive integer." >&2; exit 1; fi; if command -v cargo-nextest >/dev/null 2>&1; then cargo nextest run --workspace --locked --test-threads "$nextest_jobs"; else echo "cargo-nextest is unavailable; falling back to cargo test." >&2; cargo test --workspace --locked --lib --bins --tests --benches --examples; fi'
 
       - name: Warm Rust build cache
@@ -380,16 +370,14 @@ jobs:
   cargo-deny:
     name: cargo-deny
     needs: changes
-    if: >-
-      github.event_name != 'push' &&
-      needs.changes.outputs.dependency_policy_required == 'true' &&
-      needs.changes.outputs.container_required != 'true'
+    if: contains(fromJSON(needs.changes.outputs.jobs), 'cargo-deny')
     runs-on: ubuntu-latest
 
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
 
       - name: Check Rust dependency policy
@@ -399,129 +387,38 @@ jobs:
           command: check
           command-arguments: -D unmatched-skip
 
-  macos:
-    name: macOS
-    needs: changes
-    if: github.event_name == 'pull_request' && needs.changes.outputs.macos_required == 'true'
-    uses: ./.github/workflows/macos.yml
-    with:
-      ref: ${{ github.event.pull_request.head.sha }}
-
-  windows:
-    name: Windows
-    needs: changes
-    if: github.event_name == 'pull_request' && needs.changes.outputs.windows_required == 'true'
-    uses: ./.github/workflows/windows.yml
-    with:
-      ref: ${{ github.event.pull_request.head.sha }}
-
   required:
     name: Required
     needs:
       - changes
-      - aur-package
-      - rpm-package
-      - nix-package
+      - aur
+      - rpm
+      - nix
+      - flatpak
+      - macos
+      - windows
       - container
       - workspace
       - cargo-deny
-      - macos
-      - windows
     if: always()
     runs-on: ubuntu-latest
 
     steps:
-      - name: Enforce check policy
+      - name: Enforce selected jobs
         env:
-          AUR_REQUIRED: ${{ needs.changes.outputs.aur_required }}
-          AUR_RESULT: ${{ needs.aur-package.result }}
-          CARGO_DENY_RESULT: ${{ needs.cargo-deny.result }}
           CHANGES_RESULT: ${{ needs.changes.result }}
-          CONTAINER_REQUIRED: ${{ needs.changes.outputs.container_required }}
-          CONTAINER_RESULT: ${{ needs.container.result }}
-          DEPENDENCY_POLICY_REQUIRED: ${{ needs.changes.outputs.dependency_policy_required }}
-          EVENT_NAME: ${{ github.event_name }}
-          MACOS_REQUIRED: ${{ needs.changes.outputs.macos_required }}
-          MACOS_RESULT: ${{ needs.macos.result }}
-          NIX_PACKAGE_REQUIRED: ${{ needs.changes.outputs.nix_package_required }}
-          NIX_PACKAGE_RESULT: ${{ needs.nix-package.result }}
-          RPM_REQUIRED: ${{ needs.changes.outputs.rpm_required }}
-          RPM_RESULT: ${{ needs.rpm-package.result }}
-          RUST_CACHE_REQUIRED: ${{ needs.changes.outputs.rust_cache_required }}
-          RUST_REQUIRED: ${{ needs.changes.outputs.rust_required }}
-          WORKSPACE_RESULT: ${{ needs.workspace.result }}
-          WINDOWS_REQUIRED: ${{ needs.changes.outputs.windows_required }}
-          WINDOWS_RESULT: ${{ needs.windows.result }}
+          RESULTS: ${{ toJSON(needs) }}
+          SELECTED_JOBS: ${{ needs.changes.outputs.jobs || '[]' }}
         run: |
           set -euo pipefail
-
           if [[ "$CHANGES_RESULT" != "success" ]]; then
             echo "Change classification failed: $CHANGES_RESULT" >&2
             exit 1
           fi
-
-          if [[ "$EVENT_NAME" == "push" ]]; then
-            if [[ "$RUST_CACHE_REQUIRED" != "true" ]]; then
-              echo "Rust cache update is not required."
-              exit 0
-            fi
-            if [[ "$WORKSPACE_RESULT" != "success" ]]; then
-              echo "Rust cache update did not pass: $WORKSPACE_RESULT" >&2
+          while IFS= read -r job; do
+            result="$(jq -r --arg job "$job" '.[$job].result // "missing"' <<< "$RESULTS")"
+            if [[ "$result" != "success" ]]; then
+              echo "$job did not pass: $result" >&2
               exit 1
             fi
-            echo "Rust cache updated."
-            exit 0
-          fi
-
-          if [[ "$EVENT_NAME" == "pull_request" ]]; then
-            if [[ "$MACOS_REQUIRED" == "true" && "$MACOS_RESULT" != "success" ]]; then
-              echo "macOS check did not pass: $MACOS_RESULT" >&2
-              exit 1
-            fi
-            if [[ "$WINDOWS_REQUIRED" == "true" && "$WINDOWS_RESULT" != "success" ]]; then
-              echo "Windows check did not pass: $WINDOWS_RESULT" >&2
-              exit 1
-            fi
-          fi
-
-          if [[ "$NIX_PACKAGE_REQUIRED" == "true" && "$NIX_PACKAGE_RESULT" != "success" ]]; then
-            echo "Nix package check did not pass: $NIX_PACKAGE_RESULT" >&2
-            exit 1
-          fi
-
-          if [[ "$AUR_REQUIRED" == "true" && "$AUR_RESULT" != "success" ]]; then
-            echo "AUR package check did not pass: $AUR_RESULT" >&2
-            exit 1
-          fi
-
-          if [[ "$RPM_REQUIRED" == "true" && "$RPM_RESULT" != "success" ]]; then
-            echo "RPM source package check did not pass: $RPM_RESULT" >&2
-            exit 1
-          fi
-
-          if [[ "$CONTAINER_REQUIRED" == "true" && "$CONTAINER_RESULT" != "success" ]]; then
-            echo "Container build did not pass: $CONTAINER_RESULT" >&2
-            exit 1
-          fi
-
-          if [[ "$DEPENDENCY_POLICY_REQUIRED" == "true" && "$CONTAINER_REQUIRED" != "true" && "$CARGO_DENY_RESULT" != "success" ]]; then
-            echo "cargo-deny check did not pass: $CARGO_DENY_RESULT" >&2
-            exit 1
-          fi
-
-          if [[ "$RUST_REQUIRED" != "true" ]]; then
-            echo "Full Rust checks are not required."
-            exit 0
-          fi
-
-          if [[ "$CONTAINER_REQUIRED" == "true" ]]; then
-            echo "Required Rust checks passed through the container."
-            exit 0
-          fi
-
-          if [[ "$WORKSPACE_RESULT" != "success" ]]; then
-            echo "Workspace check did not pass: $WORKSPACE_RESULT" >&2
-            exit 1
-          fi
-
-          echo "Required Rust checks passed."
+          done < <(jq -r '.[]' <<< "$SELECTED_JOBS")

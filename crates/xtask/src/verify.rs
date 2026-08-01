@@ -1,15 +1,16 @@
-use std::collections::HashSet;
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
+use crate::Result;
 use crate::process::{
     collect_files_relative, command_stdout, ensure_command, path_to_slash, read_to_string,
     repo_root, run_command, temp_path,
 };
-use crate::release::normalize_tag;
-use crate::{Result, ensure_no_args, print_help_if_requested};
+use crate::release::{
+    first_metainfo_release_version, normalize_tag, workspace_version_from_cargo_toml,
+};
 
 pub(crate) fn run(mut args: Vec<String>) -> Result<()> {
     if args.is_empty() {
@@ -17,90 +18,11 @@ pub(crate) fn run(mut args: Vec<String>) -> Result<()> {
     }
 
     match args.remove(0).as_str() {
-        "icons" => {
-            if print_help_if_requested(&args, "Usage: cargo run --locked -p xtask -- verify icons")?
-            {
-                return Ok(());
-            }
-            ensure_no_args(&args)?;
-            icons()
-        }
         "package-layout" => package_layout(args),
+        "release-metadata" => release_metadata(args),
         "release-tag" => release_tag(args),
         command => Err(format!("unknown verify command: {command}").into()),
     }
-}
-
-pub(crate) fn icons() -> Result<()> {
-    let root = repo_root()?;
-    let icon_root = root.join("data/icons/hicolor");
-    let manifests = [
-        root.join("packaging/flatpak/io.github.screwys.Rufin.json"),
-        root.join("packaging/flatpak/io.github.screwys.Rufin.flathub.json"),
-    ];
-
-    let mut icon_paths = Vec::new();
-    collect_files_relative(&icon_root, &icon_root, &mut icon_paths)?;
-    icon_paths.sort();
-    if icon_paths.is_empty() {
-        return Err(format!("no icons found in {}", icon_root.display()).into());
-    }
-
-    let mut errors = Vec::new();
-    for manifest in manifests {
-        if !manifest.is_file() {
-            errors.push(format!("missing Flatpak manifest: {}", manifest.display()));
-            continue;
-        }
-
-        let build_commands = flatpak_rufin_build_commands(&manifest)?;
-        for icon_path in &icon_paths {
-            let assertion = format!(
-                "test -f /app/share/icons/hicolor/{}",
-                path_to_slash(icon_path)
-            );
-            if !build_commands.contains(&assertion) {
-                errors.push(format!(
-                    "{} missing icon assertion: {}",
-                    manifest.display(),
-                    assertion
-                ));
-            }
-        }
-    }
-
-    if errors.is_empty() {
-        Ok(())
-    } else {
-        for error in errors {
-            eprintln!("{error}");
-        }
-        Err("Flatpak icon assertions are incomplete".into())
-    }
-}
-
-fn flatpak_rufin_build_commands(manifest: &Path) -> Result<HashSet<String>> {
-    let value: serde_json::Value = serde_json::from_str(&read_to_string(manifest)?)?;
-    let modules = value
-        .get("modules")
-        .and_then(serde_json::Value::as_array)
-        .ok_or_else(|| format!("{} missing modules array", manifest.display()))?;
-
-    let rufin = modules
-        .iter()
-        .find(|module| module.get("name").and_then(serde_json::Value::as_str) == Some("rufin"))
-        .ok_or_else(|| format!("{} missing rufin module", manifest.display()))?;
-
-    let commands = rufin
-        .get("build-commands")
-        .and_then(serde_json::Value::as_array)
-        .ok_or_else(|| format!("{} missing rufin build-commands", manifest.display()))?;
-
-    Ok(commands
-        .iter()
-        .filter_map(serde_json::Value::as_str)
-        .map(ToOwned::to_owned)
-        .collect())
 }
 
 fn package_layout(args: Vec<String>) -> Result<()> {
@@ -216,6 +138,45 @@ fn workspace_source_root() -> Result<PathBuf> {
         .ok_or_else(|| "could not determine workspace source root".into())
 }
 
+fn release_metadata(args: Vec<String>) -> Result<()> {
+    if matches!(args.as_slice(), [arg] if arg == "-h" || arg == "--help") {
+        eprintln!("Usage: cargo run --locked -p xtask -- verify release-metadata TAG");
+        return Ok(());
+    }
+    if args.len() != 1 {
+        return Err("verify release-metadata requires TAG".into());
+    }
+
+    let root = repo_root()?;
+    verify_release_metadata_at(&root, &args[0])
+}
+
+fn verify_release_metadata_at(root: &Path, tag: &str) -> Result<()> {
+    let cargo_toml = read_to_string(&root.join("Cargo.toml"))?;
+    let metainfo = read_to_string(&root.join("data/io.github.screwys.Rufin.metainfo.xml"))?;
+    verify_release_metadata_contents(tag, &cargo_toml, &metainfo)
+}
+
+fn verify_release_metadata_contents(tag: &str, cargo_toml: &str, metainfo: &str) -> Result<()> {
+    let tag = normalize_tag(tag.trim_start_matches("refs/tags/"))?;
+    let expected = tag.trim_start_matches('v');
+    let cargo_version = workspace_version_from_cargo_toml(cargo_toml)?;
+    let metainfo_version = first_metainfo_release_version(metainfo)?;
+
+    if cargo_version != expected {
+        return Err(
+            format!("tag {tag} has Cargo version {cargo_version}, expected {expected}").into(),
+        );
+    }
+    if metainfo_version != expected {
+        return Err(format!(
+            "tag {tag} has MetaInfo release {metainfo_version}, expected {expected}"
+        )
+        .into());
+    }
+    Ok(())
+}
+
 fn release_tag(args: Vec<String>) -> Result<()> {
     if matches!(args.as_slice(), [arg] if arg == "-h" || arg == "--help") {
         eprintln!("Usage: cargo run --locked -p xtask -- verify release-tag TAG");
@@ -260,15 +221,19 @@ fn release_tag(args: Vec<String>) -> Result<()> {
     }
 
     let release_key = root.join(".github/release-gpg.pub");
-    if release_key.is_file() {
-        verify_tag_with_release_key(&tag_ref, &release_key)?;
-    }
+    verify_tag_with_release_key(&tag_ref, &release_key)?;
 
     let tag_target = command_stdout("git", ["rev-list", "-n1", &tag_ref])?;
     let head_commit = command_stdout("git", ["rev-parse", "HEAD"])?;
     if tag_target.trim() != head_commit.trim() {
         return Err("checked-out commit does not match release tag target".into());
     }
+
+    let cargo_path = format!("{tag_ref}:Cargo.toml");
+    let metainfo_path = format!("{tag_ref}:data/io.github.screwys.Rufin.metainfo.xml");
+    let cargo_toml = command_stdout("git", ["show", cargo_path.as_str()])?;
+    let metainfo = command_stdout("git", ["show", metainfo_path.as_str()])?;
+    verify_release_metadata_contents(&tag, &cargo_toml, &metainfo)?;
 
     run_command(
         "git",
@@ -282,6 +247,9 @@ fn release_tag(args: Vec<String>) -> Result<()> {
 }
 
 fn verify_tag_with_release_key(tag_ref: &str, release_key: &Path) -> Result<()> {
+    if !release_key.is_file() {
+        return Err(format!("release GPG key is missing: {}", release_key.display()).into());
+    }
     ensure_command("gpg")?;
     let gnupg_home = temp_path("gnupg");
     fs::create_dir(&gnupg_home)?;
@@ -316,5 +284,37 @@ fn verify_tag_with_release_key(tag_ref: &str, release_key: &Path) -> Result<()> 
         Ok(())
     } else {
         Err("release tag signature did not verify with .github/release-gpg.pub".into())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::process::repo_root;
+
+    use super::verify_release_metadata_contents;
+
+    const CARGO_TOML: &str = "[workspace.package]\nversion = \"1.2.3\"\n";
+    const METAINFO: &str = "<component>\n  <releases>\n    <release version=\"1.2.3\" date=\"2026-08-01\" />\n  </releases>\n</component>\n";
+
+    #[test]
+    fn release_metadata_matches_tag_version() {
+        verify_release_metadata_contents("refs/tags/v1.2.3", CARGO_TOML, METAINFO).unwrap();
+    }
+
+    #[test]
+    fn release_metadata_rejects_a_stale_top_release() {
+        let error = verify_release_metadata_contents(
+            "v1.2.4",
+            "[workspace.package]\nversion = \"1.2.4\"\n",
+            METAINFO,
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("MetaInfo release 1.2.3"));
+    }
+
+    #[test]
+    fn repository_keeps_the_release_verification_key() {
+        let release_key = repo_root().unwrap().join(".github/release-gpg.pub");
+        assert!(release_key.is_file(), "missing {}", release_key.display());
     }
 }

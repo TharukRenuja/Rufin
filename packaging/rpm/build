@@ -60,8 +60,9 @@ podman run --rm \
     bash -euc '
         dnf -y --setopt=install_weak_deps=False install dnf5-plugins rpm-build
         dnf -y --setopt=install_weak_deps=False builddep /work/*.src.rpm
+        rpm_dir="$(rpm --eval "%{_rpmdir}")"
         rpmbuild --rebuild /work/*.src.rpm
-        cp /root/rpmbuild/RPMS/*/rufin-*.rpm /work/
+        cp "$rpm_dir"/*/rufin-*.rpm /work/
     '
 
 mapfile -t rpms < <(find "${artifact_dir}" -maxdepth 1 -type f -name 'rufin-*.rpm' -print)

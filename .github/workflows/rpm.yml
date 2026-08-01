@@ -48,7 +48,7 @@ jobs:
 
     steps:
       - name: Install COPR client
-        run: dnf -y --setopt=install_weak_deps=False install bash cargo cpio copr-cli curl findutils gawk git gnupg2 grep rpm rpmlint
+        run: dnf -y --setopt=install_weak_deps=False install bash cargo cpio copr-cli curl findutils gawk git gnupg2 grep rpm rpmlint wavpack
 
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -141,7 +141,7 @@ jobs:
           done
           test -n "$x86_rpm_path"
           dnf -y install "$x86_rpm_path"
-          bash scripts/create-media-verification-files /tmp/rufin-package-media
+          cargo run --locked -p xtask -- generate media-verification-files /tmp/rufin-package-media
           for media in /tmp/rufin-package-media/*; do
             /usr/bin/rufin --verify-media "$media"
           done

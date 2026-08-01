@@ -1085,7 +1085,7 @@ fn update_issue_template_versions_in(input: &str, version: &str) -> Result<Strin
     Ok(output)
 }
 
-fn workspace_version_from_cargo_toml(input: &str) -> Result<String> {
+pub(crate) fn workspace_version_from_cargo_toml(input: &str) -> Result<String> {
     let mut in_workspace_package = false;
     for line in input.lines() {
         if line.starts_with('[') {
@@ -1098,7 +1098,7 @@ fn workspace_version_from_cargo_toml(input: &str) -> Result<String> {
     Err("missing workspace package version".into())
 }
 
-fn first_metainfo_release_version(input: &str) -> Result<String> {
+pub(crate) fn first_metainfo_release_version(input: &str) -> Result<String> {
     for line in input.lines() {
         let Some(start) = line.find("<release version=\"") else {
             continue;

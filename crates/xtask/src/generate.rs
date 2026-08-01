@@ -25,6 +25,8 @@ pub(crate) fn run(mut args: Vec<String>) -> Result<()> {
         "flatpak-sources" => flatpak_sources_command(args),
         "i18n-template" => i18n_template_command(args),
         "japanese-readings" => japanese_readings_command(args),
+        "linux-packaging" => crate::linux_packaging::command(args),
+        "media-verification-files" => crate::media::verification_files_command(args),
         "rpm-srpm" => crate::rpm::srpm_command(args),
         command => Err(format!("unknown generate command: {command}").into()),
     }

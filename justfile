@@ -5,15 +5,15 @@ default:
 
 build target="" architecture="":
     if [[ "{{ target }}" == "arch" && -z "{{ architecture }}" ]]; then \
-        scripts/container run just _build-arch; \
+        scripts/container run packaging/aur/build; \
     elif [[ "{{ target }}" == "dmg" && -z "{{ architecture }}" ]]; then \
         packaging/macos/build; \
     elif [[ "{{ target }}" == "rpm" ]]; then \
         packaging/rpm/build "{{ architecture }}"; \
     elif [[ "{{ target }}" == "flatpak" && -z "{{ architecture }}" ]]; then \
-        just _build-flatpak; \
+        packaging/flatpak/build; \
     elif [[ "{{ target }}" == "windows" && -z "{{ architecture }}" ]]; then \
-        scripts/container run just _build-windows; \
+        scripts/container run packaging/windows/build; \
     elif [[ -z "{{ target }}" && -z "{{ architecture }}" ]]; then \
         scripts/container run just _build; \
     else \
@@ -32,53 +32,21 @@ _build:
     mkdir -p "$(dirname "$native_artifact")"; \
     cp "$native_target_dir/debug/$native_executable" "$native_artifact"
 
-_build-arch:
-    packaging/aur/build
-
-_build-windows:
-    packaging/windows/build
-
-_build-flatpak:
-    if [[ "${RUFIN_CONTAINER:-0}" == "1" ]]; then \
-        echo "Build the Flatpak from the host." >&2; \
-        exit 1; \
-    fi; \
-    artifact_root="$PWD/.local/artifacts"; \
-    flatpak_build="$artifact_root/flatpak"; \
-    flatpak_bundle="$artifact_root/io.github.screwys.Rufin.flatpak"; \
-    flatpak_repo="$artifact_root/flatpak-repo"; \
-    mkdir -p "$artifact_root"; \
-    flatpak-builder \
-        --user \
-        --install-deps-from=flathub \
-        --repo="$flatpak_repo" \
-        --force-clean \
-        "$flatpak_build" \
-        packaging/flatpak/io.github.screwys.Rufin.json; \
-    flatpak build-update-repo "$flatpak_repo"; \
-    flatpak build-bundle \
-        --runtime-repo=https://flathub.org/repo/flathub.flatpakrepo \
-        "$flatpak_repo" \
-        "$flatpak_bundle" \
-        io.github.screwys.Rufin \
-        master
-
 # Run all checks, or only Linux dependency checks with `just check deps`.
 check target="":
     if [[ -z "{{ target }}" ]]; then \
         scripts/container run just _check-all; \
     elif [[ "{{ target }}" == "deps" ]]; then \
-        just _check-deps; \
-        scripts/aur-srcinfo --check; \
+        cargo run --locked -p xtask -- generate linux-packaging --check; \
     else \
         echo "usage: just check [deps]" >&2; \
         exit 2; \
     fi
 
 _check-all:
-    just _flatpak-sources-check
-    just _i18n-template-check
-    just _check-deps
+    cargo run --locked -p xtask -- generate flatpak-sources --check
+    cargo run --locked -p xtask -- generate i18n-template --check
+    cargo run --locked -p xtask -- generate linux-packaging --check
     just _fmt-check
     if command -v ast-grep >/dev/null 2>&1; then \
         just _ast-grep; \
@@ -88,6 +56,11 @@ _check-all:
     just _lint
     just _test
     just _deps
+
+_check-container-image:
+    just _check-all
+    packaging/aur/build
+    packaging/windows/build
 
 debug *args:
     if [[ "${RUFIN_CONTAINER:-0}" == "1" ]]; then \
@@ -103,16 +76,12 @@ debug *args:
     fi
 
 fmt:
-    scripts/container run just _fmt
-
-_fmt:
-    cargo fmt --all
+    scripts/container run cargo fmt --all
 
 test *args:
     scripts/container run just _test {{ args }}
 
 _test *args:
-    just _icon-check
     if command -v cargo-nextest >/dev/null 2>&1; then \
         nextest_jobs="${NEXTEST_JOBS:-4}"; \
         if [[ ! "$nextest_jobs" =~ ^[1-9][0-9]*$ ]]; then \
@@ -132,9 +101,6 @@ _test *args:
 container action="status":
     scripts/container {{ action }}
 
-_check:
-    cargo clippy -p rufin --bin rufin --locked
-
 _fmt-check:
     cargo fmt --all -- --check
 
@@ -152,22 +118,6 @@ _lint:
 _deps:
     cargo deny --locked check -D unmatched-skip
 
-_flatpak-sources:
-    cargo run --locked -p xtask -- generate flatpak-sources
-
-_flatpak-sources-check:
-    cargo run --locked -p xtask -- generate flatpak-sources --check
-
-_i18n-template-check:
-    cargo run --locked -p xtask -- generate i18n-template --check
-
-_check-deps:
-    bash scripts/check-deps --check
-
 # Regenerate Linux package dependency metadata.
 deps:
-    bash scripts/check-deps
-    scripts/aur-srcinfo
-
-_icon-check:
-    cargo run --locked -p xtask -- verify icons
+    cargo run --locked -p xtask -- generate linux-packaging

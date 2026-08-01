@@ -1,0 +1,48 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [[ "${RUFIN_CONTAINER:-0}" == "1" ]]; then
+    echo "Build the Flatpak from the host." >&2
+    exit 1
+fi
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+artifact_root="${RUFIN_ARTIFACT_ROOT:-${repo_root}/.local/artifacts}"
+work_root="${repo_root}/.local/artifacts/flatpak"
+build_dir="${work_root}/build"
+repository_dir="${work_root}/repo"
+state_dir="${work_root}/state"
+bundle_path="${artifact_root}/io.github.screwys.Rufin.flatpak"
+manifest="${repo_root}/packaging/flatpak/io.github.screwys.Rufin.json"
+
+for command_name in flatpak flatpak-builder; do
+    if ! command -v "$command_name" >/dev/null 2>&1; then
+        echo "${command_name} is required to build the Flatpak." >&2
+        exit 1
+    fi
+done
+
+mkdir -p "$artifact_root"
+rm -f "$bundle_path"
+
+flatpak-builder \
+    --user \
+    --install-deps-from=flathub \
+    --repo="$repository_dir" \
+    --state-dir="$state_dir" \
+    --force-clean \
+    "$build_dir" \
+    "$manifest"
+flatpak build-update-repo "$repository_dir"
+flatpak build-bundle \
+    --runtime-repo=https://flathub.org/repo/flathub.flatpakrepo \
+    "$repository_dir" \
+    "$bundle_path" \
+    io.github.screwys.Rufin \
+    master
+
+if [[ ! -s "$bundle_path" ]]; then
+    echo "The Flatpak bundle was not produced: ${bundle_path}" >&2
+    exit 1
+fi
+echo "Built ${bundle_path}"

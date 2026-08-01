@@ -1,164 +1,62 @@
 name: macOS
 
 on:
-  workflow_call:
+  release:
+    types:
+      - published
+  workflow_dispatch:
     inputs:
       ref:
-        description: Git ref to build
+        description: Git ref to build, including a test commit for an existing release
         required: true
-        type: string
-      release_tag:
-        description: Release version to validate
+        default: main
+      upload_release_tag:
+        description: Optional existing GitHub release tag to upload the disk images to
+        required: false
         default: ""
-        required: false
-        type: string
-      verify_signed_tag:
-        description: Verify that the release tag is signed
-        default: false
-        required: false
-        type: boolean
 
 permissions:
   contents: read
 
 concurrency:
-  group: macos-${{ github.event_name == 'pull_request' && github.ref || inputs.release_tag || inputs.ref }}
+  group: macos-release-${{ github.event_name == 'release' && github.event.release.tag_name || inputs.upload_release_tag || github.ref }}
   cancel-in-progress: true
 
 jobs:
   build:
-    name: Build macOS ${{ matrix.architecture }} disk image
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - architecture: arm64
-            runner: macos-15
-          - architecture: x86_64
-            runner: macos-15-intel
-    runs-on: ${{ matrix.runner }}
-    env:
-      HOMEBREW_NO_ANALYTICS: 1
-      HOMEBREW_NO_AUTO_UPDATE: 1
+    name: macOS
+    uses: ./.github/workflows/macos-build.yml
+    with:
+      ref: ${{ github.event_name == 'release' && github.event.release.tag_name || inputs.ref }}
+      release_tag: ${{ github.event_name == 'release' && github.event.release.tag_name || inputs.upload_release_tag }}
+      verify_signed_tag: ${{ github.event_name == 'release' }}
+
+  upload:
+    name: Upload macOS release assets
+    if: github.event_name == 'release' || inputs.upload_release_tag != ''
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+      artifact-metadata: write
 
     steps:
-      - name: Validate release target
-        if: inputs.release_tag != ''
-        shell: bash
-        env:
-          RELEASE_TAG: ${{ inputs.release_tag }}
-        run: |
-          set -euo pipefail
-          release_tag="$RELEASE_TAG"
-          if [[ ! "$release_tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([-.][0-9A-Za-z.-]+)?$ ]]; then
-            echo "Release tag must look like vMAJOR.MINOR.PATCH" >&2
-            exit 1
-          fi
-
-      - name: Check out repository
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Download workflow artifacts
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
-          ref: ${{ inputs.ref }}
-          fetch-depth: 0
-          persist-credentials: false
+          pattern: Rufin-macos-*.dmg
+          path: dist
+          merge-multiple: true
 
-      - name: Verify signed release tag
-        if: inputs.verify_signed_tag
-        env:
-          RELEASE_TAG: ${{ inputs.release_tag }}
-        run: cargo run --locked -p xtask -- verify release-tag "$RELEASE_TAG"
-
-      - name: Validate release metadata
-        if: inputs.release_tag != ''
-        env:
-          RELEASE_TAG: ${{ inputs.release_tag }}
-        run: |
-          set -euo pipefail
-          version="${RELEASE_TAG#v}"
-          cargo_version="$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n 1)"
-          metainfo_version="$(
-            sed -n 's/.*<release version="\([^"]*\)".*/\1/p' data/io.github.screwys.Rufin.metainfo.xml |
-              head -n 1
-          )"
-
-          test "$version" = "$cargo_version"
-          test "$version" = "$metainfo_version"
-
-      - name: Install packaging dependencies
-        run: |
-          set -euo pipefail
-          if brew tap | grep -Fxq aws/tap; then
-            brew untap aws/tap
-          fi
-          brew install \
-            adwaita-icon-theme \
-            dylibbundler \
-            gettext \
-            gstreamer \
-            gtk4 \
-            libadwaita \
-            librsvg \
-            meson \
-            ninja \
-            pkgconf \
-            shared-mime-info \
-            wavpack
-
-      - name: Select Xcode 26
-        run: |
-          set -euo pipefail
-          xcode_app="$(
-            find /Applications -maxdepth 1 -type d -name 'Xcode_26.*.app' -print |
-              sort -V |
-              tail -n 1
-          )"
-          test -n "$xcode_app"
-          developer_dir="$xcode_app/Contents/Developer"
-          test -d "$developer_dir"
-          echo "DEVELOPER_DIR=$developer_dir" >> "$GITHUB_ENV"
-          sdk_version="$(DEVELOPER_DIR="$developer_dir" xcrun --sdk macosx --show-sdk-version)"
-          [[ "$sdk_version" == 26.* ]]
-          echo "Using $xcode_app with macOS SDK $sdk_version."
-
-      - name: Test platform integrations
-        run: |
-          set -euo pipefail
-          cargo test --locked -p secrets
-          cargo test --locked -p desktop-integration
-          cargo test --locked -p sources metadata_
-          cargo test --locked -p rufin settings_
-
-      - name: Build macOS disk image
-        run: |
-          set -euo pipefail
-          gettext_prefix="$(brew --prefix gettext)"
-          export PATH="${gettext_prefix}/bin:$PATH"
-          RUFIN_ARTIFACT_ROOT="$PWD/dist" \
-            RUFIN_DMG_ARTIFACT="$PWD/dist/Rufin-macos-${{ matrix.architecture }}.dmg" \
-            packaging/macos/build
-
-      - name: Verify disk image
-        run: |
-          set -euo pipefail
-          media_dir="$RUNNER_TEMP/rufin-package-media"
-          mount_dir="$RUNNER_TEMP/rufin-dmg"
-          dmg_path="dist/Rufin-macos-${{ matrix.architecture }}.dmg"
-          scripts/create-media-verification-files "$media_dir"
-          mkdir -p "$mount_dir"
-          hdiutil verify "$dmg_path"
-          hdiutil attach "$dmg_path" -nobrowse -readonly -mountpoint "$mount_dir"
-          trap 'hdiutil detach "$mount_dir"' EXIT
-          for media in "$media_dir"/*; do
-            RUFIN_GST_REGISTRY_1_0="$RUNNER_TEMP/rufin-gstreamer-registry.bin" \
-              "$mount_dir/Rufin.app/Contents/MacOS/rufin" --verify-media "$media"
-          done
-          hdiutil detach "$mount_dir"
-          trap - EXIT
-
-      - name: Upload workflow artifact
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+      - name: Attest macOS disk images
+        uses: actions/attest@f7c74d28b9d84cb8768d0b8ca14a4bac6ef463e6 # v4
         with:
-          name: Rufin-macos-${{ matrix.architecture }}.dmg
-          path: dist/Rufin-macos-${{ matrix.architecture }}.dmg
-          if-no-files-found: error
-          retention-days: 7
+          subject-path: dist/Rufin-macos-*.dmg
+
+      - name: Upload release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.event_name == 'release' && github.event.release.tag_name || inputs.upload_release_tag }}
+        run: gh release upload "$RELEASE_TAG" dist/Rufin-macos-*.dmg --clobber --repo "$GITHUB_REPOSITORY"

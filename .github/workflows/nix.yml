@@ -75,22 +75,6 @@ jobs:
           RELEASE_TAG: ${{ github.event_name == 'release' && github.event.release.tag_name || inputs.ref }}
         run: cargo run --locked -p xtask -- verify release-tag "$RELEASE_TAG"
 
-      - name: Validate release metadata
-        if: github.event_name == 'release'
-        env:
-          RELEASE_TAG: ${{ github.event.release.tag_name }}
-        run: |
-          set -euo pipefail
-          version="${RELEASE_TAG#v}"
-          cargo_version="$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n 1)"
-          metainfo_version="$(
-            sed -n 's/.*<release version="\([^"]*\)".*/\1/p' data/io.github.screwys.Rufin.metainfo.xml |
-              head -n 1
-          )"
-
-          test "$version" = "$cargo_version"
-          test "$version" = "$metainfo_version"
-
       - name: Install Nix
         uses: cachix/install-nix-action@630ae543ea3a38a9a4166f03376c02c50f408342 # v31
         with:
@@ -128,7 +112,7 @@ jobs:
       - name: Create media verification files
         run: |
           bash scripts/retry-nix nix develop --command \
-            bash scripts/create-media-verification-files "$RUNNER_TEMP/rufin-package-media"
+            cargo run --locked -p xtask -- generate media-verification-files "$RUNNER_TEMP/rufin-package-media"
 
       - name: Verify wrapped app
         env:
