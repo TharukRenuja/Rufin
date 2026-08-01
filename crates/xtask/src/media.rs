@@ -5,14 +5,16 @@ use std::process::Command;
 
 use crate::Result;
 
+const WAV_FILE: &str = "package-check.wav";
+const WAVPACK_FILE: &str = "package-check.wv";
 const MEDIA_FILES: &[&str] = &[
     "package-check.mp3",
     "package-check.flac",
     "package-check.m4a",
     "package-check.ogg",
     "package-check.opus",
-    "package-check.wav",
-    "package-check.wv",
+    WAV_FILE,
+    WAVPACK_FILE,
     "package-check.mka",
     "package-check.wma",
 ];
@@ -26,7 +28,7 @@ const GST_MEDIA_FILES: &[(&str, &[&str])] = &[
     ("package-check.m4a", &["avenc_aac", "mp4mux"]),
     ("package-check.ogg", &["vorbisenc", "oggmux"]),
     ("package-check.opus", &["opusenc", "oggmux"]),
-    ("package-check.wav", &["audio/x-raw,format=S16LE", "wavenc"]),
+    (WAV_FILE, &["audio/x-raw,format=S16LE", "wavenc"]),
     ("package-check.mka", &["vorbisenc", "matroskamux"]),
     ("package-check.wma", &["avenc_wmav2", "asfmux"]),
 ];
@@ -54,21 +56,10 @@ fn generate_verification_files(output_directory: &Path) -> Result<()> {
     }
 
     for (filename, pipeline) in GST_MEDIA_FILES {
-        gst_file(pipeline, &output_directory.join(filename))?;
+        gst_file(output_directory, pipeline, filename)?;
     }
 
-    let wav = output_directory.join("package-check.wav");
-    let wavpack = output_directory.join("package-check.wv");
-    run_command(
-        "wavpack",
-        [
-            OsString::from("-q"),
-            OsString::from("-y"),
-            wav.into_os_string(),
-            OsString::from("-o"),
-            wavpack.into_os_string(),
-        ],
-    )?;
+    run_command(output_directory, "wavpack", wavpack_arguments())?;
 
     for filename in MEDIA_FILES {
         let path = output_directory.join(filename);
@@ -85,7 +76,15 @@ fn generate_verification_files(output_directory: &Path) -> Result<()> {
     Ok(())
 }
 
-fn gst_file(pipeline: &[&str], output: &Path) -> Result<()> {
+fn gst_file(output_directory: &Path, pipeline: &[&str], filename: &str) -> Result<()> {
+    run_command(
+        output_directory,
+        GST_LAUNCH,
+        gst_arguments(pipeline, filename),
+    )
+}
+
+fn gst_arguments(pipeline: &[&str], filename: &str) -> Vec<OsString> {
     let mut args = [
         "-q",
         "audiotestsrc",
@@ -102,21 +101,32 @@ fn gst_file(pipeline: &[&str], output: &Path) -> Result<()> {
         args.push(OsString::from("!"));
     }
     args.push(OsString::from("filesink"));
-    args.push(location_argument(output));
-    run_command(GST_LAUNCH, args)
+    args.push(location_argument(filename));
+    args
 }
 
-fn location_argument(path: &Path) -> OsString {
+fn location_argument(filename: &str) -> OsString {
     let mut argument = OsString::from("location=");
-    argument.push(path.as_os_str());
+    argument.push(filename);
     argument
 }
 
-fn run_command<I>(program: &str, args: I) -> Result<()>
+fn wavpack_arguments() -> [OsString; 5] {
+    [
+        OsString::from("-q"),
+        OsString::from("-y"),
+        OsString::from(WAV_FILE),
+        OsString::from("-o"),
+        OsString::from(WAVPACK_FILE),
+    ]
+}
+
+fn run_command<I>(working_directory: &Path, program: &str, args: I) -> Result<()>
 where
     I: IntoIterator<Item = OsString>,
 {
     let status = Command::new(program)
+        .current_dir(working_directory)
         .args(args)
         .status()
         .map_err(|error| format!("failed to run {program}: {error}"))?;
@@ -124,5 +134,34 @@ where
         Ok(())
     } else {
         Err(format!("{program} failed with status {status}").into())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::ffi::OsStr;
+
+    use super::{WAV_FILE, gst_arguments, wavpack_arguments};
+
+    #[test]
+    fn media_tools_receive_filenames_relative_to_the_output_directory() {
+        let gst = gst_arguments(&["wavenc"], WAV_FILE);
+        assert_has_no_directory(gst.last().expect("GStreamer output argument"));
+
+        let wavpack = wavpack_arguments();
+        assert_has_no_directory(&wavpack[2]);
+        assert_has_no_directory(&wavpack[4]);
+    }
+
+    fn assert_has_no_directory(argument: &OsStr) {
+        let argument = argument.to_string_lossy();
+        assert!(
+            !argument.contains('/'),
+            "unexpected directory in {argument}"
+        );
+        assert!(
+            !argument.contains('\\'),
+            "unexpected directory in {argument}"
+        );
     }
 }
