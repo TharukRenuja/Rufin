@@ -75,10 +75,6 @@ jobs:
             package_dependencies:
               - '**/Cargo.toml'
               - 'Cargo.lock'
-            linux-packages:
-              - 'crates/localization/locales/**'
-              - 'crates/xtask/**'
-              - 'data/**'
             aur_bin:
               - '.github/workflows/aur-build.yml'
               - '.github/workflows/aur.yml'
@@ -146,16 +142,10 @@ jobs:
                 else
                   .
                 end
-                | if index("linux-packages") then
-                  . + ["aur_bin", "flatpak", "nix", "rpm"]
-                else
-                  .
-                end
                 | map(select(
                     . != "all_builds" and
                     . != "container_image" and
                     . != "current_nix" and
-                    . != "linux-packages" and
                     . != "package_dependencies" and
                     . != "workflows"
                   ))
