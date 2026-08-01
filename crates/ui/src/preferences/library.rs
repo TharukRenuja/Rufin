@@ -327,8 +327,9 @@ fn library_sources_page(
         actions_row.set_selectable(false);
         downloads_group.add(&actions_row);
 
-        downloads_group.add(&section_header_row("Download Queue"));
-        let queue_focus = add_download_queue(&downloads_group, shell, &server.id);
+        let (queue_header, pause_downloads) = download_queue_header();
+        downloads_group.add(&queue_header);
+        let queue_focus = add_download_queue(&downloads_group, shell, &server.id, &pause_downloads);
         if focus_download_queue {
             gtk::glib::idle_add_local_once(move || {
                 queue_focus.grab_focus();
@@ -659,14 +660,35 @@ fn add_download_queue(
     queue: &adw::PreferencesGroup,
     shell: &Rc<Shell>,
     source_id: &library::SourceId,
+    pause_downloads: &gtk::Button,
 ) -> gtk::Widget {
     let queue_rows = Rc::new(std::cell::RefCell::new(Vec::<gtk::Widget>::new()));
     let rendered_rows = Rc::clone(&queue_rows);
     let weak_shell = Rc::downgrade(shell);
     let weak_queue = queue.downgrade();
     let source_id = source_id.clone();
+    let pause_source = shell.products.source.clone();
+    let pause_shell = Rc::downgrade(shell);
+    let pause_source_id = source_id.clone();
+    pause_downloads.connect_clicked(move |_| {
+        let Some(shell) = pause_shell.upgrade() else {
+            return;
+        };
+        let paused = shell
+            .downloads
+            .snapshots
+            .borrow()
+            .get(&pause_source_id)
+            .is_some_and(|snapshot| snapshot.paused);
+        pause_source.set_downloads_paused(!paused);
+    });
+    let weak_pause_downloads = pause_downloads.downgrade();
     let refresh: Rc<dyn Fn()> = Rc::new(move || {
-        let (Some(shell), Some(queue)) = (weak_shell.upgrade(), weak_queue.upgrade()) else {
+        let (Some(shell), Some(queue), Some(pause_downloads)) = (
+            weak_shell.upgrade(),
+            weak_queue.upgrade(),
+            weak_pause_downloads.upgrade(),
+        ) else {
             return;
         };
         for row in queue_rows.borrow_mut().drain(..) {
@@ -679,6 +701,15 @@ fn add_download_queue(
             .get(&source_id)
             .cloned()
             .unwrap_or_default();
+        pause_downloads.set_visible(!snapshot.jobs.is_empty());
+        let (icon, label) = if snapshot.paused {
+            ("media-playback-start-symbolic", tr("Continue"))
+        } else {
+            ("media-playback-pause-symbolic", tr("Pause"))
+        };
+        pause_downloads.set_icon_name(icon);
+        pause_downloads.set_tooltip_text(Some(&label));
+        pause_downloads.update_property(&[gtk::accessible::Property::Label(&label)]);
         if snapshot.jobs.is_empty() {
             let row = adw::ActionRow::builder()
                 .title(tr("Nothing queued"))
@@ -754,6 +785,18 @@ fn add_download_queue(
                 source.cancel_download(job_source_id.clone(), job_id.clone());
             });
             row.add_suffix(&cancel);
+            let clear = gtk::Button::from_icon_name("user-trash-symbolic");
+            clear.add_css_class("flat");
+            clear.add_css_class("destructive-action");
+            clear.set_valign(gtk::Align::Center);
+            clear.set_tooltip_text(Some(&tr("Cancel download and clear downloaded items")));
+            let source = shell.products.source.clone();
+            let job_source_id = job.source_id.clone();
+            let job_id = job.id.clone();
+            clear.connect_clicked(move |_| {
+                source.clear_download_job(job_source_id.clone(), job_id.clone());
+            });
+            row.add_suffix(&clear);
 
             let drag_source = gtk::DragSource::builder()
                 .actions(gtk::gdk::DragAction::MOVE)
@@ -908,19 +951,28 @@ fn row_action_content(title: &str, icon_name: &str) -> gtk::Box {
     content
 }
 
-fn section_header_row(title: &str) -> adw::PreferencesRow {
+fn download_queue_header() -> (adw::PreferencesRow, gtk::Button) {
     let row = adw::PreferencesRow::new();
-    let label = gtk::Label::new(Some(&tr(title)));
+    let content = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+    content.set_margin_top(12);
+    content.set_margin_bottom(8);
+    content.set_margin_start(12);
+    content.set_margin_end(12);
+    let label = gtk::Label::new(Some(&tr("Download Queue")));
     label.add_css_class("heading");
     label.set_halign(gtk::Align::Start);
-    label.set_margin_top(12);
-    label.set_margin_bottom(8);
-    label.set_margin_start(12);
-    label.set_margin_end(12);
-    row.set_child(Some(&label));
+    content.append(&label);
+    let pause = gtk::Button::from_icon_name("media-playback-pause-symbolic");
+    pause.add_css_class("circular");
+    pause.add_css_class("suggested-action");
+    pause.add_css_class("download-queue-pause");
+    pause.set_valign(gtk::Align::Center);
+    pause.set_visible(false);
+    content.append(&pause);
+    row.set_child(Some(&content));
     row.set_activatable(false);
     row.set_selectable(false);
-    row
+    (row, pause)
 }
 
 fn confirm_remove_local_folder(shell: &Rc<Shell>, path: String, row: adw::ActionRow) {

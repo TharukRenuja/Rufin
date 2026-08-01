@@ -6,7 +6,7 @@ use crate::{
 };
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
-enum DownloadCollection {
+pub(crate) enum DownloadCollection {
     Album(AlbumId),
     Artist(ArtistId),
     Genre(GenreId),
@@ -239,15 +239,27 @@ impl DownloadCoverage {
         collection: DownloadCollection,
         music_folder_id: Option<MusicFolderId>,
     ) -> bool {
+        self.status(collection, music_folder_id).1
+    }
+
+    pub(crate) fn status(
+        &self,
+        collection: DownloadCollection,
+        music_folder_id: Option<MusicFolderId>,
+    ) -> (bool, bool) {
         #[cfg(test)]
         self.status_reads
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        self.counts
-            .get(&DownloadCoverageKey {
-                collection,
-                music_folder_id,
-            })
-            .is_some_and(|count| count.total > 0 && count.downloaded == count.total)
+        let Some(count) = self.counts.get(&DownloadCoverageKey {
+            collection,
+            music_folder_id,
+        }) else {
+            return (false, false);
+        };
+        (
+            count.downloaded > 0,
+            count.total > 0 && count.downloaded == count.total,
+        )
     }
 }
 
@@ -277,14 +289,17 @@ mod tests {
             key.clone(),
             DownloadCoverageCount {
                 total: 10_000,
-                downloaded: 10_000,
+                downloaded: 1,
             },
         );
         coverage
             .memberships
             .insert(TrackId::fake(2), std::iter::repeat_n(key, 10_000).collect());
 
-        assert!(coverage.album(&album_id, None));
+        assert_eq!(
+            coverage.status(DownloadCollection::Album(album_id), None),
+            (true, false)
+        );
         assert_eq!(
             coverage
                 .status_reads

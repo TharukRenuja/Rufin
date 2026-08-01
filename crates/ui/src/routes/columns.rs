@@ -415,7 +415,7 @@ fn track_list_column_width(field: LibraryField) -> i32 {
     }
 }
 
-fn track_is_downloaded(shell: &Shell, track: &Track) -> bool {
+pub(super) fn track_is_downloaded(shell: &Shell, track: &Track) -> bool {
     shell
         .library
         .selected

@@ -249,11 +249,12 @@ mod context_menu_tests {
             ContextMenuEntry::Configurable(ContextMenuItem::Play, "play"),
             ContextMenuEntry::Configurable(ContextMenuItem::Favorites, "favorite"),
             ContextMenuEntry::Configurable(ContextMenuItem::Download, "download"),
+            ContextMenuEntry::Configurable(ContextMenuItem::Download, "remove-downloads"),
         ];
 
         assert_eq!(
             resolve_context_menu_entries(entries, &settings),
-            ["download", "favorite"]
+            ["download", "remove-downloads", "favorite"]
         );
     }
 

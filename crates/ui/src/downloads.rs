@@ -77,7 +77,7 @@ impl Shell {
                     },
                 });
             }
-            DownloadEvent::Notice(message) => self.show_notice_toast(&message),
+            DownloadEvent::Notice(message) => self.show_download_notice(&message),
         }
     }
 
@@ -100,6 +100,7 @@ impl Shell {
             *snapshot = Arc::new(DownloadQueueSnapshot {
                 jobs: jobs.into(),
                 downloaded_tracks: snapshot.downloaded_tracks,
+                paused: snapshot.paused,
             });
         }
         if let Some(refresh) = self.downloads.queue_refresh.borrow().clone() {
@@ -115,6 +116,7 @@ impl Shell {
         let title = self.download_subject_title(&feedback.subject);
         let count = track_count_text(feedback.item_count as u64);
         let subtitle = operation_feedback_subtitle(&feedback.kind, &count);
+        self.chrome.operation_feedback_artwork.set_visible(true);
         while let Some(child) = self.chrome.operation_feedback_artwork.first_child() {
             self.chrome.operation_feedback_artwork.remove(&child);
         }
@@ -122,11 +124,24 @@ impl Shell {
             .operation_feedback_artwork
             .append(&self.download_subject_artwork(&feedback.subject, 48));
         self.chrome.operation_feedback_title.set_text(&title);
+        self.chrome.operation_feedback_subtitle.set_visible(true);
         self.chrome.operation_feedback_subtitle.set_text(&subtitle);
         self.downloads.feedback_opens_queue.set(matches!(
             feedback.kind,
             OperationFeedbackKind::DownloadStarted | OperationFeedbackKind::DownloadQueued
         ));
+        self.present_download_feedback();
+    }
+
+    fn show_download_notice(&self, message: &str) {
+        self.chrome.operation_feedback_artwork.set_visible(false);
+        self.chrome.operation_feedback_title.set_text(message);
+        self.chrome.operation_feedback_subtitle.set_visible(false);
+        self.downloads.feedback_opens_queue.set(false);
+        self.present_download_feedback();
+    }
+
+    fn present_download_feedback(&self) {
         let generation = self.downloads.feedback_generation.get().wrapping_add(1);
         self.downloads.feedback_generation.set(generation);
         self.chrome.operation_feedback.set_visible(true);

@@ -250,6 +250,9 @@ impl SubsonicSource {
         let mut extra = vec![("id", raw_item_id(request.track_id.as_str()).to_string())];
         if let Some(kbps) = request.quality.max_bitrate_kbps() {
             extra.push(("maxBitRate", kbps.to_string()));
+            extra.push(("format", "mp3".to_string()));
+        } else {
+            extra.push(("format", "raw".to_string()));
         }
         let url = self.authenticated_url("stream", &extra)?;
         let redacted = redacted_subsonic_url(&url);

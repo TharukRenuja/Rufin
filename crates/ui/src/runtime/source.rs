@@ -11,7 +11,7 @@ use downloads::{DownloadRule, DownloadSubject};
 use library::{
     FavoriteItemId, FolderContents, FolderId, HomeSectionKind, MetadataDraft, MetadataEdit,
     MetadataError, MetadataItemId, MetadataValues, MusicFolderId, PlaylistEdit, PlaylistTrackAdd,
-    SearchRequest as LibrarySearchRequest, SearchResults, SourceId, TrackId, TrackSelection,
+    SearchRequest as LibrarySearchRequest, SearchResults, SourceId, TrackSelection,
 };
 use secrets::SecretStorageMode;
 
@@ -247,11 +247,11 @@ pub struct DownloadRequest {
     pub tracks: TrackSelection,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug)]
 pub struct RemoveDownloadRequest {
     pub source_id: SourceId,
     pub source_session_epoch: playback::SourceSessionEpoch,
-    pub track_id: TrackId,
+    pub tracks: TrackSelection,
 }
 
 pub trait SourcePort: Send + Sync {
@@ -282,6 +282,8 @@ pub trait SourcePort: Send + Sync {
     fn remove_download(&self, request: RemoveDownloadRequest);
     fn remove_download_rule(&self, source_id: SourceId, rule: DownloadRule, delete_downloads: bool);
     fn cancel_download(&self, source_id: SourceId, job_id: String);
+    fn clear_download_job(&self, source_id: SourceId, job_id: String);
+    fn set_downloads_paused(&self, paused: bool);
     fn move_download(
         &self,
         source_id: SourceId,

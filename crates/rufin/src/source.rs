@@ -260,6 +260,11 @@ enum Message {
         source_id: SourceId,
         job_id: String,
     },
+    ClearDownloadJob {
+        source_id: SourceId,
+        job_id: String,
+    },
+    SetDownloadsPaused(bool),
     MoveDownload {
         source_id: SourceId,
         job_id: String,
@@ -761,7 +766,7 @@ impl Actor {
                     }
                 }
                 Message::Download(request) => self.download(request).await,
-                Message::RemoveDownload(request) => self.remove_download(request),
+                Message::RemoveDownload(request) => self.remove_download(request).await,
                 Message::RemoveDownloadRule {
                     source_id,
                     rule,
@@ -769,6 +774,12 @@ impl Actor {
                 } => self.remove_download_rule(source_id, rule, delete_downloads),
                 Message::CancelDownload { source_id, job_id } => {
                     self.shared.downloads.cancel(source_id, job_id);
+                }
+                Message::ClearDownloadJob { source_id, job_id } => {
+                    self.shared.downloads.clear_job(source_id, job_id);
+                }
+                Message::SetDownloadsPaused(paused) => {
+                    self.shared.downloads.set_paused(paused);
                 }
                 Message::MoveDownload {
                     source_id,
@@ -1432,26 +1443,40 @@ impl Actor {
             }
         };
         self.shared.downloads.download(
-            selected.source.clone(),
-            Arc::clone(&selected.loaded),
-            download_settings.directory,
+            selected.source_id().clone(),
             subject,
             download_settings.quality,
             tracks,
         );
     }
 
-    fn remove_download(&self, request: RemoveDownloadRequest) {
+    async fn remove_download(&self, request: RemoveDownloadRequest) {
         let Some(selected) = self.shared.selected().filter(|selected| {
             selected.source_id() == &request.source_id
                 && selected.source_session_epoch == request.source_session_epoch
         }) else {
             return;
         };
+        let track_ids = match blocking(move || {
+            request
+                .tracks
+                .prepare()
+                .and_then(|tracks| tracks.track_ids())
+                .map(|tracks| tracks.to_vec())
+                .map_err(string_error)
+        })
+        .await
+        {
+            Ok(track_ids) => track_ids,
+            Err(error) => {
+                self.shared.send_notice(error).await;
+                return;
+            }
+        };
         self.shared.downloads.remove(
             selected.source_id().clone(),
             selected.loaded,
-            vec![request.track_id],
+            track_ids,
             true,
         );
     }
@@ -1514,9 +1539,7 @@ impl Actor {
         };
         for (rule, tracks) in queued {
             self.shared.downloads.reconcile_rule(
-                selected.source.clone(),
-                Arc::clone(&selected.loaded),
-                settings.directory.clone(),
+                selected.source_id().clone(),
                 rule,
                 settings.quality,
                 tracks,
@@ -2206,7 +2229,7 @@ impl Actor {
                     let mut selected = previous.clone();
                     selected.configuration = configuration;
                     selected.source = Some(source);
-                    if !self.shared.replace_selected(selected) {
+                    if !self.shared.replace_selected_runtime(&selected).await {
                         return Err(
                             "the selected source changed while its settings were saved".to_string()
                         );
@@ -2340,22 +2363,6 @@ impl Actor {
             )
             .await?;
         }
-        let downloads = self.shared.downloads.clone();
-        let loaded_for_downloads = Arc::clone(&commit.loaded);
-        let source_for_downloads = source.clone();
-        let download_directory = self
-            .shared
-            .settings
-            .load()
-            .ui
-            .download_directory(&configuration.source_id);
-        downloads
-            .attach(
-                source_for_downloads,
-                &loaded_for_downloads,
-                download_directory,
-            )
-            .await?;
         let library = self.shared.library.clone();
         let loaded = Arc::clone(&commit.loaded);
         let home_folder = folder.clone();
@@ -3508,22 +3515,6 @@ impl Actor {
             })
             .await?;
         }
-        let downloads = self.shared.downloads.clone();
-        let loaded_for_downloads = Arc::clone(&loaded);
-        let source_for_downloads = source.clone();
-        let download_directory = self
-            .shared
-            .settings
-            .load()
-            .ui
-            .download_directory(&configuration.source_id);
-        downloads
-            .attach(
-                source_for_downloads,
-                &loaded_for_downloads,
-                download_directory,
-            )
-            .await?;
         let library = self.shared.library.clone();
         let loaded_for_home = Arc::clone(&loaded);
         let folder_for_home = music_folder_id.clone();
@@ -3655,6 +3646,7 @@ impl Shared {
             .selected
             .write()
             .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(session);
+        self.attach_selected_downloads(&selected).await;
         if let Ok(playback_owner) = self.playback() {
             playback_owner.publish_selected_products(&playback);
         }
@@ -3669,7 +3661,7 @@ impl Shared {
     }
 
     async fn publish_library_replacement(&self, selected: &SelectedSourceRuntime) {
-        if !self.replace_selected(selected.clone()) {
+        if !self.replace_selected_runtime(selected).await {
             return;
         }
         let selected = ui_selected(selected.clone());
@@ -3681,7 +3673,7 @@ impl Shared {
     }
 
     async fn publish_home_replacement(&self, selected: SelectedSourceRuntime) {
-        if !self.replace_selected(selected.clone()) {
+        if !self.replace_selected_runtime(&selected).await {
             return;
         }
         self.send_event(SourceEvent::HomeReplaced {
@@ -3690,6 +3682,29 @@ impl Shared {
             home: selected.home,
         })
         .await;
+    }
+
+    async fn replace_selected_runtime(&self, selected: &SelectedSourceRuntime) -> bool {
+        if !self.replace_selected(selected.clone()) {
+            return false;
+        }
+        self.attach_selected_downloads(selected).await;
+        true
+    }
+
+    async fn attach_selected_downloads(&self, selected: &SelectedSourceRuntime) {
+        let directory = self
+            .settings
+            .load()
+            .ui
+            .download_directory(selected.source_id());
+        if let Err(error) = self
+            .downloads
+            .attach(selected.source.clone(), &selected.loaded, directory)
+            .await
+        {
+            self.send_notice(error).await;
+        }
     }
 
     async fn publish_selected_playback(
@@ -4597,6 +4612,14 @@ impl SourcePort for SourceOwner {
 
     fn cancel_download(&self, source_id: SourceId, job_id: String) {
         self.send(Message::CancelDownload { source_id, job_id });
+    }
+
+    fn clear_download_job(&self, source_id: SourceId, job_id: String) {
+        self.send(Message::ClearDownloadJob { source_id, job_id });
+    }
+
+    fn set_downloads_paused(&self, paused: bool) {
+        self.send(Message::SetDownloadsPaused(paused));
     }
 
     fn move_download(
