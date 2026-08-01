@@ -173,16 +173,15 @@ impl ContextMenuSurface {
             &self.target,
             &self.popover,
         ))));
-        let target = self.target.downgrade();
+        // Keep the anchor alive until its manually parented popover is detached.
+        let target = self.target.clone();
         self.popover.connect_closed(move |popover| {
             popdown_nested_native_menus_from(popover.upcast_ref());
             let popover = popover.clone();
             let target = target.clone();
             let unmap_handler = Rc::clone(&unmap_handler);
             glib::idle_add_local_once(move || {
-                if let (Some(target), Some(handler)) =
-                    (target.upgrade(), unmap_handler.borrow_mut().take())
-                {
+                if let Some(handler) = unmap_handler.borrow_mut().take() {
                     target.disconnect(handler);
                 }
                 popover.unparent();

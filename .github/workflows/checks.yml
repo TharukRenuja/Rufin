@@ -54,7 +54,7 @@ jobs:
         run: |
           set -euo pipefail
           all_build_jobs=(aur_bin aur_git container flatpak macos nix rpm windows)
-          package_dependency_jobs=(aur_bin flatpak macos nix rpm windows)
+          release_build_jobs=(aur_bin flatpak macos nix rpm windows)
           declare -A selected_jobs=()
 
           add_jobs() {
@@ -62,6 +62,10 @@ jobs:
             for job in "$@"; do
               selected_jobs["$job"]=1
             done
+          }
+
+          workspace_version_at() {
+            git show "$1:Cargo.toml" | sed -n 's/^version = "\([^"]*\)"$/\1/p'
           }
 
           build_container_image=false
@@ -101,7 +105,18 @@ jobs:
 
               case "$path" in
                 Cargo.lock|Cargo.toml|*/Cargo.toml)
-                  add_jobs workspace cargo-deny "${package_dependency_jobs[@]}"
+                  add_jobs workspace cargo-deny nix
+                  if [[ "$path" == "Cargo.toml" ]]; then
+                    base_version="$(workspace_version_at "$merge_base")"
+                    head_version="$(workspace_version_at "$HEAD_SHA")"
+                    if [[ -z "$base_version" || -z "$head_version" ]]; then
+                      echo "Could not read the workspace version from Cargo.toml" >&2
+                      exit 1
+                    fi
+                    if [[ "$base_version" != "$head_version" ]]; then
+                      add_jobs "${release_build_jobs[@]}"
+                    fi
+                  fi
                   ;;
               esac
 
