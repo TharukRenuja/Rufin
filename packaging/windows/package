@@ -130,10 +130,7 @@ copy_directory \
     "$stage_dir/libexec/gstreamer-1.0"
 find "$stage_dir/lib" -type f -name '*.dll.a' -delete
 
-objdump_command="${RUFIN_WINDOWS_OBJDUMP:-x86_64-w64-mingw32-objdump}"
-if ! command -v "$objdump_command" >/dev/null 2>&1; then
-    objdump_command=objdump
-fi
+objdump_command=x86_64-w64-mingw32-objdump
 command -v "$objdump_command" >/dev/null
 
 mapfile -d '' dependency_queue < <(
@@ -177,13 +174,8 @@ copy_directory "$runtime_prefix/share/mime" "$app_share/mime"
 copy_directory "$runtime_prefix/share/themes" "$app_share/themes"
 copy_directory "$runtime_prefix/share/licenses" "$app_share/licenses"
 
-if [[ "$(uname -s)" == MINGW* || "$(uname -s)" == MSYS* ]]; then
-    msgfmt_command="$runtime_prefix/bin/msgfmt.exe"
-    schema_command="$runtime_prefix/bin/glib-compile-schemas.exe"
-else
-    msgfmt_command="${RUFIN_MSGFMT:-msgfmt}"
-    schema_command="${RUFIN_GLIB_COMPILE_SCHEMAS:-glib-compile-schemas}"
-fi
+msgfmt_command="$runtime_prefix/bin/msgfmt.exe"
+schema_command="$runtime_prefix/bin/glib-compile-schemas.exe"
 command -v "$msgfmt_command" >/dev/null
 command -v "$schema_command" >/dev/null
 
@@ -203,8 +195,7 @@ rm -f "$hicolor_dir/icon-theme.cache"
 for icon_cache_command in \
     "$runtime_prefix/bin/gtk4-update-icon-cache.exe" \
     "$runtime_prefix/bin/gtk-update-icon-cache.exe"; do
-    if [[ -x "$icon_cache_command" \
-        && ( "$(uname -s)" == MINGW* || "$(uname -s)" == MSYS* ) ]]; then
+    if [[ -x "$icon_cache_command" ]]; then
         "$icon_cache_command" -q -t -f "$hicolor_dir"
         break
     fi

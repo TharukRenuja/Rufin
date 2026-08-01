@@ -34,6 +34,7 @@ jobs:
     name: Changes
     runs-on: ubuntu-latest
     outputs:
+      build_container_image: ${{ steps.select.outputs.build_container_image }}
       jobs: ${{ steps.select.outputs.jobs }}
       use_current_nix: ${{ steps.select.outputs.use_current_nix }}
 
@@ -71,24 +72,22 @@ jobs:
               - 'Cargo.toml'
               - 'crates/*/Cargo.toml'
               - 'deny.toml'
-            linux-packages:
+            package_dependencies:
+              - '**/Cargo.toml'
               - 'Cargo.lock'
-              - 'Cargo.toml'
-              - 'crates/*/Cargo.toml'
+            linux-packages:
               - 'crates/localization/locales/**'
               - 'crates/xtask/**'
               - 'data/**'
-            native:
-              - '.cargo/**'
-              - 'Cargo.lock'
-              - 'Cargo.toml'
-              - 'LICENSE'
-              - 'crates/**'
-              - 'data/**'
-            aur:
+            aur_bin:
               - '.github/workflows/aur-build.yml'
               - '.github/workflows/aur.yml'
-              - 'packaging/aur/**'
+              - 'packaging/aur/rufin-bin/**'
+              - 'packaging/aur/rufin-git/PKGBUILD'
+            aur_git:
+              - '.github/workflows/aur-build.yml'
+              - '.github/workflows/aur.yml'
+              - 'packaging/aur/rufin-git/**'
             rpm:
               - '.github/workflows/rpm-source.yml'
               - '.github/workflows/rpm.yml'
@@ -108,25 +107,19 @@ jobs:
               - 'LICENSE'
               - 'packaging/flatpak/**'
             macos:
-              - '.github/workflows/macos-build.yml'
-              - '.github/workflows/macos.yml'
+              - '.github/workflows/macos*.yml'
               - 'packaging/macos/**'
             windows:
-              - '.github/workflows/windows-build.yml'
-              - '.github/workflows/windows.yml'
+              - '.github/workflows/windows*.yml'
               - 'packaging/windows/**'
-              - 'scripts/rust-cache-command'
             container:
               - '.github/workflows/container-image.yml'
-              - '.cargo/**'
-              - 'Cargo.lock'
-              - 'Cargo.toml'
-              - 'crates/*/Cargo.toml'
               - 'justfile'
-              - 'packaging/aur/**'
+              - 'packaging/aur/build'
               - 'packaging/container/**'
-              - 'packaging/windows/**'
               - 'scripts/container'
+            container_image:
+              - 'packaging/container/**'
             current_nix:
               - 'flake.lock'
               - 'flake.nix'
@@ -135,11 +128,12 @@ jobs:
         id: select
         env:
           ALL_BUILDS: ${{ steps.paths.outputs.all_builds }}
+          CONTAINER_IMAGE: ${{ steps.paths.outputs.container_image }}
           CURRENT_NIX: ${{ steps.paths.outputs.current_nix }}
           MATCHED_FILTERS: ${{ steps.paths.outputs.changes || '[]' }}
         run: |
           set -euo pipefail
-          all_jobs='["aur","container","flatpak","macos","nix","rpm","windows"]'
+          all_jobs='["aur_bin","aur_git","container","flatpak","macos","nix","rpm","windows"]'
           if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" || "$ALL_BUILDS" == "true" ]]; then
             jobs="$all_jobs"
           elif [[ "$GITHUB_EVENT_NAME" == "push" ]]; then
@@ -147,21 +141,22 @@ jobs:
           else
             jobs="$(
               jq -c '
-                if index("linux-packages") then
-                  . + ["aur", "flatpak", "nix", "rpm"]
+                if index("package_dependencies") then
+                  . + ["aur_bin", "flatpak", "macos", "nix", "rpm", "windows"]
                 else
                   .
                 end
-                | if index("native") then
-                    . + ["macos", "windows"]
-                  else
-                    .
-                  end
+                | if index("linux-packages") then
+                  . + ["aur_bin", "flatpak", "nix", "rpm"]
+                else
+                  .
+                end
                 | map(select(
                     . != "all_builds" and
+                    . != "container_image" and
                     . != "current_nix" and
                     . != "linux-packages" and
-                    . != "native" and
+                    . != "package_dependencies" and
                     . != "workflows"
                   ))
                 | unique
@@ -173,13 +168,21 @@ jobs:
               ' <<< "$MATCHED_FILTERS"
             )"
           fi
+          if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" || "$CONTAINER_IMAGE" == "true" ]]; then
+            build_container_image=true
+          else
+            build_container_image=false
+          fi
           if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" || "$CURRENT_NIX" == "true" ]]; then
             use_current_nix=true
           else
             use_current_nix=false
           fi
-          echo "jobs=$jobs" >> "$GITHUB_OUTPUT"
-          echo "use_current_nix=$use_current_nix" >> "$GITHUB_OUTPUT"
+          {
+            echo "build_container_image=$build_container_image"
+            echo "jobs=$jobs"
+            echo "use_current_nix=$use_current_nix"
+          } >> "$GITHUB_OUTPUT"
           echo "Selected build jobs: $jobs"
 
       - name: Check workflows
@@ -197,14 +200,24 @@ jobs:
           tar -xzf "$archive" -C "$RUNNER_TEMP" actionlint
           "$RUNNER_TEMP/actionlint"
 
-  aur:
-    name: AUR
+  aur_bin:
+    name: AUR rufin-bin
     needs: changes
-    if: contains(fromJSON(needs.changes.outputs.jobs), 'aur')
+    if: contains(fromJSON(needs.changes.outputs.jobs), 'aur_bin')
     uses: ./.github/workflows/aur-build.yml
     with:
       ref: ${{ github.event.pull_request.head.sha || github.sha }}
-      package: both
+      package: rufin-bin
+      publish: false
+
+  aur_git:
+    name: AUR rufin-git
+    needs: changes
+    if: contains(fromJSON(needs.changes.outputs.jobs), 'aur_git')
+    uses: ./.github/workflows/aur-build.yml
+    with:
+      ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      package: rufin-git
       publish: false
 
   rpm:
@@ -215,7 +228,6 @@ jobs:
     with:
       ref: ${{ github.event.pull_request.head.sha || github.sha }}
       upload_artifact: false
-      verify_binary: true
 
   nix:
     name: Nix
@@ -266,6 +278,7 @@ jobs:
           persist-credentials: false
 
       - name: Build container image
+        if: needs.changes.outputs.build_container_image == 'true'
         run: |
           docker build \
             --file packaging/container/Containerfile \
@@ -274,9 +287,10 @@ jobs:
 
       - name: Check Rufin through container
         env:
-          RUFIN_CONTAINER_IMAGE: localhost/rufin-dev:ci
+          RUFIN_CONTAINER_IMAGE: ${{ needs.changes.outputs.build_container_image == 'true' && 'localhost/rufin-dev:ci' || 'ghcr.io/screwys/rufin-dev:latest' }}
           RUFIN_CONTAINER_RUNTIME: docker
         run: |
+          set -euo pipefail
           scripts/container setup
           scripts/container run just _check-container-image
 
@@ -391,7 +405,8 @@ jobs:
     name: Required
     needs:
       - changes
-      - aur
+      - aur_bin
+      - aur_git
       - rpm
       - nix
       - flatpak

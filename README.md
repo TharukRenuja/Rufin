@@ -103,7 +103,7 @@ nix run github:screwys/Rufin/vX.Y.Z
 
 ## Building locally
 
-Start by cloning the repository. You can build Rufin natively or use our development container to produce a binary if you want to keep dependencies outside of your system and have Docker or Podman available.
+Start by cloning the repository. You can build Rufin natively or use our Linux development container if you want to keep dependencies outside of your system and have Docker or Podman available.
 
 ```bash
 git clone https://github.com/screwys/Rufin.git
@@ -154,6 +154,19 @@ brew install \
   dylibbundler librsvg
 ```
 
+Windows builds run natively in the MSYS2 UCRT64 environment. From its Windows
+UCRT64 terminal, use MSYS2's `pacman.exe` to install the build and packaging
+dependencies:
+
+```bash
+ucrt=mingw-w64-ucrt-x86_64
+pacman -S --needed base-devel git \
+  "$ucrt"-{adwaita-icon-theme,cmake,gdk-pixbuf2,gettext-runtime,gettext-tools} \
+  "$ucrt"-{gst-libav,gst-plugins-bad,gst-plugins-base,gst-plugins-good} \
+  "$ucrt"-{gst-plugins-ugly,gstreamer,gtk4,hicolor-icon-theme,libadwaita} \
+  "$ucrt"-{just,ninja,nsis,perl,pkgconf,rust,shared-mime-info,toolchain,wavpack}
+```
+
 Then you can build and run:
 
 ```bash
@@ -166,7 +179,8 @@ required versions and development files, but those environments are not part of
 Rufin's tested support set. On macOS, `just build dmg` creates
 `.local/artifacts/Rufin.dmg` for installation and platform behavior testing.
 On Windows, `just build windows` creates the versioned setup executable in the
-same artifact directory.
+same artifact directory. These platform builds always use the host and do not
+run through the Linux development container.
 
 Testing, Nix, and container controls are documented in
 [CONTRIBUTING.md](CONTRIBUTING.md#development-environment).

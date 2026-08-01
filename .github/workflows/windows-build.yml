@@ -67,6 +67,7 @@ jobs:
             mingw-w64-ucrt-x86_64-hicolor-icon-theme
             mingw-w64-ucrt-x86_64-libadwaita
             mingw-w64-ucrt-x86_64-ninja
+            mingw-w64-ucrt-x86_64-nsis
             mingw-w64-ucrt-x86_64-perl
             mingw-w64-ucrt-x86_64-pkgconf
             mingw-w64-ucrt-x86_64-rust
@@ -112,16 +113,6 @@ jobs:
           cargo test --locked -p desktop-integration
           cargo test --locked -p sources metadata_
           cargo test --locked -p rufin settings_
-
-      - name: Install NSIS
-        shell: pwsh
-        run: |
-          choco install nsis --no-progress -y
-          $makensis = Join-Path ${env:ProgramFiles(x86)} "NSIS\makensis.exe"
-          if (-not (Test-Path $makensis)) {
-            throw "NSIS was not installed at $makensis"
-          }
-          "RUFIN_MAKENSIS=$makensis" | Out-File -FilePath $env:GITHUB_ENV -Append
 
       - name: Build Windows installer
         shell: msys2 {0}

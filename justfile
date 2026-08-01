@@ -13,7 +13,7 @@ build target="" architecture="":
     elif [[ "{{ target }}" == "flatpak" && -z "{{ architecture }}" ]]; then \
         packaging/flatpak/build; \
     elif [[ "{{ target }}" == "windows" && -z "{{ architecture }}" ]]; then \
-        scripts/container run packaging/windows/build; \
+        packaging/windows/build; \
     elif [[ -z "{{ target }}" && -z "{{ architecture }}" ]]; then \
         scripts/container run just _build; \
     else \
@@ -47,7 +47,7 @@ _check-all:
     cargo run --locked -p xtask -- generate flatpak-sources --check
     cargo run --locked -p xtask -- generate i18n-template --check
     cargo run --locked -p xtask -- generate linux-packaging --check
-    just _fmt-check
+    cargo fmt --all -- --check
     if command -v ast-grep >/dev/null 2>&1; then \
         just _ast-grep; \
     else \
@@ -55,12 +55,11 @@ _check-all:
     fi
     just _lint
     just _test
-    just _deps
+    cargo deny --locked check -D unmatched-skip
 
 _check-container-image:
     just _check-all
     packaging/aur/build
-    packaging/windows/build
 
 debug *args:
     if [[ "${RUFIN_CONTAINER:-0}" == "1" ]]; then \
@@ -101,22 +100,12 @@ _test *args:
 container action="status":
     scripts/container {{ action }}
 
-_fmt-check:
-    cargo fmt --all -- --check
-
 _ast-grep:
-    if ! command -v ast-grep >/dev/null 2>&1; then \
-        echo "ast-grep is required for RefCell checks." >&2; \
-        exit 1; \
-    fi
     ast-grep test --skip-snapshot-tests
     ast-grep scan --error crates
 
 _lint:
     cargo clippy --workspace --all-targets --locked
-
-_deps:
-    cargo deny --locked check -D unmatched-skip
 
 # Regenerate Linux package dependency metadata.
 deps:

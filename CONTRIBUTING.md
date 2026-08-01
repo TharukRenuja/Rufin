@@ -21,7 +21,11 @@ The cache for `main` and release tags is available through Cachix:
 nix-shell -p cachix --run "cachix use rufin"
 ```
 
-Even if you don't want to install dependencies on your host, and don't have nix available it is still possible to develop Rufin. We release a minimal Fedora container with nix available. This is quite convenient since you can keep these dependencies out of your system; yet develop and test Rufin easily. Since this is a container, you can't start Rufin from inside but you can use it to build a binary for your system.
+If you do not want to install Linux dependencies on your host or do not have
+Nix available, Rufin also provides a minimal Fedora container that enters the
+same Nix development shell. It can run checks and build the Linux app or Arch
+package, but it cannot start Rufin, build a Windows installer, or build a macOS
+disk image.
 
 ```bash
 just container setup
@@ -80,13 +84,13 @@ If you are testing natively, this also needs rustfmt, clippy, cargo-deny, and ge
 
 To enable the debug logging, refer to [README.md#troubleshooting](README.md#troubleshooting).
 
-These commands work the same for local and container development. If the container is set up,
-`just build`, `just fmt`, `just test`, and `just check` use the container environment. Container
-state is kept under `.local/container`, and build artifacts under `.local/artifacts`. Use
-`just container shell` for an interactive shell, `just container disable` to
-return those commands to the host, or `just container reset` to clear the
-container state. `just debug` always runs on the host and is unavailable inside
-the container shell.
+Most commands work the same for local and container development. If the container is set up,
+`just build`, `just build arch`, `just fmt`, `just test`, and `just check` use the container
+environment; `just build windows` and `just build dmg` always use the host dependencies listed
+in the README. Container state is kept under `.local/container`, and build artifacts under
+`.local/artifacts`. Use `just container shell` for an interactive shell, `just container disable`
+to return those commands to the host, or `just container reset` to clear the container state.
+`just debug` always runs on the host and is unavailable inside the container shell.
 
 ## Simple guidelines
 

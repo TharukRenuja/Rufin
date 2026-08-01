@@ -22,11 +22,6 @@ on:
         required: false
         default: false
         type: boolean
-      verify_binary:
-        description: Build, install, and verify the x86_64 RPM
-        required: false
-        default: false
-        type: boolean
 
 permissions:
   contents: read
@@ -97,37 +92,6 @@ jobs:
           (cd dist && sha256sum --check SHA256SUMS)
           rpm -K "${source_rpms[0]}"
           test "$(rpm -qp --queryformat '%{NAME}' "${source_rpms[0]}")" = rufin
-
-      - name: Build and verify binary RPM
-        if: inputs.verify_binary
-        run: |
-          set -euo pipefail
-          source_rpm="$(find dist -maxdepth 1 -name 'rufin-*.src.rpm' -print -quit)"
-          test -n "$source_rpm"
-          dnf -y --setopt=install_weak_deps=False install \
-            cpio \
-            dnf5-plugins \
-            gstreamer1-plugin-libav \
-            gstreamer1-plugins-bad-free \
-            gstreamer1-plugins-base \
-            gstreamer1-plugins-good \
-            gstreamer1-plugins-ugly-free \
-            wavpack
-          dnf -y --setopt=install_weak_deps=False builddep "$source_rpm"
-          rpm_dir="$(rpm --eval '%{_rpmdir}')"
-          test -n "$rpm_dir"
-          rpmbuild --rebuild "$source_rpm"
-          rpm_path="$(find "$rpm_dir" -type f -name 'rufin-[0-9]*.x86_64.rpm' -print -quit)"
-          test -n "$rpm_path"
-          rpm -K "$rpm_path"
-          install_root="$(mktemp -d)"
-          rpm2cpio "$rpm_path" | cpio -idm --quiet -D "$install_root"
-          cargo run --locked -p xtask -- verify package-layout "$install_root" /usr
-          dnf -y --setopt=install_weak_deps=False install "$rpm_path"
-          cargo run --locked -p xtask -- generate media-verification-files /tmp/rufin-package-media
-          for media in /tmp/rufin-package-media/*; do
-            /usr/bin/rufin --verify-media "$media"
-          done
 
       - name: Upload source RPM
         if: inputs.upload_artifact
