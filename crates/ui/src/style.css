@@ -1319,6 +1319,16 @@ popover.audio-output-popover > contents {
   min-height: 34px;
 }
 
+button.download-queue-pause {
+  min-width: 22px;
+  min-height: 22px;
+  padding: 0;
+}
+
+button.download-queue-pause image {
+  -gtk-icon-size: 12px;
+}
+
 .home-section-control-button {
   margin-left: -5px;
 }

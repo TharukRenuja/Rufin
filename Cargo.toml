@@ -35,6 +35,7 @@ gstreamer-audio = "0.25.2"
 gstreamer-pbutils = "0.25.2"
 gtk = { package = "gtk4", version = "0.11.3" }
 glib = "0.22.7"
+httpdate = "1.0.3"
 image = { version = "0.25.10", default-features = false, features = ["bmp", "gif", "jpeg", "png", "tiff", "webp"] }
 if-addrs = "0.15.0"
 ksni = "0.3.4"

@@ -24,6 +24,8 @@ use crate::interactions::{
 };
 use crate::layout::width_allocation_owner;
 use crate::preferences::dialogs::metadata::present_metadata_dialog;
+use crate::routes::collection_context::install_download_actions;
+use crate::routes::collections::PlaybackTarget;
 use crate::routes::playlist_picker::{PlaylistTrackSource, install_context_menu_picker_action};
 use crate::settings::ContextMenuItem;
 use crate::shell::Shell;
@@ -1720,6 +1722,7 @@ fn show_resolved_queue_row_context_menu(
             ALBUM_ICON,
         );
     }
+    install_download_actions(&surface, shell, &PlaybackTarget::Track(track.id.clone()));
 
     surface.popover().set_pointing_to(pointing_to.as_ref());
     if let Some(playlist_source) = playlist_source {

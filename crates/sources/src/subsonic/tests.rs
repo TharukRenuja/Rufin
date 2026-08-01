@@ -1228,8 +1228,16 @@ async fn stream_description_keeps_auth_for_playback_and_redacts_it_for_logs() {
     assert!(stream.uri().contains("s=fixed-salt"));
     assert!(stream.uri().contains("t=fixed-token"));
     assert!(stream.uri().contains("maxBitRate=320"));
+    assert!(stream.uri().contains("format=mp3"));
     assert!(!stream.redacted_uri().contains("fixed-salt"));
     assert!(!stream.redacted_uri().contains("fixed-token"));
     assert!(stream.redacted_uri().contains("maxBitRate=320"));
+    assert!(stream.redacted_uri().contains("format=mp3"));
     assert!(stream.trust_invalid_certificate());
+
+    let original = source
+        .resolve_stream(&StreamRequest::original(TrackId::new("subsonic:track:one")))
+        .await
+        .expect("resolve original stream");
+    assert!(original.uri().contains("format=raw"));
 }

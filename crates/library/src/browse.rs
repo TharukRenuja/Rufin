@@ -63,6 +63,12 @@ pub struct TrackSelection {
     kind: TrackSelectionKind,
 }
 
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct DownloadStatus {
+    pub any: bool,
+    pub complete: bool,
+}
+
 #[derive(Clone, Debug)]
 enum TrackSelectionKind {
     Prepared(TrackList),
@@ -140,6 +146,65 @@ impl TrackSelection {
                 music_folder_id,
             } => loaded.smart_playlist_tracks(&id, music_folder_id.as_ref()),
         }
+    }
+
+    pub fn download_status(&self) -> LoadedLibraryResult<DownloadStatus> {
+        use crate::download_coverage::DownloadCollection;
+
+        let (loaded, collection, music_folder_id) = match &self.kind {
+            TrackSelectionKind::Prepared(tracks) => return tracks.download_status(),
+            TrackSelectionKind::Album {
+                loaded,
+                id,
+                music_folder_id,
+            } => (
+                loaded,
+                DownloadCollection::Album(id.clone()),
+                music_folder_id.clone(),
+            ),
+            TrackSelectionKind::Artist {
+                loaded,
+                id,
+                music_folder_id,
+            } => (
+                loaded,
+                DownloadCollection::Artist(id.clone()),
+                music_folder_id.clone(),
+            ),
+            TrackSelectionKind::Genre {
+                loaded,
+                id,
+                music_folder_id,
+            } => (
+                loaded,
+                DownloadCollection::Genre(id.clone()),
+                music_folder_id.clone(),
+            ),
+            TrackSelectionKind::Mood {
+                loaded,
+                id,
+                music_folder_id,
+            } => (
+                loaded,
+                DownloadCollection::Mood(id.clone()),
+                music_folder_id.clone(),
+            ),
+            TrackSelectionKind::Playlist { loaded, id } => {
+                (loaded, DownloadCollection::Playlist(id.clone()), None)
+            }
+            TrackSelectionKind::SmartPlaylist {
+                loaded,
+                id,
+                music_folder_id,
+            } => (
+                loaded,
+                DownloadCollection::SmartPlaylist(id.clone()),
+                music_folder_id.clone(),
+            ),
+        };
+        let state = loaded.read_state()?;
+        let (any, complete) = state.download_coverage.status(collection, music_folder_id);
+        Ok(DownloadStatus { any, complete })
     }
 }
 
@@ -224,6 +289,23 @@ impl TrackList {
             })
             .collect::<LoadedLibraryResult<Vec<_>>>()
             .map(Into::into)
+    }
+
+    fn download_status(&self) -> LoadedLibraryResult<DownloadStatus> {
+        let state = self.loaded.read_state()?;
+        let mut total = 0usize;
+        let mut downloaded = 0usize;
+        for slot in self.slots.iter() {
+            let Some(track) = state.tracks.get_slot(*slot) else {
+                continue;
+            };
+            total += 1;
+            downloaded += usize::from(state.downloaded_files.contains_key(&track.id));
+        }
+        Ok(DownloadStatus {
+            any: downloaded > 0,
+            complete: total > 0 && downloaded == total,
+        })
     }
 
     pub fn position(&self, track_id: &crate::TrackId) -> LoadedLibraryResult<Option<u32>> {

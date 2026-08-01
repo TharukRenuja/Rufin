@@ -33,7 +33,7 @@ use super::collections::{
 };
 use super::columns::{
     ROW_INDEX_COLUMN_TITLE, TrackRowPlayingIndicator, set_track_row_index_text,
-    track_column_fit_width, track_column_width, track_row_index_cell,
+    track_column_fit_width, track_column_width, track_is_downloaded, track_row_index_cell,
 };
 use super::detail_links::track_artist_route;
 use super::grid_cells::{
@@ -183,6 +183,7 @@ struct PlaylistEntryCellState {
     menu: Rc<RefCell<Option<PlaylistEntryContextMenuState>>>,
     row: Rc<Cell<Option<usize>>>,
     link_route: Rc<RefCell<Option<Route>>>,
+    downloaded: Rc<RefCell<Option<gtk::Image>>>,
 }
 #[derive(Clone)]
 struct PlaylistEntryTitleCell {
@@ -592,6 +593,7 @@ impl PlaylistEntryGridCell {
         let cover = ArtworkTile::new_elastic_square(0);
         let body = CollectionGridCardCell::new(&shell, fields, cover.widget());
         let state = playlist_entry_cell_state();
+        body.set_download_badge(playlist_entry_download_badge(&shell, &state));
         install_dynamic_playlist_entry_context_menu(&body.card, &shell, Rc::clone(&state.menu));
         Self {
             body,
@@ -627,6 +629,7 @@ impl ReusableCollectionGridCell<PlaylistEntryRow> for PlaylistEntryGridCell {
             )
         });
         bind_playlist_entry_cell_state(&self.state, row, &entry, &self.playlist_id);
+        bind_playlist_entry_download_badge(&self.shell, &self.state, &entry.track);
     }
 
     fn clear(&self) {
@@ -660,6 +663,7 @@ fn playlist_entry_cell_state() -> PlaylistEntryCellState {
         menu: Rc::new(RefCell::new(None)),
         row: Rc::new(Cell::new(None)),
         link_route: Rc::new(RefCell::new(None)),
+        downloaded: Rc::new(RefCell::new(None)),
     }
 }
 fn store_playlist_entry_cell_state(item: &gtk::ListItem, state: PlaylistEntryCellState) {
@@ -699,6 +703,31 @@ fn clear_playlist_entry_cell_state(state: &PlaylistEntryCellState) {
     state.row.set(None);
     state.menu.borrow_mut().take();
     state.link_route.borrow_mut().take();
+    if let Some(downloaded) = state.downloaded.borrow().as_ref() {
+        downloaded.set_visible(false);
+    }
+}
+fn playlist_entry_download_badge(shell: &Rc<Shell>, state: &PlaylistEntryCellState) -> gtk::Image {
+    let current = Rc::clone(&state.menu);
+    let badge = shell.download_badge(false, move |selected| {
+        current.borrow().as_ref().is_some_and(|state| {
+            selected
+                .loaded
+                .is_downloaded(&state.track.id)
+                .unwrap_or(false)
+        })
+    });
+    state.downloaded.replace(Some(badge.clone()));
+    badge
+}
+fn bind_playlist_entry_download_badge(
+    shell: &Shell,
+    state: &PlaylistEntryCellState,
+    track: &Track,
+) {
+    if let Some(downloaded) = state.downloaded.borrow().as_ref() {
+        shell.set_download_badge_visible(downloaded, track_is_downloaded(shell, track));
+    }
 }
 fn setup_playlist_entry_link_label(
     label: &gtk::Label,
@@ -1137,6 +1166,10 @@ where
             setup_playlist_entry_link_label(&label, &setup_shell, &state);
         }
         root.append(&label);
+        if title == "Title" {
+            root.set_spacing(5);
+            root.append(&playlist_entry_download_badge(&setup_shell, &state));
+        }
 
         setup_playlist_entry_cell_actions(
             &root,
@@ -1148,6 +1181,7 @@ where
         item.set_child(Some(&root));
         store_playlist_entry_cell_state(item, state);
     });
+    let bind_shell = Rc::clone(shell);
     factory.connect_bind(move |_, item| {
         let Some(item) = item.downcast_ref::<gtk::ListItem>() else {
             return;
@@ -1174,6 +1208,7 @@ where
             *state.link_route.borrow_mut() = route(&entry);
         }
         bind_playlist_entry_cell_state(&state, row, &entry, &playlist_id);
+        bind_playlist_entry_download_badge(&bind_shell, &state, &entry.track);
     });
     factory.connect_unbind(|_, item| {
         if let Some(item) = item.downcast_ref::<gtk::ListItem>() {
@@ -1222,9 +1257,12 @@ fn playlist_entry_title_column(
         labels.set_width_request(1);
         let title = playlist_entry_text_label("", "", PLAYLIST_ENTRY_TITLE_MAX_CHARS);
         title.add_css_class("playlist-entry-title");
+        let title_row = gtk::Box::new(gtk::Orientation::Horizontal, 5);
+        title_row.append(&title);
+        title_row.append(&playlist_entry_download_badge(&setup_shell, &state));
         let artist = playlist_entry_text_label("", "muted", PLAYLIST_ENTRY_TITLE_MAX_CHARS);
         setup_playlist_entry_link_label(&artist, &setup_shell, &state);
-        labels.append(&title);
+        labels.append(&title_row);
         labels.append(&artist);
         let cell = playlist_title_cell(cover.widget(), labels.upcast());
         setup_playlist_entry_cell_actions(
@@ -1281,6 +1319,7 @@ fn playlist_entry_title_column(
         };
         *state.link_route.borrow_mut() = track_artist_route(&entry.track);
         bind_playlist_entry_cell_state(&state, row, &entry, &playlist_id);
+        bind_playlist_entry_download_badge(&bind_shell, &state, &entry.track);
     });
     factory.connect_unbind(move |_, item| {
         if let Some(item) = item.downcast_ref::<gtk::ListItem>() {

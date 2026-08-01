@@ -276,6 +276,9 @@ msgstr ""
 msgid "Caching local library..."
 msgstr ""
 
+msgid "Cancel download and clear downloaded items"
+msgstr ""
+
 msgid "Cancel download"
 msgstr ""
 
@@ -476,6 +479,9 @@ msgid "Don't duplicate"
 msgstr ""
 
 msgid "Download Folder"
+msgstr ""
+
+msgid "Download Queue"
 msgstr ""
 
 msgid "Download every track, including tracks added later."
@@ -1304,6 +1310,9 @@ msgid "Remove All Downloads"
 msgstr ""
 
 msgid "Remove Download"
+msgstr ""
+
+msgid "Remove Downloads"
 msgstr ""
 
 msgid "Remove Local Folder"

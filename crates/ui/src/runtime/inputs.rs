@@ -66,11 +66,11 @@ impl SelectedLibrary {
         }
     }
 
-    pub fn remove_download_request(&self, track_id: library::TrackId) -> RemoveDownloadRequest {
+    pub fn remove_download_request(&self, tracks: TrackSelection) -> RemoveDownloadRequest {
         RemoveDownloadRequest {
             source_id: self.source_id.clone(),
             source_session_epoch: self.source_session_epoch,
-            track_id,
+            tracks,
         }
     }
 

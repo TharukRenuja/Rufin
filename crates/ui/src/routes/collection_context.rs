@@ -22,7 +22,7 @@ use crate::preferences::dialogs::popup::present_light_dismiss_dialog;
 use crate::settings::ContextMenuItem;
 use crate::shell::Shell;
 use crate::shell::actions::{
-    ADD_ICON, EDIT_ICON, PLAY_ICON, PLAY_LATER_ICON, PLAY_NEXT_ICON, REMOVE_ICON,
+    ADD_ICON, EDIT_ICON, PLAY_ICON, PLAY_LATER_ICON, PLAY_NEXT_ICON, REMOVE_ICON, TRASH_ICON,
 };
 use localization::{msgid, tr};
 
@@ -98,6 +98,7 @@ pub(crate) fn install_album_context_menu(
             let playback_target = PlaybackTarget::prepared(
                 tracks.clone(),
                 format!("album:{}", album.album.id.as_str()),
+                DownloadSubject::Album(album.album.id.clone()),
             );
             present_album_context_menu_inner(
                 target,
@@ -881,7 +882,7 @@ fn install_loaded_actions(
     target: PlaybackTarget,
     shuffled_start: bool,
 ) {
-    install_download_action(surface, shell, &target);
+    install_download_actions(surface, shell, &target);
     for (action, placement) in [
         ("play", QueuePlacement::Now),
         ("play-next", QueuePlacement::Next),
@@ -898,7 +899,7 @@ fn install_loaded_actions(
     }
 }
 
-fn install_download_action(
+pub(crate) fn install_download_actions(
     surface: &ContextMenuSurface,
     shell: &Rc<Shell>,
     target: &PlaybackTarget,
@@ -916,44 +917,47 @@ fn install_download_action(
     if !remote {
         return;
     }
-    let remove = match target {
-        PlaybackTarget::Track(track_id) => selected.loaded.is_downloaded(track_id).unwrap_or(false),
-        PlaybackTarget::Album(_)
-        | PlaybackTarget::Artist(_)
-        | PlaybackTarget::Genre(_)
-        | PlaybackTarget::Mood(_)
-        | PlaybackTarget::Playlist(_)
-        | PlaybackTarget::SmartPlaylist(_)
-        | PlaybackTarget::Prepared { .. } => false,
-    };
-    surface.append_configurable_action(
-        ContextMenuItem::Download,
-        if remove {
-            msgid("Remove Download")
-        } else {
-            msgid("Download")
-        },
-        "download",
-        if remove { REMOVE_ICON } else { DOWNLOAD_ICON },
-    );
-    if remove {
-        let PlaybackTarget::Track(track_id) = target else {
-            unreachable!("only a track can remove one download");
-        };
-        let source = shell.products.source.clone();
-        let request = selected.remove_download_request(track_id.clone());
-        surface.add_action("download", move || {
-            source.remove_download(request.clone());
-        });
-    } else {
+    let status = target.download_status(&selected).unwrap_or_default();
+    let collection = !matches!(target, PlaybackTarget::Track(_));
+    if !status.complete {
         let source = shell.products.source.clone();
         let shell = Rc::clone(shell);
         let target = target.clone();
+        surface.append_configurable_action(
+            ContextMenuItem::Download,
+            msgid("Download"),
+            "download",
+            DOWNLOAD_ICON,
+        );
         surface.add_action("download", move || {
             if let Some(request) = target.download_request(&shell) {
                 source.download(request);
             }
         });
+    }
+    if status.any {
+        let source = shell.products.source.clone();
+        let shell = Rc::clone(shell);
+        let target = target.clone();
+        surface.append_configurable_action(
+            ContextMenuItem::Download,
+            remove_download_label(collection),
+            "remove-downloads",
+            TRASH_ICON,
+        );
+        surface.add_action("remove-downloads", move || {
+            if let Some(request) = target.remove_download_request(&shell) {
+                source.remove_download(request);
+            }
+        });
+    }
+}
+
+fn remove_download_label(collection: bool) -> &'static str {
+    if collection {
+        msgid("Remove Downloads")
+    } else {
+        msgid("Remove Download")
     }
 }
 

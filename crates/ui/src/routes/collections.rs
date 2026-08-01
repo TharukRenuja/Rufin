@@ -73,14 +73,20 @@ pub(crate) enum PlaybackTarget {
     Prepared {
         tracks: TrackList,
         context_id: String,
+        download_subject: DownloadSubject,
     },
 }
 
 impl PlaybackTarget {
-    pub(crate) fn prepared(tracks: TrackList, context_id: impl Into<String>) -> Self {
+    pub(crate) fn prepared(
+        tracks: TrackList,
+        context_id: impl Into<String>,
+        download_subject: DownloadSubject,
+    ) -> Self {
         Self::Prepared {
             tracks,
             context_id: context_id.into(),
+            download_subject,
         }
     }
 
@@ -129,7 +135,28 @@ impl PlaybackTarget {
         }
     }
 
-    fn download_subject(&self) -> DownloadSubject {
+    pub(crate) fn remove_download_request(
+        &self,
+        shell: &Shell,
+    ) -> Option<crate::runtime::source::RemoveDownloadRequest> {
+        let selected = shell.library.selected.borrow().as_ref().cloned()?;
+        match self.selection(&selected) {
+            Ok(tracks) => Some(selected.remove_download_request(tracks)),
+            Err(error) => {
+                warn!(target = ?self, %error, "failed to identify downloaded tracks");
+                None
+            }
+        }
+    }
+
+    pub(crate) fn download_status(
+        &self,
+        selected: &SelectedLibrary,
+    ) -> LoadedLibraryResult<library::DownloadStatus> {
+        self.selection(selected)?.download_status()
+    }
+
+    pub(crate) fn download_subject(&self) -> DownloadSubject {
         match self {
             Self::Track(id) => DownloadSubject::Track(id.clone()),
             Self::Album(id) => DownloadSubject::Album(id.clone()),
@@ -138,10 +165,9 @@ impl PlaybackTarget {
             Self::Mood(id) => DownloadSubject::Mood(id.clone()),
             Self::Playlist(id) => DownloadSubject::Playlist(id.clone()),
             Self::SmartPlaylist(id) => DownloadSubject::SmartPlaylist(id.clone()),
-            Self::Prepared { context_id, .. } => DownloadSubject::Prepared {
-                context_id: context_id.clone(),
-                title: None,
-            },
+            Self::Prepared {
+                download_subject, ..
+            } => download_subject.clone(),
         }
     }
 

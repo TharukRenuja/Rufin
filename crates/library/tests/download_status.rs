@@ -6,7 +6,7 @@ use library::{
 };
 
 #[test]
-fn a_collection_is_downloaded_only_when_every_track_is_available() {
+fn collection_download_status_distinguishes_any_from_all_tracks() {
     let directory = tempfile::tempdir().expect("temporary Library");
     let library = Library::open(directory.path().join("library.db")).expect("open Library");
     let source_id = SourceId::new("subsonic:download-status");
@@ -106,6 +106,13 @@ fn a_collection_is_downloaded_only_when_every_track_is_available() {
         &playlist_id,
         &smart_playlist_id,
     ));
+    assert_eq!(
+        loaded
+            .album_track_selection(&album_id, Some(&folder_id))
+            .download_status()
+            .expect("album download status"),
+        library::DownloadStatus::default()
+    );
     loaded
         .set_downloaded_file(tracks[0].id.clone(), directory.path().join("one.audio"))
         .expect("mark first track downloaded");
@@ -119,6 +126,24 @@ fn a_collection_is_downloaded_only_when_every_track_is_available() {
         &playlist_id,
         &smart_playlist_id,
     ));
+    let partial = library::DownloadStatus {
+        any: true,
+        complete: false,
+    };
+    assert_eq!(
+        loaded
+            .album_track_selection(&album_id, Some(&folder_id))
+            .download_status()
+            .expect("album download status"),
+        partial
+    );
+    assert_eq!(
+        loaded
+            .playlist_track_selection(&playlist_id)
+            .download_status()
+            .expect("playlist download status"),
+        partial
+    );
     loaded
         .set_downloaded_file(tracks[1].id.clone(), directory.path().join("two.audio"))
         .expect("mark second track downloaded");
@@ -133,6 +158,24 @@ fn a_collection_is_downloaded_only_when_every_track_is_available() {
         &playlist_id,
         &smart_playlist_id,
     ));
+    let complete = library::DownloadStatus {
+        any: true,
+        complete: true,
+    };
+    assert_eq!(
+        loaded
+            .album_track_selection(&album_id, Some(&folder_id))
+            .download_status()
+            .expect("album download status"),
+        complete
+    );
+    assert_eq!(
+        loaded
+            .playlist_track_selection(&playlist_id)
+            .download_status()
+            .expect("playlist download status"),
+        complete
+    );
 }
 
 #[allow(clippy::too_many_arguments)]

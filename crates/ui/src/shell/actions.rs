@@ -18,6 +18,7 @@ pub(crate) const PLAY_LATER_ICON: &str = "rufin-play-later-symbolic";
 pub(crate) const EDIT_ICON: &str = "rufin-edit-symbolic";
 pub(crate) const ADD_ICON: &str = "rufin-add-symbolic";
 pub(crate) const REMOVE_ICON: &str = "rufin-remove-symbolic";
+pub(crate) const TRASH_ICON: &str = "user-trash-symbolic";
 pub(crate) const MORE_ICON: &str = "rufin-more-symbolic";
 const SORT_ORDER_ICON: &str = "rufin-sort-name-symbolic";
 const SORT_ORDER_DESCENDING_ICON: &str = "rufin-sort-name-descending-symbolic";
