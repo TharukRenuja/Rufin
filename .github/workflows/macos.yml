@@ -30,6 +30,7 @@ jobs:
       ref: ${{ github.event_name == 'release' && github.event.release.tag_name || inputs.ref }}
       release_tag: ${{ github.event_name == 'release' && github.event.release.tag_name || inputs.upload_release_tag }}
       verify_signed_tag: ${{ github.event_name == 'release' }}
+      run_platform_checks: false
 
   upload:
     name: Upload macOS release assets
