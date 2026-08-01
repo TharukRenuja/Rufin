@@ -177,8 +177,7 @@ just debug
 On macOS, `just build dmg` creates
 `.local/artifacts/Rufin.dmg` for installation and platform behavior testing.
 On Windows, `just build windows` creates the versioned setup executable in the
-same artifact directory. These platform builds always use the host and do not
-run through the Linux development container.
+same artifact directory.
 
 Testing, Nix, and container controls are documented in
 [CONTRIBUTING.md](CONTRIBUTING.md#development-environment).

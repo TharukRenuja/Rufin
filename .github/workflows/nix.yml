@@ -7,6 +7,15 @@ on:
   push:
     branches:
       - main
+    paths:
+      - .github/workflows/nix.yml
+      - Cargo.lock
+      - Cargo.toml
+      - crates/**
+      - flake.lock
+      - flake.nix
+      - scripts/retry-nix
+      - '!**/*.md'
   workflow_call:
     inputs:
       ref:
