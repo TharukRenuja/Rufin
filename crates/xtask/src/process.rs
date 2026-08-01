@@ -1,8 +1,8 @@
 use std::env;
-use std::ffi::OsStr;
+use std::ffi::{OsStr, OsString};
 use std::fs;
 use std::io;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::process::{Command, ExitStatus, Stdio};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -15,14 +15,23 @@ pub(crate) struct CapturedOutput {
 }
 
 pub(crate) fn repo_root() -> Result<PathBuf> {
-    let output = Command::new("git")
-        .args(["rev-parse", "--show-toplevel"])
-        .output()?;
-    if !output.status.success() {
-        return Err("could not determine repository root".into());
+    let current = env::current_dir()?;
+    let relative_root = command_stdout("git", ["rev-parse", "--show-cdup"])?;
+    repo_root_from_relative(current, relative_root.trim())
+}
+
+fn repo_root_from_relative(mut current: PathBuf, relative_root: &str) -> Result<PathBuf> {
+    for component in Path::new(relative_root).components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir if current.pop() => {}
+            Component::ParentDir => {
+                return Err("repository root is above the filesystem root".into());
+            }
+            _ => return Err("git returned an invalid relative repository root".into()),
+        }
     }
-    let root = String::from_utf8(output.stdout)?;
-    Ok(PathBuf::from(root.trim()))
+    Ok(current)
 }
 
 pub(crate) fn command_stdout<I, S>(program: &str, args: I) -> Result<String>
@@ -104,10 +113,22 @@ pub(crate) fn find_on_path(command: &str) -> bool {
 }
 
 pub(crate) fn find_on_path_os(command: &str) -> Option<PathBuf> {
+    let names = executable_names(command, env::consts::EXE_SUFFIX);
     let paths = env::var_os("PATH")?;
-    env::split_paths(&paths)
-        .map(|path| path.join(command))
-        .find(|path| path.is_file())
+    env::split_paths(&paths).find_map(|path| {
+        names
+            .iter()
+            .map(|name| path.join(name))
+            .find(|path| path.is_file())
+    })
+}
+
+fn executable_names(command: &str, suffix: &str) -> Vec<OsString> {
+    let mut names = vec![OsString::from(command)];
+    if !suffix.is_empty() && !command.to_ascii_lowercase().ends_with(suffix) {
+        names.push(OsString::from(format!("{command}{suffix}")));
+    }
+    names
 }
 
 pub(crate) fn read_to_string(path: &Path) -> Result<String> {
@@ -205,4 +226,40 @@ pub(crate) fn repo_url_from_origin() -> Result<Option<String>> {
 
 pub(crate) fn github_repo_from_origin() -> Result<Option<String>> {
     Ok(repo_url_from_origin()?.map(|url| url.trim_start_matches("https://github.com/").to_owned()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn repository_root_preserves_the_native_current_path() {
+        let root = PathBuf::from("workspace").join("Rufin");
+        let current = root.join("crates").join("xtask");
+
+        assert_eq!(repo_root_from_relative(current, "../../").unwrap(), root);
+    }
+
+    #[test]
+    fn repository_root_rejects_non_parent_paths() {
+        let error = repo_root_from_relative(PathBuf::from("workspace/Rufin"), "other/")
+            .unwrap_err()
+            .to_string();
+
+        assert_eq!(error, "git returned an invalid relative repository root");
+    }
+
+    #[test]
+    fn windows_executable_lookup_appends_the_suffix() {
+        assert_eq!(
+            executable_names("gst-launch-1.0", ".exe"),
+            ["gst-launch-1.0", "gst-launch-1.0.exe"]
+                .map(OsString::from)
+                .to_vec()
+        );
+        assert_eq!(
+            executable_names("gpg.exe", ".exe"),
+            vec![OsString::from("gpg.exe")]
+        );
+    }
 }
