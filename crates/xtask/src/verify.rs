@@ -80,7 +80,7 @@ fn package_layout(args: Vec<String>) -> Result<()> {
         "share/licenses/rufin/japanese-readings.LICENSE",
     ))?;
 
-    let repo = workspace_source_root()?;
+    let repo = repo_root()?;
     let icon_root = repo.join("data/icons/hicolor");
     let mut icon_paths = Vec::new();
     collect_files_relative(&icon_root, &icon_root, &mut icon_paths)?;
@@ -140,14 +140,6 @@ fn po_files(dir: &Path) -> Result<Vec<PathBuf>> {
         .collect::<Vec<_>>();
     files.sort();
     Ok(files)
-}
-
-fn workspace_source_root() -> Result<PathBuf> {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .and_then(Path::parent)
-        .map(Path::to_path_buf)
-        .ok_or_else(|| "could not determine workspace source root".into())
 }
 
 fn release_metadata(args: Vec<String>) -> Result<()> {
@@ -271,9 +263,16 @@ fn verify_tag_with_release_key(tag_ref: &str, release_key: &Path) -> Result<()> 
         fs::set_permissions(&gnupg_home, fs::Permissions::from_mode(0o700))?;
     }
 
+    let release_key_dir = release_key
+        .parent()
+        .ok_or("release GPG key has no parent directory")?;
+    let release_key_name = release_key
+        .file_name()
+        .ok_or("release GPG key has no filename")?;
     let import_status = Command::new("gpg")
         .args(["--batch", "--import"])
-        .arg(release_key)
+        .arg(release_key_name)
+        .current_dir(release_key_dir)
         .env("GNUPGHOME", &gnupg_home)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
