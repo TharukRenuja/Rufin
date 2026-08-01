@@ -2,15 +2,37 @@
 set -euo pipefail
 
 if [[ $# -lt 2 ]]; then
-  echo "usage: $0 NIX_TARGET COMMAND [ARG...]" >&2
+  echo "usage: $0 direct COMMAND [ARG...]" >&2
+  echo "       $0 nix NIX_TARGET COMMAND [ARG...]" >&2
   exit 2
 fi
 
-nix_target="$1"
+mode="$1"
 shift
+
+case "$mode" in
+  direct)
+    ;;
+  nix)
+    if [[ $# -lt 2 ]]; then
+      echo "usage: $0 nix NIX_TARGET COMMAND [ARG...]" >&2
+      exit 2
+    fi
+    nix_target="$1"
+    shift
+    ;;
+  *)
+    echo "unknown Rust cache command mode: $mode" >&2
+    exit 2
+    ;;
+esac
 
 if [[ $# -eq 4 && "$1" == rustup && "$2" == toolchain && "$3" == list && "$4" == --quiet ]]; then
   exit 0
+fi
+
+if [[ "$mode" == direct ]]; then
+  exec "$@"
 fi
 
 exec bash scripts/retry-nix nix --accept-flake-config develop "$nix_target" --command "$@"

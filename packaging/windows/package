@@ -52,6 +52,21 @@ copy_required_file() {
     cp -L "$source_path" "$destination_path"
 }
 
+objdump_command="$runtime_prefix/bin/objdump.exe"
+msgfmt_command="$runtime_prefix/bin/msgfmt.exe"
+schema_command="$runtime_prefix/bin/glib-compile-schemas.exe"
+icon_cache_command="$runtime_prefix/bin/gtk4-update-icon-cache.exe"
+for packaging_command in \
+    "$objdump_command" \
+    "$msgfmt_command" \
+    "$schema_command" \
+    "$icon_cache_command"; do
+    if [[ ! -x "$packaging_command" ]]; then
+        echo "Required Windows packaging tool is unavailable: ${packaging_command}" >&2
+        exit 1
+    fi
+done
+
 rm -rf "$stage_dir"
 mkdir -p "$stage_dir"
 
@@ -130,12 +145,6 @@ copy_directory \
     "$stage_dir/libexec/gstreamer-1.0"
 find "$stage_dir/lib" -type f -name '*.dll.a' -delete
 
-objdump_command="${RUFIN_WINDOWS_OBJDUMP:-x86_64-w64-mingw32-objdump}"
-if ! command -v "$objdump_command" >/dev/null 2>&1; then
-    objdump_command=objdump
-fi
-command -v "$objdump_command" >/dev/null
-
 mapfile -d '' dependency_queue < <(
     find "$stage_dir" -type f \( -iname '*.dll' -o -iname '*.exe' \) -print0
 )
@@ -177,16 +186,6 @@ copy_directory "$runtime_prefix/share/mime" "$app_share/mime"
 copy_directory "$runtime_prefix/share/themes" "$app_share/themes"
 copy_directory "$runtime_prefix/share/licenses" "$app_share/licenses"
 
-if [[ "$(uname -s)" == MINGW* || "$(uname -s)" == MSYS* ]]; then
-    msgfmt_command="$runtime_prefix/bin/msgfmt.exe"
-    schema_command="$runtime_prefix/bin/glib-compile-schemas.exe"
-else
-    msgfmt_command="${RUFIN_MSGFMT:-msgfmt}"
-    schema_command="${RUFIN_GLIB_COMPILE_SCHEMAS:-glib-compile-schemas}"
-fi
-command -v "$msgfmt_command" >/dev/null
-command -v "$schema_command" >/dev/null
-
 for po_file in "$repo_root"/crates/localization/locales/*.po; do
     language="$(basename "$po_file" .po)"
     copy_directory \
@@ -200,15 +199,7 @@ done
 
 hicolor_dir="$app_share/icons/hicolor"
 rm -f "$hicolor_dir/icon-theme.cache"
-for icon_cache_command in \
-    "$runtime_prefix/bin/gtk4-update-icon-cache.exe" \
-    "$runtime_prefix/bin/gtk-update-icon-cache.exe"; do
-    if [[ -x "$icon_cache_command" \
-        && ( "$(uname -s)" == MINGW* || "$(uname -s)" == MSYS* ) ]]; then
-        "$icon_cache_command" -q -t -f "$hicolor_dir"
-        break
-    fi
-done
+"$icon_cache_command" -q -t -f "$hicolor_dir"
 
 settings_dir="$stage_dir/etc/gtk-4.0"
 mkdir -p "$settings_dir"

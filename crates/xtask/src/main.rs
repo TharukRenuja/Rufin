@@ -4,6 +4,8 @@ use std::env;
 use std::error::Error;
 
 mod generate;
+mod linux_packaging;
+mod media;
 mod process;
 mod release;
 mod rpm;
@@ -43,12 +45,14 @@ fn print_usage() {
   cargo run --locked -p xtask -- generate flatpak-sources [--check]
   cargo run --locked -p xtask -- generate i18n-template [--check] [--output PATH]
   cargo run --locked -p xtask -- generate japanese-readings SOURCE [--check]
+  cargo run --locked -p xtask -- generate linux-packaging [--check]
+  cargo run --locked -p xtask -- generate media-verification-files OUTPUT
   cargo run --locked -p xtask -- generate rpm-srpm TAG --output PATH
   cargo run --locked -p xtask -- release prepare VERSION SUMMARY
   cargo run --locked -p xtask -- release create-tag [--base TAG] [--dry-run] [--replace] [--skip-flathub] VERSION SUMMARY
   cargo run --locked -p xtask -- release update-flathub-manifest [--manifest PATH] TAG
-  cargo run --locked -p xtask -- verify icons
   cargo run --locked -p xtask -- verify package-layout ROOT [PREFIX]
+  cargo run --locked -p xtask -- verify release-metadata TAG
   cargo run --locked -p xtask -- verify release-tag TAG"
     );
 }
@@ -66,25 +70,4 @@ pub(crate) fn parse_check_flag(args: Vec<String>, usage: &str) -> Result<Option<
         }
     }
     Ok(Some(check))
-}
-
-pub(crate) fn ensure_no_args(args: &[String]) -> Result<()> {
-    if args.is_empty() {
-        Ok(())
-    } else {
-        Err(format!("unexpected argument: {}", args[0]).into())
-    }
-}
-
-pub(crate) fn print_help_if_requested(args: &[String], usage: &str) -> Result<bool> {
-    match args {
-        [arg] if arg == "-h" || arg == "--help" => {
-            eprintln!("{usage}");
-            Ok(true)
-        }
-        [arg, ..] if arg == "-h" || arg == "--help" => {
-            Err(format!("unexpected argument after {arg}: {}", args[1]).into())
-        }
-        _ => Ok(false),
-    }
 }

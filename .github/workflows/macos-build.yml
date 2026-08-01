@@ -1,0 +1,154 @@
+name: macOS build
+
+on:
+  workflow_call:
+    inputs:
+      ref:
+        description: Git ref to build
+        required: true
+        type: string
+      release_tag:
+        description: Release version to validate
+        default: ""
+        required: false
+        type: string
+      verify_signed_tag:
+        description: Verify that the release tag is signed
+        default: false
+        required: false
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: macos-${{ github.event_name == 'pull_request' && github.ref || inputs.release_tag || inputs.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build macOS ${{ matrix.architecture }} disk image
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - architecture: arm64
+            runner: macos-15
+          - architecture: x86_64
+            runner: macos-15-intel
+    runs-on: ${{ matrix.runner }}
+    env:
+      CARGO_TARGET_DIR: ${{ github.workspace }}/.local/target
+      HOMEBREW_NO_ANALYTICS: 1
+      HOMEBREW_NO_AUTO_UPDATE: 1
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ inputs.ref }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Configure Rust paths
+        run: echo "CARGO_HOME=$RUNNER_TEMP/rufin-cargo" >> "$GITHUB_ENV"
+
+      - name: Restore Rust build cache
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+        with:
+          cache-bin: "false"
+          cache-on-failure: "true"
+          key: ${{ matrix.architecture }}
+          prefix-key: v1-rust
+          workspaces: ". -> .local/target"
+
+      - name: Verify signed release tag
+        if: inputs.verify_signed_tag
+        env:
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: cargo run --locked -p xtask -- verify release-tag "$RELEASE_TAG"
+
+      - name: Validate release metadata
+        if: inputs.release_tag != '' && !inputs.verify_signed_tag
+        env:
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: cargo run --locked -p xtask -- verify release-metadata "$RELEASE_TAG"
+
+      - name: Install packaging dependencies
+        run: |
+          set -euo pipefail
+          if brew tap | grep -Fxq aws/tap; then
+            brew untap aws/tap
+          fi
+          brew install \
+            adwaita-icon-theme \
+            dylibbundler \
+            gettext \
+            gstreamer \
+            gtk4 \
+            libadwaita \
+            librsvg \
+            meson \
+            ninja \
+            pkgconf \
+            shared-mime-info \
+            wavpack
+
+      - name: Select Xcode 26
+        run: |
+          set -euo pipefail
+          xcode_app="$(
+            find /Applications -maxdepth 1 -type d -name 'Xcode_26.*.app' -print |
+              sort -V |
+              tail -n 1
+          )"
+          test -n "$xcode_app"
+          developer_dir="$xcode_app/Contents/Developer"
+          test -d "$developer_dir"
+          echo "DEVELOPER_DIR=$developer_dir" >> "$GITHUB_ENV"
+          sdk_version="$(DEVELOPER_DIR="$developer_dir" xcrun --sdk macosx --show-sdk-version)"
+          [[ "$sdk_version" == 26.* ]]
+          echo "Using $xcode_app with macOS SDK $sdk_version."
+
+      - name: Test platform integrations
+        run: |
+          set -euo pipefail
+          cargo test --locked -p secrets
+          cargo test --locked -p desktop-integration
+          cargo test --locked -p sources metadata_
+          cargo test --locked -p rufin settings_
+
+      - name: Build macOS disk image
+        run: |
+          set -euo pipefail
+          gettext_prefix="$(brew --prefix gettext)"
+          export PATH="${gettext_prefix}/bin:$PATH"
+          RUFIN_ARTIFACT_ROOT="$PWD/dist" \
+            RUFIN_DMG_ARTIFACT="$PWD/dist/Rufin-macos-${{ matrix.architecture }}.dmg" \
+            packaging/macos/build
+
+      - name: Verify disk image
+        run: |
+          set -euo pipefail
+          media_dir="$RUNNER_TEMP/rufin-package-media"
+          mount_dir="$RUNNER_TEMP/rufin-dmg"
+          dmg_path="dist/Rufin-macos-${{ matrix.architecture }}.dmg"
+          cargo run --locked -p xtask -- generate media-verification-files "$media_dir"
+          mkdir -p "$mount_dir"
+          hdiutil verify "$dmg_path"
+          hdiutil attach "$dmg_path" -nobrowse -readonly -mountpoint "$mount_dir"
+          trap 'hdiutil detach "$mount_dir"' EXIT
+          for media in "$media_dir"/*; do
+            RUFIN_GST_REGISTRY_1_0="$RUNNER_TEMP/rufin-gstreamer-registry.bin" \
+              "$mount_dir/Rufin.app/Contents/MacOS/rufin" --verify-media "$media"
+          done
+          hdiutil detach "$mount_dir"
+          trap - EXIT
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: Rufin-macos-${{ matrix.architecture }}.dmg
+          path: dist/Rufin-macos-${{ matrix.architecture }}.dmg
+          if-no-files-found: error
+          retention-days: 7

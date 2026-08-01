@@ -4,7 +4,7 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 artifact_root="${RUFIN_ARTIFACT_ROOT:-${repo_root}/.local/artifacts}"
 work_root="${RUFIN_DMG_WORK_ROOT:-${artifact_root}/macos}"
-target_dir="${RUFIN_DMG_TARGET_DIR:-${work_root}/target}"
+target_dir="${RUFIN_DMG_TARGET_DIR:-${CARGO_TARGET_DIR:-${work_root}/target}}"
 app_path="${work_root}/Rufin.app"
 dmg_root="${work_root}/dmg"
 dmg_path="${RUFIN_DMG_ARTIFACT:-${artifact_root}/Rufin.dmg}"

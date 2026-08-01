@@ -3,6 +3,10 @@ name: AUR build
 on:
   workflow_call:
     inputs:
+      ref:
+        required: false
+        default: ""
+        type: string
       package:
         required: true
         type: string
@@ -26,7 +30,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: aur-build-${{ inputs.release_tag || github.ref }}
+  group: aur-build-${{ inputs.package }}-${{ inputs.release_tag || github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -90,16 +94,21 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          ref: ${{ needs.prepare.outputs.release_tag || github.sha }}
+          ref: ${{ needs.prepare.outputs.release_tag || inputs.ref || github.sha }}
           fetch-depth: 0
           persist-credentials: false
 
       - name: Install build and runtime dependencies
         run: |
           set -euo pipefail
-          dependency_output="$(bash scripts/check-deps --arch-build-packages)"
-          test -n "$dependency_output"
-          mapfile -t dependencies <<< "$dependency_output"
+          source packaging/aur/rufin-git/PKGBUILD
+          dependencies=("${depends[@]}" "${makedepends[@]}")
+          for index in "${!dependencies[@]}"; do
+            if [[ "${dependencies[index]}" == "libgcc_s.so" ]]; then
+              dependencies[index]=gcc-libs
+            fi
+          done
+          mapfile -t dependencies < <(printf '%s\n' "${dependencies[@]}" | sort -u)
           pacman -S --noconfirm --needed \
             appstream \
             desktop-file-utils \
@@ -255,7 +264,7 @@ jobs:
           test -f "$pkgroot/usr/share/metainfo/io.github.screwys.Rufin.metainfo.xml"
           test -f "$pkgroot/usr/share/rufin/japanese-readings.dic"
           pacman -U --noconfirm "$pkgfile"
-          bash scripts/create-media-verification-files /tmp/rufin-package-media
+          cargo run --locked -p xtask -- generate media-verification-files /tmp/rufin-package-media
           for media in /tmp/rufin-package-media/*; do
             rufin --verify-media "$media"
           done
@@ -296,15 +305,21 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
+          ref: ${{ inputs.ref || github.sha }}
           fetch-depth: 0
           persist-credentials: false
 
       - name: Install package dependencies
         run: |
           set -euo pipefail
-          dependency_output="$(bash scripts/check-deps --arch-build-packages)"
-          test -n "$dependency_output"
-          mapfile -t dependencies <<< "$dependency_output"
+          source packaging/aur/rufin-git/PKGBUILD
+          dependencies=("${depends[@]}" "${makedepends[@]}")
+          for index in "${!dependencies[@]}"; do
+            if [[ "${dependencies[index]}" == "libgcc_s.so" ]]; then
+              dependencies[index]=gcc-libs
+            fi
+          done
+          mapfile -t dependencies < <(printf '%s\n' "${dependencies[@]}" | sort -u)
           pacman -S --noconfirm --needed \
             appstream \
             desktop-file-utils \
@@ -354,7 +369,7 @@ jobs:
           test -f "$pkgroot/usr/share/metainfo/io.github.screwys.Rufin.metainfo.xml"
           test -f "$pkgroot/usr/share/rufin/japanese-readings.dic"
           pacman -U --noconfirm "$pkgfile"
-          bash scripts/create-media-verification-files /tmp/rufin-package-media
+          cargo run --locked -p xtask -- generate media-verification-files /tmp/rufin-package-media
           for media in /tmp/rufin-package-media/*; do
             rufin --verify-media "$media"
           done
