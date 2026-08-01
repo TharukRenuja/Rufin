@@ -30,7 +30,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: aur-build-${{ inputs.release_tag || github.ref }}
+  group: aur-build-${{ inputs.package }}-${{ inputs.release_tag || github.ref }}
   cancel-in-progress: true
 
 jobs:
