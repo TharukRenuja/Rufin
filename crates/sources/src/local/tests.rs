@@ -1083,10 +1083,10 @@ fn unchanged_rescan_returns_no_component_plan() {
 #[test]
 fn unchanged_file_identity_keeps_an_accepted_unreadable_file() {
     let root = tempfile::tempdir().expect("Local root");
-    let path = root.path().join("Recovered.wav");
+    let root_path = fs::canonicalize(root.path()).expect("canonical Local root");
+    let path = root_path.join("Recovered.wav");
     write_silent_wav(&path, 1).expect("write WAV");
-    let source =
-        LocalSource::from_roots(vec![root.path().to_path_buf()]).expect("open Local source");
+    let source = LocalSource::from_roots(vec![root_path]).expect("open Local source");
     let mut facts = complete_scan(&source);
     for batch in &mut facts.batches {
         if let CandidateBatch::LocalFiles(files) = batch {
@@ -1148,10 +1148,10 @@ fn unchanged_file_identity_keeps_an_accepted_unreadable_file() {
 #[test]
 fn exact_reread_failure_keeps_the_accepted_path_backed_track() {
     let root = tempfile::tempdir().expect("Local root");
-    let path = root.path().join("Temporarily Unreadable.wav");
+    let root_path = fs::canonicalize(root.path()).expect("canonical Local root");
+    let path = root_path.join("Temporarily Unreadable.wav");
     write_silent_wav(&path, 1).expect("write WAV");
-    let source =
-        LocalSource::from_roots(vec![root.path().to_path_buf()]).expect("open Local source");
+    let source = LocalSource::from_roots(vec![root_path]).expect("open Local source");
     let facts = complete_scan(&source);
     let store = tempfile::tempdir().expect("Store directory");
     let library = Library::open(store.path().join("library.db")).expect("open Library");
@@ -1230,15 +1230,15 @@ fn exact_reread_failure_keeps_the_accepted_path_backed_track() {
 #[test]
 fn exact_file_change_does_not_parse_or_replace_flat_folder_siblings() {
     let root = tempfile::tempdir().expect("Local root");
+    let root_path = fs::canonicalize(root.path()).expect("canonical Local root");
     let paths = (0..128)
-        .map(|index| root.path().join(format!("Track {index:03}.wav")))
+        .map(|index| root_path.join(format!("Track {index:03}.wav")))
         .collect::<Vec<_>>();
     for path in &paths {
         write_silent_wav(path, 1).expect("write WAV");
     }
     let changed_path = paths[64].clone();
-    let source =
-        LocalSource::from_roots(vec![root.path().to_path_buf()]).expect("open Local source");
+    let source = LocalSource::from_roots(vec![root_path]).expect("open Local source");
     let facts = complete_scan(&source);
     let store = tempfile::tempdir().expect("Store directory");
     let library = Library::open(store.path().join("library.db")).expect("open Library");
@@ -1396,9 +1396,10 @@ fn exact_file_change_does_not_parse_or_replace_flat_folder_siblings() {
 #[test]
 fn valid_cue_projects_ordered_segments_and_suppresses_the_raw_track() {
     let root = tempfile::tempdir().expect("Local root");
-    let audio = root.path().join("album.wav");
-    let cue = root.path().join("album.cue");
-    let cover = root.path().join("cover.png");
+    let root_path = fs::canonicalize(root.path()).expect("canonical Local root");
+    let audio = root_path.join("album.wav");
+    let cue = root_path.join("album.cue");
+    let cover = root_path.join("cover.png");
     write_silent_wav(&audio, 8).expect("write WAV");
     fs::write(&cover, [1_u8, 2, 3, 4]).expect("write CUE Album cover");
     let cue_text = r#"
@@ -1413,8 +1414,7 @@ FILE "album.wav" WAVE
     INDEX 01 00:04:00
 "#;
     fs::write(&cue, cue_text).expect("write CUE");
-    let source =
-        LocalSource::from_roots(vec![root.path().to_path_buf()]).expect("open Local source");
+    let source = LocalSource::from_roots(vec![root_path]).expect("open Local source");
 
     let facts = complete_scan(&source);
     let mut tracks = facts.tracks();
@@ -1536,7 +1536,8 @@ FILE "album.wav" WAVE
 #[test]
 fn arbitrary_part_directories_share_one_album_and_parent_cover() {
     let root = tempfile::tempdir().expect("Local root");
-    let album = root.path().join("Artist").join("Album");
+    let root_path = fs::canonicalize(root.path()).expect("canonical Local root");
+    let album = root_path.join("Artist").join("Album");
     let first_part = album.join("first-half");
     let second_part = album.join("blue-section");
     fs::create_dir_all(&first_part).expect("create first part");
@@ -1547,8 +1548,7 @@ fn arbitrary_part_directories_share_one_album_and_parent_cover() {
     write_tagged_wav(&second, "Two", "Artist", "Album", 2).expect("write second Track");
     let cover = album.join("cover.png");
     fs::write(&cover, [1_u8, 2, 3, 4]).expect("write cover");
-    let source =
-        LocalSource::from_roots(vec![root.path().to_path_buf()]).expect("open Local source");
+    let source = LocalSource::from_roots(vec![root_path]).expect("open Local source");
 
     let facts = complete_scan(&source);
     let tracks = facts.tracks();
@@ -1767,15 +1767,15 @@ fn arbitrary_part_directories_share_one_album_and_parent_cover() {
 #[test]
 fn new_cross_directory_album_uses_an_existing_parent_cover() {
     let root = tempfile::tempdir().expect("Local root");
-    let album = root.path().join("Artist").join("Future Album");
+    let root_path = fs::canonicalize(root.path()).expect("canonical Local root");
+    let album = root_path.join("Artist").join("Future Album");
     let first_part = album.join("arbitrary-a");
     let second_part = album.join("arbitrary-b");
     fs::create_dir_all(&first_part).expect("create first part");
     fs::create_dir_all(&second_part).expect("create second part");
     let cover = album.join("cover.png");
     fs::write(&cover, [1_u8, 2, 3, 4]).expect("write future cover");
-    let source =
-        LocalSource::from_roots(vec![root.path().to_path_buf()]).expect("open Local source");
+    let source = LocalSource::from_roots(vec![root_path]).expect("open Local source");
     let facts = complete_scan(&source);
     let store = tempfile::tempdir().expect("Store directory");
     let library = Library::open(store.path().join("library.db")).expect("open Library");
@@ -1842,7 +1842,8 @@ fn new_cross_directory_album_uses_an_existing_parent_cover() {
 #[test]
 fn artist_directory_image_does_not_become_album_art_after_an_exact_edit() {
     let root = tempfile::tempdir().expect("Local root");
-    let artist = root.path().join("Artist");
+    let root_path = fs::canonicalize(root.path()).expect("canonical Local root");
+    let artist = root_path.join("Artist");
     let first_album = artist.join("First Album").join("part");
     let second_album = artist.join("Second Album").join("part");
     fs::create_dir_all(&first_album).expect("create first Album");
@@ -1852,8 +1853,7 @@ fn artist_directory_image_does_not_become_album_art_after_an_exact_edit() {
     write_tagged_wav(&first, "One", "Artist", "First Album", 1).expect("write first Track");
     write_tagged_wav(&second, "Two", "Artist", "Second Album", 1).expect("write second Track");
     fs::write(artist.join("folder.jpg"), [1_u8, 2, 3, 4]).expect("write artist image");
-    let source =
-        LocalSource::from_roots(vec![root.path().to_path_buf()]).expect("open Local source");
+    let source = LocalSource::from_roots(vec![root_path]).expect("open Local source");
     let facts = complete_scan(&source);
     assert!(facts.batches.iter().all(|batch| match batch {
         CandidateBatch::Albums(albums) => albums.iter().all(|album| album.local_artwork.is_none()),
@@ -1898,21 +1898,20 @@ fn source_input_rejects_missing_or_relative_roots_without_forgetting_saved_roots
         .expect_err("relative setup root is not accepted");
     assert!(matches!(relative, crate::SourceError::Other(_)));
 
+    let directory = tempfile::tempdir().expect("temporary missing root parent");
+    let missing_root = directory.path().join("rufin-music");
     let missing = SourceConfiguration {
         source_id: SourceId::new(LOCAL_LIBRARY_SOURCE_ID),
         kind: LOCAL_SOURCE_ID.to_string(),
         name: "Local".to_string(),
         provider_payload: LocalSourceConfig {
-            roots: vec![PathBuf::from("/definitely/missing/rufin-music")],
+            roots: vec![missing_root.clone()],
         }
         .into_payload()
         .to_string(),
     };
     let opened = LocalSource::from_configuration(&missing).expect("open saved Local source");
-    assert_eq!(
-        opened.roots(),
-        [PathBuf::from("/definitely/missing/rufin-music")]
-    );
+    assert_eq!(opened.roots(), [missing_root]);
     let mut accept = |_| true;
     let mut emitter = BatchEmitter::new(&mut accept);
     assert!(opened.read_facts(&mut emitter, &|_| {}, &|| false).is_err());

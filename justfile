@@ -5,43 +5,52 @@ default:
 
 build target="" architecture="":
     if [[ "{{ target }}" == "arch" && -z "{{ architecture }}" ]]; then \
-        scripts/container run packaging/aur/build; \
+        scripts/container run default none packaging/aur/build; \
     elif [[ "{{ target }}" == "dmg" && -z "{{ architecture }}" ]]; then \
         packaging/macos/build; \
     elif [[ "{{ target }}" == "rpm" ]]; then \
-        packaging/rpm/build "{{ architecture }}"; \
+        scripts/container run packaging engine \
+            packaging/rpm/build "{{ architecture }}"; \
     elif [[ "{{ target }}" == "flatpak" && -z "{{ architecture }}" ]]; then \
-        packaging/flatpak/build; \
+        scripts/container run packaging sandbox \
+            packaging/flatpak/build; \
     elif [[ "{{ target }}" == "windows" && -z "{{ architecture }}" ]]; then \
         packaging/windows/build; \
     elif [[ -z "{{ target }}" && -z "{{ architecture }}" ]]; then \
-        scripts/container run just _build; \
+        scripts/container run default none just _build; \
     else \
         echo "usage: just build [arch|dmg|flatpak|windows|rpm [arm]]" >&2; \
         exit 2; \
     fi
 
 _build:
-    native_target_dir="${RUFIN_TARGET_DIR:-$PWD/.local/artifacts/native}"; \
-    native_executable=rufin; \
+    target_dir="${CARGO_TARGET_DIR:-$PWD/target}"; \
+    artifact_root="${RUFIN_ARTIFACT_ROOT:-$PWD/.local/artifacts}"; \
+    executable=rufin; \
     if [[ "$(rustc -vV | sed -n 's/^host: //p')" == *-windows-* ]]; then \
-        native_executable=rufin.exe; \
+        executable=rufin.exe; \
     fi; \
-    native_artifact="${RUFIN_NATIVE_ARTIFACT:-$PWD/.local/artifacts/$native_executable}"; \
-    CARGO_TARGET_DIR="$native_target_dir" cargo build --locked; \
-    mkdir -p "$(dirname "$native_artifact")"; \
-    cp "$native_target_dir/debug/$native_executable" "$native_artifact"
+    artifact="$artifact_root/$executable"; \
+    mkdir -p "$artifact_root"; \
+    CARGO_TARGET_DIR="$target_dir" cargo build --locked; \
+    cp "$target_dir/debug/$executable" "$artifact"
+
+clean:
+    scripts/container clean
 
 # Run all checks, or only Linux dependency checks with `just check deps`.
 check target="":
     if [[ -z "{{ target }}" ]]; then \
-        scripts/container run just _check-all; \
+        scripts/container run default none just _check-all; \
     elif [[ "{{ target }}" == "deps" ]]; then \
-        cargo run --locked -p xtask -- generate linux-packaging --check; \
+        scripts/container run default none just _check-deps; \
     else \
         echo "usage: just check [deps]" >&2; \
         exit 2; \
     fi
+
+_check-deps:
+    cargo run --locked -p xtask -- generate linux-packaging --check
 
 _check-all:
     cargo run --locked -p xtask -- generate flatpak-sources --check
@@ -57,10 +66,6 @@ _check-all:
     just _test
     cargo deny --locked check -D unmatched-skip
 
-_check-container-image:
-    just _check-all
-    packaging/aur/build
-
 debug *args:
     if [[ "${RUFIN_CONTAINER:-0}" == "1" ]]; then \
         echo "Run 'just debug' on the host." >&2; \
@@ -75,10 +80,10 @@ debug *args:
     fi
 
 fmt:
-    scripts/container run cargo fmt --all
+    scripts/container run default none cargo fmt --all
 
 test *args:
-    scripts/container run just _test {{ args }}
+    scripts/container run default none just _test {{ args }}
 
 _test *args:
     if command -v cargo-nextest >/dev/null 2>&1; then \
@@ -109,4 +114,7 @@ _lint:
 
 # Regenerate Linux package dependency metadata.
 deps:
+    scripts/container run default none just _deps
+
+_deps:
     cargo run --locked -p xtask -- generate linux-packaging

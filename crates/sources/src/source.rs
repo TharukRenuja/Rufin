@@ -1389,16 +1389,17 @@ mod input_identity_tests {
 
     #[test]
     fn local_roots_qualify_cached_source_facts() {
+        let directory = tempfile::tempdir().expect("temporary Local roots");
         let first = SourceConfiguration::local(
             SourceId::new(crate::local::LOCAL_LIBRARY_SOURCE_ID),
             "Local",
-            vec![PathBuf::from("/music/one")],
+            vec![directory.path().join("one")],
         )
         .expect("first Local configuration");
         let second = SourceConfiguration::local(
             SourceId::new(crate::local::LOCAL_LIBRARY_SOURCE_ID),
             "Local",
-            vec![PathBuf::from("/music/two")],
+            vec![directory.path().join("two")],
         )
         .expect("second Local configuration");
         assert_ne!(input_digest(&first), input_digest(&second));
@@ -1412,13 +1413,14 @@ mod input_identity_tests {
 
     #[tokio::test]
     async fn local_home_refresh_stays_at_the_library_boundary() {
+        let directory = tempfile::tempdir().expect("temporary Local root parent");
         let source = Source::open(
             crate::config::encode_provider_payload(
                 SourceId::new(crate::local::LOCAL_LIBRARY_SOURCE_ID),
                 crate::local::LOCAL_SOURCE_ID,
                 "Local",
                 crate::local::LocalSourceConfig {
-                    roots: vec![PathBuf::from("/unavailable/local-home-fixture")],
+                    roots: vec![directory.path().join("unavailable")],
                 }
                 .into_payload(),
             ),

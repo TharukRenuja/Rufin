@@ -3,10 +3,11 @@ set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 artifact_root="${RUFIN_ARTIFACT_ROOT:-${repo_root}/.local/artifacts}"
-work_root="${RUFIN_WINDOWS_WORK_ROOT:-${artifact_root}/windows}"
+work_root="${RUFIN_WINDOWS_WORK_ROOT:-${repo_root}/.local/build/windows}"
 target_dir="${RUFIN_WINDOWS_TARGET_DIR:-${CARGO_TARGET_DIR:-${work_root}/target}}"
 stage_dir="${RUFIN_WINDOWS_STAGE_DIR:-${work_root}/Rufin}"
 verify_target_dir="${RUFIN_WINDOWS_VERIFY_TARGET_DIR:-${CARGO_TARGET_DIR:-${work_root}/verify-target}}"
+output_dir="${work_root}/output"
 if [[ "${MSYSTEM:-}" != "UCRT64" || "${MINGW_PREFIX:-}" != "/ucrt64" ]]; then
     echo "Run 'just build windows' from an MSYS2 UCRT64 terminal on Windows." >&2
     exit 1
@@ -31,7 +32,10 @@ if [[ "$host_target" != "x86_64-pc-windows-gnu" || -z "$version" \
     exit 1
 fi
 
-mkdir -p "$artifact_root" "$work_root"
+mkdir -p "$artifact_root" "$output_dir"
+installer="$artifact_root/Rufin-${version}-setup.exe"
+work_installer="$output_dir/Rufin-${version}-setup.exe"
+rm -f "$work_installer"
 runtime_prefix="$MINGW_PREFIX"
 CARGO_TARGET_DIR="$target_dir" cargo build --locked --release -p rufin
 binary="$target_dir/release/rufin.exe"
@@ -47,7 +51,7 @@ CARGO_TARGET_DIR="$verify_target_dir" \
 
 stage_argument="$(cygpath -w "$stage_dir")"
 stage_files_argument="${stage_argument}\\*"
-output_argument="$(cygpath -w "$artifact_root")"
+output_argument="$(cygpath -w "$output_dir")"
 asset_argument="$(cygpath -w "$repo_root/packaging/windows/assets")"
 
 MSYS2_ARG_CONV_EXCL='/D' makensis \
@@ -59,9 +63,14 @@ MSYS2_ARG_CONV_EXCL='/D' makensis \
     "/DRUFIN_VERSION_QUAD=${version_quad}" \
     "$repo_root/packaging/windows/rufin.nsi"
 
-installer="$artifact_root/Rufin-${version}-setup.exe"
-if [[ ! -s "$installer" ]]; then
-    echo "The Windows installer was not produced: ${installer}" >&2
+if [[ ! -s "$work_installer" ]]; then
+    echo "The Windows installer was not produced: ${work_installer}" >&2
     exit 1
 fi
+find "$artifact_root" \
+    -maxdepth 1 \
+    -type f \
+    -name 'Rufin-*-setup.exe' \
+    -delete
+cp "$work_installer" "$installer"
 echo "Built ${installer}"

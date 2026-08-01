@@ -23,9 +23,9 @@ nix-shell -p cachix --run "cachix use rufin"
 
 If you do not want to install Linux dependencies on your host or do not have
 Nix available, Rufin also provides a minimal Fedora container that enters the
-same Nix development shell. It can run checks and build the Linux app or Arch
-package, but it cannot start Rufin, build a Windows installer, or build a macOS
-disk image.
+same Nix development shell. It can run checks and build the Linux app, Arch
+package, Flatpak, and RPMs, but it cannot start Rufin or build the native macOS
+and Windows packages.
 
 ```bash
 just container setup
@@ -63,6 +63,7 @@ just build flatpak # builds the Flatpak
 just build rpm # builds Fedora RPMs for x86_64
 just build rpm arm # builds Fedora RPMs for AArch64
 just build windows # builds the Windows installer
+just clean # clears Rufin build state while keeping finished artifacts
 just debug # runs the development app on the host
 just fmt # formats Rust code
 just test # runs the test suite
@@ -84,13 +85,15 @@ If you are testing natively, this also needs rustfmt, clippy, cargo-deny, and ge
 
 To enable the debug logging, refer to [README.md#troubleshooting](README.md#troubleshooting).
 
-Most commands work the same for local and container development. If the container is set up,
-`just build`, `just build arch`, `just fmt`, `just test`, and `just check` use the container
-environment; `just build windows` and `just build dmg` always use the host dependencies listed
-in the README. Container state is kept under `.local/container`, and build artifacts under
-`.local/artifacts`. Use `just container shell` for an interactive shell, `just container disable`
-to return those commands to the host, or `just container reset` to clear the container state.
-`just debug` always runs on the host and is unavailable inside the container shell.
+Most commands work the same for local and container development. Linux builds plus dependency,
+formatting, test, and check commands use the host by default or the development container after it
+is set up; macOS and Windows package builds always run on their matching host. Flatpak uses a
+privileged container for nested sandboxing only during that command. RPM mounts the selected host
+engine socket only during its command; that socket can control the engine. Disposable package work
+is kept under `.local/build`, container state under `.local/container`, and finished artifacts under
+`.local/artifacts`. Use `just container shell` for an interactive shell, `just container disable` to
+return commands to the host, or `just container reset` to clear the container state. `just debug`
+always runs on the host and is unavailable inside the container shell.
 
 ## Simple guidelines
 

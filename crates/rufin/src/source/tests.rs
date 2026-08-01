@@ -1776,6 +1776,7 @@ fn local_file_change_updates_only_the_changed_component() {
     let directory = tempfile::tempdir().expect("temporary Local source");
     let music_root = directory.path().join("music");
     std::fs::create_dir(&music_root).expect("create Local music folder");
+    let music_root = std::fs::canonicalize(music_root).expect("canonical Local music folder");
     let first_path = music_root.join("First.mp3");
     std::fs::write(&first_path, []).expect("write first Local Track");
     let other_directory = music_root.join("Other");
@@ -2185,7 +2186,8 @@ fn removing_the_selected_source_chooses_the_first_survivor() {
     let directory = tempfile::tempdir().expect("temporary Rufin data directory");
     let library = Library::open(directory.path().join("library.db")).expect("open test Library");
     let configured = |id: &str, title: &str| {
-        let root = directory.path().join(id);
+        let fixture_name = title.to_ascii_lowercase();
+        let root = directory.path().join(&fixture_name);
         std::fs::create_dir(&root).expect("create Local root");
         let configuration = SourceConfiguration {
             source_id: SourceId::new(id),
@@ -2209,7 +2211,7 @@ fn removing_the_selected_source_chooses_the_first_survivor() {
             .write(CandidateBatch::Tracks(vec![test_track(
                 library::TrackId::new(format!("{id}:track")),
                 title,
-                directory.path().join(format!("{id}.flac")),
+                directory.path().join(format!("{fixture_name}.flac")),
             )]))
             .expect("write Local Track");
         candidate

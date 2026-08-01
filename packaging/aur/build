@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-repo_root="$(git rev-parse --show-toplevel)"
-artifact_root="${repo_root}/.local/artifacts"
-work_dir="${artifact_root}/arch"
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+artifact_root="${RUFIN_ARTIFACT_ROOT:-${repo_root}/.local/artifacts}"
+work_dir="${repo_root}/.local/build/arch"
 source_dir="${work_dir}/source"
 package_dir="${work_dir}/package"
 
@@ -14,6 +14,7 @@ for command in bsdtar cargo fakeroot git makepkg msgfmt pacman pkg-config rustc 
     fi
 done
 
+mkdir -p "${artifact_root}"
 rm -rf "${work_dir}"
 mkdir -p "${source_dir}" "${package_dir}"
 
@@ -100,5 +101,10 @@ if [[ ${#packages[@]} -eq 0 ]]; then
     exit 1
 fi
 bsdtar -tf "${packages[0]}" | grep -qx 'usr/bin/rufin'
+find "${artifact_root}" \
+    -maxdepth 1 \
+    -type f \
+    -name 'rufin-git-*.pkg.tar.zst' \
+    -delete
 cp "${packages[@]}" "${artifact_root}/"
 echo "Created the Arch package in ${artifact_root}"

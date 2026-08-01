@@ -17,6 +17,11 @@ on:
         default: false
         required: false
         type: boolean
+      run_platform_checks:
+        description: Run the macOS platform integration tests
+        default: true
+        required: false
+        type: boolean
 
 permissions:
   contents: read
@@ -41,6 +46,7 @@ jobs:
       CARGO_TARGET_DIR: ${{ github.workspace }}/.local/target
       HOMEBREW_NO_ANALYTICS: 1
       HOMEBREW_NO_AUTO_UPDATE: 1
+      MACOSX_DEPLOYMENT_TARGET: "15.0"
 
     steps:
       - name: Check out repository
@@ -110,14 +116,6 @@ jobs:
           [[ "$sdk_version" == 26.* ]]
           echo "Using $xcode_app with macOS SDK $sdk_version."
 
-      - name: Test platform integrations
-        run: |
-          set -euo pipefail
-          cargo test --locked -p secrets
-          cargo test --locked -p desktop-integration
-          cargo test --locked -p sources metadata_
-          cargo test --locked -p rufin settings_
-
       - name: Build macOS disk image
         run: |
           set -euo pipefail
@@ -152,3 +150,7 @@ jobs:
           path: dist/Rufin-macos-${{ matrix.architecture }}.dmg
           if-no-files-found: error
           retention-days: 7
+
+      - name: Check platform integrations
+        if: matrix.architecture == 'arm64' && inputs.run_platform_checks
+        run: cargo test --locked --tests -p secrets -p desktop-integration

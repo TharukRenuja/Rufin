@@ -1,8 +1,47 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-repo_root="$(git rev-parse --show-toplevel)"
-git_common_dir="$(git rev-parse --path-format=absolute --git-common-dir)"
+host_system="$(uname -s)"
+msys_host=false
+case "${host_system}" in
+    CYGWIN*|MINGW*|MSYS*) msys_host=true ;;
+esac
+declare -a runtime_prefix=()
+if [[ "${msys_host}" == "true" ]]; then
+    runtime_prefix=(env MSYS2_ARG_CONV_EXCL='*' MSYS_NO_PATHCONV=1)
+fi
+
+normalize_host_path() {
+    if [[ "${msys_host}" == "true" ]]; then
+        cygpath -u "$1"
+    else
+        printf '%s\n' "$1"
+    fi
+}
+
+host_mount_source() {
+    if [[ "${msys_host}" == "true" ]]; then
+        cygpath -am "$1"
+    else
+        printf '%s\n' "$1"
+    fi
+}
+
+host_volume() {
+    local access="${3:-}"
+    local source
+
+    source="$(host_mount_source "$1")"
+    printf '%s:%s%s\n' "${source}" "$2" "${access:+:${access}}"
+}
+
+repo_root="$(normalize_host_path "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)")"
+
+git_from_repo() {
+    (cd "${repo_root}" && git "$@")
+}
+
+git_common_dir="$(normalize_host_path "$(git_from_repo rev-parse --path-format=absolute --git-common-dir)")"
 shared_root="$(dirname "${git_common_dir}")"
 state_dir="${shared_root}/.local/container"
 enabled_file="${state_dir}/enabled"
@@ -10,40 +49,45 @@ image_file="${state_dir}/image"
 runtime_file="${state_dir}/runtime"
 default_image="ghcr.io/screwys/rufin-dev:latest"
 
-selected_image() {
-    if [[ -n "${RUFIN_CONTAINER_IMAGE:-}" ]]; then
-        printf '%s\n' "${RUFIN_CONTAINER_IMAGE}"
-    elif [[ -f "${image_file}" ]]; then
-        cat "${image_file}"
-    else
-        printf '%s\n' "${default_image}"
-    fi
-}
-
-selected_runtime() {
-    if [[ -n "${RUFIN_CONTAINER_RUNTIME:-}" ]]; then
-        printf '%s\n' "${RUFIN_CONTAINER_RUNTIME}"
-    elif [[ -f "${runtime_file}" ]]; then
-        cat "${runtime_file}"
-    elif command -v podman >/dev/null 2>&1; then
-        printf '%s\n' podman
-    else
-        printf '%s\n' docker
-    fi
-}
-
 runtime_is_podman() {
     local runtime="$1"
 
-    [[ "$(basename "${runtime}")" == "podman" ]] \
-        || "${runtime}" --version 2>/dev/null | grep -qi podman
+    case "$(basename "${runtime}")" in
+        podman|podman.exe) return 0 ;;
+        *) return 1 ;;
+    esac
 }
 
 prepare_directories() {
     mkdir -p \
         "${state_dir}/home" \
         "${state_dir}/nix" \
+        "${state_dir}/xdg-runtime" \
         "${state_dir}/target"
+    chmod 0700 "${state_dir}/xdg-runtime"
+}
+
+make_private_nix_writable() {
+    if [[ -d "${state_dir}/nix" && ! -L "${state_dir}/nix" ]]; then
+        find "${state_dir}/nix" -type d -exec chmod u+rwx {} +
+    fi
+}
+
+clean_project_state() {
+    if [[ -z "${repo_root}" || "${repo_root}" == "/" \
+        || -z "${shared_root}" || "${shared_root}" == "/" \
+        || "${state_dir}" != "${shared_root}/.local/container" ]]; then
+        echo "Refusing to clean an unsafe project path." >&2
+        exit 1
+    fi
+
+    make_private_nix_writable
+    rm -rf -- \
+        "${repo_root:?}/target" \
+        "${repo_root}/.local/build" \
+        "${state_dir:?}/nix" \
+        "${state_dir}/target" \
+        "${state_dir}/xdg-runtime"
 }
 
 prepare_docker_identity() {
@@ -55,8 +99,8 @@ prepare_docker_identity() {
     group_tmp="$(mktemp "${state_dir}/group.XXXXXX")"
     passwd_tmp="$(mktemp "${state_dir}/passwd.XXXXXX")"
 
-    "${runtime}" run --rm --entrypoint cat "${image}" /etc/group > "${group_tmp}"
-    "${runtime}" run --rm --entrypoint cat "${image}" /etc/passwd > "${passwd_tmp}"
+    "${runtime_prefix[@]}" "${runtime}" run --rm --entrypoint cat "${image}" /etc/group > "${group_tmp}"
+    "${runtime_prefix[@]}" "${runtime}" run --rm --entrypoint cat "${image}" /etc/passwd > "${passwd_tmp}"
 
     if ! awk -F: -v gid="${gid}" '$3 == gid { found = 1 } END { exit !found }' "${group_tmp}"; then
         printf 'rufin-host:x:%s:\n' "${gid}" >> "${group_tmp}"
@@ -78,71 +122,192 @@ require_host() {
     fi
 }
 
+run_usage() {
+    echo "usage: scripts/container run SHELL PROFILE COMMAND [ARG...]" >&2
+    exit 2
+}
+
+engine_socket=""
+engine_socket_is_host_path=true
+
+resolve_host_engine_socket() {
+    local runtime="$1"
+    local candidate=""
+    engine_socket_is_host_path=true
+
+    if runtime_is_podman "${runtime}"; then
+        candidate="$("${runtime_prefix[@]}" "${runtime}" info \
+            --format '{{.Host.RemoteSocket.Path}}' 2>/dev/null || true)"
+        if [[ "${host_system}" != "Linux" ]]; then
+            engine_socket_is_host_path=false
+        fi
+    elif [[ "${host_system}" != "Linux" ]]; then
+        candidate=/var/run/docker.sock.raw
+        engine_socket_is_host_path=false
+    elif [[ "${DOCKER_HOST:-}" == unix://* && -S "${DOCKER_HOST#unix://}" ]]; then
+        candidate="${DOCKER_HOST#unix://}"
+    elif [[ -S /var/run/docker.sock ]]; then
+        candidate=/var/run/docker.sock
+    fi
+
+    candidate="${candidate//$'\r'/}"
+    candidate="${candidate#unix://}"
+    if [[ "${candidate}" != /* ]] \
+        || { [[ "${engine_socket_is_host_path}" == "true" ]] && [[ ! -S "${candidate}" ]]; }; then
+        echo "The selected container engine does not expose a mountable API socket." >&2
+        exit 1
+    fi
+    engine_socket="${candidate}"
+}
+
+engine_side_socket_gid() {
+    local image="$1" runtime="$2" socket="$3"
+    local podman_runtime="$4"
+    local output="" socket_gid=""
+    local -a probe_args=(run --rm --pull=never --read-only)
+
+    if [[ "${podman_runtime}" == "true" ]]; then
+        probe_args+=("--userns=keep-id:uid=1000,gid=1000")
+    fi
+
+    if output="$("${runtime_prefix[@]}" "${runtime}" "${probe_args[@]}" \
+        --user 0:0 \
+        --volume "${socket}:/run/rufin-engine.sock:ro" \
+        --entrypoint stat \
+        "${image}" \
+        -c '%g' /run/rufin-engine.sock 2>&1)"; then
+        socket_gid="${output##*$'\n'}"
+        socket_gid="${socket_gid//$'\r'/}"
+    fi
+    if [[ ! "${socket_gid}" =~ ^[0-9]+$ ]]; then
+        echo "The development container could not access the host engine socket." >&2
+        exit 1
+    fi
+    printf '%s\n' "${socket_gid}"
+}
+
 container_run() {
-    local git_dir image interactive=false runtime
-    local -a container_command
+    local container_uid dev_shell engine_socket_gid environment_name flake_path git_dir image profile runtime
+    local podman_runtime=false
+    local worktree_git_file=""
     local -a git_mounts=()
     local -a runtime_args=(run --rm)
 
-    if [[ "${1:-}" == "--interactive" ]]; then
-        interactive=true
-        shift
+    [[ $# -ge 3 ]] || run_usage
+    dev_shell="$1"
+    profile="$2"
+    shift 2
+    case "${dev_shell}" in
+        default|packaging) ;;
+        *) run_usage ;;
+    esac
+    case "${profile}" in
+        none|engine|sandbox|interactive) ;;
+        *) run_usage ;;
+    esac
+
+    image="$(cat "${image_file}")"
+    runtime="$(cat "${runtime_file}")"
+    if runtime_is_podman "${runtime}"; then
+        podman_runtime=true
     fi
-
-    image="$(selected_image)"
-    runtime="$(selected_runtime)"
     prepare_directories
+    mkdir -p "${repo_root}/target"
 
-    if [[ "${interactive}" == "true" ]]; then
+    for environment_name in \
+        RUFIN_RPM_FEDORA_VERSION \
+        RUFIN_RPM_TAG \
+        NEXTEST_JOBS; do
+        if [[ -n "${!environment_name:-}" ]]; then
+            runtime_args+=(--env "${environment_name}=${!environment_name}")
+        fi
+    done
+
+    if [[ "${profile}" == "interactive" ]]; then
         runtime_args+=(--interactive)
         if [[ -t 0 && -t 1 ]]; then
             runtime_args+=(--tty)
         fi
     fi
 
-    if [[ "$(uname -s)" == "Linux" ]]; then
+    if [[ "${host_system}" == "Linux" ]]; then
         runtime_args+=(--security-opt label=disable)
     fi
 
-    if runtime_is_podman "${runtime}"; then
+    if [[ "${podman_runtime}" == "true" ]]; then
+        container_uid=1000
         runtime_args+=(
             "--userns=keep-id:uid=1000,gid=1000"
             --user 1000:1000
         )
     else
-        prepare_docker_identity "${image}" "${runtime}"
+        container_uid="$(id -u)"
+        if [[ ! -r "${state_dir}/group" || ! -r "${state_dir}/passwd" ]]; then
+            echo "Run 'just container setup' again for the selected Docker image." >&2
+            exit 1
+        fi
         runtime_args+=(
             --user "$(id -u):$(id -g)"
-            --volume "${state_dir}/group:/etc/group:ro"
-            --volume "${state_dir}/passwd:/etc/passwd:ro"
+            --volume "$(host_volume "${state_dir}/group" /etc/group ro)"
+            --volume "$(host_volume "${state_dir}/passwd" /etc/passwd ro)"
         )
     fi
 
-    git_dir="$(git rev-parse --path-format=absolute --git-dir)"
-    if [[ "${git_common_dir}" != "${repo_root}"/* ]]; then
-        git_mounts+=(--volume "${git_common_dir}:${git_common_dir}:ro")
+    if [[ "${profile}" == "engine" ]]; then
+        resolve_host_engine_socket "${runtime}"
+        if [[ "${engine_socket_is_host_path}" == "false" ]]; then
+            engine_socket_gid="$(engine_side_socket_gid \
+                "${image}" "${runtime}" "${engine_socket}" "${podman_runtime}")"
+        else
+            engine_socket_gid="$(stat -c '%g' "${engine_socket}" 2>/dev/null \
+                || stat -f '%g' "${engine_socket}")"
+        fi
+        runtime_args+=(--env DOCKER_HOST=unix:///run/rufin-engine.sock)
+        runtime_args+=(--env RUFIN_CONTAINER_HOST_ENGINE=1)
+        if [[ "${engine_socket_is_host_path}" == "true" ]]; then
+            runtime_args+=(--volume "$(host_volume "${engine_socket}" /run/rufin-engine.sock)")
+        else
+            runtime_args+=(--volume "${engine_socket}:/run/rufin-engine.sock")
+        fi
+        runtime_args+=(--group-add "${engine_socket_gid}")
     fi
-    if [[ "${git_dir}" != "${repo_root}"/* && "${git_dir}" != "${git_common_dir}"/* ]]; then
-        git_mounts+=(--volume "${git_dir}:${git_dir}:ro")
+    if [[ "${profile}" == "sandbox" ]]; then
+        runtime_args+=(
+            --env RUFIN_CONTAINER_NESTED_SANDBOX=1
+            --privileged
+        )
     fi
 
-    container_command=(
-        nix --accept-flake-config develop "git+file://${repo_root}" --command "$@"
-    )
-    exec "${runtime}" "${runtime_args[@]}" \
+    git_dir="$(normalize_host_path "$(git_from_repo rev-parse --path-format=absolute --git-dir)")"
+    if [[ "${git_common_dir}" != "${repo_root}"/* ]]; then
+        git_mounts+=(--volume "$(host_volume "${git_common_dir}" "${git_common_dir}" ro)")
+    fi
+    if [[ "${msys_host}" == "true" && -f "${repo_root}/.git" ]]; then
+        worktree_git_file="${state_dir}/worktree-$(basename "${git_dir}").git"
+        printf 'gitdir: %s\n' "${git_dir}" > "${worktree_git_file}"
+        git_mounts+=(--volume "$(host_volume "${worktree_git_file}" "${repo_root}/.git" ro)")
+    fi
+
+    flake_path="${repo_root//%/%25}"
+    flake_path="${flake_path// /%20}"
+    flake_path="${flake_path//#/%23}"
+    flake_path="${flake_path//\?/%3F}"
+    exec "${runtime_prefix[@]}" "${runtime}" "${runtime_args[@]}" \
         --workdir "${repo_root}" \
         --env "CARGO_TARGET_DIR=${repo_root}/target" \
         --env HOME=/home/rufin \
         --env NIX_REMOTE=local \
         --env RUFIN_CONTAINER=1 \
         --env USER=rufin \
-        --volume "${repo_root}:${repo_root}:rw" \
-        --volume "${state_dir}/home:/home/rufin:rw" \
-        --volume "${state_dir}/nix:/nix:rw" \
-        --volume "${state_dir}/target:${repo_root}/target:rw" \
+        --env "XDG_RUNTIME_DIR=/run/user/${container_uid}" \
+        --volume "$(host_volume "${repo_root}" "${repo_root}" rw)" \
+        --volume "$(host_volume "${state_dir}/home" /home/rufin rw)" \
+        --volume "$(host_volume "${state_dir}/nix" /nix rw)" \
+        --volume "$(host_volume "${state_dir}/xdg-runtime" "/run/user/${container_uid}" rw)" \
+        --volume "$(host_volume "${state_dir}/target" "${repo_root}/target" rw)" \
         "${git_mounts[@]}" \
         "${image}" \
-        "${container_command[@]}"
+        nix --accept-flake-config develop "git+file://${flake_path}#${dev_shell}" --command "$@"
 }
 
 action="${1:-status}"
@@ -154,10 +319,20 @@ case "${action}" in
     setup)
         require_host setup
         prepare_directories
-        image="$(selected_image)"
-        runtime="$(selected_runtime)"
-        if [[ "${image}" != localhost/* ]] || ! "${runtime}" image inspect "${image}" >/dev/null 2>&1; then
-            "${runtime}" pull "${image}"
+        image="${RUFIN_CONTAINER_IMAGE:-}"
+        if [[ -z "${image}" ]]; then
+            image="$(cat "${image_file}" 2>/dev/null || printf '%s\n' "${default_image}")"
+        fi
+        runtime="${RUFIN_CONTAINER_RUNTIME:-}"
+        if [[ -z "${runtime}" ]]; then
+            runtime="$(cat "${runtime_file}" 2>/dev/null \
+                || { command -v podman >/dev/null 2>&1 && printf podman || printf docker; })"
+        fi
+        if [[ "${image}" != localhost/* ]] || ! "${runtime_prefix[@]}" "${runtime}" image inspect "${image}" >/dev/null 2>&1; then
+            "${runtime_prefix[@]}" "${runtime}" pull "${image}"
+        fi
+        if ! runtime_is_podman "${runtime}"; then
+            prepare_docker_identity "${image}" "${runtime}"
         fi
         printf '%s\n' "${image}" > "${image_file}"
         printf '%s\n' "${runtime}" > "${runtime_file}"
@@ -166,7 +341,7 @@ case "${action}" in
         ;;
     status)
         if [[ -f "${enabled_file}" ]]; then
-            echo "enabled: $(selected_runtime) ($(selected_image))"
+            echo "enabled: $(cat "${runtime_file}") ($(cat "${image_file}"))"
         else
             echo "disabled"
         fi
@@ -177,7 +352,7 @@ case "${action}" in
             echo "Run 'just container setup' first." >&2
             exit 1
         fi
-        container_run --interactive bash
+        container_run default interactive bash
         ;;
     disable)
         require_host disable
@@ -186,21 +361,28 @@ case "${action}" in
         ;;
     reset)
         require_host reset
+        make_private_nix_writable
         rm -rf "${state_dir}"
         echo "Container cache removed."
         ;;
-    run)
-        if [[ $# -eq 0 ]]; then
-            echo "usage: scripts/container run COMMAND [ARG...]" >&2
-            exit 2
+    clean)
+        if [[ "${RUFIN_CONTAINER:-0}" == "1" ]]; then
+            echo "Run 'just clean' from the host." >&2
+            exit 1
         fi
+        clean_project_state
+        echo "Project build state and private container caches removed."
+        ;;
+    run)
+        [[ $# -ge 3 ]] || run_usage
         if [[ "${RUFIN_CONTAINER:-0}" == "1" || ! -f "${enabled_file}" ]]; then
+            shift 2
             exec "$@"
         fi
         container_run "$@"
         ;;
     *)
-        echo "usage: scripts/container setup|status|shell|disable|reset|run" >&2
+        echo "usage: scripts/container setup|status|shell|disable|reset|clean|run" >&2
         exit 2
         ;;
 esac

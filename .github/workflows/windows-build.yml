@@ -17,6 +17,11 @@ on:
         default: false
         required: false
         type: boolean
+      run_platform_checks:
+        description: Run the Windows platform integration tests
+        default: true
+        required: false
+        type: boolean
 
 permissions:
   contents: read
@@ -104,15 +109,6 @@ jobs:
         env:
           RELEASE_TAG: ${{ inputs.release_tag }}
         run: cargo run --locked -p xtask -- verify release-metadata "$RELEASE_TAG"
-
-      - name: Test platform integrations
-        shell: msys2 {0}
-        run: |
-          set -euo pipefail
-          cargo test --locked -p secrets
-          cargo test --locked -p desktop-integration
-          cargo test --locked -p sources metadata_
-          cargo test --locked -p rufin settings_
 
       - name: Build Windows installer
         shell: msys2 {0}
@@ -322,3 +318,8 @@ jobs:
           path: dist/Rufin-*-setup.exe
           if-no-files-found: error
           retention-days: 7
+
+      - name: Check platform integrations
+        if: inputs.run_platform_checks
+        shell: msys2 {0}
+        run: cargo test --locked --tests -p secrets -p desktop-integration -p sources

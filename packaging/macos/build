@@ -3,7 +3,7 @@ set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 artifact_root="${RUFIN_ARTIFACT_ROOT:-${repo_root}/.local/artifacts}"
-work_root="${RUFIN_DMG_WORK_ROOT:-${artifact_root}/macos}"
+work_root="${RUFIN_DMG_WORK_ROOT:-${repo_root}/.local/build/macos}"
 target_dir="${RUFIN_DMG_TARGET_DIR:-${CARGO_TARGET_DIR:-${work_root}/target}}"
 app_path="${work_root}/Rufin.app"
 dmg_root="${work_root}/dmg"
@@ -35,6 +35,7 @@ for command_name in "${required_commands[@]}"; do
         exit 1
     fi
 done
+mkdir -p "$(dirname "$dmg_path")"
 
 mach_o_dependencies() {
     otool -L "$1" \
@@ -360,7 +361,6 @@ codesign --verify --deep --strict "$app_path"
 mkdir -p "$dmg_root"
 ditto "$app_path" "$dmg_root/Rufin.app"
 ln -s /Applications "$dmg_root/Applications"
-mkdir -p "$(dirname "$dmg_path")"
 hdiutil create -volname Rufin -srcfolder "$dmg_root" -ov -format UDZO "$dmg_path"
 hdiutil verify "$dmg_path"
 

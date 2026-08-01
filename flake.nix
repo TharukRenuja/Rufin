@@ -148,9 +148,7 @@
         system:
         let
           pkgs = import nixpkgs { inherit system; };
-        in
-        {
-          default = pkgs.mkShell {
+          defaultShell = pkgs.mkShell {
             packages =
               with pkgs;
               [
@@ -191,6 +189,20 @@
               ]);
             # Generated Linux development dependencies end.
 
+            RUFIN_LOCALEDIR = "crates/localization/locales";
+          };
+        in
+        {
+          default = defaultShell;
+          packaging = pkgs.mkShell {
+            inputsFrom = [ defaultShell ];
+            packages = with pkgs; [
+              bubblewrap
+              dbus
+              docker-client
+              flatpak
+              flatpak-builder
+            ];
             RUFIN_LOCALEDIR = "crates/localization/locales";
           };
         }
