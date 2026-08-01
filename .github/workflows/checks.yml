@@ -103,11 +103,15 @@ jobs:
               - 'LICENSE'
               - 'packaging/flatpak/**'
             macos:
+              - '.cargo/**'
               - '.github/workflows/macos*.yml'
+              - 'LICENSE'
               - 'packaging/macos/**'
             windows:
               - '.github/workflows/windows*.yml'
+              - 'LICENSE'
               - 'packaging/windows/**'
+              - 'scripts/rust-cache-command'
             container:
               - '.github/workflows/container-image.yml'
               - 'justfile'
