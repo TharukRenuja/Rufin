@@ -10,17 +10,16 @@ on:
       - Cargo.lock
       - Cargo.toml
       - crates/**
-      - data/**
       - flake.lock
       - flake.nix
       - scripts/retry-nix
       - scripts/rust-cache-command
       - sgconfig.yml
+      - '!**/*.md'
   workflow_dispatch:
 
 permissions:
   contents: read
-  pull-requests: read
 
 concurrency:
   group: checks-${{ github.ref }}
@@ -35,6 +34,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       build_container_image: ${{ steps.select.outputs.build_container_image }}
+      check_workflows: ${{ steps.select.outputs.check_workflows }}
       jobs: ${{ steps.select.outputs.jobs }}
       use_current_nix: ${{ steps.select.outputs.use_current_nix }}
 
@@ -43,146 +43,164 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
           persist-credentials: false
 
       - name: Classify changed paths
-        if: github.event_name == 'pull_request'
-        id: paths
-        uses: dorny/paths-filter@7b450fff21473bca461d4b92ce414b9d0420d706 # v4.0.2
-        with:
-          filters: |
-            workflows:
-              - '.github/workflows/**'
-            all_builds:
-              - '.github/release-gpg.pub'
-              - '.github/workflows/checks.yml'
-            workspace:
-              - '.cargo/**'
-              - 'Cargo.lock'
-              - 'Cargo.toml'
-              - 'crates/**'
-              - 'data/**'
-              - 'flake.lock'
-              - 'flake.nix'
-              - 'sgconfig.yml'
-              - 'scripts/retry-nix'
-              - 'scripts/rust-cache-command'
-            cargo-deny:
-              - 'Cargo.lock'
-              - 'Cargo.toml'
-              - 'crates/*/Cargo.toml'
-              - 'deny.toml'
-            package_dependencies:
-              - '**/Cargo.toml'
-              - 'Cargo.lock'
-            aur_bin:
-              - '.github/workflows/aur-build.yml'
-              - '.github/workflows/aur.yml'
-              - 'packaging/aur/rufin-bin/**'
-              - 'packaging/aur/rufin-git/PKGBUILD'
-            aur_git:
-              - '.github/workflows/aur-build.yml'
-              - '.github/workflows/aur.yml'
-              - 'packaging/aur/build'
-              - 'packaging/aur/rufin-git/**'
-            rpm:
-              - '.github/workflows/rpm-source.yml'
-              - '.github/workflows/rpm.yml'
-              - 'LICENSE'
-              - 'README.md'
-              - 'packaging/rpm/**'
-            nix:
-              - '.github/workflows/nix.yml'
-              - 'LICENSE'
-              - 'README.md'
-              - 'flake.lock'
-              - 'flake.nix'
-              - 'scripts/retry-nix'
-            flatpak:
-              - '.github/workflows/flatpak-build.yml'
-              - '.github/workflows/flatpak.yml'
-              - 'LICENSE'
-              - 'packaging/flatpak/**'
-            macos:
-              - '.cargo/**'
-              - '.github/workflows/macos*.yml'
-              - 'LICENSE'
-              - 'packaging/macos/**'
-            windows:
-              - '.github/workflows/windows*.yml'
-              - 'LICENSE'
-              - 'packaging/windows/**'
-              - 'scripts/rust-cache-command'
-            container:
-              - '.github/workflows/container-image.yml'
-              - 'flake.lock'
-              - 'flake.nix'
-              - 'justfile'
-              - 'packaging/container/**'
-              - 'scripts/container'
-            container_image:
-              - 'packaging/container/**'
-            current_nix:
-              - 'flake.lock'
-              - 'flake.nix'
-
-      - name: Select build jobs
         id: select
         env:
-          ALL_BUILDS: ${{ steps.paths.outputs.all_builds }}
-          CONTAINER_IMAGE: ${{ steps.paths.outputs.container_image }}
-          CURRENT_NIX: ${{ steps.paths.outputs.current_nix }}
-          MATCHED_FILTERS: ${{ steps.paths.outputs.changes || '[]' }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
         run: |
           set -euo pipefail
-          all_jobs='["aur_bin","aur_git","container","flatpak","macos","nix","rpm","windows"]'
-          if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" || "$ALL_BUILDS" == "true" ]]; then
-            jobs="$all_jobs"
-          elif [[ "$GITHUB_EVENT_NAME" == "push" ]]; then
-            jobs='["workspace"]'
-          else
-            jobs="$(
-              jq -c '
-                if index("package_dependencies") then
-                  . + ["aur_bin", "flatpak", "macos", "nix", "rpm", "windows"]
-                else
-                  .
-                end
-                | map(select(
-                    . != "all_builds" and
-                    . != "container_image" and
-                    . != "current_nix" and
-                    . != "package_dependencies" and
-                    . != "workflows"
-                  ))
-                | unique
-                | if index("container") then
-                    map(select(. != "cargo-deny" and . != "workspace"))
-                  else
-                    .
-                  end
-              ' <<< "$MATCHED_FILTERS"
-            )"
-          fi
-          if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" || "$CONTAINER_IMAGE" == "true" ]]; then
+          all_build_jobs=(aur_bin aur_git container flatpak macos nix rpm windows)
+          package_dependency_jobs=(aur_bin flatpak macos nix rpm windows)
+          declare -A selected_jobs=()
+
+          add_jobs() {
+            local job
+            for job in "$@"; do
+              selected_jobs["$job"]=1
+            done
+          }
+
+          build_container_image=false
+          check_workflows=false
+          use_current_nix=false
+
+          if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]]; then
+            add_jobs "${all_build_jobs[@]}"
             build_container_image=true
-          else
-            build_container_image=false
-          fi
-          if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" || "$CURRENT_NIX" == "true" ]]; then
+            check_workflows=true
             use_current_nix=true
+          elif [[ "$GITHUB_EVENT_NAME" == "push" ]]; then
+            add_jobs workspace
           else
-            use_current_nix=false
+            git cat-file -e "${BASE_SHA}^{commit}"
+            git cat-file -e "${HEAD_SHA}^{commit}"
+            merge_base="$(git merge-base "$BASE_SHA" "$HEAD_SHA")"
+            mapfile -d '' -t changed_paths < <(
+              git diff --name-only --no-renames -z "$merge_base" "$HEAD_SHA"
+            )
+
+            printf 'Changed paths:\n'
+            printf '  %q\n' "${changed_paths[@]}"
+
+            for path in "${changed_paths[@]}"; do
+              case "$path" in
+                LICENSE|data|data/*|*.md)
+                  continue
+                  ;;
+              esac
+
+              case "$path" in
+                .github/workflows/*.yml|.github/workflows/*.yaml)
+                  check_workflows=true
+                  ;;
+              esac
+
+              case "$path" in
+                Cargo.lock|Cargo.toml|*/Cargo.toml)
+                  add_jobs workspace cargo-deny "${package_dependency_jobs[@]}"
+                  ;;
+              esac
+
+              case "$path" in
+                .github/workflows/checks.yml)
+                  add_jobs "${all_build_jobs[@]}" workspace cargo-deny
+                  ;;
+                .github/workflows/aur-build.yml|.github/workflows/aur.yml)
+                  add_jobs aur_bin aur_git
+                  ;;
+                .github/workflows/rpm-source.yml|.github/workflows/rpm.yml|packaging/rpm/*)
+                  add_jobs rpm
+                  ;;
+                .github/workflows/nix.yml|packaging/nix/*)
+                  add_jobs nix
+                  ;;
+                .github/workflows/flatpak-build.yml|.github/workflows/flatpak.yml|packaging/flatpak/*)
+                  add_jobs flatpak
+                  ;;
+                .github/workflows/macos*.yml|packaging/macos/*)
+                  add_jobs macos
+                  ;;
+                .github/workflows/windows*.yml|packaging/windows/*)
+                  add_jobs windows
+                  ;;
+                .github/workflows/container-image.yml|justfile|scripts/container)
+                  add_jobs container
+                  ;;
+                .github/workflows/*.yml|.github/workflows/*.yaml)
+                  ;;
+                Cargo.lock|Cargo.toml|*/Cargo.toml)
+                  ;;
+                .cargo/*)
+                  add_jobs workspace macos
+                  ;;
+                crates/*|sgconfig.yml)
+                  add_jobs workspace
+                  ;;
+                flake.lock|flake.nix)
+                  add_jobs workspace container nix
+                  use_current_nix=true
+                  ;;
+                scripts/retry-nix)
+                  add_jobs workspace nix
+                  ;;
+                scripts/rust-cache-command)
+                  add_jobs workspace windows
+                  ;;
+                deny.toml)
+                  add_jobs cargo-deny
+                  ;;
+                packaging/aur/rufin-bin/*)
+                  add_jobs aur_bin
+                  ;;
+                packaging/aur/rufin-git/PKGBUILD)
+                  add_jobs aur_bin aur_git
+                  ;;
+                packaging/aur/build|packaging/aur/rufin-git/*)
+                  add_jobs aur_git
+                  ;;
+                packaging/aur/*)
+                  add_jobs aur_bin aur_git
+                  ;;
+                packaging/container/*)
+                  add_jobs container
+                  build_container_image=true
+                  ;;
+                *.avif|*.gif|*.ico|*.icns|*.jpeg|*.jpg|*.png|*.po|*.pot|*.svg|*.webp)
+                  ;;
+                *)
+                  add_jobs workspace
+                  ;;
+              esac
+            done
           fi
+
+          if [[ -n "${selected_jobs[container]+selected}" ]]; then
+            unset 'selected_jobs[cargo-deny]' 'selected_jobs[workspace]'
+          fi
+
+          if ((${#selected_jobs[@]})); then
+            jobs="$(
+              printf '%s\n' "${!selected_jobs[@]}" |
+                jq -Rsc 'split("\n") | map(select(length > 0)) | sort'
+            )"
+          else
+            jobs='[]'
+          fi
+
           {
             echo "build_container_image=$build_container_image"
+            echo "check_workflows=$check_workflows"
             echo "jobs=$jobs"
             echo "use_current_nix=$use_current_nix"
           } >> "$GITHUB_OUTPUT"
           echo "Selected build jobs: $jobs"
 
       - name: Check workflows
-        if: github.event_name == 'workflow_dispatch' || steps.paths.outputs.workflows == 'true'
+        if: steps.select.outputs.check_workflows == 'true'
         env:
           ACTIONLINT_SHA256: 8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8
           ACTIONLINT_VERSION: 1.7.12
