@@ -16,17 +16,20 @@ use crate::format_duration_units;
 use crate::localization::{bind_label_text_with, localized_label};
 use crate::preferences::dialogs::popup::present_light_dismiss_dialog;
 use crate::shell::Shell;
-use crate::shell::actions::{ADD_ICON, EDIT_ICON, PLAY_ICON};
+use crate::shell::actions::{ADD_ICON, EDIT_ICON};
 use crate::shell::cover::presentation::stable_seed;
 use crate::shell::route::{LatestMountedRouteRead, MountedRoute, SelectedRouteIdentity};
 use localization::{msgid, tr, track_count_text};
-use playback::{QueuePlacement, RadioPlayRequest};
+use playback::RadioPlayRequest;
 
-use super::collections::library_route_inset;
+use super::collection_context::{
+    present_playlist_context_menu, present_smart_playlist_context_menu,
+};
+use super::collections::{CollectionPlay, library_route_inset};
 use super::detail_showcase::{
     PlaylistDetailShowcase, detail_action_button, detail_action_row, detail_delete_button,
-    detail_genre_pill_button, detail_primary_action_button, detail_radio_button,
-    detail_title_label, playlist_detail_showcase,
+    detail_genre_pill_button, detail_playback_controls, detail_radio_button, detail_title_label,
+    playlist_detail_showcase,
 };
 use super::library_fields::smart_playlist_display_name;
 use super::playlist_entry_model::{
@@ -176,33 +179,55 @@ impl Shell {
         let actions = detail_action_row();
         actions.set_halign(gtk::Align::Start);
 
-        let play = detail_primary_action_button(PLAY_ICON, "Play");
         let controller = self.products.playback.queue.clone();
         let play_tracks = tracks.clone();
         let play_context_id = context_id.clone();
-        play.connect_clicked(move |_| {
+        let play: CollectionPlay = Rc::new(move |placement, shuffled_start| {
             if let Some(request) =
-                play_tracks.source_play_request(QueuePlacement::Now, &play_context_id, true)
+                play_tracks.source_play_request(placement, &play_context_id, shuffled_start)
             {
                 controller.play_loaded(request);
             }
         });
-        actions.append(&play);
+        let cover_controls = detail_playback_controls(
+            &actions,
+            msgid("Play smart playlist"),
+            None,
+            false,
+            Rc::clone(&play),
+        );
 
-        let edit = detail_action_button(EDIT_ICON, "Edit");
+        let rename = detail_action_button(EDIT_ICON, "Rename");
         let shell = Rc::clone(self);
-        let edit_header = Rc::clone(&header);
-        edit.connect_clicked(move |_| {
-            shell.edit_smart_playlist_dialog((*edit_header.borrow().smart_playlist).clone());
+        let rename_header = Rc::clone(&header);
+        rename.connect_clicked(move |_| {
+            shell.rename_smart_playlist_dialog((*rename_header.borrow().smart_playlist).clone());
         });
-        actions.append(&edit);
+        actions.append(&rename);
         let delete = detail_delete_button("Delete");
-        let smart_playlists = self.products.smart_playlists.clone();
+        let delete_shell = Rc::clone(self);
         let delete_header = Rc::clone(&header);
         delete.connect_clicked(move |_| {
-            smart_playlists.delete(delete_header.borrow().smart_playlist.id.clone())
+            let playlist_id = delete_header.borrow().smart_playlist.id.clone();
+            delete_shell.products.smart_playlists.delete(playlist_id);
+            delete_shell.navigate(Route::SmartPlaylists);
         });
         actions.append(&delete);
+
+        let menu_shell = Rc::clone(self);
+        let menu_header = Rc::clone(&header);
+        let menu_play = Rc::clone(&play);
+        let context_menu: crate::interactions::ContextMenuOpen =
+            Rc::new(move |target, position| {
+                let playlist = menu_header.borrow().clone();
+                present_smart_playlist_context_menu(
+                    target,
+                    &menu_shell,
+                    playlist,
+                    Some(Rc::clone(&menu_play)),
+                    position,
+                );
+            });
 
         let showcase = playlist_detail_showcase(
             self,
@@ -210,6 +235,8 @@ impl Shell {
                 seed,
                 initial_width: content_width,
                 cover: cover.clone(),
+                cover_controls,
+                context_menu: Some(context_menu),
                 kind_row: kind_row.upcast(),
                 title: title.clone().upcast(),
                 summary: summary.widget(),
@@ -429,15 +456,20 @@ impl Shell {
 
         let actions = detail_action_row();
         actions.set_halign(gtk::Align::Start);
-        let play = detail_primary_action_button(PLAY_ICON, "Play");
         let controller = self.products.playback.queue.clone();
         let play_entries = entries.clone();
-        play.connect_clicked(move |_| {
-            if let Some(request) = play_entries.source_play_request(QueuePlacement::Now, true) {
+        let play: CollectionPlay = Rc::new(move |placement, shuffled_start| {
+            if let Some(request) = play_entries.source_play_request(placement, shuffled_start) {
                 controller.play_loaded(request);
             }
         });
-        actions.append(&play);
+        let cover_controls = detail_playback_controls(
+            &actions,
+            msgid("Play playlist"),
+            None,
+            false,
+            Rc::clone(&play),
+        );
 
         let rename = detail_action_button(EDIT_ICON, "Rename");
         let shell = Rc::clone(self);
@@ -485,6 +517,7 @@ impl Shell {
         let delete = detail_delete_button("Delete");
         let source = self.products.source.clone();
         let window = self.chrome.window.clone();
+        let delete_shell = Rc::clone(self);
         let delete_header = Rc::clone(&header);
         let delete_id = playlist_id.clone();
         delete.connect_clicked(move |_| {
@@ -499,17 +532,34 @@ impl Shell {
             dialog.add_response("delete", &tr("Delete"));
             dialog.set_response_appearance("delete", adw::ResponseAppearance::Destructive);
             let source = source.clone();
+            let shell = Rc::clone(&delete_shell);
             let playlist_id = delete_id.clone();
             dialog.connect_response(None, move |_, response| {
                 if response == "delete" {
                     source.edit_playlist(PlaylistEdit::Delete {
                         playlist_id: playlist_id.clone(),
                     });
+                    shell.navigate(Route::Playlists);
                 }
             });
             present_light_dismiss_dialog(&dialog, &window);
         });
         actions.append(&delete);
+
+        let menu_shell = Rc::clone(self);
+        let menu_header = Rc::clone(&header);
+        let menu_play = Rc::clone(&play);
+        let context_menu: crate::interactions::ContextMenuOpen =
+            Rc::new(move |target, position| {
+                let playlist = menu_header.borrow().clone();
+                present_playlist_context_menu(
+                    target,
+                    &menu_shell,
+                    playlist,
+                    Some(Rc::clone(&menu_play)),
+                    position,
+                );
+            });
 
         let showcase = playlist_detail_showcase(
             self,
@@ -517,6 +567,8 @@ impl Shell {
                 seed,
                 initial_width: content_width,
                 cover: cover.clone(),
+                cover_controls,
+                context_menu: Some(context_menu),
                 kind_row: kind_slot.clone().upcast(),
                 title: title.clone().upcast(),
                 summary: summary.widget(),

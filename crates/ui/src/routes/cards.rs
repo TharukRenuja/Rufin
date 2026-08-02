@@ -83,7 +83,14 @@ pub(crate) fn album_cover_overlay(
     let menu_album = album.clone();
     let open_menu: Rc<dyn Fn(&gtk::Widget, Option<(f64, f64)>)> =
         Rc::new(move |target, position| {
-            present_album_context_menu(target, &menu_shell, menu_album.clone(), None, position);
+            present_album_context_menu(
+                target,
+                &menu_shell,
+                menu_album.clone(),
+                None,
+                None,
+                position,
+            );
         });
     install_context_menu_openers(&overlay, Rc::clone(&open_menu));
     let menu_target = overlay.downgrade();
@@ -531,7 +538,7 @@ pub(super) fn square_cover_frame(child: &impl IsA<gtk::Widget>) -> SquareCoverFr
     frame
 }
 
-pub(super) struct CoverHoverControls {
+pub(crate) struct CoverHoverControls {
     pub(super) shade: gtk::Box,
     pub(super) transport: gtk::Box,
     pub(super) play_next: gtk::Button,

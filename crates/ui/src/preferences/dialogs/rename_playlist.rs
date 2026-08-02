@@ -2,7 +2,7 @@ use std::rc::Rc;
 
 use crate::preferences::dialogs::popup::present_light_dismiss_dialog;
 use crate::shell::Shell;
-use ::library::{PlaylistEdit, PlaylistId};
+use ::library::{PlaylistEdit, PlaylistId, SmartPlaylist};
 use adw::prelude::*;
 use localization::tr;
 
@@ -11,6 +11,29 @@ impl Shell {
         self: &Rc<Self>,
         playlist_id: PlaylistId,
         current_name: String,
+    ) {
+        let source = self.products.source.clone();
+        self.rename_playlist_dialog_inner(current_name, move |name| {
+            source.edit_playlist(PlaylistEdit::Rename {
+                playlist_id: playlist_id.clone(),
+                name,
+            });
+        });
+    }
+
+    pub(crate) fn rename_smart_playlist_dialog(self: &Rc<Self>, playlist: SmartPlaylist) {
+        let smart_playlists = self.products.smart_playlists.clone();
+        let playlist_id = playlist.id.clone();
+        let definition = playlist.definition.clone();
+        self.rename_playlist_dialog_inner(playlist.name, move |name| {
+            smart_playlists.update(playlist_id.clone(), name, definition.clone());
+        });
+    }
+
+    fn rename_playlist_dialog_inner(
+        self: &Rc<Self>,
+        current_name: String,
+        rename: impl Fn(String) + 'static,
     ) {
         let dialog = adw::AlertDialog::builder()
             .heading(tr("Rename Playlist"))
@@ -22,15 +45,11 @@ impl Shell {
         let entry = gtk::Entry::new();
         entry.set_text(&current_name);
         dialog.set_extra_child(Some(&entry));
-        let source = self.products.source.clone();
         dialog.connect_response(None, move |_, response| {
             if response == "rename" {
                 let name = entry.text().trim().to_string();
                 if !name.is_empty() {
-                    source.edit_playlist(PlaylistEdit::Rename {
-                        playlist_id: playlist_id.clone(),
-                        name,
-                    });
+                    rename(name);
                 }
             }
         });

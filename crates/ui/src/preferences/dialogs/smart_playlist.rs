@@ -9,9 +9,8 @@ use crate::shell::Shell;
 use crate::shell::actions::text_button;
 use crate::shell::actions::{ADD_ICON, REMOVE_ICON};
 use ::library::{
-    SmartPlaylist, SmartPlaylistBuiltin, SmartPlaylistDefinition, SmartPlaylistRule,
-    SmartPlaylistRuleField, SmartPlaylistRuleOperator, SmartPlaylistRuleValue,
-    SmartPlaylistSortField,
+    SmartPlaylistBuiltin, SmartPlaylistDefinition, SmartPlaylistRule, SmartPlaylistRuleField,
+    SmartPlaylistRuleOperator, SmartPlaylistRuleValue, SmartPlaylistSortField,
     smart_playlists::{self as smart_policy, SmartPlaylistRuleValueKind},
 };
 use adw::prelude::*;
@@ -98,47 +97,6 @@ impl Shell {
                     return;
                 };
                 smart_playlists.create(name, definition);
-                if let Some(dialog) = dialog.upgrade() {
-                    dialog.close();
-                }
-            });
-        }
-        present_light_dismiss_dialog(&dialog, &self.chrome.window);
-    }
-
-    pub(crate) fn edit_smart_playlist_dialog(self: &Rc<Self>, playlist: SmartPlaylist) {
-        let value_suggestions = self.smart_playlist_rule_value_suggestions();
-        let editor = smart_playlist_editor(Some(&playlist.name), Some(&playlist.definition));
-        let (content, _default_dropdown) =
-            smart_playlist_editor_content(&editor, &[], value_suggestions);
-        let actions = dialog_action_row();
-        let cancel = dialog_button("Cancel", None);
-        let save = dialog_button("Save", Some("suggested-action"));
-        sync_editor_button_enabled(&save, &editor);
-        actions.append(&cancel);
-        actions.append(&save);
-
-        let dialog = smart_playlist_dialog("Edit Smart Playlist", &content, &actions);
-        connect_editor_name_validation(&save, &editor);
-
-        {
-            let dialog = dialog.downgrade();
-            cancel.connect_clicked(move |_| {
-                if let Some(dialog) = dialog.upgrade() {
-                    dialog.close();
-                }
-            });
-        }
-
-        let smart_playlists = self.products.smart_playlists.clone();
-        let playlist_id = playlist.id.clone();
-        {
-            let dialog = dialog.downgrade();
-            save.connect_clicked(move |_| {
-                let Some((name, definition)) = editor.definition() else {
-                    return;
-                };
-                smart_playlists.update(playlist_id.clone(), name, definition);
                 if let Some(dialog) = dialog.upgrade() {
                     dialog.close();
                 }

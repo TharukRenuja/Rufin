@@ -718,6 +718,7 @@ impl AlbumGridCell {
                 &menu_shell,
                 album,
                 menu_playback_context.clone(),
+                None,
                 cards::elastic_cover_context_point(&menu_target),
             );
         });
@@ -929,6 +930,7 @@ impl ArtistGridCell {
                 menu_target.upcast_ref(),
                 &menu_shell,
                 artist,
+                None,
                 cards::elastic_cover_context_point(&menu_target),
             );
         });
@@ -1113,6 +1115,7 @@ impl PlaylistGridCell {
                 menu_target.upcast_ref(),
                 &menu_shell,
                 playlist,
+                None,
                 cards::elastic_cover_context_point(&menu_target),
             );
         });
@@ -1285,6 +1288,7 @@ impl SmartPlaylistGridCell {
                 menu_target.upcast_ref(),
                 &menu_shell,
                 playlist,
+                None,
                 cards::elastic_cover_context_point(&menu_target),
             );
         });
@@ -1433,7 +1437,7 @@ fn install_dynamic_artist_context_menu(
             let Some(artist) = artist.borrow().clone() else {
                 return;
             };
-            present_artist_context_menu(target, &shell, artist, position);
+            present_artist_context_menu(target, &shell, artist, None, position);
         }),
     );
 }
@@ -1450,7 +1454,7 @@ pub(super) fn install_dynamic_genre_context_menu(
             let Some(genre) = genre.borrow().clone() else {
                 return;
             };
-            present_genre_context_menu(target, &shell, genre, position);
+            present_genre_context_menu(target, &shell, genre, None, position);
         }),
     );
 }
@@ -1467,7 +1471,7 @@ fn install_dynamic_playlist_context_menu(
             let Some(playlist) = playlist.borrow().clone() else {
                 return;
             };
-            present_playlist_context_menu(target, &shell, playlist, position);
+            present_playlist_context_menu(target, &shell, playlist, None, position);
         }),
     );
 }
@@ -1484,7 +1488,7 @@ fn install_dynamic_smart_playlist_context_menu(
             let Some(playlist) = playlist.borrow().clone() else {
                 return;
             };
-            present_smart_playlist_context_menu(target, &shell, playlist, position);
+            present_smart_playlist_context_menu(target, &shell, playlist, None, position);
         }),
     );
 }

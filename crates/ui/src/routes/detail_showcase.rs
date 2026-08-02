@@ -8,7 +8,7 @@ use adw::prelude::*;
 use artwork::ArtworkBinding;
 use tracing::warn;
 
-use crate::interactions::add_widget_click;
+use crate::interactions::{ContextMenuOpen, add_widget_click, install_context_menu_openers};
 use crate::layout::width_allocation_owner;
 use crate::localization::bind_label_text_with;
 use crate::shell::Shell;
@@ -20,9 +20,13 @@ use crate::shell::cover::{
 };
 use localization::{msgid, tr};
 
+use super::cards::{
+    CoverHoverControls, cover_hover_controls, cover_play_hover_controls,
+    elastic_cover_context_point,
+};
+use super::collections::CollectionPlay;
 use super::detail_links::{DetailEntityKind, DetailExternalLink, server_entity_link};
 use super::route_layout::{detail_showcase_cover_only, detail_showcase_cover_size};
-use super::routes::TrackListProjection;
 
 const DETAIL_HEADER_SPACING: i32 = 18;
 const RADIO_ICON: &str = "rufin-audio-radio-symbolic";
@@ -32,6 +36,8 @@ pub(crate) struct MediaDetailShowcase {
     pub(crate) seed: u32,
     pub(crate) initial_width: i32,
     pub(crate) cover: DetailCoverProjection,
+    pub(crate) cover_controls: CoverHoverControls,
+    pub(crate) context_menu: Option<ContextMenuOpen>,
     pub(crate) external_links: DetailExternalLinksProjection,
     pub(crate) text_stack: gtk::Widget,
     pub(crate) actions: gtk::Widget,
@@ -96,6 +102,8 @@ pub(crate) struct CollectionDetailShowcase {
     pub(crate) compact_spacing: i32,
     pub(crate) wide_spacing: i32,
     pub(crate) cover: CoverGroupProjection,
+    pub(crate) cover_controls: CoverHoverControls,
+    pub(crate) context_menu: Option<ContextMenuOpen>,
     pub(crate) metadata: Vec<gtk::Widget>,
 }
 
@@ -103,6 +111,8 @@ pub(crate) struct PlaylistDetailShowcase {
     pub(crate) seed: u32,
     pub(crate) initial_width: i32,
     pub(crate) cover: CoverGroupProjection,
+    pub(crate) cover_controls: CoverHoverControls,
+    pub(crate) context_menu: Option<ContextMenuOpen>,
     pub(crate) kind_row: gtk::Widget,
     pub(crate) title: gtk::Widget,
     pub(crate) summary: gtk::Widget,
@@ -123,7 +133,11 @@ pub(crate) fn media_detail_showcase(shell: &Rc<Shell>, config: MediaDetailShowca
 
     let cover_column = gtk::Box::new(gtk::Orientation::Vertical, 8);
     cover_column.set_halign(gtk::Align::Start);
-    cover_column.append(&config.cover.button());
+    cover_column.append(&detail_cover_overlay(
+        config.cover.button().upcast_ref(),
+        config.cover_controls,
+        config.context_menu,
+    ));
     cover_column.append(&config.external_links.widget());
     body.append(&cover_column);
 
@@ -198,7 +212,11 @@ pub(crate) fn collection_detail_showcase(
     header.set_hexpand(true);
     header.set_halign(gtk::Align::Fill);
     header.set_width_request(1);
-    header.append(&config.cover.widget());
+    header.append(&detail_cover_overlay(
+        &config.cover.widget(),
+        config.cover_controls,
+        config.context_menu,
+    ));
 
     let metadata = gtk::Box::new(gtk::Orientation::Vertical, 10);
     metadata.set_valign(gtk::Align::Center);
@@ -278,6 +296,8 @@ pub(crate) fn playlist_detail_showcase(
             compact_spacing: 20,
             wide_spacing: 28,
             cover: config.cover,
+            cover_controls: config.cover_controls,
+            context_menu: config.context_menu,
             metadata: vec![
                 config.kind_row,
                 config.title,
@@ -369,31 +389,86 @@ pub(crate) fn detail_radio_button() -> gtk::Button {
     button
 }
 
-pub(crate) fn append_loaded_batch_queue_actions(
+pub(crate) fn detail_playback_controls(
     actions: &gtk::Box,
-    controller: &playback::QueueHandle,
-    tracks: &TrackListProjection,
-    context_id: String,
-) {
-    for (icon, label, placement) in [
-        (PLAY_NEXT_ICON, "Next", playback::QueuePlacement::Next),
+    play_label: &str,
+    favorite_active: Option<bool>,
+    show_queue_actions: bool,
+    play: CollectionPlay,
+) -> CoverHoverControls {
+    let controls = favorite_active.map_or_else(
+        || cover_play_hover_controls(0, play_label),
+        |favorite| cover_hover_controls(0, play_label, favorite),
+    );
+
+    let primary = detail_primary_action_button(crate::shell::actions::PLAY_ICON, "Play");
+    connect_collection_play(
+        &primary,
+        Rc::clone(&play),
+        playback::QueuePlacement::Now,
+        true,
+    );
+    actions.append(&primary);
+
+    for (icon, label, placement, hover) in [
+        (
+            PLAY_NEXT_ICON,
+            "Next",
+            playback::QueuePlacement::Next,
+            controls.play_next.clone(),
+        ),
         (
             PLAY_LATER_ICON,
             "Play Later",
             playback::QueuePlacement::Last,
+            controls.play_last.clone(),
         ),
     ] {
-        let button = detail_action_button(icon, label);
-        let controller = controller.clone();
-        let tracks = tracks.clone();
-        let context_id = context_id.clone();
-        button.connect_clicked(move |_| {
-            if let Some(request) = tracks.source_play_request(placement, &context_id, false) {
-                controller.play_loaded(request);
-            }
-        });
-        actions.append(&button);
+        if show_queue_actions {
+            let button = detail_action_button(icon, label);
+            connect_collection_play(&button, Rc::clone(&play), placement, false);
+            actions.append(&button);
+        }
+        connect_collection_play(&hover, Rc::clone(&play), placement, false);
     }
+    connect_collection_play(&controls.play, play, playback::QueuePlacement::Now, true);
+    controls
+}
+
+fn connect_collection_play(
+    button: &gtk::Button,
+    play: CollectionPlay,
+    placement: playback::QueuePlacement,
+    shuffled_start: bool,
+) {
+    button.connect_clicked(move |_| play(placement, shuffled_start));
+}
+
+fn detail_cover_overlay(
+    cover: &gtk::Widget,
+    mut controls: CoverHoverControls,
+    context_menu: Option<ContextMenuOpen>,
+) -> gtk::Overlay {
+    let overlay = gtk::Overlay::new();
+    overlay.add_css_class("cover-frame");
+    overlay.set_halign(gtk::Align::Start);
+    overlay.set_valign(gtk::Align::Start);
+    overlay.set_child(Some(cover));
+
+    if let Some(open) = context_menu {
+        let menu = controls.add_context_button();
+        install_context_menu_openers(&overlay, Rc::clone(&open));
+        let target = overlay.downgrade();
+        menu.connect_clicked(move |_| {
+            let Some(target) = target.upgrade() else {
+                return;
+            };
+            open(target.upcast_ref(), elastic_cover_context_point(&target));
+        });
+    }
+    controls.add_to_overlay(&overlay);
+    controls.connect_hover(&overlay);
+    overlay
 }
 
 pub(crate) fn detail_title_label(text: &str) -> gtk::Label {
