@@ -16,7 +16,7 @@ use crate::player::queue::QueueState;
 use crate::player::right_panel::RightPanelWidgets;
 use crate::player::state::PlaybackState;
 use crate::player::{
-    PlayerDesktopWidgets, apply_lyrics_panel_visibility, build_bottom_player,
+    BOTTOM_PLAYER_HEIGHT, PlayerDesktopWidgets, apply_lyrics_panel_visibility, build_bottom_player,
     build_fullscreen_player, build_right_panel, connect_fullscreen_player_controls,
     connect_player_controls, connect_queue_lyrics_overlay, connect_queue_panel_controls,
     default_audio_output_options, warm_audio_output_cache,
@@ -347,7 +347,7 @@ pub fn build(app: &adw::Application, inputs: RuntimeInputs) {
     operation_feedback.add_css_class("operation-feedback");
     operation_feedback.set_halign(gtk::Align::Center);
     operation_feedback.set_valign(gtk::Align::End);
-    operation_feedback.set_margin_bottom(96);
+    operation_feedback.set_margin_bottom(BOTTOM_PLAYER_HEIGHT);
     operation_feedback.set_visible(false);
     operation_feedback.set_focusable(true);
     let operation_feedback_artwork = gtk::Box::new(gtk::Orientation::Horizontal, 0);

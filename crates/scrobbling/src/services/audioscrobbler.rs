@@ -211,7 +211,10 @@ pub(crate) fn submit(
             service.name()
         )));
     }
-    debug!(service = service.name(), "submitted scrobbling event");
+    debug!(
+        service = service.name(),
+        operation, "submitted remote playback event"
+    );
     Ok(())
 }
 

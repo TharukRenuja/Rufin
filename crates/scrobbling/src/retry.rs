@@ -1,7 +1,7 @@
 use std::sync::mpsc::{Receiver, RecvTimeoutError, SyncSender, TrySendError, sync_channel};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use library::{Library, NewScrobble, PendingScrobble, PendingScrobbleId, ScrobbleService};
 use playback::{CompletedScrobble, ListeningTrack};
@@ -13,6 +13,7 @@ use crate::{AudioscrobblerSettings, ListenBrainzSettings, Settings};
 
 const COMMAND_CAPACITY: usize = 32;
 const DELIVERY_BATCH_SIZE: usize = 50;
+const NOW_PLAYING_STABLE_DELAY: Duration = Duration::from_secs(1);
 const RETRY_POLL: Duration = Duration::from_secs(30);
 const USER_AGENT: &str = concat!("Rufin/", env!("CARGO_PKG_VERSION"));
 
@@ -130,6 +131,10 @@ enum DeliveryFlow {
 enum Command {
     NowPlaying(SubmissionTrack),
     Wake,
+}
+
+fn now_playing_is_stable(changed_at: Instant, now: Instant) -> bool {
+    now >= changed_at + NOW_PLAYING_STABLE_DELAY
 }
 
 struct Worker {
@@ -293,14 +298,39 @@ fn run_worker(
     state: Arc<Mutex<DeliveryState>>,
     receiver: Receiver<Command>,
 ) {
+    let mut pending_now_playing = None;
+    let mut retry_at = Instant::now() + RETRY_POLL;
     loop {
-        match receiver.recv_timeout(RETRY_POLL) {
+        let now = Instant::now();
+        if now >= retry_at {
+            deliver_due(&client, &library, &state);
+            retry_at = Instant::now() + RETRY_POLL;
+            continue;
+        }
+        if pending_now_playing
+            .as_ref()
+            .is_some_and(|(_, changed_at)| now_playing_is_stable(*changed_at, now))
+        {
+            let (track, _) = pending_now_playing
+                .take()
+                .expect("stable now-playing update must be pending");
+            deliver_now_playing(&client, &state, track);
+            continue;
+        }
+        let deadline = pending_now_playing
+            .as_ref()
+            .map(|(_, changed_at)| (*changed_at + NOW_PLAYING_STABLE_DELAY).min(retry_at))
+            .unwrap_or(retry_at);
+        match receiver.recv_timeout(deadline.saturating_duration_since(now)) {
             Ok(Command::NowPlaying(track)) => {
-                deliver_now_playing(&client, &state, track);
+                pending_now_playing = Some((track, Instant::now()));
             }
-            Ok(Command::Wake) | Err(RecvTimeoutError::Timeout) => {
+            Ok(Command::Wake) => {
+                // Durable completed scrobbles do not wait for the transient now-playing window.
                 deliver_due(&client, &library, &state);
+                retry_at = Instant::now() + RETRY_POLL;
             }
+            Err(RecvTimeoutError::Timeout) => {}
             Err(RecvTimeoutError::Disconnected) => return,
         }
     }
@@ -573,6 +603,19 @@ mod tests {
     use library::{SourceId, TrackId};
 
     use super::*;
+
+    #[test]
+    fn now_playing_waits_for_one_quiet_second() {
+        let changed_at = Instant::now();
+        assert!(!now_playing_is_stable(
+            changed_at,
+            changed_at + Duration::from_millis(999)
+        ));
+        assert!(now_playing_is_stable(
+            changed_at,
+            changed_at + Duration::from_secs(1)
+        ));
+    }
 
     #[test]
     fn account_identity_is_service_scoped_and_does_not_store_the_secret() {

@@ -30,7 +30,7 @@ use crate::shell::actions::{MORE_ICON, icon_button_without_tooltip, set_active_c
 use crate::shell::cover::ArtworkTile;
 use crate::shell::cover::THUMB_COVER_SIZE;
 
-pub(super) const BOTTOM_PLAYER_HEIGHT: i32 = 96;
+pub(crate) const BOTTOM_PLAYER_HEIGHT: i32 = 97;
 const BOTTOM_PLAYER_COVER_SIZE: i32 = 56;
 const BOTTOM_PLAYER_EDGE_PADDING: i32 = 8;
 const BOTTOM_PLAYER_HORIZONTAL_PADDING: i32 = 0;
@@ -59,8 +59,6 @@ const BOTTOM_PLAYER_VOLUME_SPACING: i32 = 1;
 const BOTTOM_PLAYER_VOLUME_MIN_WIDTH: i32 = 48;
 const BOTTOM_PLAYER_VOLUME_MAX_WIDTH: i32 = 160;
 const BOTTOM_PLAYER_VOLUME_WIDTH_RATIO: f64 = 1.0 / 16.0;
-const BOTTOM_PLAYER_RIGHT_EDGE_GAP: i32 = 8;
-const BOTTOM_PLAYER_TRANSPORT_CLEARANCE: i32 = 8;
 const BOTTOM_PLAYER_TINY_TRANSPORT_WIDTH: i32 = 126;
 const BOTTOM_PLAYER_TINY_CONTROL_SPACING: i32 = 2;
 const BOTTOM_PLAYER_TINY_CONTROLS_WIDTH: i32 = BOTTOM_PLAYER_TINY_TRANSPORT_WIDTH;
@@ -68,9 +66,6 @@ const BOTTOM_PLAYER_TINY_ROW_SPACING: i32 = 6;
 const BOTTOM_PLAYER_COMPACT_MIN_WIDTH: i32 = 614;
 const BOTTOM_PLAYER_TINY_WIDTH: i32 = BOTTOM_PLAYER_COMPACT_MIN_WIDTH;
 const BOTTOM_PLAYER_FULL_PROGRESS_WIDTH: i32 = 864;
-const BOTTOM_PLAYER_SHOW_FAVORITE_WIDTH: i32 = 636;
-const BOTTOM_PLAYER_SHOW_LYRICS_WIDTH: i32 = 780;
-const BOTTOM_PLAYER_SHOW_QUEUE_WIDTH: i32 = BOTTOM_PLAYER_SHOW_LYRICS_WIDTH;
 const SEEK_PREVIEW_COMMIT_DELAY: Duration = Duration::from_millis(100);
 const SEEK_PREVIEW_TOLERANCE_MILLIS: u64 = 1_500;
 const VOLUME_PERSIST_DELAY: Duration = Duration::from_millis(250);
@@ -85,13 +80,15 @@ enum BottomPlayerActions {
 
 pub(crate) struct PlayerControls {
     pub(crate) root: AllocationOwner,
-    surface: gtk::CenterBox,
+    surface: gtk::Box,
     pub(crate) cover: ArtworkTile,
     title: gtk::Label,
     pub(crate) menu_button: gtk::Button,
     artist: gtk::Label,
     album: gtk::Label,
     now_playing_wall: gtk::Box,
+    left_slot: gtk::Overlay,
+    right_slot: gtk::Overlay,
     tiny_row: gtk::Box,
     tiny_controls: gtk::Box,
     tiny_layout: Cell<bool>,
@@ -126,6 +123,7 @@ pub(crate) struct PlayerControls {
     pub(crate) mute_button: gtk::Button,
     mute_icon: gtk::DrawingArea,
     mute_icon_state: Rc<Cell<VolumeIcon>>,
+    volume_slot: gtk::Overlay,
     volume: gtk::Scale,
     pub(crate) audio_output_button: gtk::Button,
 }
@@ -171,6 +169,7 @@ struct PlayerActionControls {
     mute_button: gtk::Button,
     mute_icon: gtk::DrawingArea,
     mute_icon_state: Rc<Cell<VolumeIcon>>,
+    volume_slot: gtk::Overlay,
     volume: gtk::Scale,
     audio_output_button: gtk::Button,
 }
@@ -698,10 +697,8 @@ fn should_clear_seek_preview(
 }
 
 pub(crate) fn build_bottom_player() -> PlayerControls {
-    let root = gtk::CenterBox::new();
+    let root = gtk::Box::new(gtk::Orientation::Horizontal, 0);
     root.add_css_class("bottom-player");
-    root.set_orientation(gtk::Orientation::Horizontal);
-    root.set_shrink_center_last(true);
     root.set_hexpand(true);
     root.set_vexpand(false);
     root.set_height_request(BOTTOM_PLAYER_HEIGHT);
@@ -757,9 +754,19 @@ pub(crate) fn build_bottom_player() -> PlayerControls {
         mute_button,
         mute_icon,
         mute_icon_state,
+        volume_slot,
         volume,
         audio_output_button,
     } = build_player_action_controls();
+
+    let left_slot = bottom_player_allocated_slot(&now_playing_wall, 1, 1);
+    left_slot.set_hexpand(true);
+    left_slot.set_halign(gtk::Align::Fill);
+    left_slot.set_valign(gtk::Align::Fill);
+    let right_slot = bottom_player_allocated_slot(&actions, 1, 1);
+    right_slot.set_hexpand(true);
+    right_slot.set_halign(gtk::Align::Fill);
+    right_slot.set_valign(gtk::Align::Fill);
 
     let transport_slot = gtk::Box::new(gtk::Orientation::Horizontal, 0);
     transport_slot.set_width_request(BOTTOM_PLAYER_TRANSPORT_WIDTH);
@@ -782,9 +789,9 @@ pub(crate) fn build_bottom_player() -> PlayerControls {
     tiny_row.set_width_request(1);
     tiny_row.append(&tiny_controls);
 
-    root.set_start_widget(Some(&now_playing_wall));
-    root.set_center_widget(Some(&transport_slot));
-    root.set_end_widget(Some(&actions));
+    root.append(&left_slot);
+    root.append(&transport_slot);
+    root.append(&right_slot);
     // Bottom-player topology follows the real allocation. Applying it during GTK's tentative
     // height-for-width measurement lets a provisional width and the allocated width alternate,
     // continuously invalidating the shell layout.
@@ -799,6 +806,8 @@ pub(crate) fn build_bottom_player() -> PlayerControls {
         artist,
         album,
         now_playing_wall,
+        left_slot,
+        right_slot,
         tiny_row,
         tiny_controls,
         tiny_layout: Cell::new(false),
@@ -833,6 +842,7 @@ pub(crate) fn build_bottom_player() -> PlayerControls {
         mute_button,
         mute_icon,
         mute_icon_state,
+        volume_slot,
         volume,
         audio_output_button,
     }
@@ -909,22 +919,27 @@ fn build_now_playing_controls() -> NowPlayingControls {
     }
 }
 
-fn bottom_player_identity_slot(identity: &gtk::Box) -> gtk::ScrolledWindow {
-    let slot = gtk::ScrolledWindow::new();
-    slot.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Never);
-    slot.set_overflow(gtk::Overflow::Hidden);
-    slot.set_width_request(1);
-    slot.set_height_request(BOTTOM_PLAYER_IDENTITY_HEIGHT);
-    slot.set_min_content_width(0);
-    slot.set_max_content_width(1);
-    slot.set_min_content_height(BOTTOM_PLAYER_IDENTITY_HEIGHT);
-    slot.set_max_content_height(BOTTOM_PLAYER_IDENTITY_HEIGHT);
-    slot.set_propagate_natural_width(false);
-    slot.set_propagate_natural_height(false);
+fn bottom_player_identity_slot(identity: &gtk::Box) -> gtk::Overlay {
+    let slot = bottom_player_allocated_slot(identity, 1, BOTTOM_PLAYER_IDENTITY_HEIGHT);
     slot.set_hexpand(true);
     slot.set_halign(gtk::Align::Fill);
     slot.set_valign(gtk::Align::Center);
-    slot.set_child(Some(identity));
+    slot
+}
+
+fn bottom_player_allocated_slot(
+    child: &impl IsA<gtk::Widget>,
+    width: i32,
+    height: i32,
+) -> gtk::Overlay {
+    let slot = gtk::Overlay::new();
+    let measure = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+    measure.set_size_request(width, height);
+    measure.set_accessible_role(gtk::AccessibleRole::Presentation);
+    slot.set_child(Some(&measure));
+    slot.add_overlay(child);
+    slot.set_measure_overlay(child, false);
+    slot.set_clip_overlay(child, true);
     slot
 }
 
@@ -1095,11 +1110,14 @@ fn build_player_action_controls() -> PlayerActionControls {
     volume_group.append(&mute_button);
     let volume = gtk::Scale::with_range(gtk::Orientation::Horizontal, 0.0, 1.0, 0.01);
     volume.add_css_class("volume-slider");
+    volume.set_hexpand(true);
+    volume.set_halign(gtk::Align::Fill);
     volume.set_valign(gtk::Align::Center);
-    volume.set_width_request(BOTTOM_PLAYER_VOLUME_MIN_WIDTH);
     volume.set_value(1.0);
     volume.set_draw_value(false);
-    volume_group.append(&volume);
+    let volume_slot = bottom_player_allocated_slot(&volume, BOTTOM_PLAYER_VOLUME_MIN_WIDTH, 1);
+    volume_slot.set_valign(gtk::Align::Fill);
+    volume_group.append(&volume_slot);
     root.append(&volume_group);
 
     PlayerActionControls {
@@ -1114,6 +1132,7 @@ fn build_player_action_controls() -> PlayerActionControls {
         mute_button,
         mute_icon,
         mute_icon_state,
+        volume_slot,
         volume,
         audio_output_button,
     }
@@ -1150,20 +1169,9 @@ fn set_button_image_pixel_size(button: &gtk::Button, size: i32) {
 }
 
 fn bottom_player_volume_width(player_width: i32) -> i32 {
-    let right_side_width = (player_width - BOTTOM_PLAYER_TRANSPORT_WIDTH) / 2;
-    let visible_action_count = match bottom_player_actions(player_width) {
-        BottomPlayerActions::Volume => 0,
-        BottomPlayerActions::Favorite => 1,
-        BottomPlayerActions::Lyrics => 2,
-        BottomPlayerActions::Queue => 3,
-    };
-    let fixed_action_count = visible_action_count + 2;
-    let action_width_without_volume = BOTTOM_PLAYER_ACTION_BUTTON_SIZE * fixed_action_count
-        + BOTTOM_PLAYER_ACTION_SPACING * visible_action_count
-        + BOTTOM_PLAYER_VOLUME_SPACING * 2
-        + BOTTOM_PLAYER_RIGHT_EDGE_GAP
-        + BOTTOM_PLAYER_TRANSPORT_CLEARANCE;
-    let available_width = right_side_width - action_width_without_volume;
+    let actions = bottom_player_actions(player_width);
+    let fixed_width = bottom_player_action_min_width(actions) - BOTTOM_PLAYER_VOLUME_MIN_WIDTH;
+    let available_width = bottom_player_side_width(player_width).saturating_sub(fixed_width);
     let proportional_width =
         (f64::from(player_width) * BOTTOM_PLAYER_VOLUME_WIDTH_RATIO).round() as i32;
 
@@ -1171,6 +1179,28 @@ fn bottom_player_volume_width(player_width: i32) -> i32 {
         BOTTOM_PLAYER_VOLUME_MIN_WIDTH,
         BOTTOM_PLAYER_VOLUME_MAX_WIDTH,
     )
+}
+
+fn bottom_player_action_count(actions: BottomPlayerActions) -> i32 {
+    match actions {
+        BottomPlayerActions::Volume => 0,
+        BottomPlayerActions::Favorite => 1,
+        BottomPlayerActions::Lyrics => 2,
+        BottomPlayerActions::Queue => 3,
+    }
+}
+
+fn bottom_player_action_min_width(actions: BottomPlayerActions) -> i32 {
+    let visible_action_count = bottom_player_action_count(actions);
+    let fixed_action_count = visible_action_count + 2;
+    BOTTOM_PLAYER_ACTION_BUTTON_SIZE * fixed_action_count
+        + BOTTOM_PLAYER_ACTION_SPACING * visible_action_count
+        + BOTTOM_PLAYER_VOLUME_SPACING * 2
+        + BOTTOM_PLAYER_VOLUME_MIN_WIDTH
+}
+
+fn bottom_player_side_width(player_width: i32) -> i32 {
+    bottom_player_content_width(player_width).saturating_sub(BOTTOM_PLAYER_TRANSPORT_WIDTH) / 2
 }
 
 fn bottom_player_content_width(player_width: i32) -> i32 {
@@ -1207,11 +1237,12 @@ fn widget_natural_width(widget: &impl IsA<gtk::Widget>) -> i32 {
 }
 
 fn bottom_player_actions(player_width: i32) -> BottomPlayerActions {
-    if player_width >= BOTTOM_PLAYER_SHOW_QUEUE_WIDTH {
+    let side_width = bottom_player_side_width(player_width);
+    if side_width >= bottom_player_action_min_width(BottomPlayerActions::Queue) {
         BottomPlayerActions::Queue
-    } else if player_width >= BOTTOM_PLAYER_SHOW_LYRICS_WIDTH {
+    } else if side_width >= bottom_player_action_min_width(BottomPlayerActions::Lyrics) {
         BottomPlayerActions::Lyrics
-    } else if player_width >= BOTTOM_PLAYER_SHOW_FAVORITE_WIDTH {
+    } else if side_width >= bottom_player_action_min_width(BottomPlayerActions::Favorite) {
         BottomPlayerActions::Favorite
     } else {
         BottomPlayerActions::Volume
@@ -1687,26 +1718,21 @@ fn connect_bottom_player_resize(shell: &Rc<Shell>) {
 }
 
 impl Shell {
-    pub(crate) fn apply_bottom_player_width(&self, content_width: i32) {
-        if content_width > 0 {
-            let player_width = content_width + BOTTOM_PLAYER_EDGE_PADDING * 2;
+    pub(crate) fn apply_bottom_player_width(&self, player_width: i32) {
+        if player_width > 0 {
             let tiny = bottom_player_tiny(player_width);
             let actions = bottom_player_actions(player_width);
             self.apply_bottom_player_tiny(tiny);
             self.apply_bottom_player_actions(actions);
-            self.player_view
-                .player_controls
-                .volume
-                .set_width_request(bottom_player_volume_width(player_width));
-
             let player = &self.player_view.player_controls;
+            let volume_width = bottom_player_volume_width(player_width);
+            player.volume_slot.set_width_request(volume_width);
             let desired_progress_width = bottom_player_progress_width(player_width);
             let progress_width = if tiny {
                 desired_progress_width
             } else {
-                // GtkCenterBox can keep the transport centered only while the end surface fits
-                // inside the same-width side allocation. Measure that surface after applying its
-                // current topology so the progress row yields instead of shifting the play button.
+                // Keep the action surface inside its equal side allocation. The progress row yields
+                // when necessary so the two side slots remain the same width around the transport.
                 let action_width = widget_natural_width(&player.actions);
                 let progress_row_fixed_width = widget_natural_width(&player.elapsed)
                     + widget_natural_width(&player.duration)
@@ -1789,23 +1815,19 @@ impl Shell {
             return;
         }
         if tiny {
-            player.surface.set_start_widget(None::<&gtk::Widget>);
-            player.surface.set_center_widget(None::<&gtk::Widget>);
-            player.surface.set_end_widget(None::<&gtk::Widget>);
-            player.tiny_row.prepend(&player.now_playing_wall);
+            player.surface.remove(&player.left_slot);
+            player.surface.remove(&player.transport_slot);
+            player.surface.remove(&player.right_slot);
+            player.tiny_row.prepend(&player.left_slot);
             player.tiny_controls.prepend(&player.transport_slot);
-            player.surface.set_start_widget(Some(&player.tiny_row));
+            player.surface.append(&player.tiny_row);
         } else {
-            player.surface.set_start_widget(None::<&gtk::Widget>);
-            player.tiny_row.remove(&player.now_playing_wall);
+            player.surface.remove(&player.tiny_row);
+            player.tiny_row.remove(&player.left_slot);
             player.tiny_controls.remove(&player.transport_slot);
-            player
-                .surface
-                .set_start_widget(Some(&player.now_playing_wall));
-            player
-                .surface
-                .set_center_widget(Some(&player.transport_slot));
-            player.surface.set_end_widget(Some(&player.actions));
+            player.surface.append(&player.left_slot);
+            player.surface.append(&player.transport_slot);
+            player.surface.append(&player.right_slot);
         }
     }
 
@@ -1829,6 +1851,48 @@ impl Shell {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn bottom_player_actions_never_outgrow_their_equal_side() {
+        for player_width in super::BOTTOM_PLAYER_TINY_WIDTH..=4096 {
+            let actions = super::bottom_player_actions(player_width);
+            let action_width = super::bottom_player_action_min_width(actions)
+                - super::BOTTOM_PLAYER_VOLUME_MIN_WIDTH
+                + super::bottom_player_volume_width(player_width);
+
+            assert!(
+                action_width <= super::bottom_player_side_width(player_width),
+                "actions outgrew their side at player width {player_width}"
+            );
+        }
+    }
+
+    #[test]
+    fn bottom_player_actions_use_the_available_side_width() {
+        let tiers = [
+            (
+                super::BottomPlayerActions::Favorite,
+                super::BottomPlayerActions::Volume,
+            ),
+            (
+                super::BottomPlayerActions::Lyrics,
+                super::BottomPlayerActions::Favorite,
+            ),
+            (
+                super::BottomPlayerActions::Queue,
+                super::BottomPlayerActions::Lyrics,
+            ),
+        ];
+
+        for (tier, previous_tier) in tiers {
+            let threshold = super::BOTTOM_PLAYER_EDGE_PADDING * 2
+                + super::BOTTOM_PLAYER_TRANSPORT_WIDTH
+                + super::bottom_player_action_min_width(tier) * 2;
+
+            assert_eq!(super::bottom_player_actions(threshold - 1), previous_tier);
+            assert_eq!(super::bottom_player_actions(threshold), tier);
+        }
+    }
+
     #[test]
     fn centered_progress_budget_preserves_both_side_allocations() {
         for desired_width in (1..=512).step_by(17) {
