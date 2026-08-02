@@ -1154,7 +1154,10 @@ impl Shell {
         page_shell
             .mounted_route(resume, projection.item_navigation())
             .with_library_update(Rc::new(move |library_update| {
-                if reload_on_activity && library_update.change.history_changed {
+                if reload_on_activity
+                    && (library_update.change.history_changed
+                        || !library_update.change.tracks.is_empty())
+                {
                     read.request_with(TrackRouteReadRequest {
                         identity: identity.clone(),
                         tracks: update_projection.projection_request(),

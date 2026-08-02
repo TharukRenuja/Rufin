@@ -250,6 +250,16 @@ impl TrackCollectionModel {
         self.with_state(|state| state.visible.position(track_id).ok().flatten())
     }
 
+    pub(crate) fn played_at(&self, position: u32) -> Option<i64> {
+        self.with_state(|state| state.visible.played_at(position as usize))
+    }
+
+    pub(crate) fn played_at_text(&self, position: u32) -> String {
+        self.played_at(position)
+            .map(history_played_at_text)
+            .unwrap_or_default()
+    }
+
     pub(crate) fn position_for_current(
         &self,
         track_id: &TrackId,
@@ -573,6 +583,13 @@ fn visible_tracks(
     query: &str,
     settings: &LibraryListSettings,
 ) -> LoadedLibraryResult<TrackList> {
+    if source.has_played_at() {
+        let query = query.to_lowercase();
+        return source.filtered_in_source_order(
+            |track| query.is_empty() || track_matches_query(track, &query),
+            !settings.descending,
+        );
+    }
     if settings.sort_key == crate::LibraryField::RowIndex {
         let query = query.to_lowercase();
         return source.filtered_in_source_order(
@@ -591,6 +608,13 @@ fn visible_tracks(
             settings.descending,
         )
     }
+}
+
+fn history_played_at_text(played_at: i64) -> String {
+    glib::DateTime::from_unix_local(played_at)
+        .and_then(|date| date.format("%Y-%m-%d %H:%M"))
+        .map(String::from)
+        .unwrap_or_else(|_| played_at.to_string())
 }
 
 #[cfg(test)]

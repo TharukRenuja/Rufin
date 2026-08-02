@@ -50,6 +50,7 @@ pub enum TrackSort {
 pub struct TrackList {
     loaded: Arc<LoadedLibrary>,
     slots: Arc<[TrackSlot]>,
+    row_played_at: Option<Arc<[i64]>>,
     sorted_by: Option<(TrackSort, bool)>,
 }
 
@@ -235,7 +236,18 @@ impl TrackList {
         Self {
             loaded,
             slots,
+            row_played_at: None,
             sorted_by,
+        }
+    }
+
+    fn with_played_at(loaded: Arc<LoadedLibrary>, rows: Vec<(TrackSlot, i64)>) -> Self {
+        let (slots, played_at): (Vec<_>, Vec<_>) = rows.into_iter().unzip();
+        Self {
+            loaded,
+            slots: slots.into(),
+            row_played_at: Some(played_at.into()),
+            sorted_by: None,
         }
     }
 
@@ -245,6 +257,16 @@ impl TrackList {
 
     pub fn is_empty(&self) -> bool {
         self.slots.is_empty()
+    }
+
+    pub fn played_at(&self, position: usize) -> Option<i64> {
+        self.row_played_at
+            .as_ref()
+            .and_then(|played_at| played_at.get(position).copied())
+    }
+
+    pub fn has_played_at(&self) -> bool {
+        self.row_played_at.is_some()
     }
 
     pub fn shares_order(&self, other: &Self) -> bool {
@@ -372,17 +394,35 @@ impl TrackList {
         descending: bool,
     ) -> LoadedLibraryResult<Self> {
         let state = self.loaded.read_state()?;
-        let mut slots = self
+        let mut positions = self
             .slots
             .iter()
-            .copied()
-            .filter(|slot| state.tracks.get_slot(*slot).is_some_and(&mut include))
+            .enumerate()
+            .filter(|(_, slot)| state.tracks.get_slot(**slot).is_some_and(&mut include))
+            .map(|(position, _)| position)
             .collect::<Vec<_>>();
         if descending {
-            slots.reverse();
+            positions.reverse();
         }
+        let slots = positions
+            .iter()
+            .map(|position| self.slots[*position])
+            .collect::<Vec<_>>()
+            .into();
+        let row_played_at = self.row_played_at.as_ref().map(|played_at| {
+            positions
+                .iter()
+                .map(|position| played_at[*position])
+                .collect::<Vec<_>>()
+                .into()
+        });
         drop(state);
-        Ok(Self::new(Arc::clone(&self.loaded), slots.into(), None))
+        Ok(Self {
+            loaded: Arc::clone(&self.loaded),
+            slots,
+            row_played_at,
+            sorted_by: None,
+        })
     }
 
     /// Inserts, removes, or repositions one current Track without rebuilding
@@ -896,22 +936,19 @@ impl LoadedLibrary {
         music_folder_id: Option<&MusicFolderId>,
     ) -> LoadedLibraryResult<TrackList> {
         let state = self.read_state()?;
-        Ok(TrackList::new(
-            Arc::clone(self),
-            state
-                .recent_plays
-                .iter()
-                .filter_map(|play| state.tracks.slot(&play.track_id))
-                .filter(|slot| {
-                    state
-                        .tracks
-                        .get_slot(*slot)
-                        .is_some_and(|track| track_in_scope(track, music_folder_id))
-                })
-                .collect::<Vec<_>>()
-                .into(),
-            None,
-        ))
+        let rows = state
+            .recent_plays
+            .iter()
+            .filter_map(|play| {
+                let track = state.tracks.slot(&play.track_id)?;
+                state
+                    .tracks
+                    .get_slot(track)
+                    .is_some_and(|track| track_in_scope(track, music_folder_id))
+                    .then_some((track, play.played_at))
+            })
+            .collect();
+        Ok(TrackList::with_played_at(Arc::clone(self), rows))
     }
 
     pub fn track_selection(self: &Arc<Self>, track_id: &TrackId) -> LoadedLibraryResult<TrackList> {

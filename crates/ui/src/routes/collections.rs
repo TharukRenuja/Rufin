@@ -23,6 +23,7 @@ use super::album_detail::{AlbumCollectionModels, AlbumDetailVirtualList, album_d
 use super::columns::{
     TrackRowPlayingIndicator, album_column, artist_column, column_fit_width, playlist_column,
     smart_playlist_column, track_column_fit_width, track_column_for_key,
+    track_position_text_column,
 };
 use super::detail_links::track_artist_route;
 use super::grid_cells::{
@@ -822,15 +823,26 @@ pub(crate) fn track_grid(
         .grid_fields;
     let cell_shell = Rc::clone(shell);
     let cell_play_from_collection = Rc::clone(&play_from_collection);
+    let cell_model = model.clone();
     collection_grid(
         model,
         &fields,
         move |fields| {
-            TrackGridCell::new(
+            let value_model = cell_model.clone();
+            TrackGridCell::new_with_field_value(
                 Rc::clone(&cell_shell),
                 fields,
                 Rc::clone(&cell_play_from_collection),
                 COLLECTION_GRID_MAX_CARD_WIDTH,
+                Rc::new(move |position, track, field| {
+                    let value =
+                        if key == LibraryListKey::History && field == LibraryField::LastPlayed {
+                            value_model.played_at_text(position)
+                        } else {
+                            super::library_fields::track_field(track, field)
+                        };
+                    (value, track_grid_field_route(track, field))
+                }),
             )
         },
         move |position, _: Track| {
@@ -1277,13 +1289,28 @@ pub(crate) fn track_table(
     });
     let column_shell = Rc::clone(shell);
     let column_playing_indicator = playing_indicator;
+    let column_model = model.clone();
     let table = dynamic_collection_table(
         shell,
         key,
         model,
         &fields,
         Vec::new(),
-        move |field| track_column_for_key(&column_shell, key, field, &column_playing_indicator),
+        move |field| {
+            if key == LibraryListKey::History && field == LibraryField::LastPlayed {
+                let value_model = column_model.clone();
+                track_position_text_column(
+                    &column_shell,
+                    field.title(),
+                    track_column_fit_width(key, field),
+                    0.0,
+                    None,
+                    move |position, _| value_model.played_at_text(position),
+                )
+            } else {
+                track_column_for_key(&column_shell, key, field, &column_playing_indicator)
+            }
+        },
         move |field| track_column_fit_width(key, field),
         false,
         Some(activate),

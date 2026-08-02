@@ -362,6 +362,7 @@ impl Shell {
         bind_drop_down_options(&sort_dropdown, sort_messages, |labels| {
             toolbar_sort_width_for_labels(labels.iter().map(String::as_str))
         });
+        sort_dropdown.set_sensitive(available_sort_fields(key).len() > 1);
         sort_dropdown.set_hexpand(false);
         sort_dropdown.set_halign(gtk::Align::End);
         let syncing = Rc::new(Cell::new(false));

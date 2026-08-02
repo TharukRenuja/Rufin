@@ -358,6 +358,9 @@ pub(crate) fn track_column_width(key: LibraryListKey, field: LibraryField) -> i3
     if key == LibraryListKey::AlbumDetailTracks && field == LibraryField::Duration {
         return ALBUM_DETAIL_DURATION_COLUMN_WIDTH;
     }
+    if key == LibraryListKey::History && field == LibraryField::LastPlayed {
+        return 148;
+    }
 
     match key {
         LibraryListKey::ArtistTracks
@@ -1469,6 +1472,22 @@ pub(crate) fn track_text_column<F>(
 where
     F: Fn(&Track) -> String + 'static,
 {
+    track_position_text_column(shell, title, width, xalign, playing, move |_, track| {
+        value(track)
+    })
+}
+
+pub(crate) fn track_position_text_column<F>(
+    shell: &Rc<Shell>,
+    title: &'static str,
+    width: i32,
+    xalign: f32,
+    playing: Option<TrackRowPlayingIndicator>,
+    value: F,
+) -> gtk::ColumnViewColumn
+where
+    F: Fn(u32, &Track) -> String + 'static,
+{
     let factory = gtk::SignalListItemFactory::new();
     let shell = Rc::clone(shell);
     let value = Rc::new(value);
@@ -1531,7 +1550,7 @@ where
         let Some(cell) = track_text_cell(item) else {
             return;
         };
-        cell.label.set_text(&(value)(&track));
+        cell.label.set_text(&(value)(item.position(), &track));
         if let Some(downloaded) = cell.downloaded.as_ref() {
             bind_shell
                 .set_download_badge_visible(downloaded, track_is_downloaded(&bind_shell, &track));
