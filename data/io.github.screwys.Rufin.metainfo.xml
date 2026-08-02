@@ -33,43 +33,43 @@
   <screenshots>
     <screenshot type="default">
       <caption>Browse your music library</caption>
-      <image type="source" width="1000" height="700">https://raw.githubusercontent.com/screwys/Rufin/v0.11.1/data/screenshots/Rufin.png</image>
+      <image type="source" width="1000" height="700">https://raw.githubusercontent.com/screwys/Rufin/v0.12.0/data/screenshots/Rufin.png</image>
     </screenshot>
     <screenshot>
       <caption>Browse all tracks</caption>
-      <image type="source" width="1000" height="700">https://raw.githubusercontent.com/screwys/Rufin/v0.11.1/data/screenshots/tracks_page.png</image>
+      <image type="source" width="1000" height="700">https://raw.githubusercontent.com/screwys/Rufin/v0.12.0/data/screenshots/tracks_page.png</image>
     </screenshot>
     <screenshot>
       <caption>Browse all albums</caption>
-      <image type="source" width="1000" height="700">https://raw.githubusercontent.com/screwys/Rufin/v0.11.1/data/screenshots/albums_page.png</image>
+      <image type="source" width="1000" height="700">https://raw.githubusercontent.com/screwys/Rufin/v0.12.0/data/screenshots/albums_page.png</image>
     </screenshot>
     <screenshot>
       <caption>View artist details</caption>
-      <image type="source" width="1000" height="700">https://raw.githubusercontent.com/screwys/Rufin/v0.11.1/data/screenshots/artist_detail.png</image>
+      <image type="source" width="1000" height="700">https://raw.githubusercontent.com/screwys/Rufin/v0.12.0/data/screenshots/artist_detail.png</image>
     </screenshot>
     <screenshot>
       <caption>View album details</caption>
-      <image type="source" width="1000" height="700">https://raw.githubusercontent.com/screwys/Rufin/v0.11.1/data/screenshots/album_detail.png</image>
+      <image type="source" width="1000" height="700">https://raw.githubusercontent.com/screwys/Rufin/v0.12.0/data/screenshots/album_detail.png</image>
     </screenshot>
     <screenshot>
       <caption>Use the fullscreen player</caption>
-      <image type="source" width="1000" height="700">https://raw.githubusercontent.com/screwys/Rufin/v0.11.1/data/screenshots/visualizer.png</image>
+      <image type="source" width="1000" height="700">https://raw.githubusercontent.com/screwys/Rufin/v0.12.0/data/screenshots/visualizer.png</image>
     </screenshot>
     <screenshot>
       <caption>Customize the display</caption>
-      <image type="source" width="1000" height="700">https://raw.githubusercontent.com/screwys/Rufin/v0.11.1/data/screenshots/customize_display.png</image>
+      <image type="source" width="1000" height="700">https://raw.githubusercontent.com/screwys/Rufin/v0.12.0/data/screenshots/customize_display.png</image>
     </screenshot>
     <screenshot>
       <caption>Manage downloads</caption>
-      <image type="source" width="1000" height="700">https://raw.githubusercontent.com/screwys/Rufin/v0.11.1/data/screenshots/download_settings.png</image>
+      <image type="source" width="1000" height="700">https://raw.githubusercontent.com/screwys/Rufin/v0.12.0/data/screenshots/download_settings.png</image>
     </screenshot>
     <screenshot>
       <caption>Configure playback</caption>
-      <image type="source" width="1000" height="700">https://raw.githubusercontent.com/screwys/Rufin/v0.11.1/data/screenshots/playback_settings.png</image>
+      <image type="source" width="1000" height="700">https://raw.githubusercontent.com/screwys/Rufin/v0.12.0/data/screenshots/playback_settings.png</image>
     </screenshot>
     <screenshot>
       <caption>Customize the layout</caption>
-      <image type="source" width="1000" height="700">https://raw.githubusercontent.com/screwys/Rufin/v0.11.1/data/screenshots/layout_settings.png</image>
+      <image type="source" width="1000" height="700">https://raw.githubusercontent.com/screwys/Rufin/v0.12.0/data/screenshots/layout_settings.png</image>
     </screenshot>
   </screenshots>
   <launchable type="desktop-id">io.github.screwys.Rufin.desktop</launchable>
@@ -80,6 +80,35 @@
     <control>touch</control>
   </supports>
   <releases>
+    <release version="0.12.0" date="2026-08-02">
+      <description>
+        <p>We have two important changes this release: metadata editing is now here, and Rufin is available for Windows &amp; MacOS! With the number of features added recently, I want to polish these in next releases, and then hopefully we will be able to do a v1.0.0 release.</p>
+        <ul>
+          <li>Rufin now uses Navidrome API directly instead of generic OpenSubsonic API, for this you need to enter your password again in the menu and save.This is required to edit Navidrome track metadata from Rufin.</li>
+        </ul>
+        <ul>
+          <li>Metadata editing is available for all supported fields. Jellyfin lets you directly edit metadata from the server, but for Navidrome/OpenSubsonic there is no API for that yet; therefore this can only be done if your music folder is on the same device.</li>
+        </ul>
+        <ul>
+          <li>Windows and MacOS builds have opt-in automatic updates. A new update is checked on app launches and periodically within the app.</li>
+        </ul>
+        <ul>
+          <li>Made history tab more reliable with recording activity.</li>
+        </ul>
+        <ul>
+          <li>Artist/Album/Playlist and Smart Playlists pages now have hover menus as well, so you don't need to go back to perform a bulk metadata editing/download action.</li>
+        </ul>
+        <ul>
+          <li>Fixed an issue that made favoriting an item in grid view would refresh the page.</li>
+        </ul>
+        <ul>
+          <li>Fixed a bug where removing a pin crashed the GTK.</li>
+        </ul>
+        <ul>
+          <li>Fixed some resizing issues that were visually fine but were spamming warnings.</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.11.1" date="2026-07-30">
       <description>
         <p>This is a patch release that adresses a regression with local library media formats.</p>
