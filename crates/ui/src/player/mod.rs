@@ -11,7 +11,9 @@ mod random_play;
 pub(crate) mod right_panel;
 pub(crate) mod state;
 
-pub(crate) use bottom::{PlayerControls, build_bottom_player, connect_player_controls};
+pub(crate) use bottom::{
+    BOTTOM_PLAYER_HEIGHT, PlayerControls, build_bottom_player, connect_player_controls,
+};
 pub(crate) use desktop::{install_tray, present_initial_window};
 pub(crate) use desktop::{
     now_playing_notification_can_send, now_playing_notification_should_withdraw,

@@ -1,7 +1,7 @@
-use std::sync::mpsc::{Receiver, RecvTimeoutError, SyncSender, TrySendError, sync_channel};
+use std::sync::mpsc::{Receiver, RecvTimeoutError, SyncSender, sync_channel};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use library::{Library, NewScrobble, PendingScrobble, PendingScrobbleId, ScrobbleService};
 use playback::{CompletedScrobble, ListeningTrack};
@@ -11,8 +11,9 @@ use tracing::warn;
 use crate::services::{audioscrobbler, listenbrainz};
 use crate::{AudioscrobblerSettings, ListenBrainzSettings, Settings};
 
-const COMMAND_CAPACITY: usize = 32;
+const NOTIFICATION_CAPACITY: usize = 1;
 const DELIVERY_BATCH_SIZE: usize = 50;
+const NOW_PLAYING_STABLE_DELAY: Duration = Duration::from_secs(1);
 const RETRY_POLL: Duration = Duration::from_secs(30);
 const USER_AGENT: &str = concat!("Rufin/", env!("CARGO_PKG_VERSION"));
 
@@ -127,13 +128,25 @@ enum DeliveryFlow {
     StopAccount,
 }
 
-enum Command {
-    NowPlaying(SubmissionTrack),
-    Wake,
+#[derive(Default)]
+struct PendingWork {
+    now_playing: Option<(SubmissionTrack, Instant)>,
+    wake: bool,
+}
+
+fn take_stable_now_playing(
+    pending: &mut Option<(SubmissionTrack, Instant)>,
+    now: Instant,
+) -> Option<SubmissionTrack> {
+    let stable = pending
+        .as_ref()
+        .is_some_and(|(_, changed_at)| now >= *changed_at + NOW_PLAYING_STABLE_DELAY);
+    stable.then(|| pending.take().expect("stable update must be pending").0)
 }
 
 struct Worker {
-    sender: SyncSender<Command>,
+    sender: SyncSender<()>,
+    pending: Arc<Mutex<PendingWork>>,
     _thread: JoinHandle<()>,
 }
 
@@ -144,31 +157,34 @@ impl Worker {
             .user_agent(USER_AGENT)
             .build()
             .map_err(|error| error.to_string())?;
-        let (sender, receiver) = sync_channel(COMMAND_CAPACITY);
+        let (sender, receiver) = sync_channel(NOTIFICATION_CAPACITY);
+        let pending = Arc::new(Mutex::new(PendingWork::default()));
+        let worker_pending = Arc::clone(&pending);
         let thread = std::thread::Builder::new()
             .name("rufin-scrobbling".to_string())
-            .spawn(move || run_worker(client, library, state, receiver))
+            .spawn(move || run_worker(client, library, state, receiver, worker_pending))
             .map_err(|error| error.to_string())?;
         Ok(Self {
             sender,
+            pending,
             _thread: thread,
         })
     }
 
     fn now_playing(&self, track: SubmissionTrack) {
-        match self.sender.try_send(Command::NowPlaying(track)) {
-            Ok(()) => {}
-            Err(TrySendError::Full(_)) => {
-                warn!("scrobbling worker is busy; dropping transient now-playing update");
-            }
-            Err(TrySendError::Disconnected(_)) => {
-                warn!("scrobbling worker is unavailable; dropping transient now-playing update");
-            }
+        self.update(|pending| pending.now_playing = Some((track, Instant::now())));
+    }
+
+    fn update(&self, update: impl FnOnce(&mut PendingWork)) {
+        if let Ok(mut pending) = self.pending.lock() {
+            update(&mut pending);
+            drop(pending);
+            let _ = self.sender.try_send(());
         }
     }
 
     fn wake(&self) {
-        let _ = self.sender.try_send(Command::Wake);
+        self.update(|pending| pending.wake = true);
     }
 }
 
@@ -291,16 +307,38 @@ fn run_worker(
     client: Client,
     library: Library,
     state: Arc<Mutex<DeliveryState>>,
-    receiver: Receiver<Command>,
+    receiver: Receiver<()>,
+    pending: Arc<Mutex<PendingWork>>,
 ) {
+    let mut retry_at = Instant::now() + RETRY_POLL;
     loop {
-        match receiver.recv_timeout(RETRY_POLL) {
-            Ok(Command::NowPlaying(track)) => {
-                deliver_now_playing(&client, &state, track);
+        let now = Instant::now();
+        let wake = pending
+            .lock()
+            .is_ok_and(|mut pending| std::mem::take(&mut pending.wake));
+        if wake || now >= retry_at {
+            deliver_due(&client, &library, &state);
+            retry_at = Instant::now() + RETRY_POLL;
+            continue;
+        }
+        let (track, deadline) = match pending.lock() {
+            Ok(mut pending) => {
+                let track = take_stable_now_playing(&mut pending.now_playing, now);
+                let deadline = pending
+                    .now_playing
+                    .as_ref()
+                    .map(|(_, changed_at)| (*changed_at + NOW_PLAYING_STABLE_DELAY).min(retry_at))
+                    .unwrap_or(retry_at);
+                (track, deadline)
             }
-            Ok(Command::Wake) | Err(RecvTimeoutError::Timeout) => {
-                deliver_due(&client, &library, &state);
-            }
+            Err(_) => return,
+        };
+        if let Some(track) = track {
+            deliver_now_playing(&client, &state, track);
+            continue;
+        }
+        match receiver.recv_timeout(deadline.saturating_duration_since(now)) {
+            Ok(()) | Err(RecvTimeoutError::Timeout) => {}
             Err(RecvTimeoutError::Disconnected) => return,
         }
     }
@@ -575,6 +613,29 @@ mod tests {
     use super::*;
 
     #[test]
+    fn now_playing_keeps_only_the_track_stable_for_one_second() {
+        let first_change = Instant::now();
+        let last_change = first_change + Duration::from_millis(500);
+        let mut pending = Some((submission_track("First"), first_change));
+        assert!(
+            take_stable_now_playing(&mut pending, first_change + Duration::from_millis(499))
+                .is_none()
+        );
+        pending = Some((submission_track("Last"), last_change));
+
+        assert!(
+            take_stable_now_playing(&mut pending, first_change + Duration::from_millis(1499))
+                .is_none()
+        );
+        assert_eq!(
+            take_stable_now_playing(&mut pending, first_change + Duration::from_millis(1500))
+                .map(|track| track.title),
+            Some("Last".to_string())
+        );
+        assert!(pending.is_none());
+    }
+
+    #[test]
     fn account_identity_is_service_scoped_and_does_not_store_the_secret() {
         let lastfm = opaque_account_id(ScrobbleService::LastFm, "secret");
         let listenbrainz = opaque_account_id(ScrobbleService::ListenBrainz, "secret");
@@ -811,6 +872,15 @@ mod tests {
             api_secret: "api-secret".to_string(),
             session_key: session_key.to_string(),
             now_playing_enabled: true,
+        }
+    }
+
+    fn submission_track(title: &str) -> SubmissionTrack {
+        SubmissionTrack {
+            title: title.to_string(),
+            artist: "Artist".to_string(),
+            album: "Album".to_string(),
+            duration_millis: 180_000,
         }
     }
 }
