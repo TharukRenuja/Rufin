@@ -1678,7 +1678,15 @@ fn local_favorite_and_playlist_transactions_reopen_without_parallel_truth() {
         .expect("read favorite Album")
         .expect("favorite Album");
     assert!(favorite.tracks.is_empty());
-    assert_eq!(favorite.albums.as_slice(), std::slice::from_ref(&album_id));
+    assert!(favorite.albums.is_empty());
+    assert!(favorite.artists.is_empty());
+    assert_eq!(
+        favorite.favorite,
+        Some(library::FavoriteAcknowledgement {
+            item: FavoriteItemId::Album(album_id.clone()),
+            favorite: true,
+        })
+    );
     assert!(favorite_album.favorite);
     let playlist_id = created_playlist_id(
         library
@@ -3271,7 +3279,7 @@ fn sparse_local_favorites_stay_dormant_without_becoming_source_rows() {
             },
         )
         .expect("favorite sparse Album");
-    library
+    let artist_favorite = library
         .accept_favorite(
             &accepted.loaded,
             FavoriteAcceptance::RufinOwned {
@@ -3280,6 +3288,15 @@ fn sparse_local_favorites_stay_dormant_without_becoming_source_rows() {
             },
         )
         .expect("favorite sparse Artist");
+    assert!(artist_favorite.albums.is_empty());
+    assert!(artist_favorite.artists.is_empty());
+    assert_eq!(
+        artist_favorite.favorite,
+        Some(library::FavoriteAcknowledgement {
+            item: FavoriteItemId::Artist(artist_id.clone()),
+            favorite: true,
+        })
+    );
 
     drop(accepted);
     let loaded = library

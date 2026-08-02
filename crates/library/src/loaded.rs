@@ -915,7 +915,7 @@ impl LoadedLibrary {
         favorite: bool,
     ) -> LoadedLibraryResult<AcceptedLibraryChange> {
         let mut state = self.write()?;
-        let accepted = match item_id {
+        let change = match item_id {
             FavoriteItemId::Track(id) => replace_track_favorite(&mut state, id, favorite),
             FavoriteItemId::Album(id) => {
                 let current = state
@@ -926,31 +926,16 @@ impl LoadedLibrary {
                         id: id.to_string(),
                     })?
                     .clone();
-                if current.favorite == favorite {
-                    return Ok(AcceptedLibraryChange {
-                        albums: vec![id.clone()],
-                        favorite: Some(FavoriteAcknowledgement {
-                            item: item_id.clone(),
-                            favorite,
-                        }),
-                        ..AcceptedLibraryChange::default()
-                    });
+                if current.favorite != favorite {
+                    let mut replacement = current.album.as_ref().clone();
+                    replacement.favorite = favorite;
+                    state
+                        .albums
+                        .get_mut(id)
+                        .expect("favorite Album row still exists")
+                        .album = Arc::new(replacement);
                 }
-                let mut replacement = current.album.as_ref().clone();
-                replacement.favorite = favorite;
-                state
-                    .albums
-                    .get_mut(id)
-                    .expect("favorite Album row still exists")
-                    .album = Arc::new(replacement);
-                Ok(AcceptedLibraryChange {
-                    albums: vec![id.clone()],
-                    favorite: Some(FavoriteAcknowledgement {
-                        item: item_id.clone(),
-                        favorite,
-                    }),
-                    ..AcceptedLibraryChange::default()
-                })
+                Ok(AcceptedLibraryChange::default())
             }
             FavoriteItemId::Artist(id) => {
                 let current = state
@@ -961,37 +946,28 @@ impl LoadedLibrary {
                         id: id.to_string(),
                     })?
                     .clone();
-                if current.favorite == favorite {
-                    return Ok(AcceptedLibraryChange {
-                        artists: vec![id.clone()],
-                        favorite: Some(FavoriteAcknowledgement {
-                            item: item_id.clone(),
-                            favorite,
-                        }),
-                        ..AcceptedLibraryChange::default()
-                    });
+                if current.favorite != favorite {
+                    let mut replacement = current.artist.as_ref().clone();
+                    replacement.favorite = favorite;
+                    state
+                        .artists
+                        .get_mut(id)
+                        .expect("favorite Artist row still exists")
+                        .artist = Arc::new(replacement);
                 }
-                let mut replacement = current.artist.as_ref().clone();
-                replacement.favorite = favorite;
-                state
-                    .artists
-                    .get_mut(id)
-                    .expect("favorite Artist row still exists")
-                    .artist = Arc::new(replacement);
-                Ok(AcceptedLibraryChange {
-                    artists: vec![id.clone()],
-                    favorite: Some(FavoriteAcknowledgement {
-                        item: item_id.clone(),
-                        favorite,
-                    }),
-                    ..AcceptedLibraryChange::default()
-                })
+                Ok(AcceptedLibraryChange::default())
             }
         }?;
         if matches!(item_id, FavoriteItemId::Track(_)) {
             crate::download_coverage::rebuild_smart_playlist_download_coverage(&mut state);
         }
-        Ok(accepted)
+        Ok(AcceptedLibraryChange {
+            favorite: Some(FavoriteAcknowledgement {
+                item: item_id.clone(),
+                favorite,
+            }),
+            ..change
+        })
     }
 
     pub(crate) fn replace_track_activity(
@@ -1422,10 +1398,6 @@ fn replace_track_favorite(
                 id: track_id.clone(),
                 track: Some(current),
             }],
-            favorite: Some(FavoriteAcknowledgement {
-                item: FavoriteItemId::Track(track_id.clone()),
-                favorite,
-            }),
             ..AcceptedLibraryChange::default()
         });
     }
@@ -1444,10 +1416,6 @@ fn replace_track_favorite(
             track: Some(replacement),
         }],
         smart_playlists: sorted_set(affected_smart_playlists),
-        favorite: Some(FavoriteAcknowledgement {
-            item: FavoriteItemId::Track(track_id.clone()),
-            favorite,
-        }),
         ..AcceptedLibraryChange::default()
     })
 }
