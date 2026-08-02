@@ -3,8 +3,8 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use ::library::{
-    AlbumArtwork, AlbumSummary, Artist, ArtistDiscography, ArtistId, ArtistOverview, ArtistSummary,
-    ArtistTracks, FavoriteItemId, LoadedLibrary, MusicFolderId, RadioSeed,
+    AlbumSummary, Artist, ArtistDiscography, ArtistId, ArtistOverview, ArtistSummary, ArtistTracks,
+    FavoriteItemId, LoadedLibrary, MusicFolderId, RadioSeed,
 };
 use adw::prelude::*;
 use artwork::ArtworkBinding;
@@ -19,24 +19,24 @@ use crate::layout::{configure_fill_width_clip, width_allocation_owner};
 use crate::localization::{bind_label_text_with, localized_label};
 use crate::shell::Shell;
 use crate::shell::actions::{ActionButtonVariant, configure_action_button};
-use crate::shell::actions::{PLAY_ICON, PLAY_LATER_ICON, PLAY_NEXT_ICON};
 use crate::shell::cover::presentation::{add_album_seed_gradient_class, stable_seed};
 use crate::shell::route::{LatestMountedRouteRead, MountedRoute, SelectedRouteIdentity};
 use localization::{album_count_text, msgid, track_count_text};
-use playback::{QueuePlacement, RadioPlayRequest};
+use playback::RadioPlayRequest;
 
 use super::artist_releases::{
     ArtistReleaseProjections, ArtistReleaseRoutePreamble, ArtistRouteSearchTarget,
 };
+use super::collection_context::present_artist_context_menu;
 use super::collections::{
-    COMPACT_TRACK_TABLE_HEADER_HEIGHT, PlaybackTarget, configure_compact_track_table_scroller,
-    library_route_inset,
+    COMPACT_TRACK_TABLE_HEADER_HEIGHT, CollectionPlay, PlaybackTarget,
+    configure_compact_track_table_scroller, library_route_inset,
 };
 use super::detail_showcase::{
     DetailCoverProjection, DetailExternalLinksProjection, MediaDetailShowcase,
-    artist_external_links, detail_action_button, detail_action_row, detail_cover_projection,
-    detail_primary_action_button, detail_radio_button, detail_showcase_frame_with_back,
-    fit_detail_text, fitted_detail_title_label, mark_tiny_detail_showcase, media_detail_showcase,
+    artist_external_links, detail_action_row, detail_cover_projection, detail_playback_controls,
+    detail_radio_button, detail_showcase_frame_with_back, fit_detail_text,
+    fitted_detail_title_label, mark_tiny_detail_showcase, media_detail_showcase,
 };
 use super::models::sort_albums;
 use super::route::Route;
@@ -124,12 +124,11 @@ impl ArtistSummaryFacts {
 struct ArtistDetailHeaderProjection {
     root: gtk::Widget,
     external_links: DetailExternalLinksProjection,
-    artist: Rc<RefCell<Arc<Artist>>>,
+    summary: Rc<RefCell<ArtistSummary>>,
     title: gtk::Label,
     album_count: gtk::Label,
     track_count: gtk::Label,
     cover: DetailCoverProjection,
-    favorite: gtk::Button,
     facts: ArtistSummaryFacts,
 }
 
@@ -140,29 +139,26 @@ impl ArtistDetailHeaderProjection {
 
     fn apply_external_link_settings(&self, shell: &Rc<Shell>) {
         self.external_links
-            .replace(artist_external_links(shell, &self.artist.borrow()));
+            .replace(artist_external_links(shell, &self.summary.borrow().artist));
     }
 
-    fn replace(
-        &self,
-        shell: &Rc<Shell>,
-        artist: Arc<Artist>,
-        representative_albums: &[AlbumArtwork],
-        album_count: u32,
-        track_count: u32,
-    ) {
-        self.facts.replace(album_count, track_count);
+    fn replace(&self, shell: &Rc<Shell>, summary: ArtistSummary) {
+        let artist = Arc::clone(&summary.artist);
+        self.facts.replace(summary.album_count, summary.track_count);
         self.title.set_text(&artist.name);
         fit_detail_text(&self.title, &artist.name);
         self.album_count.set_text(&self.facts.album_text());
         self.track_count.set_text(&self.facts.track_text());
         self.cover.replace(
             shell,
-            ArtworkBinding::artist(&artist, representative_albums),
+            ArtworkBinding::artist(&artist, &summary.representative_albums),
             stable_seed(artist.id.as_str()),
         );
-        set_favorite_button_active(&self.favorite, artist.favorite);
-        self.artist.replace(artist);
+        shell.update_visible_favorite_buttons(
+            &FavoriteItemId::Artist(artist.id.clone()),
+            artist.favorite,
+        );
+        self.summary.replace(summary);
         self.apply_external_link_settings(shell);
     }
 }
@@ -205,16 +201,11 @@ impl Shell {
             albums,
             appears_on,
         } = detail;
-        let facts = ArtistSummaryFacts::new(summary.album_count, summary.track_count);
         let applied_external_link_settings = Rc::new(RefCell::new(
             self.settings.current.borrow().external_site_links.clone(),
         ));
         let wrapper = super::route_layout::detail_route_wrapper(0);
-        let header = self.artist_detail_header(
-            Arc::clone(&summary.artist),
-            Arc::clone(&summary.representative_albums),
-            facts,
-        );
+        let header = self.artist_detail_header(summary);
 
         let favorite_section = gtk::Box::new(gtk::Orientation::Vertical, 10);
         favorite_section.append(&section_heading(msgid("Favorite tracks")));
@@ -309,13 +300,7 @@ impl Shell {
                     if !favorite_projection.replace_prepared(next.favorite_tracks) {
                         return;
                     }
-                    header.replace(
-                        &shell,
-                        Arc::clone(&next.summary.artist),
-                        &next.summary.representative_albums,
-                        next.summary.album_count,
-                        next.summary.track_count,
-                    );
+                    header.replace(&shell, next.summary);
                     releases.replace_prepared(
                         next.albums,
                         next.appears_on,
@@ -826,16 +811,17 @@ impl Shell {
 
     fn artist_detail_header(
         self: &Rc<Self>,
-        artist: Arc<Artist>,
-        representative_albums: Arc<[AlbumArtwork]>,
-        facts: ArtistSummaryFacts,
+        summary: ArtistSummary,
     ) -> ArtistDetailHeaderProjection {
+        let artist = Arc::clone(&summary.artist);
+        let facts = ArtistSummaryFacts::new(summary.album_count, summary.track_count);
+        let current_summary = Rc::new(RefCell::new(summary));
         let content_width = detail_route_inner_width(self, PRIMARY_ROUTE_MARGIN_START);
         let cover_size = detail_showcase_cover_size(content_width);
         let seed = stable_seed(artist.id.as_str());
         let cover = detail_cover_projection(
             self,
-            ArtworkBinding::artist(&artist, &representative_albums),
+            ArtworkBinding::artist(&artist, &current_summary.borrow().representative_albums),
             seed,
             cover_size,
             "artist-detail-cover",
@@ -878,34 +864,60 @@ impl Shell {
         actions.add_css_class("artist-detail-actions");
         actions.set_halign(gtk::Align::Start);
         let playback_target = PlaybackTarget::Artist(artist.id.clone());
-        let play = detail_primary_action_button(PLAY_ICON, "Play");
         let controller = self.products.playback.queue.clone();
         let play_shell = Rc::clone(self);
-        let play_target = playback_target.clone();
-        play.connect_clicked(move |_| {
-            if let Some(request) = play_target.play_request(&play_shell, QueuePlacement::Now, true)
+        let play: CollectionPlay = Rc::new(move |placement, shuffled_start| {
+            if let Some(request) =
+                playback_target.play_request(&play_shell, placement, shuffled_start)
             {
                 controller.play_loaded(request);
             }
         });
-        actions.append(&play);
-        append_artist_queue_actions(&actions, self, playback_target);
+        let cover_controls = detail_playback_controls(
+            &actions,
+            msgid("Play artist"),
+            Some(artist.favorite),
+            true,
+            Rc::clone(&play),
+        );
 
         let favorite = favorite_icon_button("Favorite");
         configure_action_button(&favorite, ActionButtonVariant::DetailFavorite, None);
         set_favorite_button_active(&favorite, artist.favorite);
-        self.favorites
-            .register_button(artist_favorite_key(&artist.id), &favorite);
-        let shell = Rc::clone(self);
-        let artist_id = artist.id.clone();
-        favorite.connect_clicked(move |button| {
-            shell.set_favorite_with_feedback(
-                FavoriteItemId::Artist(artist_id.clone()),
-                !favorite_button_is_active(button),
-                Some(button),
-            );
-        });
         actions.append(&favorite);
+        let hover_favorite = cover_controls
+            .favorite
+            .as_ref()
+            .expect("artist detail has a Favorite cover control")
+            .clone();
+        for button in [favorite, hover_favorite] {
+            self.favorites
+                .register_button(artist_favorite_key(&artist.id), &button);
+            let shell = Rc::clone(self);
+            let artist_id = artist.id.clone();
+            button.connect_clicked(move |button| {
+                shell.set_favorite_with_feedback(
+                    FavoriteItemId::Artist(artist_id.clone()),
+                    !favorite_button_is_active(button),
+                    Some(button),
+                );
+            });
+        }
+
+        let menu_shell = Rc::clone(self);
+        let menu_summary = Rc::clone(&current_summary);
+        let menu_play = Rc::clone(&play);
+        let context_menu: crate::interactions::ContextMenuOpen =
+            Rc::new(move |target, position| {
+                let summary = menu_summary.borrow().clone();
+                present_artist_context_menu(
+                    target,
+                    &menu_shell,
+                    summary,
+                    Some(Rc::clone(&menu_play)),
+                    position,
+                );
+            });
 
         let external_links =
             DetailExternalLinksProjection::new(None, artist_external_links(self, &artist));
@@ -916,6 +928,8 @@ impl Shell {
                 seed,
                 initial_width: content_width,
                 cover: cover.clone(),
+                cover_controls,
+                context_menu: Some(context_menu),
                 external_links: external_links.clone(),
                 text_stack: text_stack.upcast(),
                 actions: actions.upcast(),
@@ -924,12 +938,11 @@ impl Shell {
         ArtistDetailHeaderProjection {
             root,
             external_links,
-            artist: Rc::new(RefCell::new(artist)),
+            summary: current_summary,
             title,
             album_count,
             track_count,
             cover,
-            favorite,
             facts,
         }
     }
@@ -1065,24 +1078,6 @@ pub(crate) fn load_artist_tracks(
             .map_err(|error| error.to_string())?;
     }
     Ok(detail)
-}
-
-fn append_artist_queue_actions(actions: &gtk::Box, shell: &Rc<Shell>, target: PlaybackTarget) {
-    for (icon, label, placement) in [
-        (PLAY_NEXT_ICON, "Next", QueuePlacement::Next),
-        (PLAY_LATER_ICON, "Play Later", QueuePlacement::Last),
-    ] {
-        let button = detail_action_button(icon, label);
-        let shell = Rc::clone(shell);
-        let controller = shell.products.playback.queue.clone();
-        let target = target.clone();
-        button.connect_clicked(move |_| {
-            if let Some(request) = target.play_request(&shell, placement, false) {
-                controller.play_loaded(request);
-            }
-        });
-        actions.append(&button);
-    }
 }
 
 fn section_heading(title: &str) -> gtk::Widget {

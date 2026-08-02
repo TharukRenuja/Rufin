@@ -15,21 +15,22 @@ use crate::format_duration_units;
 use crate::interactions::{add_dynamic_link_hover, add_label_click};
 use crate::localization::bind_label_text_with;
 use crate::shell::Shell;
-use crate::shell::actions::PLAY_ICON;
 use crate::shell::actions::{ActionButtonVariant, configure_action_button};
 use crate::shell::route::{LatestMountedRouteRead, MountedRoute, SelectedRouteIdentity};
 use crate::{LibraryListKey, LibraryListSettings};
 use ::library::RadioSeed;
-use localization::{tr, track_count_text};
-use playback::{QueuePlacement, RadioPlayRequest};
+use localization::{msgid, tr, track_count_text};
+use playback::RadioPlayRequest;
 
+use super::collection_context::present_album_context_menu;
+use super::collections::CollectionPlay;
 use super::collections::{library_route_inset, set_library_table_content_height};
 use super::detail_links::album_artist_route;
 use super::detail_showcase::{
     DetailExternalLinksProjection, DetailSummaryProjection, MediaDetailShowcase,
-    album_external_links, append_loaded_batch_queue_actions, detail_action_row,
-    detail_cover_projection, detail_genre_pill_button, detail_primary_action_button,
-    detail_radio_button, fit_detail_text, fitted_detail_title_label, media_detail_showcase,
+    album_external_links, detail_action_row, detail_cover_projection, detail_genre_pill_button,
+    detail_playback_controls, detail_radio_button, fit_detail_text, fitted_detail_title_label,
+    media_detail_showcase,
 };
 use super::release_kind::album_release_kind_label;
 use super::route::Route;
@@ -71,7 +72,7 @@ impl Shell {
         };
         let album = Arc::clone(&detail.summary.album);
         let tracks = detail.tracks.clone();
-        let current_album = Rc::new(RefCell::new(Arc::clone(&album)));
+        let current_album = Rc::new(RefCell::new(detail.summary.clone()));
         let context_id = format!("album:{}", album_id.as_str());
         let applied_external_link_settings = Rc::new(RefCell::new(
             self.settings.current.borrow().external_site_links.clone(),
@@ -149,7 +150,7 @@ impl Shell {
         let radio_album = Rc::clone(&current_album);
         radio.connect_clicked(move |_| {
             radio_controller.play_radio(RadioPlayRequest::now(RadioSeed::Album(
-                radio_album.borrow().id.clone(),
+                radio_album.borrow().album.id.clone(),
             )));
         });
         kind_row.append(&radio);
@@ -175,7 +176,7 @@ impl Shell {
         let shell = Rc::clone(self);
         let linked_album = Rc::clone(&current_album);
         add_label_click(&artist, move || {
-            if let Some(route) = album_artist_route(&linked_album.borrow()) {
+            if let Some(route) = album_artist_route(&linked_album.borrow().album) {
                 shell.navigate(route);
             }
         });
@@ -187,40 +188,62 @@ impl Shell {
         let actions = detail_action_row();
         actions.add_css_class("album-detail-actions");
         actions.set_halign(gtk::Align::Start);
-        let play_album = detail_primary_action_button(PLAY_ICON, "Play");
         let play_controller = self.products.playback.queue.clone();
         let play_tracks = track_projection.clone();
         let play_context_id = context_id.clone();
-        play_album.connect_clicked(move |_| {
+        let play: CollectionPlay = Rc::new(move |placement, shuffled_start| {
             if let Some(request) =
-                play_tracks.source_play_request(QueuePlacement::Now, &play_context_id, true)
+                play_tracks.source_play_request(placement, &play_context_id, shuffled_start)
             {
                 play_controller.play_loaded(request);
             }
         });
-        actions.append(&play_album);
-        append_loaded_batch_queue_actions(
+        let cover_controls = detail_playback_controls(
             &actions,
-            &self.products.playback.queue,
-            &track_projection,
-            context_id.clone(),
+            msgid("Play album"),
+            Some(album.favorite),
+            true,
+            Rc::clone(&play),
         );
 
         let favorite = favorite_icon_button("Favorite");
         configure_action_button(&favorite, ActionButtonVariant::DetailFavorite, None);
         set_favorite_button_active(&favorite, album.favorite);
-        self.favorites
-            .register_button(album_favorite_key(&album.id), &favorite);
-        let shell = Rc::clone(self);
-        let favorite_album_id = album.id.clone();
-        favorite.connect_clicked(move |button| {
-            shell.set_favorite_with_feedback(
-                FavoriteItemId::Album(favorite_album_id.clone()),
-                !favorite_button_is_active(button),
-                Some(button),
-            );
-        });
         actions.append(&favorite);
+        let hover_favorite = cover_controls
+            .favorite
+            .as_ref()
+            .expect("album detail has a Favorite cover control")
+            .clone();
+        for button in [favorite, hover_favorite] {
+            self.favorites
+                .register_button(album_favorite_key(&album.id), &button);
+            let shell = Rc::clone(self);
+            let favorite_album_id = album.id.clone();
+            button.connect_clicked(move |button| {
+                shell.set_favorite_with_feedback(
+                    FavoriteItemId::Album(favorite_album_id.clone()),
+                    !favorite_button_is_active(button),
+                    Some(button),
+                );
+            });
+        }
+
+        let menu_shell = Rc::clone(self);
+        let menu_album = Rc::clone(&current_album);
+        let menu_play = Rc::clone(&play);
+        let context_menu: crate::interactions::ContextMenuOpen =
+            Rc::new(move |target, position| {
+                let album = menu_album.borrow().clone();
+                present_album_context_menu(
+                    target,
+                    &menu_shell,
+                    album,
+                    None,
+                    Some(Rc::clone(&menu_play)),
+                    position,
+                );
+            });
 
         let external_links = DetailExternalLinksProjection::new(
             Some("album-detail-link-stack"),
@@ -233,6 +256,8 @@ impl Shell {
                 seed: album.color_seed,
                 initial_width: inner_content_width,
                 cover: cover.clone(),
+                cover_controls,
+                context_menu: Some(context_menu),
                 external_links: external_links.clone(),
                 text_stack: text_stack.upcast(),
                 actions: actions.upcast(),
@@ -286,7 +311,6 @@ impl Shell {
             let genres = genres.clone();
             let title = title.clone();
             let artist = artist.clone();
-            let favorite = favorite.clone();
             let external_links = external_links.clone();
             let track_projection = track_projection.clone();
             Rc::new(
@@ -332,9 +356,12 @@ impl Shell {
                         genres.remove(&child);
                     }
                     shell.append_album_genre_buttons(&genres, &album.relations.genres);
-                    set_favorite_button_active(&favorite, album.favorite);
+                    shell.update_visible_favorite_buttons(
+                        &FavoriteItemId::Album(album.id.clone()),
+                        album.favorite,
+                    );
                     external_links.replace(album_external_links(&shell, &album));
-                    current_album.replace(album);
+                    current_album.replace(next.summary);
                     route_stack.set_visible_child_name("content");
                 },
             )
@@ -390,7 +417,7 @@ impl Shell {
                 let external_link_settings =
                     shell.settings.current.borrow().external_site_links.clone();
                 if *applied_external_link_settings.borrow() != external_link_settings {
-                    external_links.replace(album_external_links(&shell, &album.borrow()));
+                    external_links.replace(album_external_links(&shell, &album.borrow().album));
                     applied_external_link_settings.replace(external_link_settings);
                 }
                 let settings = shell

@@ -62,6 +62,8 @@ const HOME_ALBUM_GRID_FIELDS: [LibraryField; HOME_GRID_FIELD_COUNT] =
 const HOME_TRACK_GRID_FIELDS: [LibraryField; HOME_GRID_FIELD_COUNT] =
     [LibraryField::Artist, LibraryField::Album];
 
+pub(crate) type CollectionPlay = Rc<dyn Fn(QueuePlacement, bool)>;
+
 #[derive(Clone, Debug)]
 pub(crate) enum PlaybackTarget {
     Track(TrackId),

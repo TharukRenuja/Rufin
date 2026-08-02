@@ -6,13 +6,13 @@ use artwork::ArtworkBinding;
 
 use crate::LibraryListKey;
 use crate::shell::Shell;
-use crate::shell::actions::PLAY_ICON;
 use crate::shell::cover::CoverGroupProjection;
 
+use super::collections::CollectionPlay;
 use super::collections::library_route_inset;
 use super::detail_showcase::{
-    CollectionDetailShowcase, DetailSummaryProjection, append_loaded_batch_queue_actions,
-    collection_detail_showcase, detail_primary_action_button,
+    CollectionDetailShowcase, DetailSummaryProjection, collection_detail_showcase,
+    detail_action_row, detail_playback_controls,
 };
 use super::playlist_detail::playlist_cover_size;
 use super::route_layout::{
@@ -30,10 +30,11 @@ pub(crate) struct GroupedDetailData {
     pub(super) artwork: Vec<ArtworkBinding>,
     pub(super) seed: u32,
     pub(super) summary_items: Vec<(&'static str, String)>,
-    pub(super) actions: Option<gtk::Widget>,
+    pub(super) context_menu: Option<Rc<dyn Fn(&gtk::Widget, Option<(f64, f64)>, CollectionPlay)>>,
     pub(super) tracks: TrackList,
     pub(super) table_context: &'static str,
     pub(super) playback_context: String,
+    pub(super) play_label: &'static str,
 }
 
 #[derive(Clone)]
@@ -125,10 +126,11 @@ impl Shell {
             artwork,
             seed,
             summary_items,
-            actions,
+            context_menu,
             tracks,
             table_context,
             playback_context,
+            play_label,
         } = data;
         let content_width = detail_route_inner_width(self, PRIMARY_ROUTE_MARGIN_START);
         let cover_size = playlist_cover_size(content_width);
@@ -146,6 +148,36 @@ impl Shell {
             cover_size,
             playlist_cover_size(i32::MAX),
         );
+        let track_projection = self.searchable_track_collection(
+            tracks,
+            key,
+            SearchableTrackOptions {
+                on_visible_count_changed: None,
+                context_id: playback_context.clone(),
+                content_inset: PRIMARY_ROUTE_HORIZONTAL_INSET,
+                fixed_layout: None,
+            },
+        );
+        let controller = self.products.playback.queue.clone();
+        let play_tracks = track_projection.clone();
+        let play_context = playback_context;
+        let play: CollectionPlay = Rc::new(move |placement, shuffled_start| {
+            if let Some(request) =
+                play_tracks.source_play_request(placement, &play_context, shuffled_start)
+            {
+                controller.play_loaded(request);
+            }
+        });
+        let actions = detail_action_row();
+        actions.set_halign(gtk::Align::Start);
+        let cover_controls =
+            detail_playback_controls(&actions, play_label, None, true, Rc::clone(&play));
+        let context_menu = context_menu.map(|present| {
+            let play = Rc::clone(&play);
+            Rc::new(move |target: &gtk::Widget, position| {
+                present(target, position, Rc::clone(&play));
+            }) as crate::interactions::ContextMenuOpen
+        });
         let title_label = gtk::Label::new(Some(&title));
         title_label.add_css_class("detail-title");
         title_label.set_xalign(0.0);
@@ -158,9 +190,7 @@ impl Shell {
         metadata.push(title_label.clone().upcast());
         let summary = DetailSummaryProjection::new(&summary_items);
         metadata.push(summary.widget());
-        if let Some(actions) = actions {
-            metadata.push(actions);
-        }
+        metadata.push(actions.upcast());
         let showcase = collection_detail_showcase(
             self,
             CollectionDetailShowcase {
@@ -169,21 +199,13 @@ impl Shell {
                 compact_spacing: 22,
                 wide_spacing: 22,
                 cover: cover.clone(),
+                cover_controls,
+                context_menu,
                 metadata,
             },
         );
         wrapper.append(&library_route_inset(showcase));
 
-        let track_projection = self.searchable_track_collection(
-            tracks,
-            key,
-            SearchableTrackOptions {
-                on_visible_count_changed: None,
-                context_id: playback_context,
-                content_inset: PRIMARY_ROUTE_HORIZONTAL_INSET,
-                fixed_layout: None,
-            },
-        );
         let track_section = gtk::Box::new(gtk::Orientation::Vertical, 10);
         track_section.set_widget_name(table_context);
         track_section.set_hexpand(true);
@@ -220,31 +242,5 @@ impl Shell {
             cover,
             summary,
         }
-    }
-
-    pub(crate) fn install_grouped_detail_actions(
-        self: &Rc<Self>,
-        actions: &gtk::Box,
-        tracks: &TrackListProjection,
-        context_id: String,
-    ) {
-        let play = detail_primary_action_button(PLAY_ICON, "Play");
-        let controller = self.products.playback.queue.clone();
-        let play_tracks = tracks.clone();
-        let play_context = context_id.clone();
-        play.connect_clicked(move |_| {
-            if let Some(request) =
-                play_tracks.source_play_request(playback::QueuePlacement::Now, &play_context, true)
-            {
-                controller.play_loaded(request);
-            }
-        });
-        actions.append(&play);
-        append_loaded_batch_queue_actions(
-            actions,
-            &self.products.playback.queue,
-            tracks,
-            context_id,
-        );
     }
 }

@@ -1688,23 +1688,40 @@ mod tests {
     }
 
     fn drive_current_to_completion(fixture: &Fixture) {
-        fixture.runtime.block_on(async {
-            for _ in 0..10_000 {
-                let loading = fixture
-                    .service
-                    .state
-                    .lock()
-                    .unwrap_or_else(|poisoned| poisoned.into_inner())
-                    .current
-                    .as_ref()
-                    .is_some_and(|current| current.loading);
-                if !loading {
-                    return;
-                }
-                tokio::task::yield_now().await;
+        let task = {
+            let mut state = fixture
+                .service
+                .state
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            if !state
+                .current
+                .as_ref()
+                .is_some_and(|current| current.loading)
+            {
+                return;
             }
-            panic!("lyrics resolution did not complete");
-        });
+            state
+                .current_task
+                .take()
+                .expect("loading lyrics must retain their resolution task")
+        };
+        fixture
+            .runtime
+            .block_on(task)
+            .expect("lyrics resolution task must complete");
+
+        let state = fixture
+            .service
+            .state
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let current = state.current.as_ref().expect("current lyrics document");
+        assert!(
+            !current.loading,
+            "lyrics resolution task completed without finishing request {}",
+            current.request
+        );
     }
 
     fn drain_events(events: &Receiver<LyricsEvent>) -> Vec<&'static str> {

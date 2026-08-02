@@ -4,7 +4,7 @@ use std::{
     sync::Arc,
 };
 
-use ::library::{Genre, GenreDetail, GenreSummary, LoadedLibrary, MusicFolderId, RadioSeed};
+use ::library::{GenreDetail, GenreSummary, LoadedLibrary, MusicFolderId, RadioSeed};
 use adw::prelude::*;
 use artwork::ArtworkBinding;
 
@@ -14,10 +14,12 @@ use crate::shell::Shell;
 use crate::shell::cover::presentation::stable_seed;
 use crate::shell::route::{LatestMountedRouteRead, MountedRoute, SelectedRouteIdentity};
 use crate::{LibraryListKey, LibraryListSettings};
-use localization::track_count_text;
+use localization::{msgid, track_count_text};
 use playback::RadioPlayRequest;
 
-use super::detail_showcase::{detail_action_row, detail_radio_button};
+use super::collection_context::present_genre_context_menu;
+use super::collections::CollectionPlay;
+use super::detail_showcase::detail_radio_button;
 use super::grouped_detail::GroupedDetailData;
 use super::route::Route;
 use super::track_model::{
@@ -53,11 +55,17 @@ impl Shell {
         let seed = stable_seed(genre.genre.id.as_str());
         let summary_items = genre_summary_items(&genre);
         let artwork = ArtworkBinding::genre_slots(&genre.genre, &genre.representative_albums);
-        let current_genre = Rc::new(RefCell::new(Arc::clone(&genre.genre)));
+        let current_genre = Rc::new(RefCell::new(genre.clone()));
         let kind_row = self.genre_detail_kind_row(Rc::clone(&current_genre));
-        let actions = detail_action_row();
-        actions.set_halign(gtk::Align::Start);
         let context_id = format!("genre:{}", genre_id.as_str());
+        let menu_shell = Rc::clone(self);
+        let menu_genre = Rc::clone(&current_genre);
+        let context_menu = Rc::new(
+            move |target: &gtk::Widget, position: Option<(f64, f64)>, play: CollectionPlay| {
+                let genre = menu_genre.borrow().clone();
+                present_genre_context_menu(target, &menu_shell, genre, Some(play), position);
+            },
+        );
         let grouped = self.grouped_detail_view(GroupedDetailData {
             key: LibraryListKey::GenreTracks,
             kind_row: Some(kind_row.upcast()),
@@ -65,12 +73,12 @@ impl Shell {
             artwork,
             seed,
             summary_items,
-            actions: Some(actions.clone().upcast()),
+            context_menu: Some(context_menu),
             tracks,
             table_context: "genre-detail",
             playback_context: context_id.clone(),
+            play_label: msgid("Play genre"),
         });
-        self.install_grouped_detail_actions(&actions, grouped.tracks(), context_id);
         let track_count = Rc::new(Cell::new(genre.track_count));
         let localized_track_count = Rc::clone(&track_count);
         grouped.bind_summary_text_with(0, move || {
@@ -128,7 +136,7 @@ impl Shell {
                         return;
                     }
                     track_count.set(next.summary.track_count);
-                    current_genre.replace(Arc::clone(&next.summary.genre));
+                    current_genre.replace(next.summary);
                     stack.set_visible_child_name("content");
                 },
             )
@@ -226,7 +234,7 @@ impl Shell {
             .with_library_update(update)
     }
 
-    fn genre_detail_kind_row(self: &Rc<Self>, genre: Rc<RefCell<Arc<Genre>>>) -> gtk::Box {
+    fn genre_detail_kind_row(self: &Rc<Self>, genre: Rc<RefCell<GenreSummary>>) -> gtk::Box {
         let kind = localized_label("Genre");
         kind.add_css_class("eyebrow");
         kind.set_xalign(0.0);
@@ -246,8 +254,8 @@ impl Shell {
         radio.connect_clicked(move |_| {
             let genre = genre.borrow();
             controller.play_radio(RadioPlayRequest::now(RadioSeed::Genre {
-                id: genre.id.clone(),
-                name: genre.name.clone(),
+                id: genre.genre.id.clone(),
+                name: genre.genre.name.clone(),
             }));
         });
         row.append(&radio);
