@@ -230,6 +230,8 @@ fn present_resolved_track_context_menu(
     popover_position: Option<gtk::PositionType>,
     metadata_editable: bool,
 ) {
+    let favorite =
+        shell.projected_item_favorite(&FavoriteItemId::Track(track.id.clone()), track.favorite);
     let playback_target = PlaybackTarget::Track(track.id.clone());
     let surface = ContextMenuSurface::new(target, "track", position);
     surface.append_configurable_action(ContextMenuItem::Play, msgid("Play"), "play", PLAY_ICON);
@@ -268,13 +270,13 @@ fn present_resolved_track_context_menu(
     }
     surface.append_configurable_action(
         ContextMenuItem::Favorites,
-        if track.favorite {
+        if favorite {
             msgid("Remove from Favorites")
         } else {
             msgid("Add to Favorites")
         },
         "favorite",
-        if track.favorite {
+        if favorite {
             FAVORITE_REMOVE_ICON
         } else {
             FAVORITE_ADD_ICON
@@ -325,7 +327,7 @@ fn present_resolved_track_context_menu(
     surface.add_action("favorite", {
         let shell = Rc::clone(shell);
         let track_id = track.id.clone();
-        let favorite = !track.favorite;
+        let favorite = !favorite;
         move || {
             shell.set_favorite_with_feedback(
                 FavoriteItemId::Track(track_id.clone()),
@@ -422,6 +424,10 @@ fn present_resolved_album_context_menu_inner(
     position: Option<(f64, f64)>,
     metadata_editable: bool,
 ) {
+    let favorite = shell.projected_item_favorite(
+        &FavoriteItemId::Album(album.album.id.clone()),
+        album.album.favorite,
+    );
     let surface = ContextMenuSurface::new(target, "album", position);
     surface.append_configurable_action(ContextMenuItem::Play, msgid("Play"), "play", PLAY_ICON);
     surface.append_configurable_action(
@@ -455,13 +461,13 @@ fn present_resolved_album_context_menu_inner(
     }
     surface.append_configurable_action(
         ContextMenuItem::Favorites,
-        if album.album.favorite {
+        if favorite {
             msgid("Remove from Favorites")
         } else {
             msgid("Add to Favorites")
         },
         "favorite",
-        if album.album.favorite {
+        if favorite {
             FAVORITE_REMOVE_ICON
         } else {
             FAVORITE_ADD_ICON
@@ -512,7 +518,7 @@ fn present_resolved_album_context_menu_inner(
     surface.add_action("favorite", {
         let shell = Rc::clone(shell);
         let album_id = album.album.id.clone();
-        let favorite = !album.album.favorite;
+        let favorite = !favorite;
         move || {
             shell.set_favorite_with_feedback(
                 FavoriteItemId::Album(album_id.clone()),
@@ -582,6 +588,10 @@ fn present_resolved_artist_context_menu(
     position: Option<(f64, f64)>,
     metadata_editable: bool,
 ) {
+    let favorite = shell.projected_item_favorite(
+        &FavoriteItemId::Artist(artist.artist.id.clone()),
+        artist.artist.favorite,
+    );
     let surface = ContextMenuSurface::new(target, "artist", position);
     surface.append_configurable_action(ContextMenuItem::Play, msgid("Play"), "play", PLAY_ICON);
     surface.append_configurable_action(
@@ -615,13 +625,13 @@ fn present_resolved_artist_context_menu(
     }
     surface.append_configurable_action(
         ContextMenuItem::Favorites,
-        if artist.artist.favorite {
+        if favorite {
             msgid("Remove from Favorites")
         } else {
             msgid("Add to Favorites")
         },
         "favorite",
-        if artist.artist.favorite {
+        if favorite {
             FAVORITE_REMOVE_ICON
         } else {
             FAVORITE_ADD_ICON
@@ -663,7 +673,7 @@ fn present_resolved_artist_context_menu(
     surface.add_action("favorite", {
         let shell = Rc::clone(shell);
         let artist_id = artist.artist.id.clone();
-        let favorite = !artist.artist.favorite;
+        let favorite = !favorite;
         move || {
             shell.set_favorite_with_feedback(
                 FavoriteItemId::Artist(artist_id.clone()),

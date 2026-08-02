@@ -197,11 +197,15 @@ impl Shell {
         track_id: &TrackId,
         playback_fallback: bool,
     ) -> bool {
+        self.projected_item_favorite(&FavoriteItemId::Track(track_id.clone()), playback_fallback)
+    }
+
+    pub(crate) fn projected_item_favorite(&self, item_id: &FavoriteItemId, fallback: bool) -> bool {
         if let Some(pending) = self
             .favorites
             .pending_intents
             .borrow()
-            .get(&FavoriteItemId::Track(track_id.clone()))
+            .get(item_id)
             .copied()
         {
             return pending;
@@ -210,8 +214,27 @@ impl Shell {
             .selected
             .borrow()
             .as_ref()
-            .and_then(|selected| selected.loaded.track(track_id).ok().flatten())
-            .map_or(playback_fallback, |track| track.favorite)
+            .and_then(|selected| match item_id {
+                FavoriteItemId::Track(id) => selected
+                    .loaded
+                    .track(id)
+                    .ok()
+                    .flatten()
+                    .map(|track| track.favorite),
+                FavoriteItemId::Album(id) => selected
+                    .loaded
+                    .album(id)
+                    .ok()
+                    .flatten()
+                    .map(|album| album.favorite),
+                FavoriteItemId::Artist(id) => selected
+                    .loaded
+                    .artist(id)
+                    .ok()
+                    .flatten()
+                    .map(|artist| artist.favorite),
+            })
+            .unwrap_or(fallback)
     }
 
     pub(crate) fn update_visible_favorite_buttons(&self, item_id: &FavoriteItemId, favorite: bool) {

@@ -56,7 +56,7 @@ struct RootTrackRouteOptions {
     route: Route,
     context: &'static str,
     empty_body: &'static str,
-    reload_on_activity: bool,
+    reload_on_history_change: bool,
 }
 
 #[derive(Clone)]
@@ -433,7 +433,7 @@ impl Shell {
                 route: Route::Tracks,
                 context: "tracks",
                 empty_body: msgid("Cached entries will appear here after sync finishes"),
-                reload_on_activity: false,
+                reload_on_history_change: false,
             },
             tracks,
             loaded,
@@ -470,7 +470,7 @@ impl Shell {
                 route: Route::Favorites,
                 context: "favorite-tracks",
                 empty_body: "Favorite tracks will appear here after you add them.",
-                reload_on_activity: false,
+                reload_on_history_change: false,
             },
             favorites,
             loaded,
@@ -505,7 +505,7 @@ impl Shell {
                 route: Route::History,
                 context: "history",
                 empty_body: msgid("Accepted plays will appear here."),
-                reload_on_activity: true,
+                reload_on_history_change: true,
             },
             history,
             loaded,
@@ -546,7 +546,7 @@ impl Shell {
             identity,
             source,
             membership,
-            options.reload_on_activity,
+            options.reload_on_history_change,
         )
     }
 
@@ -1080,7 +1080,7 @@ impl Shell {
         identity: SelectedRouteIdentity,
         source: TrackRouteSource,
         membership: TrackRouteMembership,
-        reload_on_activity: bool,
+        reload_on_history_change: bool,
     ) -> MountedRoute {
         let visible_projection = projection.clone();
         let page_shell = self.library_page_shell(LibraryPageShellOptions {
@@ -1154,14 +1154,14 @@ impl Shell {
         page_shell
             .mounted_route(resume, projection.item_navigation())
             .with_library_update(Rc::new(move |library_update| {
-                if reload_on_activity
-                    && (library_update.change.history_changed
-                        || !library_update.change.tracks.is_empty())
-                {
+                if reload_on_history_change && library_update.change.history_changed {
                     read.request_with(TrackRouteReadRequest {
                         identity: identity.clone(),
                         tracks: update_projection.projection_request(),
                     });
+                    return;
+                }
+                if reload_on_history_change && library_update.change.favorite.is_some() {
                     return;
                 }
                 let replacements = library_update.change.tracks.as_slice();
