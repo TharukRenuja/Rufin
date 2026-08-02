@@ -1,4 +1,5 @@
 use std::env;
+use std::ffi::OsStr;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -246,7 +247,7 @@ fn release_tag(args: Vec<String>) -> Result<()> {
     }
 
     let release_key = root.join(".github/release-gpg.pub");
-    verify_tag_with_release_key(&tag_ref, &release_key)?;
+    verify_tag_with_release_key(&tag_ref, &root, &release_key)?;
 
     let tag_target = command_stdout("git", ["rev-list", "-n1", &tag_ref])?;
     let head_commit = command_stdout("git", ["rev-parse", "HEAD"])?;
@@ -271,62 +272,104 @@ fn release_tag(args: Vec<String>) -> Result<()> {
     )
 }
 
-fn verify_tag_with_release_key(tag_ref: &str, release_key: &Path) -> Result<()> {
+fn verify_tag_with_release_key(tag_ref: &str, root: &Path, release_key: &Path) -> Result<()> {
     if !release_key.is_file() {
         return Err(format!("release GPG key is missing: {}", release_key.display()).into());
     }
     ensure_command("gpg")?;
-    let gnupg_home = temp_path("gnupg");
-    fs::create_dir(&gnupg_home)?;
+    let unique_name = temp_path("gnupg")
+        .file_name()
+        .ok_or("temporary GPG home has no directory name")?
+        .to_owned();
+    let (gnupg_home, gnupg_home_env) = isolated_gpg_home(root, &unique_name)?;
+    fs::create_dir_all(&gnupg_home)?;
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
         fs::set_permissions(&gnupg_home, fs::Permissions::from_mode(0o700))?;
     }
 
-    let release_key_dir = release_key
-        .parent()
-        .ok_or("release GPG key has no parent directory")?;
-    let release_key_name = release_key
-        .file_name()
-        .ok_or("release GPG key has no filename")?;
-    let import_status = Command::new("gpg")
+    let release_key_relative = release_key
+        .strip_prefix(root)
+        .map_err(|_| "release GPG key must be inside the repository")?;
+    let import_output = Command::new("gpg")
         .args(["--batch", "--import"])
-        .arg(release_key_name)
-        .current_dir(release_key_dir)
-        .env("GNUPGHOME", &gnupg_home)
+        .arg(path_to_slash(release_key_relative))
+        .current_dir(root)
+        .env("GNUPGHOME", &gnupg_home_env)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()?;
-    if !import_status.success() {
+        .stderr(Stdio::piped())
+        .output()?;
+    if !import_output.status.success() {
         let _ = fs::remove_dir_all(&gnupg_home);
-        return Err("failed to import release GPG key".into());
+        let stderr = String::from_utf8_lossy(&import_output.stderr);
+        return Err(format!("failed to import release GPG key: {}", stderr.trim()).into());
     }
 
-    let verify_status = Command::new("git")
+    let verify_output = Command::new("git")
         .args(["verify-tag", tag_ref])
-        .env("GNUPGHOME", &gnupg_home)
+        .current_dir(root)
+        .env("GNUPGHOME", &gnupg_home_env)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()?;
+        .stderr(Stdio::piped())
+        .output()?;
     let _ = fs::remove_dir_all(&gnupg_home);
-    if verify_status.success() {
+    if verify_output.status.success() {
         Ok(())
     } else {
-        Err("release tag signature did not verify with .github/release-gpg.pub".into())
+        let stderr = String::from_utf8_lossy(&verify_output.stderr);
+        Err(format!(
+            "release tag signature did not verify with .github/release-gpg.pub: {}",
+            stderr.trim()
+        )
+        .into())
     }
+}
+
+fn isolated_gpg_home(root: &Path, unique_name: &OsStr) -> Result<(PathBuf, String)> {
+    let name = Path::new(unique_name);
+    if name.components().count() != 1 {
+        return Err("temporary GPG home must be a single directory name".into());
+    }
+    let environment_path = format!(".local/{}", name.to_string_lossy());
+    Ok((root.join(".local").join(name), environment_path))
 }
 
 #[cfg(test)]
 mod tests {
+    use std::ffi::OsStr;
+    use std::path::Path;
+
     use crate::process::repo_root;
 
-    use super::verify_release_metadata_contents;
+    use super::{isolated_gpg_home, verify_release_metadata_contents, verify_tag_with_release_key};
 
     const CARGO_TOML: &str = "[workspace.package]\nversion = \"1.2.3\"\n";
     const METAINFO: &str = "<component>\n  <releases>\n    <release version=\"1.2.3\" date=\"2026-08-01\" />\n  </releases>\n</component>\n";
+
+    #[test]
+    fn isolated_gpg_home_uses_a_short_portable_environment_path() {
+        let root = Path::new("/checkout/with/a/long/native/path");
+        let (home, environment_path) =
+            isolated_gpg_home(root, OsStr::new("rufin-gnupg-test")).unwrap();
+
+        assert_eq!(home, root.join(".local").join("rufin-gnupg-test"));
+        assert_eq!(environment_path, ".local/rufin-gnupg-test");
+    }
+
+    #[test]
+    #[ignore = "requires Git and GPG from the host platform"]
+    fn release_key_imports_with_platform_gpg() {
+        let root = repo_root().unwrap();
+        verify_tag_with_release_key(
+            "refs/tags/v0.11.1",
+            &root,
+            &root.join(".github/release-gpg.pub"),
+        )
+        .unwrap();
+    }
 
     #[test]
     fn release_metadata_matches_tag_version() {
