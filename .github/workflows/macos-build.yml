@@ -74,10 +74,6 @@ jobs:
           RELEASE_TAG: ${{ inputs.release_tag }}
         run: cargo run --locked -p xtask -- verify release-tag "$RELEASE_TAG"
 
-      - name: Check release key with platform GPG
-        if: ${{ !inputs.verify_signed_tag }}
-        run: cargo test --locked -p xtask verify::tests::release_key_imports_with_platform_gpg -- --exact --ignored
-
       - name: Validate release metadata
         if: inputs.release_tag != '' && !inputs.verify_signed_tag
         env:

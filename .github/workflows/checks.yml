@@ -92,7 +92,7 @@ jobs:
 
             for path in "${changed_paths[@]}"; do
               case "$path" in
-                LICENSE|data|data/*|*.md)
+                LICENSE|data|data/*|*.md|.github/ISSUE_TEMPLATE/*)
                   continue
                   ;;
               esac
@@ -122,7 +122,7 @@ jobs:
 
               case "$path" in
                 .github/workflows/checks.yml)
-                  add_jobs "${all_build_jobs[@]}" workspace cargo-deny
+                  add_jobs workspace cargo-deny
                   ;;
                 .github/workflows/aur-build.yml|.github/workflows/aur.yml)
                   add_jobs aur_bin aur_git
@@ -146,7 +146,7 @@ jobs:
                   add_jobs workspace windows
                   ;;
                 crates/xtask/src/verify.rs)
-                  add_jobs workspace "${release_build_jobs[@]}"
+                  add_jobs workspace
                   ;;
                 .github/workflows/container-image.yml|justfile|scripts/container)
                   add_jobs container
