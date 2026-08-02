@@ -102,18 +102,17 @@ nix run github:screwys/Rufin/vX.Y.Z
 
 ## Windows
 
-Download the current per-user installer from [GitHub Releases](https://github.com/screwys/Rufin/releases/latest).
+Download the .exe from [GitHub Releases](https://github.com/screwys/Rufin/releases/latest).
 
-Rufin is also available from the reusable Scoop bucket:
+Rufin is also available via Scoop:
 
 ```powershell
 scoop bucket add screwys https://github.com/screwys/scoop-bucket
 scoop install screwys/rufin
 ```
 
-Direct-installer and Scoop users can turn on
-**Automatic updates** in General preferences to have Rufin install an available Windows
-update when the app starts.
+Both have opt-in **Automatic updates** in General preferences to have Rufin install an available Windows
+update when the app starts. Alternatively, you can click `Update` button in Version History on the latest release.
 
 ## macOS
 
@@ -124,9 +123,8 @@ brew tap screwys/tap
 brew install --cask rufin
 ```
 
-Homebrew Cask users can turn on **Automatic updates** in General preferences to have
-Rufin install an available update when the app starts. You can also update manually with
-`brew upgrade --cask rufin` or the `Update` button in Version History.
+You can turn on **Automatic updates** in General preferences to have
+Rufin install an available update when the app starts or manually click `Update` button in Version History on the latest release.
 
 You can also download `.dmg` files directly from
 [GitHub Releases](https://github.com/screwys/Rufin/releases/latest), but then you have to update manually.
@@ -136,7 +134,7 @@ You can also download `.dmg` files directly from
 You can remove Rufin with your package manager, use the uninstaller included with the Windows
 `.exe` (which can also delete the cache), or delete `Rufin.app` from Applications if you installed the macOS `.dmg`.
 
-To delete Rufin's cache as well, remove the path for your installation:
+To delete Rufin's cache as well, delete its cache folder based on your operating system:
 
 - Linux and FreeBSD: `~/.cache/rufin`
 - Flatpak: `~/.var/app/io.github.screwys.Rufin/cache/rufin`
