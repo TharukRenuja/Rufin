@@ -1,9 +1,7 @@
 name: RPM
+run-name: ${{ inputs.upload_release_tag != '' && format('Stage {0}', inputs.upload_release_tag) || format('Build RPM {0}', inputs.ref) }}
 
 on:
-  release:
-    types:
-      - published
   workflow_dispatch:
     inputs:
       ref:
@@ -19,7 +17,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: rpm-${{ github.event_name == 'release' && github.event.release.tag_name || inputs.upload_release_tag || github.ref }}
+  group: rpm-${{ inputs.upload_release_tag || github.ref }}
   cancel-in-progress: true
 
 defaults:
@@ -27,18 +25,36 @@ defaults:
     shell: bash
 
 jobs:
+  validate:
+    name: Validate release target
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Validate manual release target
+        if: inputs.upload_release_tag != ''
+        env:
+          BUILD_REF: ${{ inputs.ref }}
+          RELEASE_TAG: ${{ inputs.upload_release_tag }}
+        run: |
+          set -euo pipefail
+          if [[ "$BUILD_REF" != "$RELEASE_TAG" && "$BUILD_REF" != "refs/tags/$RELEASE_TAG" ]]; then
+            echo "Manual release uploads must build the same tag they upload" >&2
+            exit 1
+          fi
+
   srpm:
     name: Generate source RPM
+    needs: validate
     uses: ./.github/workflows/rpm-source.yml
     with:
-      ref: ${{ github.event_name == 'release' && github.event.release.tag_name || inputs.ref }}
-      release_tag: ${{ github.event_name == 'release' && github.event.release.tag_name || inputs.upload_release_tag }}
-      verify_release_tag: ${{ github.event_name == 'release' }}
+      ref: ${{ inputs.ref }}
+      release_tag: ${{ inputs.upload_release_tag }}
+      verify_release_tag: ${{ inputs.upload_release_tag != '' }}
       upload_artifact: true
 
   copr:
     name: Build RPMs in COPR
-    if: github.event_name == 'release' || inputs.upload_release_tag != ''
+    if: inputs.upload_release_tag != ''
     needs: srpm
     runs-on: ubuntu-24.04
     container:
@@ -53,7 +69,7 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          ref: ${{ github.event_name == 'release' && github.event.release.tag_name || inputs.ref }}
+          ref: ${{ inputs.ref }}
           persist-credentials: false
 
       - name: Trust checked-out repository
@@ -156,7 +172,7 @@ jobs:
 
   release:
     name: Upload RPM release assets
-    if: github.event_name == 'release' || inputs.upload_release_tag != ''
+    if: inputs.upload_release_tag != ''
     needs: copr
     runs-on: ubuntu-24.04
     permissions:
@@ -187,7 +203,7 @@ jobs:
       - name: Upload release assets
         env:
           GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: ${{ github.event_name == 'release' && github.event.release.tag_name || inputs.upload_release_tag }}
+          RELEASE_TAG: ${{ inputs.upload_release_tag }}
         run: |
           set -euo pipefail
           gh release upload \

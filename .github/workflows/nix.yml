@@ -1,9 +1,12 @@
 name: Nix
+run-name: >-
+  ${{ github.event_name == 'workflow_dispatch' &&
+      (startsWith(inputs.ref, 'v') || startsWith(inputs.ref, 'refs/tags/v')) &&
+      format('Stage {0}', inputs.ref) ||
+      github.event_name == 'workflow_call' && format('Check Nix {0}', inputs.ref) ||
+      format('Build Nix {0}', inputs.ref || github.ref_name) }}
 
 on:
-  release:
-    types:
-      - published
   push:
     branches:
       - main
@@ -39,7 +42,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: nix-${{ github.event_name == 'release' && github.event.release.tag_name || inputs.ref || github.ref }}
+  group: nix-${{ inputs.ref || github.ref }}
   cancel-in-progress: true
 
 env:
@@ -74,14 +77,14 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          ref: ${{ github.event_name == 'release' && github.event.release.tag_name || inputs.ref || github.sha }}
+          ref: ${{ inputs.ref || github.sha }}
           fetch-depth: 0
           persist-credentials: false
 
       - name: Verify signed release tag
-        if: github.event_name == 'release' || startsWith(inputs.ref, 'v') || startsWith(inputs.ref, 'refs/tags/v')
+        if: startsWith(inputs.ref, 'v') || startsWith(inputs.ref, 'refs/tags/v')
         env:
-          RELEASE_TAG: ${{ github.event_name == 'release' && github.event.release.tag_name || inputs.ref }}
+          RELEASE_TAG: ${{ inputs.ref }}
         run: cargo run --locked -p xtask -- verify release-tag "$RELEASE_TAG"
 
       - name: Install Nix

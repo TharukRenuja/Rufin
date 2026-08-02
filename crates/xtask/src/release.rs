@@ -207,8 +207,12 @@ fn create_tag(mut args: Vec<String>) -> Result<()> {
     }
 
     if base_tag.is_empty() {
-        base_tag =
-            latest_release_tag()?.ok_or("could not find previous v* tag; pass --base TAG")?;
+        base_tag = if replace_tag && git_ref_exists(&format!("refs/tags/{version}"))? {
+            latest_release_tag_at(&format!("{version}^"))?
+        } else {
+            latest_release_tag_at("HEAD")?
+        }
+        .ok_or("could not find previous v* tag; pass --base TAG")?;
     }
     ensure_tag_exists(&base_tag)?;
 
@@ -295,10 +299,17 @@ fn create_tag(mut args: Vec<String>) -> Result<()> {
     Ok(())
 }
 
-fn latest_release_tag() -> Result<Option<String>> {
+fn latest_release_tag_at(revision: &str) -> Result<Option<String>> {
     let output = capture_command(
         "git",
-        ["describe", "--tags", "--abbrev=0", "--match", "v[0-9]*"],
+        [
+            "describe",
+            "--tags",
+            "--abbrev=0",
+            "--match",
+            "v[0-9]*",
+            revision,
+        ],
     )?;
     if output.status.success() {
         let tag = output.stdout.trim();

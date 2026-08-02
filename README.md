@@ -9,8 +9,8 @@
     <a href="https://search.nixos.org/packages?channel=unstable&query=rufin"><img alt="Nixpkgs version" src="https://repology.org/badge/version-for-repo/nix_unstable/rufin.svg?header=Nixpkgs"></a>
 </p>
 
-<img align="left" alt="Rufin" src="data/icons/hicolor/512x512/apps/io.github.screwys.Rufin.png" width="96"> Rufin is a powerful, fast and easy to use GTK4/libadwaita music client written in Rust. It can play music from your Jellyfin, Navidrome/OpenSubsonic flavor servers and local folders; can download tracks from these servers and let you play from downloaded songs while still keeping you in the same remote session. It also has broad set of features and optimizations around these features for the ideal user experience.
-<br clear="left">
+<img align="left" alt="Rufin" src="data/icons/hicolor/512x512/apps/io.github.screwys.Rufin.png" width="96"> Rufin is a powerful, fast and easy to use GTK4/libadwaita music client written in Rust, available on [multiple platforms](#installation). It can play music from your Jellyfin, Navidrome/OpenSubsonic flavor servers and local folders; can download tracks from these servers and let you play from downloaded songs while still keeping you in the same remote session. It also has broad set of features and optimizations around these features for the ideal user experience.
+<br clear="left"> [Jump to installation](#installation)
 
 
 ![Rufin](data/screenshots/Rufin.png)
@@ -100,6 +100,49 @@ You can also run `main` or an older release directly:
 nix run github:screwys/Rufin/main
 nix run github:screwys/Rufin/vX.Y.Z
 ```
+
+## Windows
+
+Download the current per-user installer from [GitHub Releases](https://github.com/screwys/Rufin/releases/latest).
+
+Rufin is also available from the reusable Scoop bucket:
+
+```powershell
+scoop bucket add screwys https://github.com/screwys/scoop-bucket
+scoop install screwys/rufin
+```
+
+Direct-installer and Scoop users can turn on
+**Automatic updates** in General preferences to have Rufin install an available Windows
+update when the app starts.
+
+## macOS
+
+Homebrew Cask is the primary macOS installation:
+
+```bash
+brew tap screwys/tap
+brew install --cask rufin
+```
+
+Homebrew Cask users can turn on **Automatic updates** in General preferences to have
+Rufin install an available update when the app starts. You can also update manually with
+`brew upgrade --cask rufin` or the `Update` button in Version History.
+
+You can also download `.dmg` files directly from
+[GitHub Releases](https://github.com/screwys/Rufin/releases/latest), but then you have to update manually.
+
+## Uninstallation
+
+You can remove Rufin with your package manager, use the uninstaller included with the Windows
+`.exe` (which can also delete the cache), or delete `Rufin.app` from Applications if you installed the macOS `.dmg`.
+
+To delete Rufin's cache as well, remove the path for your installation:
+
+- Linux and FreeBSD: `~/.cache/rufin`
+- Flatpak: `~/.var/app/io.github.screwys.Rufin/cache/rufin`
+- macOS: `~/Library/Caches/io.github.screwys.Rufin`
+- Windows: `%LOCALAPPDATA%\screwys\Rufin\cache`
 
 ## Building locally
 

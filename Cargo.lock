@@ -3269,6 +3269,7 @@ dependencies = [
  "tracing-subscriber",
  "ui",
  "url",
+ "windows-updater",
 ]
 
 [[package]]
@@ -4672,6 +4673,20 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3949bd5b99cafdf1c7ca86b43ca564028dfe27d66958f2470940f73d86d75b37"
 dependencies = [
  "windows-link",
+]
+
+[[package]]
+name = "windows-updater"
+version = "0.11.1"
+dependencies = [
+ "directories",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "sha2 0.11.0",
+ "tempfile",
+ "thiserror",
+ "winsafe",
 ]
 
 [[package]]

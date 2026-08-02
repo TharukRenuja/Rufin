@@ -38,6 +38,8 @@ pub struct Settings {
     pub release_notifications_enabled: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub release_notification_seen_version: Option<String>,
+    #[serde(default)]
+    pub automatic_updates_enabled: bool,
     #[serde(default = "legacy_secret_storage_mode")]
     pub secret_storage_mode: SecretStorageMode,
     #[serde(flatten)]
@@ -105,6 +107,7 @@ impl Default for Settings {
             control_notifications_enabled: true,
             release_notifications_enabled: true,
             release_notification_seen_version: None,
+            automatic_updates_enabled: false,
             secret_storage_mode: SecretStorageMode::default(),
             lyrics: LyricsSettings::default(),
             external_metadata_enabled: true,

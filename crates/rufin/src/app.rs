@@ -88,9 +88,13 @@ pub(crate) fn runtime_inputs(diagnostics: DiagnosticsHandle) -> Result<RuntimeIn
         }
     });
     let discord = Arc::new(desktop_integration::Discord::new());
-    let release_updates =
-        ReleaseUpdateOwner::new(settings.clone(), runtime.clone(), release_update_events);
-    let release_notes = release_updates.bundled_notes();
+    let release_updates = ReleaseUpdateOwner::new(
+        settings.clone(),
+        runtime.clone(),
+        release_update_events,
+        paths::release_history_file(),
+    );
+    let release_history = release_updates.initial_history();
 
     let SourceBootstrap {
         owner: source,
@@ -222,7 +226,7 @@ pub(crate) fn runtime_inputs(diagnostics: DiagnosticsHandle) -> Result<RuntimeIn
         },
         configured_sources: configured,
         source_operation: operation,
-        release_notes,
+        release_history,
     })
 }
 

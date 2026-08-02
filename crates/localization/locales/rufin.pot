@@ -204,7 +204,7 @@ msgstr ""
 msgid "Any genre"
 msgstr ""
 
-msgid "App window"
+msgid "App settings"
 msgstr ""
 
 msgid "Appears On"
@@ -253,6 +253,9 @@ msgid "Auto DJ refill threshold"
 msgstr ""
 
 msgid "Auto DJ"
+msgstr ""
+
+msgid "Automatic updates"
 msgstr ""
 
 msgid "BPM"
@@ -722,6 +725,9 @@ msgid "Increase"
 msgstr ""
 
 msgid "Increases memory usage"
+msgstr ""
+
+msgid "Install available updates when Rufin starts"
 msgstr ""
 
 msgid "Installed"
@@ -1417,6 +1423,10 @@ msgstr ""
 msgid "Rows"
 msgstr ""
 
+#, rust-format
+msgid "Rufin could not update: {error}"
+msgstr ""
+
 msgid "Rufin is running in the tray"
 msgstr ""
 
@@ -1757,6 +1767,12 @@ msgstr ""
 msgid "Unmuted"
 msgstr ""
 
+msgid "Update"
+msgstr ""
+
+msgid "Updating Rufin\342\200\246"
+msgstr ""
+
 msgid "Use Jellyfin Instant Mix for recommendations"
 msgstr ""
 
@@ -1815,6 +1831,12 @@ msgid "Year"
 msgstr ""
 
 msgid "Yes"
+msgstr ""
+
+msgid "\342\234\250 A new release is installed"
+msgstr ""
+
+msgid "\342\234\250 A new release is installed. Update to use the new version"
 msgstr ""
 
 msgid "above"

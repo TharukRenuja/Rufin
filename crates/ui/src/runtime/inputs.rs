@@ -176,5 +176,5 @@ pub struct RuntimeInputs {
     pub receivers: ProductReceivers,
     pub configured_sources: ConfiguredSources,
     pub source_operation: SourceOperation,
-    pub release_notes: Arc<[super::ReleaseNote]>,
+    pub release_history: super::ReleaseHistory,
 }

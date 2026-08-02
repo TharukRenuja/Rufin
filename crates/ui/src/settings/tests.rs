@@ -21,6 +21,27 @@ fn private_mode_blocks_automatic_external_activity_but_keeps_passive_links() {
 }
 
 #[test]
+fn automatic_updates_are_opt_in_and_persisted() {
+    let mut legacy = serde_json::to_value(Settings::default()).expect("serialize settings");
+    legacy
+        .as_object_mut()
+        .expect("settings object")
+        .remove("automatic_updates_enabled");
+    let restored = serde_json::from_value::<Settings>(legacy).expect("restore older settings");
+    assert!(!restored.automatic_updates_enabled);
+
+    let mut settings = Settings::default();
+    for enabled in [true, false, true, false] {
+        settings.automatic_updates_enabled = enabled;
+        settings = serde_json::from_value::<Settings>(
+            serde_json::to_value(settings).expect("serialize automatic update setting"),
+        )
+        .expect("restore automatic update setting");
+        assert_eq!(settings.automatic_updates_enabled, enabled);
+    }
+}
+
+#[test]
 fn playback_modes_are_one_app_wide_settings_value() {
     let settings = Settings {
         auto_dj_enabled: true,

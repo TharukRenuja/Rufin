@@ -39,7 +39,10 @@ const SCROBBLING_ICON_NAME: &str = "io.github.screwys.Rufin.scrobbling-symbolic"
 
 pub(crate) struct PreferencesState {
     pub(crate) dialog: RefCell<Option<gtk::glib::WeakRef<adw::Dialog>>>,
-    pub(crate) release_notes: RefCell<std::sync::Arc<[crate::runtime::ReleaseNote]>>,
+    pub(crate) release_history: RefCell<crate::runtime::ReleaseHistory>,
+    pub(crate) release_history_list: RefCell<Option<gtk::glib::WeakRef<gtk::Box>>>,
+    pub(crate) release_notification_toast: RefCell<Option<adw::Toast>>,
+    pub(crate) release_updating: RefCell<Option<String>>,
 }
 
 impl PreferencesState {
@@ -703,7 +706,7 @@ fn general_page(shell: &Rc<Shell>, dialog: &adw::Dialog) -> adw::PreferencesPage
 
     {
         let window_group = adw::PreferencesGroup::builder()
-            .title(tr("App window"))
+            .title(tr("App settings"))
             .build();
         let tray_row = adw::SwitchRow::builder()
             .title(tr("Show tray icon"))
@@ -752,6 +755,23 @@ fn general_page(shell: &Rc<Shell>, dialog: &adw::Dialog) -> adw::PreferencesPage
         window_group.add(&exit_to_tray_row);
         window_group.add(&start_minimized_row);
         window_group.add(&type_to_search_row);
+        if shell
+            .preferences
+            .release_history
+            .borrow()
+            .automatic_updates_supported
+        {
+            let automatic_updates_row = adw::SwitchRow::builder()
+                .title(tr("Automatic updates"))
+                .subtitle(tr("Install available updates when Rufin starts"))
+                .active(settings.automatic_updates_enabled)
+                .build();
+            let automatic_updates_shell = Rc::clone(shell);
+            automatic_updates_row.connect_active_notify(move |row| {
+                automatic_updates_shell.set_automatic_updates_enabled(row.is_active());
+            });
+            window_group.add(&automatic_updates_row);
+        }
         page.add(&window_group);
     }
 

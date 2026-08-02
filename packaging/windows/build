@@ -37,12 +37,17 @@ installer="$artifact_root/Rufin-${version}-setup.exe"
 work_installer="$output_dir/Rufin-${version}-setup.exe"
 rm -f "$work_installer"
 runtime_prefix="$MINGW_PREFIX"
-CARGO_TARGET_DIR="$target_dir" cargo build --locked --release -p rufin
+CARGO_TARGET_DIR="$target_dir" cargo build --locked --release -p rufin --bin rufin
+CARGO_TARGET_DIR="$target_dir" \
+    cargo build --locked --release -p windows-updater --bin rufin-update-helper
 binary="$target_dir/release/rufin.exe"
+update_helper="$target_dir/release/rufin-update-helper.exe"
 
 RUFIN_WINDOWS_BINARY="$binary" \
+RUFIN_WINDOWS_UPDATE_HELPER="$update_helper" \
 RUFIN_WINDOWS_PREFIX="$runtime_prefix" \
 RUFIN_WINDOWS_STAGE_DIR="$stage_dir" \
+RUFIN_WINDOWS_VERSION="$version" \
     "$repo_root/packaging/windows/package"
 
 CARGO_TARGET_DIR="$verify_target_dir" \

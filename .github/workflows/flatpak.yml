@@ -1,9 +1,7 @@
 name: Flatpak
+run-name: ${{ inputs.upload_release_tag != '' && format('Stage {0}', inputs.upload_release_tag) || format('Build Flatpak {0}', inputs.ref) }}
 
 on:
-  release:
-    types:
-      - published
   workflow_dispatch:
     inputs:
       ref:
@@ -19,7 +17,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: flatpak-${{ github.event_name == 'release' && github.event.release.tag_name || inputs.upload_release_tag || github.ref }}
+  group: flatpak-${{ inputs.upload_release_tag || github.ref }}
   cancel-in-progress: true
 
 env:
@@ -48,13 +46,13 @@ jobs:
     needs: validate
     uses: ./.github/workflows/flatpak-build.yml
     with:
-      ref: ${{ github.event_name == 'release' && github.event.release.tag_name || inputs.ref }}
-      release_tag: ${{ github.event_name == 'release' && github.event.release.tag_name || inputs.upload_release_tag }}
-      verify_signed_tag: ${{ github.event_name == 'release' || inputs.upload_release_tag != '' }}
+      ref: ${{ inputs.ref }}
+      release_tag: ${{ inputs.upload_release_tag }}
+      verify_signed_tag: ${{ inputs.upload_release_tag != '' }}
 
   release:
     name: Upload Flatpak release asset
-    if: github.event_name == 'release' || inputs.upload_release_tag != ''
+    if: inputs.upload_release_tag != ''
     needs: build
     runs-on: ubuntu-latest
     permissions:
@@ -78,7 +76,7 @@ jobs:
       - name: Upload release asset
         env:
           GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: ${{ github.event_name == 'release' && github.event.release.tag_name || inputs.upload_release_tag }}
+          RELEASE_TAG: ${{ inputs.upload_release_tag }}
         run: |
           gh release upload \
             "$RELEASE_TAG" \

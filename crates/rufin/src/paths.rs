@@ -11,6 +11,7 @@ const SECRETS_FILE: &str = "secrets.json";
 const ARTWORK_DIRECTORY: &str = "covers";
 const PLAYBACK_DIRECTORY: &str = "playback";
 const DOWNLOADS_DIRECTORY: &str = "downloads";
+const RELEASE_HISTORY_FILE: &str = "releases.json";
 
 fn project_dirs() -> Option<ProjectDirs> {
     ProjectDirs::from("io.github", "screwys", "Rufin")
@@ -66,6 +67,10 @@ pub(crate) fn playback_dir() -> PathBuf {
 
 pub(crate) fn downloads_dir() -> PathBuf {
     data_dir().join(DOWNLOADS_DIRECTORY)
+}
+
+pub(crate) fn release_history_file() -> PathBuf {
+    cache_dir().join(RELEASE_HISTORY_FILE)
 }
 
 pub(crate) fn prepare() -> Result<(), String> {

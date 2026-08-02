@@ -142,6 +142,9 @@ jobs:
                 .github/workflows/windows*.yml|packaging/windows/*)
                   add_jobs windows
                   ;;
+                crates/windows-updater/*)
+                  add_jobs workspace windows
+                  ;;
                 .github/workflows/container-image.yml|justfile|scripts/container)
                   add_jobs container
                   ;;

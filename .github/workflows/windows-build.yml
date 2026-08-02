@@ -170,6 +170,18 @@ jobs:
           $legacyShortcut.TargetPath = Join-Path $installDir "rufin.exe"
           $legacyShortcut.Save()
 
+          $invalidChannel = Start-Process `
+            -FilePath $installer.FullName `
+            -ArgumentList @("/S", "/RUFINCHANNEL=unknown") `
+            -Wait `
+            -PassThru
+          if ($invalidChannel.ExitCode -eq 0) {
+            throw "Windows installer accepted an unknown update channel"
+          }
+          if (Test-Path (Join-Path $installDir "update-channel")) {
+            throw "Rejected Windows install wrote an update channel marker"
+          }
+
           $legacyHandle = [System.IO.File]::Open(
             (Join-Path $legacyInstallDir "rufin.exe"),
             [System.IO.FileMode]::Open,
@@ -241,6 +253,46 @@ jobs:
           if ($installedDlls.Count -eq 0) {
             throw "Installed Rufin runtime has no DLLs"
           }
+          $channelMarker = Join-Path $installDir "update-channel"
+          if ((Get-Content -Raw $channelMarker).Trim() -ne "direct") {
+            throw "Direct Windows install has the wrong update channel"
+          }
+          $updaterRoots = @(Get-ChildItem -LiteralPath (Join-Path $installDir "updater") -Directory)
+          if ($updaterRoots.Count -ne 1) {
+            throw "Windows install does not contain one versioned update helper"
+          }
+          $updaterRoot = $updaterRoots[0].FullName
+          $updateHelper = Join-Path $updaterRoot "rufin-update-helper.exe"
+          $updateSentinel = Join-Path $updaterRoot "rufin-update-helper.complete"
+          if (-not (Test-Path $updateHelper) -or -not (Test-Path $updateSentinel)) {
+            throw "Windows update helper closure is incomplete"
+          }
+          $sentinelVersion = $updaterRoots[0].Name
+          if ((Get-Content -Raw $updateSentinel) -ne "rufin-update-helper:$sentinelVersion`n") {
+            throw "Windows update helper has the wrong ownership sentinel"
+          }
+          $previousPath = $env:PATH
+          try {
+            $env:PATH = "$env:SystemRoot\System32;$env:SystemRoot"
+            $selfCheck = Start-Process `
+              -FilePath $updateHelper `
+              -ArgumentList "--self-check" `
+              -Wait `
+              -PassThru
+            if ($selfCheck.ExitCode -ne 0) {
+              throw "Packaged Windows update helper could not start from its private closure"
+            }
+            $rejectedSelfCheck = Start-Process `
+              -FilePath $updateHelper `
+              -ArgumentList @("--self-check", "unexpected") `
+              -Wait `
+              -PassThru
+            if ($rejectedSelfCheck.ExitCode -eq 0) {
+              throw "Windows update helper accepted extra self-check arguments"
+            }
+          } finally {
+            $env:PATH = $previousPath
+          }
 
           $runtimeStdout = Join-Path $env:RUNNER_TEMP "rufin-runtime.out"
           $runtimeStderr = Join-Path $env:RUNNER_TEMP "rufin-runtime.err"
@@ -288,6 +340,124 @@ jobs:
             }
           }
 
+          $lockedDllHandle = [System.IO.File]::Open(
+            $installedDlls[0].FullName,
+            [System.IO.FileMode]::Open,
+            [System.IO.FileAccess]::Read,
+            [System.IO.FileShare]::None
+          )
+          try {
+            $upgrade = Start-Process -FilePath $installer.FullName -ArgumentList "/S" -Wait -PassThru
+            if ($upgrade.ExitCode -ne 5) {
+              throw "Windows installer reported the wrong cleanup exit code: $($upgrade.ExitCode)"
+            }
+          } finally {
+            $lockedDllHandle.Dispose()
+          }
+
+          $oldUpdaterRoot = Join-Path (Split-Path $updaterRoot) "0.0.0"
+          Remove-Item -Recurse -Force -ErrorAction SilentlyContinue $oldUpdaterRoot
+          Copy-Item -Recurse -Path $updaterRoot -Destination $oldUpdaterRoot
+          Set-Content `
+            -NoNewline `
+            -Path (Join-Path $oldUpdaterRoot "rufin-update-helper.complete") `
+            -Value "rufin-update-helper:0.0.0`n"
+          $helperReady = Join-Path $env:RUNNER_TEMP "rufin-update-helper.ready"
+          $helperError = Join-Path $env:RUNNER_TEMP "rufin-update-helper.err"
+          $helperUpdateRoot = Join-Path $env:RUNNER_TEMP "rufin-update-helper-cache"
+          Remove-Item -Recurse -Force -ErrorAction SilentlyContinue $helperUpdateRoot
+          $helperInstallerDir = Join-Path $helperUpdateRoot "downloads\$sentinelVersion"
+          New-Item -ItemType Directory -Force -Path $helperInstallerDir | Out-Null
+          $helperInstaller = Join-Path $helperInstallerDir $installer.Name
+          Copy-Item -LiteralPath $installer.FullName -Destination $helperInstaller
+          $helperResult = Join-Path $helperUpdateRoot "result.json"
+          Remove-Item -Force -ErrorAction SilentlyContinue $helperReady, $helperError
+          $waitParent = Start-Process `
+            -FilePath "powershell.exe" `
+            -ArgumentList @("-NoProfile", "-Command", "Start-Sleep -Seconds 120") `
+            -PassThru
+          $oldUpdateHelper = Join-Path $oldUpdaterRoot "rufin-update-helper.exe"
+          $helperProcess = Start-Process `
+            -FilePath $oldUpdateHelper `
+            -ArgumentList @(
+              "--parent-pid", $waitParent.Id,
+              "--channel", "direct",
+              "--target-version", $sentinelVersion,
+              "--result-file", $helperResult,
+              "--relaunch", (Join-Path $env:SystemRoot "System32\where.exe"),
+              "--installer", $helperInstaller
+            ) `
+            -WorkingDirectory $oldUpdaterRoot `
+            -RedirectStandardOutput $helperReady `
+            -RedirectStandardError $helperError `
+            -PassThru
+          $readyDeadline = (Get-Date).AddSeconds(15)
+          while ((((Get-Content -Raw $helperReady -ErrorAction SilentlyContinue) ?? "").Trim() -ne "READY") -and
+              (Get-Date) -lt $readyDeadline -and -not $helperProcess.HasExited) {
+            Start-Sleep -Milliseconds 100
+          }
+          if (((Get-Content -Raw $helperReady -ErrorAction SilentlyContinue) ?? "").Trim() -ne "READY") {
+            Stop-Process -Id $waitParent.Id -Force -ErrorAction SilentlyContinue
+            Stop-Process -Id $helperProcess.Id -Force -ErrorAction SilentlyContinue
+            if (Test-Path $helperError) { Get-Content $helperError }
+            throw "Windows update helper did not report READY"
+          }
+          if ($helperProcess.HasExited) {
+            Stop-Process -Id $waitParent.Id -Force -ErrorAction SilentlyContinue
+            throw "Windows update helper exited instead of waiting for Rufin"
+          }
+          if (-not (Test-Path $helperResult)) {
+            Stop-Process -Id $waitParent.Id -Force -ErrorAction SilentlyContinue
+            Stop-Process -Id $helperProcess.Id -Force -ErrorAction SilentlyContinue
+            throw "Waiting Windows update helper did not leave a pending result"
+          }
+          $pendingResult = Get-Content -Raw $helperResult | ConvertFrom-Json
+          if ($pendingResult.version -ne $sentinelVersion -or
+              $pendingResult.message -ne "The update did not finish after Rufin closed.") {
+            Stop-Process -Id $waitParent.Id -Force -ErrorAction SilentlyContinue
+            Stop-Process -Id $helperProcess.Id -Force -ErrorAction SilentlyContinue
+            throw "Windows update helper wrote the wrong pending result"
+          }
+          Stop-Process -Id $waitParent.Id -Force
+          if (-not $helperProcess.WaitForExit(120000)) {
+            Stop-Process -Id $helperProcess.Id -Force
+            throw "Windows update helper did not finish the direct installer"
+          }
+          if ($helperProcess.ExitCode -ne 0) {
+            if (Test-Path $helperError) { Get-Content $helperError }
+            throw "Windows update helper exited with code $($helperProcess.ExitCode)"
+          }
+          if (-not (Test-Path $helperResult)) {
+            throw "Successful Windows helper update did not leave an installed result"
+          }
+          $installedResult = Get-Content -Raw $helperResult | ConvertFrom-Json
+          if ($installedResult.status -ne "installed" -or
+              $installedResult.version -ne $sentinelVersion) {
+            Get-Content $helperResult
+            throw "Successful Windows helper update left the wrong result"
+          }
+          Remove-Item -Force $helperResult
+          if ((Test-Path $helperInstaller) -or (Test-Path $helperInstallerDir)) {
+            throw "Successful Windows helper update left its cached installer"
+          }
+          if ((Get-Content -Raw $channelMarker).Trim() -ne "direct") {
+            throw "Direct helper update did not preserve its update channel"
+          }
+          if (-not (Test-Path $oldUpdateHelper) -or -not (Test-Path $updateHelper)) {
+            throw "Windows helper update did not preserve the old versioned helper"
+          }
+
+          $testUninstaller = Join-Path $env:RUNNER_TEMP "Rufin-Uninstall.exe"
+          Copy-Item `
+            -LiteralPath (Join-Path $installDir "Uninstall.exe") `
+            -Destination $testUninstaller
+          function Invoke-RufinUninstaller([string[]] $Arguments) {
+            Start-Process -FilePath $testUninstaller `
+              -ArgumentList ($Arguments + "_?=$installDir") -Wait -PassThru
+          }
+          $cacheDir = Join-Path $env:LOCALAPPDATA "screwys\Rufin\cache"
+          New-Item -ItemType Directory -Force -Path $cacheDir | Out-Null
+          Set-Content -NoNewline -Path (Join-Path $cacheDir "keep.txt") -Value "keep"
           $runningHandle = [System.IO.File]::Open(
             $installedExe,
             [System.IO.FileMode]::Open,
@@ -295,21 +465,97 @@ jobs:
             [System.IO.FileShare]::None
           )
           try {
-            $upgrade = Start-Process -FilePath $installer.FullName -ArgumentList "/S" -Wait -PassThru
-            if ($upgrade.ExitCode -eq 0) {
-              throw "Windows installer replaced a running Rufin executable"
+            $blockedUninstall = Invoke-RufinUninstaller -Arguments @("/S")
+            if ($blockedUninstall.ExitCode -ne 2) {
+              throw "Windows uninstaller reported the wrong running-app exit code: $($blockedUninstall.ExitCode)"
+            }
+            if (-not (Test-Path $installedExe)) {
+              throw "Blocked Windows uninstall changed the installation"
             }
           } finally {
             $runningHandle.Dispose()
           }
 
-          $uninstaller = Join-Path $installDir "Uninstall.exe"
-          $uninstall = Start-Process -FilePath $uninstaller -ArgumentList "/S" -Wait -PassThru
+          $lockedDllHandle = [System.IO.File]::Open(
+            $installedDlls[0].FullName,
+            [System.IO.FileMode]::Open,
+            [System.IO.FileAccess]::Read,
+            [System.IO.FileShare]::None
+          )
+          try {
+            $incompleteUninstall = Invoke-RufinUninstaller -Arguments @("/S")
+            if ($incompleteUninstall.ExitCode -ne 5) {
+              throw "Windows uninstaller reported the wrong cleanup exit code: $($incompleteUninstall.ExitCode)"
+            }
+            if (-not (Test-Path (Join-Path $installDir "Uninstall.exe")) -or
+                -not (Test-Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\Rufin")) {
+              throw "Incomplete Windows uninstall removed its retry path"
+            }
+            if (-not (Test-Path (Join-Path $cacheDir "keep.txt"))) {
+              throw "Incomplete Windows uninstall removed Rufin's cache"
+            }
+          } finally {
+            $lockedDllHandle.Dispose()
+          }
+
+          $uninstall = Invoke-RufinUninstaller -Arguments @("/S", "/PURGEX")
           if ($uninstall.ExitCode -ne 0) {
             throw "Windows uninstaller exited with code $($uninstall.ExitCode)"
           }
           if (Test-Path $installDir) {
             throw "Windows uninstaller left the dedicated install directory behind"
+          }
+          if (-not (Test-Path (Join-Path $cacheDir "keep.txt"))) {
+            throw "Normal Windows uninstall removed Rufin's cache"
+          }
+
+          $scoopInstall = Start-Process `
+            -FilePath $installer.FullName `
+            -ArgumentList @("/S", "/RUFINCHANNEL=scoop") `
+            -Wait `
+            -PassThru
+          if ($scoopInstall.ExitCode -ne 0) {
+            throw "Windows installer could not record the Scoop update channel"
+          }
+          if ((Get-Content -Raw $channelMarker).Trim() -ne "scoop") {
+            throw "Scoop Windows install has the wrong update channel"
+          }
+          $scoopUninstall = Invoke-RufinUninstaller -Arguments @("/S")
+          if ($scoopUninstall.ExitCode -ne 0) {
+            throw "Scoop-channel Windows uninstall exited with code $($scoopUninstall.ExitCode)"
+          }
+
+          $wingetInstall = Start-Process `
+            -FilePath $installer.FullName `
+            -ArgumentList @("/S", "/RUFINCHANNEL=winget") `
+            -Wait `
+            -PassThru
+          if ($wingetInstall.ExitCode -ne 0) {
+            throw "Windows installer could not record the WinGet update channel"
+          }
+          if ((Get-Content -Raw $channelMarker).Trim() -ne "winget") {
+            throw "WinGet Windows install has the wrong update channel"
+          }
+
+          $localRufinDir = Split-Path $cacheDir
+          $localSentinel = Join-Path $localRufinDir "keep-local.txt"
+          Set-Content -NoNewline -Path $localSentinel -Value "keep"
+          $roamingRufinDir = Join-Path $env:APPDATA "screwys\Rufin"
+          New-Item -ItemType Directory -Force -Path $roamingRufinDir | Out-Null
+          $roamingSentinel = Join-Path $roamingRufinDir "keep-roaming.txt"
+          Set-Content -NoNewline -Path $roamingSentinel -Value "keep"
+          $purge = Invoke-RufinUninstaller -Arguments @("/S", "/PURGE")
+          if ($purge.ExitCode -ne 0) {
+            throw "Windows uninstaller cache purge exited with code $($purge.ExitCode)"
+          }
+          if (Test-Path $cacheDir) {
+            throw "Windows uninstaller did not purge Rufin's cache"
+          }
+          if (-not (Test-Path $localSentinel)) {
+            throw "Windows cache purge removed a sibling Local Rufin file"
+          }
+          if (-not (Test-Path $roamingSentinel)) {
+            throw "Windows cache purge removed Rufin's Roaming data"
           }
       - name: Upload workflow artifact
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
@@ -322,4 +568,9 @@ jobs:
       - name: Check platform integrations
         if: inputs.run_platform_checks
         shell: msys2 {0}
-        run: cargo test --locked --tests -p secrets -p desktop-integration -p sources
+        run: >-
+          cargo test --locked --tests
+          -p windows-updater
+          -p secrets
+          -p desktop-integration
+          -p sources

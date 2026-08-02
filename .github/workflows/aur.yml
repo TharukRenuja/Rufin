@@ -1,9 +1,10 @@
 name: AUR
+run-name: >-
+  ${{ inputs.upload_release_asset && format('Stage {0}', inputs.release_tag) ||
+      inputs.publish && format('Publish AUR {0}', inputs.release_tag || inputs.package) ||
+      format('Build AUR {0}', inputs.package) }}
 
 on:
-  release:
-    types:
-      - published
   workflow_dispatch:
     inputs:
       package:
@@ -19,8 +20,13 @@ on:
         description: Existing release tag required for rufin-bin
         required: false
         default: ""
+      upload_release_asset:
+        description: Upload the Arch payload to a draft GitHub release
+        required: true
+        default: false
+        type: boolean
       publish:
-        description: Upload release assets and push AUR metadata
+        description: Push AUR metadata
         required: true
         default: false
         type: boolean
@@ -29,23 +35,52 @@ permissions:
   contents: read
 
 concurrency:
-  group: aur-${{ github.event_name == 'release' && github.event.release.tag_name || inputs.release_tag || github.ref }}
+  group: aur-${{ inputs.release_tag || github.ref }}
   cancel-in-progress: true
 
 jobs:
+  validate:
+    name: Validate requested operation
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Keep release staging separate from AUR publication
+        env:
+          PACKAGE: ${{ inputs.package }}
+          PUBLISH: ${{ inputs.publish }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+          UPLOAD_RELEASE_ASSET: ${{ inputs.upload_release_asset }}
+        run: |
+          set -euo pipefail
+          if [[ "$UPLOAD_RELEASE_ASSET" == "true" && "$PUBLISH" == "true" ]]; then
+            echo "Stage the GitHub release asset before publishing AUR metadata" >&2
+            exit 1
+          fi
+          if [[ "$UPLOAD_RELEASE_ASSET" == "true" ]]; then
+            if [[ -z "$RELEASE_TAG" ]]; then
+              echo "Arch release staging requires a release tag" >&2
+              exit 1
+            fi
+            if [[ "$PACKAGE" != "rufin-bin" && "$PACKAGE" != "both" ]]; then
+              echo "Arch release staging requires rufin-bin or both" >&2
+              exit 1
+            fi
+          fi
+
   build:
     name: Build AUR packages
+    needs: validate
     uses: ./.github/workflows/aur-build.yml
     with:
-      package: ${{ github.event_name == 'release' && 'rufin-bin' || inputs.package }}
-      release_tag: ${{ github.event_name == 'release' && github.event.release.tag_name || inputs.release_tag }}
-      publish: ${{ github.event_name == 'release' || inputs.publish }}
+      package: ${{ inputs.package }}
+      release_tag: ${{ inputs.release_tag }}
+      publish: ${{ inputs.publish }}
 
   release-assets:
     name: Upload Arch release assets
     needs: build
     if: >-
-      (github.event_name == 'release' || inputs.publish) &&
+      inputs.upload_release_asset &&
       (needs.build.outputs.package == 'rufin-bin' || needs.build.outputs.package == 'both')
     runs-on: ubuntu-latest
     permissions:
@@ -90,7 +125,7 @@ jobs:
     needs:
       - build
       - release-assets
-    if: always() && (github.event_name == 'release' || inputs.publish)
+    if: always() && inputs.publish
     runs-on: ubuntu-latest
     container: archlinux:latest
 
@@ -104,7 +139,7 @@ jobs:
           set -euo pipefail
           test "$BUILD_RESULT" = "success"
           if [[ "$PACKAGE" == "rufin-bin" || "$PACKAGE" == "both" ]]; then
-            test "$RELEASE_ASSETS_RESULT" = "success"
+            test "$RELEASE_ASSETS_RESULT" = "skipped"
           fi
 
       - name: Install publish dependencies
