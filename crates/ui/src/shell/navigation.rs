@@ -778,7 +778,7 @@ impl SidebarPinItem {
     ) {
         match self {
             Self::Album(album) => {
-                present_album_context_menu(target, shell, album.clone(), position);
+                present_album_context_menu(target, shell, album.clone(), None, position);
             }
             Self::Artist(artist) => {
                 present_artist_context_menu(target, shell, artist.clone(), position);
@@ -1392,6 +1392,14 @@ mod tests {
             "artist:artist",
             "artist:artist|query=blue|sort=Title|descending=false"
         ));
+        assert!(sidebar_pin_context_matches(
+            "artist:artist",
+            "artist:artist|favorites|query=|sort=Title|descending=false"
+        ));
+        assert!(sidebar_pin_context_matches(
+            "artist:artist",
+            "artist:artist|releases"
+        ));
         assert!(!sidebar_pin_context_matches(
             "artist:artist",
             "artist-favorites:artist|query=|sort=Title|descending=false"
@@ -1399,6 +1407,14 @@ mod tests {
         assert!(!sidebar_pin_context_matches(
             "artist:artist",
             "track:by-the-artist"
+        ));
+        assert!(!sidebar_pin_context_matches(
+            "artist:artist",
+            "album:by-the-artist"
+        ));
+        assert!(!sidebar_pin_context_matches(
+            "artist:artist",
+            "playlist:with-the-artist"
         ));
 
         assert!(sidebar_pin_context_matches(

@@ -76,6 +76,10 @@ pub(crate) enum PlaybackTarget {
         context_id: String,
         download_subject: DownloadSubject,
     },
+    Contextual {
+        target: Box<PlaybackTarget>,
+        context_id: String,
+    },
 }
 
 impl PlaybackTarget {
@@ -88,6 +92,13 @@ impl PlaybackTarget {
             tracks,
             context_id: context_id.into(),
             download_subject,
+        }
+    }
+
+    pub(crate) fn in_context(self, context_id: impl Into<String>) -> Self {
+        Self::Contextual {
+            target: Box::new(self),
+            context_id: context_id.into(),
         }
     }
 
@@ -104,6 +115,7 @@ impl PlaybackTarget {
                 Ok(selected.loaded.smart_playlist_track_selection(id, folder))
             }
             Self::Prepared { tracks, .. } => Ok(tracks.clone().into()),
+            Self::Contextual { target, .. } => target.selection(selected),
         }
     }
 
@@ -169,6 +181,7 @@ impl PlaybackTarget {
             Self::Prepared {
                 download_subject, ..
             } => download_subject.clone(),
+            Self::Contextual { target, .. } => target.download_subject(),
         }
     }
 
@@ -182,6 +195,7 @@ impl PlaybackTarget {
             Self::Playlist(id) => format!("playlist:{}", id.as_str()),
             Self::SmartPlaylist(id) => format!("smart-playlist:{}", id.as_str()),
             Self::Prepared { context_id, .. } => context_id.clone(),
+            Self::Contextual { context_id, .. } => context_id.clone(),
         }
     }
 
@@ -588,7 +602,7 @@ pub(crate) fn album_collection_projection(
         settings,
         Rc::new(move |layout| match layout {
             LibraryLayout::Row => {
-                LibraryPresentationProjection::Row(album_table(&shell, models.albums(), key))
+                LibraryPresentationProjection::Row(album_table(&shell, models.albums(), key, None))
             }
             LibraryLayout::Detail if key.supports_layout(LibraryLayout::Detail) => {
                 LibraryPresentationProjection::AlbumDetail(album_detail_list(
@@ -739,7 +753,7 @@ pub(crate) fn album_grid(
         minimum_card_width,
         maximum_card_width,
         &fields,
-        move |fields| AlbumGridCell::new(Rc::clone(&cell_shell), fields, maximum_card_width),
+        move |fields| AlbumGridCell::new(Rc::clone(&cell_shell), fields, maximum_card_width, None),
         move |_, album: AlbumSummary| {
             activate_shell.navigate(Route::AlbumDetail(album.album.id.clone()))
         },
@@ -866,6 +880,7 @@ pub(crate) fn home_item_row(
                     Rc::clone(&widget_shell),
                     &HOME_ALBUM_GRID_FIELDS,
                     COLLECTION_GRID_MAX_CARD_WIDTH,
+                    None,
                 );
                 cell.bind(position, album);
                 cell.widget()
@@ -911,17 +926,19 @@ pub(crate) fn album_table(
     shell: &Rc<Shell>,
     model: gio::ListStore,
     key: LibraryListKey,
+    playback_context: Option<String>,
 ) -> CollectionTableProjection {
     let fields = shell.settings.current.borrow().library_list(key).row_fields;
     let activate_shell = Rc::clone(shell);
     let column_shell = Rc::clone(shell);
+    let column_playback_context = playback_context;
     dynamic_collection_table(
         shell,
         key,
         model,
         &fields,
         Vec::new(),
-        move |field| album_column(&column_shell, field),
+        move |field| album_column(&column_shell, field, column_playback_context.clone()),
         |field| column_fit_width(field, column_width(field)),
         true,
         Some(Box::new(move |_, album: AlbumSummary| {
@@ -1441,6 +1458,14 @@ pub(super) fn collection_grid_card() -> gtk::Box {
 #[cfg(test)]
 mod layout_policy_tests {
     use super::*;
+
+    #[test]
+    fn contextual_playback_target_uses_the_route_context() {
+        let target =
+            PlaybackTarget::Album(AlbumId::new("album")).in_context("artist:artist|releases");
+
+        assert_eq!(target.context_id(), "artist:artist|releases");
+    }
 
     #[test]
     fn compact_track_height_caps_at_four_rows() {

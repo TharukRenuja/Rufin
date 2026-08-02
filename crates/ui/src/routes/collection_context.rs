@@ -115,6 +115,7 @@ pub(crate) fn install_dynamic_album_context_menu(
     target: &impl IsA<gtk::Widget>,
     shell: &Rc<Shell>,
     album: Rc<RefCell<Option<AlbumSummary>>>,
+    playback_context: Option<String>,
 ) {
     let shell = Rc::clone(shell);
     install_context_menu_openers(
@@ -123,7 +124,7 @@ pub(crate) fn install_dynamic_album_context_menu(
             let Some(album) = album.borrow().clone() else {
                 return;
             };
-            present_album_context_menu(target, &shell, album, position);
+            present_album_context_menu(target, &shell, album, playback_context.clone(), position);
         }),
     );
 }
@@ -372,9 +373,13 @@ pub(crate) fn present_album_context_menu(
     target: &gtk::Widget,
     shell: &Rc<Shell>,
     album: AlbumSummary,
+    playback_context: Option<String>,
     position: Option<(f64, f64)>,
 ) {
     let playback_target = PlaybackTarget::Album(album.album.id.clone());
+    let playback_target = playback_context
+        .map(|context| playback_target.clone().in_context(context))
+        .unwrap_or(playback_target);
     present_album_context_menu_inner(target, shell, album, playback_target, position);
 }
 

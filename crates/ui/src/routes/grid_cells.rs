@@ -16,7 +16,7 @@ use crate::shell::cover::presentation::stable_seed;
 use crate::shell::cover::{ArtworkTile, LARGE_COVER_SIZE, THUMB_COVER_SIZE};
 use crate::shell::route::{MountedRouteItemNavigation, item_navigation_entry_position};
 use ::library::{
-    AlbumSummary, ArtistSummary, GenreSummary, PlaylistSummary, SmartPlaylistId,
+    AlbumId, AlbumSummary, ArtistSummary, GenreSummary, PlaylistSummary, SmartPlaylistId,
     SmartPlaylistSummary, Track,
 };
 use adw::prelude::*;
@@ -459,6 +459,13 @@ fn play_loaded_tracks(
     shell.products.playback.queue.play_loaded(request);
 }
 
+fn album_playback_target(album_id: AlbumId, context: Option<&str>) -> PlaybackTarget {
+    let target = PlaybackTarget::Album(album_id);
+    context
+        .map(|context| target.clone().in_context(context))
+        .unwrap_or(target)
+}
+
 fn play_one_track(shell: &Shell, track: Track, placement: QueuePlacement) {
     let Some(selected) = shell.library.selected.borrow().as_ref().cloned() else {
         return;
@@ -672,7 +679,12 @@ pub(super) struct AlbumGridCell {
 }
 
 impl AlbumGridCell {
-    pub(super) fn new(shell: Rc<Shell>, fields: &[LibraryField], cover_size: i32) -> Self {
+    pub(super) fn new(
+        shell: Rc<Shell>,
+        fields: &[LibraryField],
+        cover_size: i32,
+        playback_context: Option<String>,
+    ) -> Self {
         let current_album = Rc::new(RefCell::new(None::<AlbumSummary>));
 
         let overlay = cards::elastic_cover_overlay();
@@ -693,6 +705,7 @@ impl AlbumGridCell {
         let menu_shell = Rc::clone(&shell);
         let menu_album = Rc::clone(&current_album);
         let menu_target = overlay.downgrade();
+        let menu_playback_context = playback_context.clone();
         menu.connect_clicked(move |_| {
             let Some(album) = menu_album.borrow().as_ref().cloned() else {
                 return;
@@ -704,19 +717,21 @@ impl AlbumGridCell {
                 menu_target.upcast_ref(),
                 &menu_shell,
                 album,
+                menu_playback_context.clone(),
                 cards::elastic_cover_context_point(&menu_target),
             );
         });
 
         let play_shell = Rc::clone(&shell);
         let play_album = Rc::clone(&current_album);
+        let play_context = playback_context.clone();
         controls.play.connect_clicked(move |_| {
             let Some(album) = play_album.borrow().as_ref().cloned() else {
                 return;
             };
             play_loaded_tracks(
                 &play_shell,
-                PlaybackTarget::Album(album.album.id.clone()),
+                album_playback_target(album.album.id.clone(), play_context.as_deref()),
                 QueuePlacement::Now,
                 true,
             );
@@ -724,13 +739,14 @@ impl AlbumGridCell {
 
         let next_shell = Rc::clone(&shell);
         let next_album = Rc::clone(&current_album);
+        let next_context = playback_context.clone();
         controls.play_next.connect_clicked(move |_| {
             let Some(album) = next_album.borrow().as_ref().cloned() else {
                 return;
             };
             play_loaded_tracks(
                 &next_shell,
-                PlaybackTarget::Album(album.album.id.clone()),
+                album_playback_target(album.album.id.clone(), next_context.as_deref()),
                 QueuePlacement::Next,
                 false,
             );
@@ -738,13 +754,14 @@ impl AlbumGridCell {
 
         let last_shell = Rc::clone(&shell);
         let last_album = Rc::clone(&current_album);
+        let last_context = playback_context.clone();
         controls.play_last.connect_clicked(move |_| {
             let Some(album) = last_album.borrow().as_ref().cloned() else {
                 return;
             };
             play_loaded_tracks(
                 &last_shell,
-                PlaybackTarget::Album(album.album.id.clone()),
+                album_playback_target(album.album.id.clone(), last_context.as_deref()),
                 QueuePlacement::Last,
                 false,
             );
@@ -787,7 +804,12 @@ impl AlbumGridCell {
                     .unwrap_or(false)
             })
         }));
-        install_dynamic_album_context_menu(&body.card, &shell, Rc::clone(&current_album));
+        install_dynamic_album_context_menu(
+            &body.card,
+            &shell,
+            Rc::clone(&current_album),
+            playback_context,
+        );
 
         Self {
             body,
