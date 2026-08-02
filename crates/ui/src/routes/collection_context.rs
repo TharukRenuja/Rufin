@@ -26,7 +26,7 @@ use crate::shell::actions::{
 };
 use localization::{msgid, tr};
 
-use super::collections::PlaybackTarget;
+use super::collections::{CollectionPlay, PlaybackTarget};
 use super::detail_links::{album_artist_route, track_artist_route};
 use super::playlist_entries::{
     PlaylistEntryContextMenuAction, PlaylistEntryContextMenuState, confirm_remove_playlist_entry,
@@ -105,6 +105,7 @@ pub(crate) fn install_album_context_menu(
                 &shell,
                 album.clone(),
                 playback_target,
+                None,
                 position,
             );
         }),
@@ -124,7 +125,14 @@ pub(crate) fn install_dynamic_album_context_menu(
             let Some(album) = album.borrow().clone() else {
                 return;
             };
-            present_album_context_menu(target, &shell, album, playback_context.clone(), position);
+            present_album_context_menu(
+                target,
+                &shell,
+                album,
+                playback_context.clone(),
+                None,
+                position,
+            );
         }),
     );
 }
@@ -138,7 +146,7 @@ pub(crate) fn install_genre_context_menu(
     install_context_menu_openers(
         target,
         Rc::new(move |target, position| {
-            present_genre_context_menu(target, &shell, genre.clone(), position);
+            present_genre_context_menu(target, &shell, genre.clone(), None, position);
         }),
     );
 }
@@ -308,7 +316,7 @@ fn present_resolved_track_context_menu(
     if let Some(popover_position) = popover_position {
         surface.popover().set_position(popover_position);
     }
-    install_loaded_actions(&surface, shell, playback_target, false);
+    install_loaded_actions(&surface, shell, playback_target, false, None);
     install_radio_actions(&surface, shell, RadioSeed::Track(track.id.clone()));
     if let Some(playlist_source) = playlist_source {
         install_context_menu_picker_action(&surface, shell, playlist_source);
@@ -374,13 +382,14 @@ pub(crate) fn present_album_context_menu(
     shell: &Rc<Shell>,
     album: AlbumSummary,
     playback_context: Option<String>,
+    play: Option<CollectionPlay>,
     position: Option<(f64, f64)>,
 ) {
     let playback_target = PlaybackTarget::Album(album.album.id.clone());
     let playback_target = playback_context
         .map(|context| playback_target.clone().in_context(context))
         .unwrap_or(playback_target);
-    present_album_context_menu_inner(target, shell, album, playback_target, position);
+    present_album_context_menu_inner(target, shell, album, playback_target, play, position);
 }
 
 fn present_album_context_menu_inner(
@@ -388,6 +397,7 @@ fn present_album_context_menu_inner(
     shell: &Rc<Shell>,
     album: AlbumSummary,
     playback_target: PlaybackTarget,
+    play: Option<CollectionPlay>,
     position: Option<(f64, f64)>,
 ) {
     let metadata_editable =
@@ -397,6 +407,7 @@ fn present_album_context_menu_inner(
         shell,
         album,
         playback_target,
+        play,
         position,
         metadata_editable,
     );
@@ -407,6 +418,7 @@ fn present_resolved_album_context_menu_inner(
     shell: &Rc<Shell>,
     album: AlbumSummary,
     playback_target: PlaybackTarget,
+    play: Option<CollectionPlay>,
     position: Option<(f64, f64)>,
     metadata_editable: bool,
 ) {
@@ -492,7 +504,7 @@ fn present_resolved_album_context_menu_inner(
         ALBUM_ICON,
     );
 
-    install_loaded_actions(&surface, shell, playback_target, true);
+    install_loaded_actions(&surface, shell, playback_target, true, play);
     install_radio_actions(&surface, shell, RadioSeed::Album(album.album.id.clone()));
     if let Some(playlist_source) = playlist_source {
         install_context_menu_picker_action(&surface, shell, playlist_source);
@@ -544,6 +556,7 @@ pub(crate) fn present_artist_context_menu(
     target: &gtk::Widget,
     shell: &Rc<Shell>,
     artist: ArtistSummary,
+    play: Option<CollectionPlay>,
     position: Option<(f64, f64)>,
 ) {
     let playback_target = PlaybackTarget::Artist(artist.artist.id.clone());
@@ -554,6 +567,7 @@ pub(crate) fn present_artist_context_menu(
         shell,
         artist,
         playback_target,
+        play,
         position,
         metadata_editable,
     );
@@ -564,6 +578,7 @@ fn present_resolved_artist_context_menu(
     shell: &Rc<Shell>,
     artist: ArtistSummary,
     playback_target: PlaybackTarget,
+    play: Option<CollectionPlay>,
     position: Option<(f64, f64)>,
     metadata_editable: bool,
 ) {
@@ -640,7 +655,7 @@ fn present_resolved_artist_context_menu(
         ARTIST_ICON,
     );
 
-    install_loaded_actions(&surface, shell, playback_target, true);
+    install_loaded_actions(&surface, shell, playback_target, true, play);
     install_radio_actions(&surface, shell, RadioSeed::Artist(artist.artist.id.clone()));
     if let Some(playlist_source) = playlist_source {
         install_context_menu_picker_action(&surface, shell, playlist_source);
@@ -678,6 +693,7 @@ pub(crate) fn present_genre_context_menu(
     target: &gtk::Widget,
     shell: &Rc<Shell>,
     genre: GenreSummary,
+    play: Option<CollectionPlay>,
     position: Option<(f64, f64)>,
 ) {
     let playback_target = PlaybackTarget::Genre(genre.genre.id.clone());
@@ -725,7 +741,7 @@ pub(crate) fn present_genre_context_menu(
                 genre_id: genre.genre.id.clone(),
             }),
     );
-    install_loaded_actions(&surface, shell, playback_target, true);
+    install_loaded_actions(&surface, shell, playback_target, true, play);
     install_radio_actions(
         &surface,
         shell,
@@ -744,6 +760,7 @@ pub(crate) fn present_playlist_context_menu(
     target: &gtk::Widget,
     shell: &Rc<Shell>,
     playlist: PlaylistSummary,
+    play: Option<CollectionPlay>,
     position: Option<(f64, f64)>,
 ) {
     let playback_target = PlaybackTarget::Playlist(playlist.playlist.id.clone());
@@ -780,15 +797,41 @@ pub(crate) fn present_playlist_context_menu(
                 playlist_id: playlist.playlist.id.clone(),
             }),
     );
+    surface.append_fixed_action(msgid("Rename"), "rename", EDIT_ICON);
+    surface.append_fixed_action(msgid("Add current"), "add-current", ADD_ICON);
     surface.append_fixed_action(msgid("Delete"), "delete", REMOVE_ICON);
-    install_loaded_actions(&surface, shell, playback_target, true);
+    install_loaded_actions(&surface, shell, playback_target, true, play);
     install_radio_actions(
         &surface,
         shell,
         RadioSeed::Playlist(playlist.playlist.id.clone()),
     );
+    surface.add_action("rename", {
+        let shell = Rc::clone(shell);
+        let playlist_id = playlist.playlist.id.clone();
+        let playlist_name = playlist.playlist.name.clone();
+        move || shell.rename_playlist_dialog(playlist_id.clone(), playlist_name.clone())
+    });
+    let current_track_id = {
+        let player = shell.playback.player.borrow();
+        current_playback_track(&player).map(|track| track.id.clone())
+    };
+    surface.add_action_enabled("add-current", current_track_id.is_some(), {
+        let source = shell.products.source.clone();
+        let playlist_id = playlist.playlist.id.clone();
+        move || {
+            let Some(track_id) = current_track_id.clone() else {
+                return;
+            };
+            source.edit_playlist(PlaylistEdit::AddTracks {
+                playlist_id: playlist_id.clone(),
+                track_ids: vec![track_id],
+            });
+        }
+    });
     surface.add_action("delete", {
         let source = shell.products.source.clone();
+        let shell = Rc::clone(shell);
         let window = shell.chrome.window.clone();
         let playlist_id = playlist.playlist.id.clone();
         let playlist_name = playlist.playlist.name.clone();
@@ -801,12 +844,14 @@ pub(crate) fn present_playlist_context_menu(
             dialog.add_response("delete", &tr("Delete"));
             dialog.set_response_appearance("delete", adw::ResponseAppearance::Destructive);
             let source = source.clone();
+            let shell = Rc::clone(&shell);
             let playlist_id = playlist_id.clone();
             dialog.connect_response(None, move |_, response| {
                 if response == "delete" {
                     source.edit_playlist(PlaylistEdit::Delete {
                         playlist_id: playlist_id.clone(),
                     });
+                    shell.navigate(Route::Playlists);
                 }
             });
             present_light_dismiss_dialog(&dialog, &window);
@@ -819,6 +864,7 @@ pub(crate) fn present_smart_playlist_context_menu(
     target: &gtk::Widget,
     shell: &Rc<Shell>,
     playlist: SmartPlaylistSummary,
+    play: Option<CollectionPlay>,
     position: Option<(f64, f64)>,
 ) {
     let playback_target = PlaybackTarget::SmartPlaylist(playlist.smart_playlist.id.clone());
@@ -837,12 +883,21 @@ pub(crate) fn present_smart_playlist_context_menu(
                 playlist_id: playlist.smart_playlist.id.clone(),
             }),
     );
+    surface.append_fixed_action(msgid("Rename"), "rename", EDIT_ICON);
     surface.append_fixed_action(msgid("Delete"), "delete", REMOVE_ICON);
-    install_loaded_actions(&surface, shell, playback_target, true);
+    install_loaded_actions(&surface, shell, playback_target, true, play);
+    surface.add_action("rename", {
+        let shell = Rc::clone(shell);
+        let playlist = (*playlist.smart_playlist).clone();
+        move || shell.rename_smart_playlist_dialog(playlist.clone())
+    });
     surface.add_action("delete", {
-        let smart_playlists = shell.products.smart_playlists.clone();
+        let shell = Rc::clone(shell);
         let playlist_id = playlist.smart_playlist.id.clone();
-        move || smart_playlists.delete(playlist_id.clone())
+        move || {
+            shell.products.smart_playlists.delete(playlist_id.clone());
+            shell.navigate(Route::SmartPlaylists);
+        }
     });
     surface.popup(&shell.settings.current.borrow().context_menu);
 }
@@ -886,6 +941,7 @@ fn install_loaded_actions(
     shell: &Rc<Shell>,
     target: PlaybackTarget,
     shuffled_start: bool,
+    play: Option<CollectionPlay>,
 ) {
     install_download_actions(surface, shell, &target);
     for (action, placement) in [
@@ -896,8 +952,14 @@ fn install_loaded_actions(
         let queue = shell.products.playback.queue.clone();
         let shell = Rc::clone(shell);
         let target = target.clone();
+        let play = play.clone();
         surface.add_action(action, move || {
-            if let Some(request) = target.play_request(&shell, placement, shuffled_start) {
+            if let Some(play) = play.as_ref() {
+                play(
+                    placement,
+                    shuffled_start && placement == QueuePlacement::Now,
+                );
+            } else if let Some(request) = target.play_request(&shell, placement, shuffled_start) {
                 queue.play_loaded(request);
             }
         });

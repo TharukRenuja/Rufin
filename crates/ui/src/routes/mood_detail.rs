@@ -10,9 +10,8 @@ use crate::shell::Shell;
 use crate::shell::cover::presentation::stable_seed;
 use crate::shell::route::{LatestMountedRouteRead, MountedRoute, SelectedRouteIdentity};
 use crate::{LibraryListKey, LibraryListSettings};
-use localization::track_count_text;
+use localization::{msgid, track_count_text};
 
-use super::detail_showcase::detail_action_row;
 use super::grouped_detail::GroupedDetailData;
 use super::route::Route;
 use super::track_model::{
@@ -49,8 +48,6 @@ impl Shell {
         let seed = stable_seed(mood.mood.id.as_str());
         let summary_items = mood_summary_items(&mood);
         let artwork = ArtworkBinding::mood_slots(&mood.mood, &mood.representative_albums);
-        let actions = detail_action_row();
-        actions.set_halign(gtk::Align::Start);
         let context_id = format!("mood:{}", mood_id.as_str());
         let grouped = self.grouped_detail_view(GroupedDetailData {
             key: LibraryListKey::MoodTracks,
@@ -59,12 +56,12 @@ impl Shell {
             artwork,
             seed,
             summary_items,
-            actions: Some(actions.clone().upcast()),
+            context_menu: None,
             tracks,
             table_context: "mood-detail",
             playback_context: context_id.clone(),
+            play_label: msgid("Play mood"),
         });
-        self.install_grouped_detail_actions(&actions, grouped.tracks(), context_id);
         let track_count = Rc::new(Cell::new(mood.track_count));
         let localized_track_count = Rc::clone(&track_count);
         grouped.bind_summary_text_with(0, move || {

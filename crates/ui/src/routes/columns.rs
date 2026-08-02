@@ -1103,7 +1103,14 @@ fn install_album_list_item_context_menu(
             let Some(album) = item.upgrade().and_then(|item| item_at_from_item(&item)) else {
                 return;
             };
-            present_album_context_menu(target, &shell, album, playback_context.clone(), position);
+            present_album_context_menu(
+                target,
+                &shell,
+                album,
+                playback_context.clone(),
+                None,
+                position,
+            );
         }),
     );
 }
@@ -1121,7 +1128,7 @@ fn install_artist_list_item_context_menu(
             let Some(artist) = item.upgrade().and_then(|item| item_at_from_item(&item)) else {
                 return;
             };
-            present_artist_context_menu(target, &shell, artist, position);
+            present_artist_context_menu(target, &shell, artist, None, position);
         }),
     );
 }

@@ -526,13 +526,7 @@ msgstr ""
 msgid "EPs"
 msgstr ""
 
-msgid "Edit Smart Playlist"
-msgstr ""
-
 msgid "Edit metadata"
-msgstr ""
-
-msgid "Edit"
 msgstr ""
 
 msgid "Enable equalizer"

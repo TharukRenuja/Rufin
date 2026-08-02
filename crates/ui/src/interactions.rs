@@ -21,7 +21,7 @@ pub(crate) const ARTIST_ICON: &str = "rufin-route-artists-symbolic";
 pub(crate) const DOWNLOAD_ICON: &str = "folder-download-symbolic";
 pub(crate) const RADIO_ICON: &str = "rufin-audio-radio-symbolic";
 
-type ContextMenuOpen = Rc<dyn Fn(&gtk::Widget, Option<(f64, f64)>)>;
+pub(crate) type ContextMenuOpen = Rc<dyn Fn(&gtk::Widget, Option<(f64, f64)>)>;
 
 pub(crate) fn connect_transient_entry_focus_dismissal(shell: &Shell) {
     install_focus_dismissal(
@@ -146,7 +146,12 @@ impl ContextMenuSurface {
     }
 
     pub(crate) fn add_action(&self, name: &str, run: impl Fn() + 'static) {
+        self.add_action_enabled(name, true, run);
+    }
+
+    pub(crate) fn add_action_enabled(&self, name: &str, enabled: bool, run: impl Fn() + 'static) {
         let action = gio::SimpleAction::new(name, None);
+        action.set_enabled(enabled);
         let popover = self.popover.downgrade();
         action.connect_activate(move |_, _| {
             if let Some(popover) = popover.upgrade() {

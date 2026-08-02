@@ -387,7 +387,7 @@ fn named_collection_title_column(
                 else {
                     return;
                 };
-                present_genre_context_menu(target, &menu_shell, genre, position);
+                present_genre_context_menu(target, &menu_shell, genre, None, position);
             }),
         );
         item.set_child(Some(&row));

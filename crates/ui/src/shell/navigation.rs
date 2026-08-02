@@ -778,19 +778,25 @@ impl SidebarPinItem {
     ) {
         match self {
             Self::Album(album) => {
-                present_album_context_menu(target, shell, album.clone(), None, position);
+                present_album_context_menu(target, shell, album.clone(), None, None, position);
             }
             Self::Artist(artist) => {
-                present_artist_context_menu(target, shell, artist.clone(), position);
+                present_artist_context_menu(target, shell, artist.clone(), None, position);
             }
             Self::Genre(genre) => {
-                present_genre_context_menu(target, shell, genre.clone(), position);
+                present_genre_context_menu(target, shell, genre.clone(), None, position);
             }
             Self::Playlist(playlist) => {
-                present_playlist_context_menu(target, shell, playlist.clone(), position);
+                present_playlist_context_menu(target, shell, playlist.clone(), None, position);
             }
             Self::SmartPlaylist(playlist) => {
-                present_smart_playlist_context_menu(target, shell, playlist.clone(), position);
+                present_smart_playlist_context_menu(
+                    target,
+                    shell,
+                    playlist.clone(),
+                    None,
+                    position,
+                );
             }
         }
     }
