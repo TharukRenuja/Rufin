@@ -228,7 +228,7 @@ impl Shell {
             LibraryListKey::ArtistTracks,
             SearchableTrackOptions {
                 on_visible_count_changed: Some(resize_favorite_tracks),
-                context_id: format!("artist-favorites:{}", artist_id.as_str()),
+                context_id: format!("artist:{}|favorites", artist_id.as_str()),
                 content_inset: PRIMARY_ROUTE_HORIZONTAL_INSET,
                 fixed_layout: Some(crate::LibraryLayout::Row),
             },
@@ -263,6 +263,7 @@ impl Shell {
             },
             albums,
             appears_on,
+            format!("artist:{}|releases", artist_id.as_str()),
         );
         set_artist_route_search(self, releases.primary_search());
         wrapper.append(&releases.widget());
@@ -498,6 +499,7 @@ impl Shell {
             },
             detail.albums,
             detail.appears_on,
+            format!("artist:{}|releases", artist_id.as_str()),
         );
         set_artist_route_search(self, releases.primary_search());
         wrapper.append(&releases.widget());

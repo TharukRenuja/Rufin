@@ -83,7 +83,7 @@ pub(crate) fn album_cover_overlay(
     let menu_album = album.clone();
     let open_menu: Rc<dyn Fn(&gtk::Widget, Option<(f64, f64)>)> =
         Rc::new(move |target, position| {
-            present_album_context_menu(target, &menu_shell, menu_album.clone(), position);
+            present_album_context_menu(target, &menu_shell, menu_album.clone(), None, position);
         });
     install_context_menu_openers(&overlay, Rc::clone(&open_menu));
     let menu_target = overlay.downgrade();

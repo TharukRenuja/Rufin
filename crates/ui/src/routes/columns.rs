@@ -32,22 +32,36 @@ use super::table_links::track_link_column;
 pub(crate) const ROW_INDEX_COLUMN_TITLE: &str = "\u{2003}\u{a0}#";
 pub(crate) const ALBUM_DETAIL_DURATION_COLUMN_WIDTH: i32 = 48;
 
-pub(crate) fn album_column(shell: &Rc<Shell>, field: LibraryField) -> gtk::ColumnViewColumn {
+pub(crate) fn album_column(
+    shell: &Rc<Shell>,
+    field: LibraryField,
+    playback_context: Option<String>,
+) -> gtk::ColumnViewColumn {
     match field {
         LibraryField::RowIndex => row_index_column(),
-        LibraryField::Image => {
-            album_image_column(shell, "Image", column_width(LibraryField::Image))
-        }
-        LibraryField::TitleMerged => {
-            album_merged_column(shell, "Title", column_width(LibraryField::TitleMerged))
-        }
-        LibraryField::Title => {
-            album_text_column(shell, "Title", 220, |album| album.album.title.clone())
-        }
-        LibraryField::Favorite => album_favorite_column(shell),
-        _ => album_text_column(shell, field.title(), column_width(field), move |album| {
-            album_field(album, field)
+        LibraryField::Image => album_image_column(
+            shell,
+            "Image",
+            column_width(LibraryField::Image),
+            playback_context,
+        ),
+        LibraryField::TitleMerged => album_merged_column(
+            shell,
+            "Title",
+            column_width(LibraryField::TitleMerged),
+            playback_context,
+        ),
+        LibraryField::Title => album_text_column(shell, "Title", 220, playback_context, |album| {
+            album.album.title.clone()
         }),
+        LibraryField::Favorite => album_favorite_column(shell, playback_context),
+        _ => album_text_column(
+            shell,
+            field.title(),
+            column_width(field),
+            playback_context,
+            move |album| album_field(album, field),
+        ),
     }
 }
 pub(crate) fn artist_column(shell: &Rc<Shell>, field: LibraryField) -> gtk::ColumnViewColumn {
@@ -752,6 +766,7 @@ pub(crate) fn album_image_column(
     shell: &Rc<Shell>,
     title: &'static str,
     width: i32,
+    playback_context: Option<String>,
 ) -> gtk::ColumnViewColumn {
     let factory = gtk::SignalListItemFactory::new();
     let shell = Rc::clone(shell);
@@ -764,7 +779,12 @@ pub(crate) fn album_image_column(
         let current_album = Rc::new(RefCell::new(None::<AlbumSummary>));
         let cover = ArtworkTile::new(48, 0);
         let widget = cover.widget();
-        install_dynamic_album_context_menu(&widget, &setup_shell, Rc::clone(&current_album));
+        install_dynamic_album_context_menu(
+            &widget,
+            &setup_shell,
+            Rc::clone(&current_album),
+            playback_context.clone(),
+        );
         item.set_child(Some(&widget));
         let key = library_list_item_storage_key(item);
         LIBRARY_ALBUM_IMAGE_CELLS.with(|cells| {
@@ -827,6 +847,7 @@ pub(crate) fn album_text_column<F>(
     shell: &Rc<Shell>,
     title: &'static str,
     width: i32,
+    playback_context: Option<String>,
     value: F,
 ) -> gtk::ColumnViewColumn
 where
@@ -862,7 +883,12 @@ where
             })
         });
         row.append(&downloaded);
-        install_dynamic_album_context_menu(&row, &setup_shell, Rc::clone(&current_album));
+        install_dynamic_album_context_menu(
+            &row,
+            &setup_shell,
+            Rc::clone(&current_album),
+            playback_context.clone(),
+        );
         item.set_child(Some(&row));
         let key = library_list_item_storage_key(item);
         LIBRARY_ALBUM_TEXT_CELLS.with(|cells| {
@@ -922,6 +948,7 @@ pub(crate) fn album_merged_column(
     shell: &Rc<Shell>,
     title: &'static str,
     width: i32,
+    playback_context: Option<String>,
 ) -> gtk::ColumnViewColumn {
     let factory = gtk::SignalListItemFactory::new();
     let shell = Rc::clone(shell);
@@ -981,7 +1008,12 @@ pub(crate) fn album_merged_column(
         labels.append(&subtitle);
 
         row.append(&labels);
-        install_dynamic_album_context_menu(&row, &setup_shell, Rc::clone(&current_album));
+        install_dynamic_album_context_menu(
+            &row,
+            &setup_shell,
+            Rc::clone(&current_album),
+            playback_context.clone(),
+        );
         item.set_child(Some(&row));
         let key = library_list_item_storage_key(item);
         LIBRARY_ALBUM_MERGED_CELLS.with(|cells| {
@@ -1061,6 +1093,7 @@ fn install_album_list_item_context_menu(
     target: &impl IsA<gtk::Widget>,
     shell: &Rc<Shell>,
     item: &gtk::ListItem,
+    playback_context: Option<String>,
 ) {
     let item = item.downgrade();
     let shell = Rc::clone(shell);
@@ -1070,7 +1103,7 @@ fn install_album_list_item_context_menu(
             let Some(album) = item.upgrade().and_then(|item| item_at_from_item(&item)) else {
                 return;
             };
-            present_album_context_menu(target, &shell, album, position);
+            present_album_context_menu(target, &shell, album, playback_context.clone(), position);
         }),
     );
 }
@@ -1761,7 +1794,10 @@ where
     column.set_fixed_width(width);
     column
 }
-pub(crate) fn album_favorite_column(shell: &Rc<Shell>) -> gtk::ColumnViewColumn {
+pub(crate) fn album_favorite_column(
+    shell: &Rc<Shell>,
+    playback_context: Option<String>,
+) -> gtk::ColumnViewColumn {
     let factory = gtk::SignalListItemFactory::new();
     let shell = Rc::clone(shell);
 
@@ -1780,7 +1816,7 @@ pub(crate) fn album_favorite_column(shell: &Rc<Shell>) -> gtk::ColumnViewColumn 
             }),
             &button,
         );
-        install_album_list_item_context_menu(&button, &shell, item);
+        install_album_list_item_context_menu(&button, &shell, item, playback_context.clone());
         let favorite_shell = Rc::clone(&shell);
         let click_item = item.downgrade();
         button.connect_clicked(move |button| {

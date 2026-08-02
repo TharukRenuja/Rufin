@@ -68,6 +68,7 @@ struct ArtistAlbumProjection {
     row_surface: Rc<RefCell<Option<gtk::Widget>>>,
     applied_settings: Rc<RefCell<LibraryListSettings>>,
     shell: Rc<Shell>,
+    playback_context: String,
     recompute: Rc<dyn Fn(String, bool)>,
 }
 
@@ -145,6 +146,7 @@ impl ArtistAlbumProjection {
         title: &'static str,
         albums: Vec<AlbumSummary>,
         update_gate: Rc<ArtistReleaseUpdateGate>,
+        playback_context: String,
     ) -> Self {
         let key = LibraryListKey::ArtistAlbums;
         let search = gtk::SearchEntry::new();
@@ -213,6 +215,7 @@ impl ArtistAlbumProjection {
             row_surface: Rc::new(RefCell::new(None)),
             applied_settings: Rc::new(RefCell::new(settings)),
             shell: Rc::clone(shell),
+            playback_context,
             recompute,
         }
     }
@@ -248,6 +251,7 @@ impl ArtistAlbumProjection {
             &self.shell,
             self.row_model.clone(),
             LibraryListKey::ArtistAlbums,
+            Some(self.playback_context.clone()),
         );
         table.apply_fields(&settings.row_fields);
         let clip = non_propagating_width_scroller();
@@ -288,6 +292,7 @@ impl ArtistReleaseProjections {
         preamble: ArtistReleaseRoutePreamble,
         albums: Arc<[AlbumSummary]>,
         appears_on: Arc<[AlbumSummary]>,
+        playback_context: String,
     ) -> Self {
         let update_gate = Rc::new(ArtistReleaseUpdateGate::default());
         let partitioned = partition_artist_releases(albums, appears_on);
@@ -299,12 +304,19 @@ impl ArtistReleaseProjections {
             AlbumReleaseKind::Other.section_title(),
             msgid("Appears On"),
         ];
+        let section_playback_context = playback_context.clone();
         let sections = Rc::new(
             titles
                 .into_iter()
                 .zip(partitioned)
                 .map(|(title, albums)| {
-                    ArtistAlbumProjection::new(shell, title, albums, Rc::clone(&update_gate))
+                    ArtistAlbumProjection::new(
+                        shell,
+                        title,
+                        albums,
+                        Rc::clone(&update_gate),
+                        section_playback_context.clone(),
+                    )
                 })
                 .collect::<Vec<_>>(),
         );
@@ -317,12 +329,14 @@ impl ArtistReleaseProjections {
             .library_list(LibraryListKey::ArtistAlbums);
         let grid_fields = Rc::new(RefCell::new(settings.grid_fields.clone()));
         let cell_shell = Rc::clone(shell);
+        let grid_playback_context = playback_context;
         let (list, apply_grid_fields) =
             artist_route_list(rows.clone(), Rc::clone(&grid_fields), move |fields| {
                 AlbumGridCell::new(
                     Rc::clone(&cell_shell),
                     fields,
                     COLLECTION_GRID_MAX_CARD_WIDTH,
+                    Some(grid_playback_context.clone()),
                 )
             });
         list.set_margin_top(ROUTE_TOP_MARGIN);
