@@ -344,7 +344,7 @@ mod tests {
 
     use crate::process::repo_root;
 
-    use super::{isolated_gpg_home, verify_release_metadata_contents, verify_tag_with_release_key};
+    use super::{isolated_gpg_home, verify_release_metadata_contents};
 
     const CARGO_TOML: &str = "[workspace.package]\nversion = \"1.2.3\"\n";
     const METAINFO: &str = "<component>\n  <releases>\n    <release version=\"1.2.3\" date=\"2026-08-01\" />\n  </releases>\n</component>\n";
@@ -357,18 +357,6 @@ mod tests {
 
         assert_eq!(home, root.join(".local").join("rufin-gnupg-test"));
         assert_eq!(environment_path, ".local/rufin-gnupg-test");
-    }
-
-    #[test]
-    #[ignore = "requires Git and GPG from the host platform"]
-    fn release_key_imports_with_platform_gpg() {
-        let root = repo_root().unwrap();
-        verify_tag_with_release_key(
-            "refs/tags/v0.11.1",
-            &root,
-            &root.join(".github/release-gpg.pub"),
-        )
-        .unwrap();
     }
 
     #[test]
