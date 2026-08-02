@@ -1,6 +1,6 @@
 # Contributing
 
-Thank you for your interest in contributing to Rufin! This document has some simple guidelines for contributing.
+Thank you for your interest in contributing to Rufin! 
 
 ## Development environment
 
@@ -37,13 +37,13 @@ Rufin's crates try to follow a product ownership model. The goal is to separate 
 
 | Crate | What it is for |
 | :--- | :--- |
-| `metadata-lookup` | external metadata and artwork lookups |
 | `artwork` | artwork selection, loading, and caching |
 | `desktop-integration` | MPRIS, notifications, the tray, and Discord RPC |
 | `downloads` | server track downloads and download management |
 | `library` | music items, listening activity, and the database |
 | `localization` | translation tooling and locales |
 | `lyrics` | lyrics fetching, selection, and state |
+| `metadata-lookup` | external metadata and artwork lookups |
 | `playback` | playback behavior and the queue |
 | `playback-gstreamer` | the GStreamer playback backend |
 | `rufin` | app startup, settings persistence, and crate composition |
@@ -51,6 +51,7 @@ Rufin's crates try to follow a product ownership model. The goal is to separate 
 | `secrets` | storage for credentials and service keys |
 | `sources` | source-specific operations |
 | `ui` | GTK views and navigation|
+| `windows-updater` | automatic windows updates from .exe |
 | `xtask` | development and packaging commands |
 
 ## Development commands
