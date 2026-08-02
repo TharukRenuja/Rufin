@@ -5,11 +5,11 @@ use localization::msgid;
 use serde::{Deserialize, Deserializer, Serialize};
 
 use super::sidebar::{
-    available_detail_track_fields, available_sort_fields, default_detail_track_fields,
-    default_grid_fields, default_row_fields, default_sort_key, ensure_usable_row_field,
-    sanitize_optional_fields, sanitize_required_fields,
+    available_detail_track_fields, available_sort_fields, default_descending,
+    default_detail_track_fields, default_grid_fields, default_row_fields, default_sort_key,
+    ensure_usable_row_field, sanitize_optional_fields, sanitize_required_fields,
 };
-pub const LIBRARY_LIST_LAYOUT_VERSION: u8 = 8;
+pub const LIBRARY_LIST_LAYOUT_VERSION: u8 = 9;
 pub const DEFAULT_WINDOW_WIDTH: i32 = 1_500;
 pub const DEFAULT_WINDOW_HEIGHT: i32 = 900;
 pub const MIN_RESTORED_WINDOW_WIDTH: i32 = 450;
@@ -698,7 +698,7 @@ impl LibraryListSettings {
             grid_fields: default_grid_fields(key),
             detail_track_fields: default_detail_track_fields(),
             sort_key: default_sort_key(key),
-            descending: false,
+            descending: default_descending(key),
             row_column_widths: Vec::new(),
             layout_version: LIBRARY_LIST_LAYOUT_VERSION,
         }
@@ -724,6 +724,7 @@ impl LibraryListSettings {
         ensure_usable_row_field(&mut self.detail_track_fields, default_detail_track_fields());
         if !available_sort_fields(key).contains(&self.sort_key) {
             self.sort_key = default_sort_key(key);
+            self.descending = default_descending(key);
         }
         let mut seen = HashSet::new();
         self.row_column_widths.retain_mut(|entry| {
@@ -902,6 +903,29 @@ impl LibraryListSettings {
                 ]
             {
                 self.detail_track_fields = default_detail_track_fields();
+            }
+        }
+
+        if self.layout_version < 9 && key == LibraryListKey::History {
+            if self.row_fields
+                == [
+                    LibraryField::RowIndex,
+                    LibraryField::TitleMerged,
+                    LibraryField::Album,
+                    LibraryField::Duration,
+                    LibraryField::Favorite,
+                ]
+            {
+                self.row_fields = default_row_fields(key);
+            }
+            if self.grid_fields
+                == [
+                    LibraryField::Artist,
+                    LibraryField::Album,
+                    LibraryField::Duration,
+                ]
+            {
+                self.grid_fields = default_grid_fields(key);
             }
         }
     }

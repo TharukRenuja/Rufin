@@ -428,12 +428,18 @@ fn default_artist_tracks_use_normal_track_rows() {
 }
 
 #[test]
-fn history_is_an_enabled_ordered_track_route_by_default() {
+fn history_is_an_enabled_occurrence_route_by_default() {
     let mut settings = Settings::default();
     let history = settings.library_list(LibraryListKey::History);
     assert_eq!(history.layout, LibraryLayout::Row);
-    assert_eq!(history.sort_key, LibraryField::RowIndex);
+    assert_eq!(history.sort_key, LibraryField::LastPlayed);
+    assert!(history.descending);
     assert_eq!(history.row_fields.first(), Some(&LibraryField::RowIndex));
+    assert!(history.row_fields.contains(&LibraryField::LastPlayed));
+    assert_eq!(
+        available_sort_fields(LibraryListKey::History),
+        &[LibraryField::LastPlayed]
+    );
     assert!(
         settings
             .sidebar
@@ -694,5 +700,47 @@ fn library_list_settings_migrate_persisted_layout_versions() {
     assert_eq!(
         custom_tracks.row_fields,
         [LibraryField::Image, LibraryField::TitleMerged]
+    );
+
+    let mut history = super::LibraryListSettings {
+        layout: LibraryLayout::Row,
+        row_fields: vec![
+            LibraryField::RowIndex,
+            LibraryField::TitleMerged,
+            LibraryField::Album,
+            LibraryField::Duration,
+            LibraryField::Favorite,
+        ],
+        grid_fields: vec![
+            LibraryField::Artist,
+            LibraryField::Album,
+            LibraryField::Duration,
+        ],
+        detail_track_fields: available_detail_track_fields().to_vec(),
+        sort_key: LibraryField::RowIndex,
+        descending: false,
+        row_column_widths: Vec::new(),
+        layout_version: 8,
+    };
+    history.sanitize(LibraryListKey::History);
+    assert_eq!(history.sort_key, LibraryField::LastPlayed);
+    assert!(history.descending);
+    assert_eq!(
+        history.row_fields,
+        [
+            LibraryField::RowIndex,
+            LibraryField::TitleMerged,
+            LibraryField::Album,
+            LibraryField::LastPlayed,
+            LibraryField::Favorite,
+        ]
+    );
+    assert_eq!(
+        history.grid_fields,
+        [
+            LibraryField::Artist,
+            LibraryField::Album,
+            LibraryField::LastPlayed,
+        ]
     );
 }

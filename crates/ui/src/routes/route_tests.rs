@@ -177,6 +177,7 @@ fn history_playback_keeps_the_selected_repeated_occurrence() {
             .expect("apply History play")
             .expect("History changed");
     }
+    let settings = LibraryListSettings::for_key(LibraryListKey::History);
     let model = TrackCollectionModel::new(
         source_id,
         SourceSessionEpoch::new(1),
@@ -184,10 +185,21 @@ fn history_playback_keeps_the_selected_repeated_occurrence() {
             .loaded
             .history_track_list(None)
             .expect("History Tracks"),
-        LibraryListSettings::for_key(LibraryListKey::History),
+        settings.clone(),
     );
 
-    assert_eq!(model.position(&track.id), Some(0));
+    assert_eq!(model.played_at(0), Some(1_700_000_100));
+    assert_eq!(model.played_at(1), Some(1_700_000_000));
+    assert_eq!(model.n_items(), 2);
+    let mut ascending = settings;
+    ascending.descending = false;
+    assert!(model.apply_settings(ascending));
+    assert_eq!(model.played_at(0), Some(1_700_000_000));
+    assert_eq!(model.played_at(1), Some(1_700_000_100));
+    assert!(model.set_query("missing"));
+    assert_eq!(model.n_items(), 0);
+    assert!(model.set_query("Feather"));
+    assert_eq!(model.n_items(), 2);
     assert_eq!(model.position_for_current(&track.id, Some(1)), Some(1));
     assert_eq!(model.position_for_current(&track.id, Some(99)), Some(0));
 }

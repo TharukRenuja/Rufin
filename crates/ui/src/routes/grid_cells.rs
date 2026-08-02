@@ -478,6 +478,7 @@ pub(super) struct TrackGridCell {
     current_track: Rc<RefCell<Option<Track>>>,
     current_position: Rc<Cell<u32>>,
     cover_size: i32,
+    field_value: Rc<dyn Fn(u32, &Track, LibraryField) -> (String, Option<Route>)>,
 }
 
 impl TrackGridCell {
@@ -486,6 +487,27 @@ impl TrackGridCell {
         fields: &[LibraryField],
         play_from_collection: Rc<dyn Fn(u32)>,
         cover_size: i32,
+    ) -> Self {
+        Self::new_with_field_value(
+            shell,
+            fields,
+            play_from_collection,
+            cover_size,
+            Rc::new(|_, track, field| {
+                (
+                    track_field(track, field),
+                    track_grid_field_route(track, field),
+                )
+            }),
+        )
+    }
+
+    pub(super) fn new_with_field_value(
+        shell: Rc<Shell>,
+        fields: &[LibraryField],
+        play_from_collection: Rc<dyn Fn(u32)>,
+        cover_size: i32,
+        field_value: Rc<dyn Fn(u32, &Track, LibraryField) -> (String, Option<Route>)>,
     ) -> Self {
         let current_track = Rc::new(RefCell::new(None::<Track>));
         let current_position = Rc::new(Cell::new(0));
@@ -587,6 +609,7 @@ impl TrackGridCell {
             current_track,
             current_position,
             cover_size,
+            field_value,
         }
     }
 }
@@ -606,10 +629,7 @@ impl ReusableCollectionGridCell<Track> for TrackGridCell {
             LARGE_COVER_SIZE,
         );
         self.body.bind(&track.title, |field| {
-            (
-                track_field(&track, field),
-                track_grid_field_route(&track, field),
-            )
+            (self.field_value)(position, &track, field)
         });
         self.body.set_downloaded(
             &self.shell,
@@ -634,11 +654,9 @@ impl ReusableCollectionGridCell<Track> for TrackGridCell {
     fn apply_fields(&self, fields: &[LibraryField]) {
         self.body.replace_fields(&self.shell, fields);
         if let Some(track) = self.current_track.borrow().as_ref().cloned() {
+            let position = self.current_position.get();
             self.body.bind(&track.title, |field| {
-                (
-                    track_field(&track, field),
-                    track_grid_field_route(&track, field),
-                )
+                (self.field_value)(position, &track, field)
             });
         }
     }

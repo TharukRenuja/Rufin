@@ -4118,6 +4118,8 @@ fn accepted_activity_replaces_only_the_next_local_home_and_reopens() {
         .history_track_list(None)
         .expect("read bounded History");
     assert_eq!(history.len(), 2);
+    assert_eq!(history.played_at(0), Some(1_700_000_001));
+    assert_eq!(history.played_at(1), Some(1_700_000_000));
     assert_eq!(
         history.track_ids().expect("History Track IDs").as_ref(),
         [
