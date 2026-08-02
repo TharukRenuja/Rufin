@@ -188,6 +188,16 @@ impl Shell {
         });
     }
 
+    pub(super) fn set_automatic_updates_enabled(self: &Rc<Self>, enabled: bool) {
+        self.update_app_settings("automatic update setting", |settings| {
+            if settings.automatic_updates_enabled == enabled {
+                return false;
+            }
+            settings.automatic_updates_enabled = enabled;
+            true
+        });
+    }
+
     pub(super) async fn set_secret_storage_mode(self: &Rc<Self>, mode: SecretStorageMode) -> bool {
         match self
             .products

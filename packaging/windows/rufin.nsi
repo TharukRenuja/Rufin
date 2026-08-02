@@ -1,5 +1,7 @@
 !include "MUI2.nsh"
+!include "FileFunc.nsh"
 !include "LogicLib.nsh"
+!include "nsDialogs.nsh"
 !include "Win\COM.nsh"
 !include "Win\Propkey.nsh"
 
@@ -54,6 +56,9 @@ VIAddVersionKey /LANG=1033 "LegalCopyright" "GPL-3.0-or-later"
 
 Var LegacyInstallDir
 Var LegacyInstallOwned
+Var InstallChannel
+Var PurgeCache
+Var PurgeCacheCheckbox
 
 !macro CreateRufinShortcut SHORTCUT_PATH TARGET_PATH ICON_PATH
     !insertmacro ComHlpr_CreateInProcInstance ${CLSID_ShellLink} ${IID_IShellLink} r0 ""
@@ -86,21 +91,62 @@ Var LegacyInstallOwned
     ${EndIf}
 !macroend
 
-!macro RequireRufinClosed EXECUTABLE LABEL
+!macro RequireRufinClosed EXECUTABLE LABEL RUNNING_LABEL
     IfFileExists "${EXECUTABLE}" 0 ${LABEL}_not_running
     Delete "${EXECUTABLE}.rufin-install"
     ClearErrors
     Rename "${EXECUTABLE}" "${EXECUTABLE}.rufin-install"
-    IfErrors runtime_is_running
+    IfErrors ${RUNNING_LABEL}
     Rename "${EXECUTABLE}.rufin-install" "${EXECUTABLE}"
-    IfErrors runtime_is_running
+    IfErrors ${RUNNING_LABEL}
 
 ${LABEL}_not_running:
+!macroend
+
+!macro WriteRufinUninstallRegistration
+    WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\Rufin" \
+        "DisplayName" "Rufin"
+    WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\Rufin" \
+        "DisplayVersion" "${RUFIN_VERSION}"
+    WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\Rufin" \
+        "DisplayIcon" "$INSTDIR\rufin.ico"
+    WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\Rufin" \
+        "Publisher" "screwy"
+    WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\Rufin" \
+        "URLInfoAbout" "https://github.com/screwys/Rufin"
+    WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\Rufin" \
+        "UninstallString" '$\"$INSTDIR\Uninstall.exe$\"'
+    WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\Rufin" \
+        "QuietUninstallString" '$\"$INSTDIR\Uninstall.exe$\" /S'
+    WriteRegDWORD HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\Rufin" \
+        "NoModify" 1
+    WriteRegDWORD HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\Rufin" \
+        "NoRepair" 1
 !macroend
 
 Function .onInit
     StrCpy $INSTDIR "$LOCALAPPDATA\Programs\Rufin"
     StrCpy $LegacyInstallOwned 0
+    StrCpy $InstallChannel "direct"
+    ${GetParameters} $0
+    ClearErrors
+    ${GetOptions} $0 "/RUFINCHANNEL=" $1
+    IfErrors update_channel_done
+    StrCpy $InstallChannel $1
+    StrCmp $InstallChannel "direct" update_channel_done
+    StrCmp $InstallChannel "scoop" update_channel_done
+    StrCmp $InstallChannel "winget" update_channel_done
+    IfSilent invalid_channel_silent invalid_channel_message
+
+invalid_channel_message:
+    MessageBox MB_OK|MB_ICONSTOP \
+        "The Rufin update channel must be direct, scoop, or winget."
+
+invalid_channel_silent:
+    SetErrorLevel 3
+    Abort
+
+update_channel_done:
     ReadRegStr $LegacyInstallDir HKCU "Software\Rufin" "InstallDir"
     StrCmp $LegacyInstallDir "" legacy_install_done
     GetFullPathName $LegacyInstallDir "$LegacyInstallDir"
@@ -124,17 +170,20 @@ FunctionEnd
 !insertmacro MUI_PAGE_FINISH
 
 !insertmacro MUI_UNPAGE_CONFIRM
+UninstPage custom un.CachePageCreate un.CachePageLeave
 !insertmacro MUI_UNPAGE_INSTFILES
 
 !insertmacro MUI_LANGUAGE "English"
 
 Section "Rufin" RufinSection
     SectionIn RO
-    !insertmacro RequireRufinClosed "$INSTDIR\bin\rufin.exe" current_bin
-    !insertmacro RequireRufinClosed "$INSTDIR\rufin.exe" current_root
+    !insertmacro RequireRufinClosed "$INSTDIR\bin\rufin.exe" current_bin runtime_is_running
+    !insertmacro RequireRufinClosed "$INSTDIR\rufin.exe" current_root runtime_is_running
     StrCmp $LegacyInstallOwned 1 0 runtime_not_running
-    !insertmacro RequireRufinClosed "$LegacyInstallDir\bin\rufin.exe" legacy_bin
-    !insertmacro RequireRufinClosed "$LegacyInstallDir\rufin.exe" legacy_root
+    !insertmacro RequireRufinClosed \
+        "$LegacyInstallDir\bin\rufin.exe" legacy_bin runtime_is_running
+    !insertmacro RequireRufinClosed \
+        "$LegacyInstallDir\rufin.exe" legacy_root runtime_is_running
     Goto runtime_not_running
 
 runtime_is_running:
@@ -148,55 +197,64 @@ runtime_silent_abort:
     Abort
 
 runtime_not_running:
+    ClearErrors
     RMDir /r "$INSTDIR\bin"
     RMDir /r "$INSTDIR\etc"
     RMDir /r "$INSTDIR\lib"
     RMDir /r "$INSTDIR\libexec"
     RMDir /r "$INSTDIR\share"
-    Delete /REBOOTOK "$INSTDIR\rufin.exe"
-    Delete /REBOOTOK "$INSTDIR\*.dll"
-    Delete /REBOOTOK "$INSTDIR\gspawn-win64-helper.exe"
-    Delete /REBOOTOK "$INSTDIR\gspawn-win64-helper-console.exe"
+    Delete "$INSTDIR\update-channel"
+    Delete "$INSTDIR\rufin.exe"
+    Delete "$INSTDIR\*.dll"
+    Delete "$INSTDIR\gspawn-win64-helper.exe"
+    Delete "$INSTDIR\gspawn-win64-helper-console.exe"
+    IfErrors runtime_cleanup_failed
     SetOutPath "$INSTDIR"
     File /r "${RUFIN_STAGE_FILES}"
+    FileOpen $0 "$INSTDIR\update-channel" w
+    IfErrors install_write_failed
+    FileWrite $0 "$InstallChannel$\r$\n"
+    FileClose $0
+    IfErrors install_write_failed
     WriteUninstaller "$INSTDIR\Uninstall.exe"
+    IfErrors install_write_failed
+    Goto install_written
+
+install_write_failed:
+    SetErrorLevel 4
+    Abort
+
+runtime_cleanup_failed:
+    SetErrorLevel 5
+    Abort
+
+install_written:
 
     StrCmp $LegacyInstallOwned 1 0 legacy_install_removed
+    ClearErrors
     RMDir /r "$LegacyInstallDir\bin"
     RMDir /r "$LegacyInstallDir\etc"
     RMDir /r "$LegacyInstallDir\lib"
     RMDir /r "$LegacyInstallDir\libexec"
     RMDir /r "$LegacyInstallDir\share"
+    RMDir /r "$LegacyInstallDir\updater"
     Delete "$LegacyInstallDir\rufin.exe"
     Delete "$LegacyInstallDir\*.dll"
     Delete "$LegacyInstallDir\gspawn-win64-helper.exe"
     Delete "$LegacyInstallDir\gspawn-win64-helper-console.exe"
     Delete "$LegacyInstallDir\LICENSE"
     Delete "$LegacyInstallDir\rufin.ico"
+    IfErrors runtime_cleanup_failed
     Delete "$LegacyInstallDir\Uninstall.exe"
+    IfErrors runtime_cleanup_failed
     RMDir "$LegacyInstallDir"
+    ClearErrors
 
 legacy_install_removed:
     DeleteRegKey HKCU "Software\Rufin"
-
-    WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\Rufin" \
-        "DisplayName" "Rufin"
-    WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\Rufin" \
-        "DisplayVersion" "${RUFIN_VERSION}"
-    WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\Rufin" \
-        "DisplayIcon" "$INSTDIR\rufin.ico"
-    WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\Rufin" \
-        "Publisher" "screwy"
-    WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\Rufin" \
-        "URLInfoAbout" "https://github.com/screwys/Rufin"
-    WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\Rufin" \
-        "UninstallString" '$\"$INSTDIR\Uninstall.exe$\"'
-    WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\Rufin" \
-        "QuietUninstallString" '$\"$INSTDIR\Uninstall.exe$\" /S'
-    WriteRegDWORD HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\Rufin" \
-        "NoModify" 1
-    WriteRegDWORD HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\Rufin" \
-        "NoRepair" 1
+    ClearErrors
+    !insertmacro WriteRufinUninstallRegistration
+    IfErrors install_write_failed
 
     CreateDirectory "$SMPROGRAMS\Rufin"
     !insertmacro CreateRufinShortcut \
@@ -222,7 +280,60 @@ Section /o "Desktop shortcut" DesktopSection
         "$INSTDIR\rufin.ico"
 SectionEnd
 
+Function un.onInit
+    StrCpy $PurgeCache 0
+    ${GetParameters} $0
+    ClearErrors
+    ${GetOptions} $0 "/PURGE" $1
+    IfErrors purge_option_done
+    StrCmp $1 "" 0 purge_option_done
+    StrCpy $PurgeCache 1
+
+purge_option_done:
+FunctionEnd
+
+Function un.CachePageCreate
+    nsDialogs::Create 1018
+    Pop $0
+    ${If} $0 == error
+        Abort
+    ${EndIf}
+    ${NSD_CreateCheckbox} 0 0 100% 14u "Remove Rufin's cache"
+    Pop $PurgeCacheCheckbox
+    ${If} $PurgeCache == 1
+        ${NSD_Check} $PurgeCacheCheckbox
+    ${EndIf}
+    nsDialogs::Show
+FunctionEnd
+
+Function un.CachePageLeave
+    ${NSD_GetState} $PurgeCacheCheckbox $0
+    ${If} $0 == ${BST_CHECKED}
+        StrCpy $PurgeCache 1
+    ${Else}
+        StrCpy $PurgeCache 0
+    ${EndIf}
+FunctionEnd
+
 Section "Uninstall"
+    !insertmacro RequireRufinClosed \
+        "$INSTDIR\bin\rufin.exe" uninstall_bin uninstall_runtime_is_running
+    !insertmacro RequireRufinClosed \
+        "$INSTDIR\rufin.exe" uninstall_root uninstall_runtime_is_running
+    Goto uninstall_runtime_not_running
+
+uninstall_runtime_is_running:
+    IfSilent uninstall_silent_abort uninstall_show_running
+
+uninstall_show_running:
+    MessageBox MB_OK|MB_ICONEXCLAMATION "Close Rufin and try the uninstall again."
+
+uninstall_silent_abort:
+    SetErrorLevel 2
+    Abort
+
+uninstall_runtime_not_running:
+    ClearErrors
     Delete "$DESKTOP\Rufin.lnk"
     RMDir /r "$SMPROGRAMS\Rufin"
     RMDir /r "$INSTDIR\bin"
@@ -230,10 +341,41 @@ Section "Uninstall"
     RMDir /r "$INSTDIR\lib"
     RMDir /r "$INSTDIR\libexec"
     RMDir /r "$INSTDIR\share"
+    RMDir /r "$INSTDIR\updater"
+    Delete "$INSTDIR\update-channel"
     Delete "$INSTDIR\LICENSE"
     Delete "$INSTDIR\rufin.ico"
-    Delete "$INSTDIR\Uninstall.exe"
-    RMDir "$INSTDIR"
+    IfErrors uninstall_cleanup_failed
+
+    StrCmp $PurgeCache 1 0 uninstall_cache_preserved
+    ClearErrors
+    RMDir /r "$LOCALAPPDATA\screwys\Rufin\cache"
+    IfErrors uninstall_cleanup_failed
+
+uninstall_cache_preserved:
+    ClearErrors
+    ReadRegStr $0 HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\Rufin" \
+        "UninstallString"
+    IfErrors uninstall_registration_removed
     DeleteRegKey HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\Rufin"
+    IfErrors uninstall_cleanup_failed
+
+uninstall_registration_removed:
+    ClearErrors
+    Delete "$INSTDIR\Uninstall.exe"
+    IfErrors uninstall_restore_registration
+    RMDir "$INSTDIR"
     DeleteRegKey HKCU "Software\Rufin"
+    ClearErrors
+    Goto uninstall_done
+
+uninstall_restore_registration:
+    ClearErrors
+    !insertmacro WriteRufinUninstallRegistration
+
+uninstall_cleanup_failed:
+    SetErrorLevel 5
+    Abort
+
+uninstall_done:
 SectionEnd

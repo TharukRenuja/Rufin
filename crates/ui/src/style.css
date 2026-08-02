@@ -153,6 +153,16 @@ toastoverlay toast label {
   font-weight: 700;
 }
 
+button.release-note-update {
+  min-width: 0;
+  min-height: 0;
+  box-shadow: none;
+}
+
+button.release-note-update:hover {
+  background: color-mix(in srgb, var(--destructive-color) 22%, transparent);
+}
+
 .release-note-date {
   color: color-mix(in srgb, var(--window-fg-color) 58%, transparent);
   padding: 4px 0;

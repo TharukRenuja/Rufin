@@ -48,5 +48,8 @@ localization.workspace = true
 rusqlite.workspace = true
 tempfile.workspace = true
 
+[target.'cfg(target_os = "windows")'.dependencies]
+windows-updater.workspace = true
+
 [lints]
 workspace = true

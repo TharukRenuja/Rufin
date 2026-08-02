@@ -3,16 +3,17 @@ use std::time::Duration;
 
 use crate::layout::{large_popup_content_height, large_popup_content_width};
 use crate::preferences::dialogs::popup::present_light_dismiss_dialog;
-use crate::runtime::{ReleaseNote, ReleaseUpdate};
+use crate::runtime::{ReleaseHistory, ReleaseNote, ReleaseUpdate, ReleaseUpdateHandle};
 use crate::shell::Shell;
 use adw::prelude::*;
 use gtk::glib;
-use localization::{tr, trn_with};
+use localization::{tr, tr_with, trn_with};
 use tracing::warn;
 
 const RELEASE_NOTES_POPUP_WIDTH: i32 = 700;
 const RELEASE_NOTES_POPUP_HEIGHT: i32 = 640;
 const RELEASE_TOAST_TITLE: &str = "✨ New release is available!";
+const RELEASE_CHECK_POLL_INTERVAL: Duration = Duration::from_secs(15 * 60);
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct CivilDate {
@@ -21,10 +22,15 @@ struct CivilDate {
     day: u32,
 }
 
-pub(crate) fn schedule_release_check(shell: &Rc<Shell>) {
+pub(crate) fn check_for_release_update(shell: &Rc<Shell>) {
+    shell.products.release_updates.check_and_update();
+}
+
+pub(crate) fn schedule_periodic_release_checks(shell: &Rc<Shell>) {
     let release_updates = shell.products.release_updates.clone();
-    glib::timeout_add_local_once(Duration::from_millis(250), move || {
+    glib::timeout_add_local(RELEASE_CHECK_POLL_INTERVAL, move || {
         release_updates.check();
+        glib::ControlFlow::Continue
     });
 }
 
@@ -115,7 +121,30 @@ fn release_relative_date(date: &str) -> String {
         .unwrap_or_else(|| date.to_string())
 }
 
-fn release_note_row(window: &adw::ApplicationWindow, note: &ReleaseNote) -> gtk::Widget {
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ReleaseRowStatus {
+    Installed,
+    Update,
+    None,
+}
+
+fn release_row_status(history: &ReleaseHistory, note: &ReleaseNote) -> ReleaseRowStatus {
+    if note.version == history.installed_version {
+        return ReleaseRowStatus::Installed;
+    }
+    if history.available_version.as_deref() == Some(note.version.as_str()) {
+        return ReleaseRowStatus::Update;
+    }
+    ReleaseRowStatus::None
+}
+
+fn release_note_row(
+    window: &adw::ApplicationWindow,
+    note: &ReleaseNote,
+    history: &ReleaseHistory,
+    updating_version: Option<&str>,
+    release_updates: &ReleaseUpdateHandle,
+) -> gtk::Widget {
     let row = gtk::Box::new(gtk::Orientation::Vertical, 8);
     row.add_css_class("release-note-row");
 
@@ -155,10 +184,26 @@ fn release_note_row(window: &adw::ApplicationWindow, note: &ReleaseNote) -> gtk:
     let spacer = gtk::Box::new(gtk::Orientation::Horizontal, 0);
     spacer.set_hexpand(true);
     header.append(&version);
-    if note.version == env!("CARGO_PKG_VERSION") {
-        let installed = gtk::Label::new(Some(&tr("Installed")));
-        installed.add_css_class("release-note-installed");
-        header.append(&installed);
+    match release_row_status(history, note) {
+        ReleaseRowStatus::Installed => {
+            let installed = gtk::Label::new(Some(&tr("Installed")));
+            installed.add_css_class("release-note-installed");
+            header.append(&installed);
+        }
+        ReleaseRowStatus::Update => {
+            let update = gtk::Button::with_label(&tr("Update"));
+            update.add_css_class("release-note-installed");
+            update.add_css_class("release-note-update");
+            update.set_cursor_from_name(Some("pointer"));
+            update.set_sensitive(updating_version != Some(note.version.as_str()));
+            let version = note.version.clone();
+            let release_updates = release_updates.clone();
+            update.connect_clicked(move |_| {
+                release_updates.update(version.clone());
+            });
+            header.append(&update);
+        }
+        ReleaseRowStatus::None => {}
     }
     header.append(&spacer);
     header.append(&date);
@@ -195,7 +240,12 @@ fn release_note_row(window: &adw::ApplicationWindow, note: &ReleaseNote) -> gtk:
     row.upcast()
 }
 
-fn present_release_notes_dialog(window: &adw::ApplicationWindow, notes: &[ReleaseNote]) {
+fn present_release_notes_dialog(
+    window: &adw::ApplicationWindow,
+    history: &ReleaseHistory,
+    updating_version: Option<&str>,
+    release_updates: &ReleaseUpdateHandle,
+) -> gtk::glib::WeakRef<gtk::Box> {
     let toolbar = adw::ToolbarView::new();
     let header = adw::HeaderBar::new();
     header.set_title_widget(Some(&adw::WindowTitle::new(&tr("Version History"), "")));
@@ -203,9 +253,7 @@ fn present_release_notes_dialog(window: &adw::ApplicationWindow, notes: &[Releas
 
     let list = gtk::Box::new(gtk::Orientation::Vertical, 0);
     list.add_css_class("release-notes-list");
-    for note in notes {
-        list.append(&release_note_row(window, note));
-    }
+    populate_release_notes_list(window, &list, history, updating_version, release_updates);
 
     let popup_width = large_popup_content_width(RELEASE_NOTES_POPUP_WIDTH);
     let popup_height = large_popup_content_height(window.height(), RELEASE_NOTES_POPUP_HEIGHT);
@@ -225,37 +273,176 @@ fn present_release_notes_dialog(window: &adw::ApplicationWindow, notes: &[Releas
         .content_height(popup_height)
         .child(&toolbar)
         .build();
+    let list = list.downgrade();
     present_light_dismiss_dialog(&dialog, window);
+    list
+}
+
+fn populate_release_notes_list(
+    window: &adw::ApplicationWindow,
+    list: &gtk::Box,
+    history: &ReleaseHistory,
+    updating_version: Option<&str>,
+    release_updates: &ReleaseUpdateHandle,
+) {
+    while let Some(child) = list.first_child() {
+        list.remove(&child);
+    }
+    for note in history.notes.iter() {
+        list.append(&release_note_row(
+            window,
+            note,
+            history,
+            updating_version,
+            release_updates,
+        ));
+    }
+}
+
+fn refresh_open_release_notes(shell: &Shell) {
+    let Some(list) = shell
+        .preferences
+        .release_history_list
+        .borrow()
+        .as_ref()
+        .and_then(gtk::glib::WeakRef::upgrade)
+    else {
+        return;
+    };
+    let history = shell.preferences.release_history.borrow().clone();
+    let updating_version = shell.preferences.release_updating.borrow().clone();
+    populate_release_notes_list(
+        &shell.chrome.window,
+        &list,
+        &history,
+        updating_version.as_deref(),
+        &shell.products.release_updates,
+    );
 }
 
 pub(crate) fn apply_release_update(shell: &Rc<Shell>, update: ReleaseUpdate) {
-    *shell.preferences.release_notes.borrow_mut() = update.notes;
-    let Some(version) = update.notification_version else {
-        return;
-    };
+    match update {
+        ReleaseUpdate::Refreshed {
+            history,
+            notification_version,
+        } => {
+            let update_available = history.available_version.is_some();
+            let changed = {
+                let mut current = shell.preferences.release_history.borrow_mut();
+                if *current == history {
+                    false
+                } else {
+                    *current = history;
+                    true
+                }
+            };
+            if changed {
+                refresh_open_release_notes(shell);
+            }
+            if !update_available {
+                dismiss_release_notification(shell);
+            }
+            let Some(version) = notification_version else {
+                return;
+            };
+            dismiss_release_notification(shell);
+            let toast = adw::Toast::new(&tr(RELEASE_TOAST_TITLE));
+            toast.set_timeout(0);
+            toast.set_button_label(Some(&tr("View")));
+            toast.set_action_name(Some("win.show-release-notes"));
+            shell.chrome.toast_overlay.add_toast(toast.clone());
+            *shell.preferences.release_notification_toast.borrow_mut() = Some(toast);
+            if let Err(error) = shell.products.release_updates.mark_seen(version) {
+                warn!(%error, "failed to record the shown release notification");
+            }
+        }
+        ReleaseUpdate::Updating { version } => {
+            dismiss_release_notification(shell);
+            *shell.preferences.release_updating.borrow_mut() = Some(version);
+            refresh_open_release_notes(shell);
+            shell
+                .chrome
+                .toast_overlay
+                .add_toast(adw::Toast::new(&tr("Updating Rufin…")));
+        }
+        ReleaseUpdate::Updated {
+            version,
+            restart_required,
+        } => {
+            dismiss_release_notification(shell);
+            clear_updating_version(shell, &version);
+            {
+                let mut history = shell.preferences.release_history.borrow_mut();
+                history.installed_version = version.clone();
+                history.available_version = None;
+            }
+            refresh_open_release_notes(shell);
+            let message = if restart_required {
+                tr("✨ A new release is installed. Update to use the new version")
+            } else {
+                tr("✨ A new release is installed")
+            };
+            shell
+                .chrome
+                .toast_overlay
+                .add_toast(adw::Toast::new(&message));
+        }
+        ReleaseUpdate::Failed { version, error } => {
+            clear_updating_version(shell, &version);
+            refresh_open_release_notes(shell);
+            warn!(%version, %error, "Rufin update failed");
+            let message = tr_with("Rufin could not update: {error}", &[("error", &error)]);
+            let toast = adw::Toast::new(&message);
+            toast.set_timeout(0);
+            shell.chrome.toast_overlay.add_toast(toast);
+        }
+        ReleaseUpdate::Restarting { version } => {
+            dismiss_release_notification(shell);
+            *shell.preferences.release_updating.borrow_mut() = Some(version);
+            shell.chrome.application.quit();
+        }
+    }
+}
 
-    let toast = adw::Toast::new(&tr(RELEASE_TOAST_TITLE));
-    toast.set_timeout(0);
-    toast.set_button_label(Some(&tr("View")));
-    toast.set_action_name(Some("win.show-release-notes"));
-    shell.chrome.toast_overlay.add_toast(toast);
-    if let Err(error) = shell.products.release_updates.mark_seen(version) {
-        warn!(%error, "failed to record the shown release notification");
+fn dismiss_release_notification(shell: &Shell) {
+    if let Some(toast) = shell
+        .preferences
+        .release_notification_toast
+        .borrow_mut()
+        .take()
+    {
+        toast.dismiss();
+    }
+}
+
+fn clear_updating_version(shell: &Shell, version: &str) {
+    let mut updating = shell.preferences.release_updating.borrow_mut();
+    if updating.as_deref() == Some(version) {
+        updating.take();
     }
 }
 
 impl Shell {
     pub(crate) fn present_release_notes(&self) {
-        present_release_notes_dialog(
+        let history = self.preferences.release_history.borrow().clone();
+        let updating_version = self.preferences.release_updating.borrow().clone();
+        let list = present_release_notes_dialog(
             &self.chrome.window,
-            self.preferences.release_notes.borrow().as_ref(),
+            &history,
+            updating_version.as_deref(),
+            &self.products.release_updates,
         );
+        self.preferences.release_history_list.replace(Some(list));
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{CivilDate, release_relative_date_for};
+    use std::sync::Arc;
+
+    use crate::runtime::{ReleaseHistory, ReleaseNote};
+
+    use super::{CivilDate, ReleaseRowStatus, release_relative_date_for, release_row_status};
 
     #[test]
     fn release_dates_use_relative_labels_without_singular_units() {
@@ -285,5 +472,39 @@ mod tests {
             "3 years ago"
         );
         assert_eq!(release_relative_date_for("not-a-date", today), "not-a-date");
+    }
+
+    #[test]
+    fn only_the_latest_newer_release_gets_an_update_action() {
+        let notes: Arc<[ReleaseNote]> = vec![
+            ReleaseNote {
+                version: "2.0.0".to_string(),
+                date: String::new(),
+                summary: None,
+                items: Vec::new(),
+            },
+            ReleaseNote {
+                version: "1.0.0".to_string(),
+                date: String::new(),
+                summary: None,
+                items: Vec::new(),
+            },
+        ]
+        .into();
+        let history = ReleaseHistory {
+            notes: Arc::clone(&notes),
+            installed_version: "1.0.0".to_string(),
+            available_version: Some("2.0.0".to_string()),
+            automatic_updates_supported: true,
+        };
+
+        assert_eq!(
+            release_row_status(&history, &notes[0]),
+            ReleaseRowStatus::Update
+        );
+        assert_eq!(
+            release_row_status(&history, &notes[1]),
+            ReleaseRowStatus::Installed
+        );
     }
 }

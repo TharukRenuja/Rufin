@@ -22,7 +22,9 @@ pub use inputs::{
     FavoriteFailure, HomePublication, RuntimeInputs, SelectedLibrary, SelectedLibraryUpdate,
     SourceEvent,
 };
-pub use release_update::{ReleaseNote, ReleaseUpdate, ReleaseUpdateHandle, ReleaseUpdatePort};
+pub use release_update::{
+    ReleaseHistory, ReleaseNote, ReleaseUpdate, ReleaseUpdateHandle, ReleaseUpdatePort,
+};
 pub use scrobbling::{
     LastFmPreferences, LibreFmPreferences, ListenBrainzPreferences, ScrobblingConnection,
     ScrobblingConnectionEvent, ScrobblingHandle, ScrobblingPort, ScrobblingPreferences,

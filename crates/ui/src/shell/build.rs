@@ -23,7 +23,9 @@ use crate::player::{
 };
 use crate::player::{install_tray, present_initial_window};
 use crate::preferences::PreferencesState;
-use crate::preferences::dialogs::release_notes::schedule_release_check;
+use crate::preferences::dialogs::release_notes::{
+    check_for_release_update, schedule_periodic_release_checks,
+};
 use crate::preferences::source::SourceState;
 use crate::routes::LibraryState;
 use crate::routes::playlist_picker::PlaylistPickerState;
@@ -93,7 +95,7 @@ pub fn build(app: &adw::Application, inputs: RuntimeInputs) {
         receivers,
         configured_sources,
         source_operation,
-        release_notes,
+        release_history,
     } = inputs;
     let settings = settings_handle.load();
     info!(
@@ -157,7 +159,10 @@ pub fn build(app: &adw::Application, inputs: RuntimeInputs) {
     };
     let preferences = PreferencesState {
         dialog: RefCell::new(None),
-        release_notes: RefCell::new(release_notes),
+        release_history: RefCell::new(release_history),
+        release_history_list: RefCell::new(None),
+        release_notification_toast: RefCell::new(None),
+        release_updating: RefCell::new(None),
     };
     let playlist_picker = PlaylistPickerState {
         active: RefCell::new(None),
@@ -480,12 +485,14 @@ pub fn build(app: &adw::Application, inputs: RuntimeInputs) {
     shell.connect_artwork_scale_refresh();
     {
         let source = Arc::clone(&shell.products.source);
+        let release_updates = Arc::clone(&shell.products.release_updates);
         let was_active = Cell::new(shell.chrome.window.is_active());
         shell.chrome.window.connect_is_active_notify(move |window| {
             let active = window.is_active();
             let previous = was_active.replace(active);
             if active && !previous {
                 source.check_for_source_changes();
+                release_updates.check();
             }
         });
     }
@@ -533,8 +540,9 @@ pub fn build(app: &adw::Application, inputs: RuntimeInputs) {
     shell.request_initial_lyrics_if_needed();
     install_product_event_receivers(&shell, receivers);
 
+    check_for_release_update(&shell);
     present_initial_window(&shell);
-    schedule_release_check(&shell);
+    schedule_periodic_release_checks(&shell);
     if defer_initial_route && !shell.source.operation.borrow().blocks_library() {
         shell.schedule_startup_route_reveal();
     }
