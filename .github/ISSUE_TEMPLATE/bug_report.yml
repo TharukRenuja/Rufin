@@ -46,7 +46,9 @@ body:
         - Flatpak
         - AUR
         - Nix
-        - Local build
+        - Fedora RPM
+        - Windows
+        - MacOS
         - Other
     validations:
       required: true
@@ -63,6 +65,7 @@ body:
         - i3
         - Sway
         - Qtile
+        - COSMIC
         - Other
     validations:
       required: false
