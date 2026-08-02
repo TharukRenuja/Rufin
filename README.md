@@ -129,18 +129,6 @@ Rufin install an available update when the app starts or manually click `Update`
 You can also download `.dmg` files directly from
 [GitHub Releases](https://github.com/screwys/Rufin/releases/latest), but then you have to update manually.
 
-## Uninstallation
-
-You can remove Rufin with your package manager, use the uninstaller included with the Windows
-`.exe` (which can also delete the cache), or delete `Rufin.app` from Applications if you installed the macOS `.dmg`.
-
-To delete Rufin's cache as well, delete its cache folder based on your operating system:
-
-- Linux and FreeBSD: `~/.cache/rufin`
-- Flatpak: `~/.var/app/io.github.screwys.Rufin/cache/rufin`
-- macOS: `~/Library/Caches/io.github.screwys.Rufin`
-- Windows: `%LOCALAPPDATA%\screwys\Rufin\cache`
-
 ## Building locally
 
 Start by cloning the repository. You can build Rufin natively or use our Linux development container if you want to keep dependencies outside of your system and have Docker or Podman available.
@@ -256,15 +244,17 @@ For development build:
 just debug
 ```
 
-# Scope
+## Uninstallation
 
-- **Integrations**: Rufin will not integrate any sources that are hostile against 3rd pary clients, which include most live music listening services. That is a never ending battle with their API that they constantly break intentionally. This is not maintainable for an app in official repositories as even an immediate hotfix could take days or weeks to deploy. I also don't want enable anti-user services like this.
+You can remove Rufin with your package manager, use the uninstaller included with the Windows
+`.exe` (which can also delete the cache), or delete `Rufin.app` from Applications if you installed the macOS `.dmg`.
 
-  On the other hand, I am very eager to integrate any feature that would improve the user experience; this can range from some server API support to self-hosted scrobbling/sync servers, as Rufin aims to be your own client truly. If you go visit past issues, you will see that all feature requests have a follow-up PR so far, and I intend this to continue as long as it is feasible.
+To delete Rufin's cache as well, delete its cache folder based on your operating system:
 
-- **More packaging alternatives**: Since this is a native client, we want to offer distribution specific packaging formats. As long as there is an active tester, these can be maintained officially from this repository.
-  
-- **Basic hardening for privacy and security:** See [SECURITY.md](SECURITY.md).
+- Linux and FreeBSD: `~/.cache/rufin`
+- Flatpak: `~/.var/app/io.github.screwys.Rufin/cache/rufin`
+- macOS: `~/Library/Caches/io.github.screwys.Rufin`
+- Windows: `%LOCALAPPDATA%\screwys\Rufin\cache`
 
 # Contributing
 
