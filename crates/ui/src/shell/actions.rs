@@ -541,6 +541,9 @@ pub(crate) enum ActionButtonVariant {
     DetailFavorite,
 }
 
+pub(crate) const COVER_SIDE_ACTION_SIZE: i32 = 34;
+pub(crate) const COVER_PRIMARY_ACTION_SIZE: i32 = 54;
+
 pub(crate) fn configure_action_button(
     button: &gtk::Button,
     variant: ActionButtonVariant,
@@ -563,22 +566,22 @@ pub(crate) fn configure_action_button(
     let nudge_icon = match variant {
         ActionButtonVariant::CoverSideTransport => {
             button.add_css_class("cover-side-button");
-            pin_action_button(button, 34);
+            pin_action_button(button, COVER_SIDE_ACTION_SIZE);
             true
         }
         ActionButtonVariant::CoverPrimaryTransport => {
             button.add_css_class("cover-play-button");
-            pin_action_button(button, 54);
+            pin_action_button(button, COVER_PRIMARY_ACTION_SIZE);
             true
         }
         ActionButtonVariant::CoverCornerMenu => {
             button.add_css_class("cover-menu-button");
-            pin_action_button(button, 34);
+            pin_action_button(button, COVER_SIDE_ACTION_SIZE);
             false
         }
         ActionButtonVariant::CoverCornerFavorite => {
             button.add_css_class("cover-favorite-button");
-            pin_action_button(button, 34);
+            pin_action_button(button, COVER_SIDE_ACTION_SIZE);
             false
         }
         ActionButtonVariant::DetailAction => true,

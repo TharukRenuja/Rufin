@@ -597,7 +597,7 @@ impl TrackGridCell {
         controls.add_to_overlay(&overlay);
         controls.connect_hover(&overlay);
 
-        let cover = cards::square_cover_frame(&overlay);
+        let cover = cards::square_cover_frame(&overlay, &controls.transport);
         let body = CollectionGridCardCell::new(&shell, fields, cover.upcast());
         let downloaded_track = Rc::clone(&current_track);
         body.set_download_badge(shell.download_badge(false, move |selected| {
@@ -794,7 +794,7 @@ impl AlbumGridCell {
         controls.add_to_overlay(&overlay);
         controls.connect_hover(&overlay);
 
-        let cover = cards::square_cover_frame(&overlay);
+        let cover = cards::square_cover_frame(&overlay, &controls.transport);
         let body = CollectionGridCardCell::new(&shell, fields, cover.upcast());
         let downloaded_album = Rc::clone(&current_album);
         body.set_download_badge(shell.download_badge(true, move |selected| {
@@ -1003,7 +1003,7 @@ impl ArtistGridCell {
         controls.add_to_overlay(&overlay);
         controls.connect_hover(&overlay);
 
-        let cover = cards::square_cover_frame(&overlay);
+        let cover = cards::square_cover_frame(&overlay, &controls.transport);
         let body = CollectionGridCardCell::new(&shell, fields, cover.upcast());
         let downloaded_artist = Rc::clone(&current_artist);
         body.set_download_badge(shell.download_badge(true, move |selected| {
@@ -1164,7 +1164,7 @@ impl PlaylistGridCell {
         controls.add_to_overlay(&overlay);
         controls.connect_hover(&overlay);
 
-        let cover = cards::square_cover_frame(&overlay);
+        let cover = cards::square_cover_frame(&overlay, &controls.transport);
         let body = CollectionGridCardCell::new(&shell, fields, cover.upcast());
         let downloaded_playlist = Rc::clone(&current_playlist);
         body.set_download_badge(shell.download_badge(true, move |selected| {
@@ -1337,7 +1337,7 @@ impl SmartPlaylistGridCell {
         controls.add_to_overlay(&overlay);
         controls.connect_hover(&overlay);
 
-        let cover = cards::square_cover_frame(&overlay);
+        let cover = cards::square_cover_frame(&overlay, &controls.transport);
         let body = CollectionGridCardCell::new(&shell, fields, cover.upcast());
         let downloaded_playlist = Rc::clone(&current_playlist);
         body.set_download_badge(shell.download_badge(true, move |selected| {
