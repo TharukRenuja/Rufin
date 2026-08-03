@@ -192,7 +192,7 @@ impl Shell {
     ) -> MountedRoute {
         let Some(detail) = detail else {
             return MountedRoute::static_widget(
-                self.placeholder_view("Artist", "The selected cached artist was not found."),
+                self.placeholder_view("Artist", msgid("This isn't available")),
             );
         };
         let ArtistOverview {
@@ -247,10 +247,7 @@ impl Shell {
                 header: header.widget(),
                 favorite: Some((favorite_section.upcast(), favorite_projection.search())),
                 favorite_present: !favorite_projection.source_is_empty(),
-                empty: self.placeholder_view(
-                    "Artist",
-                    "No cached albums or tracks are linked to this artist yet.",
-                ),
+                empty: self.placeholder_view("Artist", msgid("No music from this artist yet")),
             },
             albums,
             appears_on,
@@ -263,7 +260,7 @@ impl Shell {
         route_stack.set_vexpand(true);
         route_stack.add_named(&wrapper, Some("content"));
         route_stack.add_named(
-            &self.placeholder_view("Artist", "The selected cached artist was not found."),
+            &self.placeholder_view("Artist", msgid("This isn't available")),
             Some("missing"),
         );
         route_stack.set_visible_child_name("content");
@@ -457,10 +454,9 @@ impl Shell {
         music_folder_id: Option<MusicFolderId>,
     ) -> MountedRoute {
         let Some(detail) = detail else {
-            return MountedRoute::static_widget(self.placeholder_view(
-                msgid("Discography"),
-                "The selected cached artist was not found.",
-            ));
+            return MountedRoute::static_widget(
+                self.placeholder_view(msgid("Discography"), msgid("This isn't available")),
+            );
         };
         let facts = ArtistSummaryFacts::new(detail.summary.album_count, detail.summary.track_count);
         let wrapper = super::route_layout::detail_route_wrapper(0);
@@ -479,7 +475,7 @@ impl Shell {
                 favorite_present: false,
                 empty: self.placeholder_view(
                     msgid("Discography"),
-                    "No cached albums are linked to this artist yet.",
+                    msgid("No albums from this artist yet"),
                 ),
             },
             detail.albums,
@@ -493,10 +489,7 @@ impl Shell {
         route_stack.set_vexpand(true);
         route_stack.add_named(&wrapper, Some("content"));
         route_stack.add_named(
-            &self.placeholder_view(
-                msgid("Discography"),
-                "The selected cached artist was not found.",
-            ),
+            &self.placeholder_view(msgid("Discography"), msgid("This isn't available")),
             Some("missing"),
         );
         route_stack.set_visible_child_name("content");
@@ -603,7 +596,7 @@ impl Shell {
     ) -> MountedRoute {
         let Some(detail) = detail else {
             return MountedRoute::static_widget(
-                self.placeholder_view("Tracks", "The selected cached artist was not found."),
+                self.placeholder_view("Tracks", msgid("This isn't available")),
             );
         };
         let facts = ArtistSummaryFacts::new(detail.summary.album_count, detail.summary.track_count);
@@ -646,9 +639,7 @@ impl Shell {
         track_stack.set_vexpand(true);
         track_stack.add_named(&track_section, Some("tracks"));
         track_stack.add_named(
-            &library_route_inset(
-                self.placeholder_view("Tracks", "No cached tracks are linked to this artist yet."),
-            ),
+            &library_route_inset(self.placeholder_view("Tracks", msgid("No tracks here yet"))),
             Some("empty"),
         );
         track_stack.set_visible_child_name(if track_projection.source_is_empty() {
@@ -662,7 +653,7 @@ impl Shell {
         route_stack.set_vexpand(true);
         route_stack.add_named(&wrapper, Some("content"));
         route_stack.add_named(
-            &self.placeholder_view("Tracks", "The selected cached artist was not found."),
+            &self.placeholder_view("Tracks", msgid("This isn't available")),
             Some("missing"),
         );
         route_stack.set_visible_child_name("content");

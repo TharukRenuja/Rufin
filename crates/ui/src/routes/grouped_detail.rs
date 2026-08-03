@@ -3,6 +3,7 @@ use std::rc::Rc;
 use ::library::TrackList;
 use adw::prelude::*;
 use artwork::ArtworkBinding;
+use localization::msgid;
 
 use crate::LibraryListKey;
 use crate::shell::Shell;
@@ -220,9 +221,7 @@ impl Shell {
         track_stack.set_hexpand(true);
         track_stack.set_vexpand(true);
         track_stack.add_named(
-            &library_route_inset(
-                self.placeholder_view("Tracks", "No cached tracks are linked here yet."),
-            ),
+            &library_route_inset(self.placeholder_view("Tracks", msgid("No tracks here yet"))),
             Some("empty"),
         );
         track_stack.add_named(&track_section, Some("tracks"));

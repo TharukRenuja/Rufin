@@ -330,8 +330,7 @@ impl Shell {
                 }
             }
         }
-        let empty =
-            self.route_empty_view(msgid("Cached entries will appear here after sync finishes"));
+        let empty = self.route_empty_view(msgid("Nothing here yet"));
         content.append(&empty);
         scroller.set_child(Some(&library_route_inset(content.clone().upcast())));
 

@@ -327,9 +327,7 @@ impl Shell {
         stack.set_hexpand(true);
         stack.set_vexpand(true);
         stack.add_named(
-            &library_route_inset(
-                self.placeholder_view("Tracks", "No cached tracks are linked here yet."),
-            ),
+            &library_route_inset(self.placeholder_view("Tracks", msgid("No tracks here yet"))),
             Some("empty"),
         );
         stack.add_named(&collection.scrolling_widget(), Some("content"));

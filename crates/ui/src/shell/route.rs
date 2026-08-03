@@ -655,9 +655,9 @@ impl Shell {
         let Some(selected) = self.library.selected.borrow().clone() else {
             self.invalidate_route_projection_lane();
             self.replace_mounted_route(route, None, render_started, 0, || {
-                MountedRoute::static_widget(self.route_empty_view(localization::msgid(
-                    "Cached entries will appear here after sync finishes",
-                )))
+                MountedRoute::static_widget(
+                    self.route_empty_view(localization::msgid("Nothing here yet")),
+                )
             });
             return;
         };
