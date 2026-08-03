@@ -172,6 +172,7 @@ fn replace_selection_actions(shell: &Rc<Shell>, content: &SourceMenuContent) {
                 let shell = Rc::clone(shell);
                 let source_id = source.id.clone();
                 move || {
+                    popdown_primary_menu(&shell);
                     if shell.source.configured.borrow().selected_source_id.as_ref()
                         != Some(&source_id)
                     {
@@ -219,6 +220,7 @@ fn choice_action(name: &str, active: bool, select: impl Fn() + 'static) -> gio::
 }
 
 fn select_music_folder(shell: &Shell, folder_id: Option<MusicFolderId>) {
+    popdown_primary_menu(shell);
     let selected_folder_id = shell
         .library
         .selected
