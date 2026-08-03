@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use library::{
-    CandidateBatch, CandidateFinish, CandidateHeader, HomeFacts, Library, LocalAccessFile,
+    CandidateBatch, CandidateFinish, CandidateHeader, HomeFacts, Libraries, LocalAccessFile,
     LocalAccessMapping, MetadataError, MetadataItemId, PlayableFile, SourceId, Track, TrackData,
     TrackId, TrackRelations, project_local_access_path, reported_path_is_absolute,
 };
@@ -55,7 +55,7 @@ fn local_access_preserves_full_filesystem_identities() {
     let root = tempfile::tempdir().expect("local access root");
     let store_path = directory.path().join("library.db");
     let source_id = SourceId::new("opensubsonic:server:filesystem-identities");
-    let library = Library::open(&store_path).expect("open Library");
+    let library = Libraries::open(&store_path).expect("open Library");
     let loaded = accept_tracks(&library, source_id.clone(), Vec::new());
     let identity_values = [0, i64::MAX as u64, (i64::MAX as u64) + 1, u64::MAX];
     let files = identity_values
@@ -70,9 +70,8 @@ fn local_access_preserves_full_filesystem_identities() {
             file
         })
         .collect::<Vec<_>>();
-    library
+    loaded
         .replace_local_access(
-            &loaded,
             LocalAccessMapping {
                 root_path: root.path().to_path_buf(),
                 server_prefix: None,
@@ -90,7 +89,7 @@ fn local_access_preserves_full_filesystem_identities() {
 
     drop(loaded);
     drop(library);
-    let reopened = Library::open(store_path)
+    let reopened = Libraries::open(store_path)
         .expect("reopen Library")
         .load_source(&source_id)
         .expect("load source")
@@ -160,16 +159,16 @@ fn accepted_local_access_maps_tracks_and_reopens() {
     };
 
     {
-        let library = Library::open(&store_path).expect("open Library");
+        let library = Libraries::open(&store_path).expect("open Library");
         let loaded = accept_tracks(&library, source_id.clone(), tracks);
-        let before_scan = library
-            .configure_local_access(&loaded, mapping.clone())
+        let before_scan = loaded
+            .configure_local_access(mapping.clone())
             .expect("configure mapping before its scan");
         assert_eq!(before_scan.unmatched_count, 3);
         assert_playable(&loaded, "direct", &direct_path);
         assert_playable(&loaded, "prefix", &prefix_path);
-        let status = library
-            .replace_local_access(&loaded, mapping.clone(), files.clone())
+        let status = loaded
+            .replace_local_access(mapping.clone(), files.clone())
             .expect("accept local access files");
         assert_eq!(status.direct_match_count, 1);
         assert_eq!(status.prefix_match_count, 1);
@@ -195,7 +194,7 @@ fn accepted_local_access_maps_tracks_and_reopens() {
         );
     }
 
-    let library = Library::open(&store_path).expect("reopen Library");
+    let library = Libraries::open(&store_path).expect("reopen Library");
     let loaded = library
         .load_source(&source_id)
         .expect("load accepted source")
@@ -207,8 +206,8 @@ fn accepted_local_access_maps_tracks_and_reopens() {
             .is_none(),
         "persisted files are inert until their current mapping is configured"
     );
-    let status = library
-        .configure_local_access(&loaded, mapping)
+    let status = loaded
+        .configure_local_access(mapping)
         .expect("configure reopened local access");
     assert_eq!(status.direct_match_count, 1);
     assert_eq!(status.prefix_match_count, 1);
@@ -228,9 +227,7 @@ fn accepted_local_access_maps_tracks_and_reopens() {
         }
     );
 
-    let status = library
-        .clear_local_access(&loaded)
-        .expect("clear local access");
+    let status = loaded.clear_local_access().expect("clear local access");
     assert_eq!(status.unmatched_count, 3);
     assert!(loaded.local_access_files().expect("read files").is_empty());
 }
@@ -257,7 +254,7 @@ fn proposed_metadata_access_projects_the_exact_file_without_scanning_the_root() 
         end_millis: 1,
     });
     let library =
-        Library::open(directory.path().join("library.db")).expect("open temporary Library");
+        Libraries::open(directory.path().join("library.db")).expect("open temporary Library");
     let loaded = accept_tracks(
         &library,
         SourceId::new("opensubsonic:server:metadata-proposal"),
@@ -336,7 +333,7 @@ fn metadata_mapping_rejects_ambiguity_and_files_from_an_old_root() {
     let configured_root = tempfile::tempdir().expect("configured root");
     let old_root = tempfile::tempdir().expect("old root");
     let library =
-        Library::open(directory.path().join("library.db")).expect("open temporary Library");
+        Libraries::open(directory.path().join("library.db")).expect("open temporary Library");
     let loaded = accept_tracks(
         &library,
         SourceId::new("jellyfin:server:ambiguous"),
@@ -350,9 +347,8 @@ fn metadata_mapping_rejects_ambiguity_and_files_from_an_old_root() {
         access_file(configured_root.path(), &second, "Same", "Album", "Artist"),
         access_file(old_root.path(), &old, "Same", "Album", "Artist"),
     ];
-    let status = library
+    let status = loaded
         .replace_local_access(
-            &loaded,
             LocalAccessMapping {
                 root_path: configured_root.path().to_path_buf(),
                 server_prefix: None,
@@ -377,7 +373,7 @@ fn server_prefix_matches_a_path_component_not_a_text_prefix() {
     let directory = tempfile::tempdir().expect("temporary Store directory");
     let root = tempfile::tempdir().expect("local access root");
     let library =
-        Library::open(directory.path().join("library.db")).expect("open temporary Library");
+        Libraries::open(directory.path().join("library.db")).expect("open temporary Library");
     let loaded = accept_tracks(
         &library,
         SourceId::new("opensubsonic:server:path-boundary"),
@@ -390,9 +386,8 @@ fn server_prefix_matches_a_path_component_not_a_text_prefix() {
         )],
     );
     let local_path = root.path().join("-old/Track.flac");
-    let status = library
+    let status = loaded
         .replace_local_access(
-            &loaded,
             LocalAccessMapping {
                 root_path: root.path().to_path_buf(),
                 server_prefix: Some("/server/music".to_string()),
@@ -417,7 +412,7 @@ fn an_exact_download_wins_without_replacing_local_access() {
     let directory = tempfile::tempdir().expect("temporary Store directory");
     let local = tempfile::tempdir().expect("local access root");
     let library =
-        Library::open(directory.path().join("library.db")).expect("open temporary Library");
+        Libraries::open(directory.path().join("library.db")).expect("open temporary Library");
     let track_id = TrackId::new("track:downloaded");
     let loaded = accept_tracks(
         &library,
@@ -434,15 +429,12 @@ fn an_exact_download_wins_without_replacing_local_access() {
     let downloaded = directory.path().join("downloaded.audio");
     std::fs::write(&mapped, b"mapped").expect("mapped audio");
     std::fs::write(&downloaded, b"downloaded").expect("downloaded audio");
-    library
-        .configure_local_access(
-            &loaded,
-            LocalAccessMapping {
-                root_path: local.path().to_path_buf(),
-                server_prefix: Some("/server/music".to_string()),
-                local_prefix: None,
-            },
-        )
+    loaded
+        .configure_local_access(LocalAccessMapping {
+            root_path: local.path().to_path_buf(),
+            server_prefix: Some("/server/music".to_string()),
+            local_prefix: None,
+        })
         .expect("configure mapping");
 
     let removed = loaded
@@ -472,10 +464,10 @@ fn an_exact_download_wins_without_replacing_local_access() {
 }
 
 fn accept_tracks(
-    library: &Library,
+    library: &Libraries,
     source_id: SourceId,
     tracks: Vec<Track>,
-) -> std::sync::Arc<library::LoadedLibrary> {
+) -> std::sync::Arc<library::Library> {
     let mut candidate = library
         .begin_source_candidate(CandidateHeader {
             source_id,
@@ -497,7 +489,7 @@ fn accept_tracks(
         )
         .and_then(library::PreparedSourceCandidate::accept)
         .expect("accept source")
-        .loaded
+        .library
 }
 
 fn track(id: &str, title: &str, album: &str, artist: &str, source_path: Option<String>) -> Track {
@@ -561,7 +553,7 @@ fn access_file(
     }
 }
 
-fn assert_playable(loaded: &library::LoadedLibrary, id: &str, expected: &PathBuf) {
+fn assert_playable(loaded: &library::Library, id: &str, expected: &PathBuf) {
     let playable = loaded
         .playable_file(&TrackId::new(format!("track:{id}")))
         .expect("read playback mapping")
@@ -575,7 +567,7 @@ fn assert_playable(loaded: &library::LoadedLibrary, id: &str, expected: &PathBuf
 }
 
 fn metadata_target(
-    loaded: &std::sync::Arc<library::LoadedLibrary>,
+    loaded: &std::sync::Arc<library::Library>,
     id: &str,
 ) -> Result<PathBuf, MetadataError> {
     let (_, targets) = loaded

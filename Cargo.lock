@@ -2818,6 +2818,7 @@ version = "0.12.0"
 dependencies = [
  "gstreamer",
  "gstreamer-audio",
+ "library",
  "playback",
  "rustfft",
  "tempfile",
@@ -3705,6 +3706,7 @@ dependencies = [
  "lofty",
  "md5",
  "notify",
+ "playback",
  "reqwest",
  "rustix",
  "serde",

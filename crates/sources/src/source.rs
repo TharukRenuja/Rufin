@@ -2,21 +2,23 @@ use std::collections::BTreeSet;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use async_channel::Sender;
 use library::{
-    AlbumId, ArtistId, CandidateBatch, FavoriteAcceptance, FavoriteItemId, FolderContents,
-    FolderId, GenreId, HomeFacts, HomeSectionKind, ImageRef, LocalAccessTarget, LocalArtworkRef,
-    LocalComponentBaseline, LocalComponentReplacement, MetadataDraft, MetadataEdit, MetadataError,
-    MetadataValues, MusicFolderId, PlaylistAcceptance, PlaylistEdit, PlaylistId, PlaylistSnapshot,
-    ProviderFreshness, SearchRequest, SearchResults, SourceHomeSection, SourceHomeSectionKind,
-    SourceId, TrackId,
+    CandidateBatch, CandidateFinish, CandidateHeader, FavoriteAcceptance, FavoriteItemId,
+    FolderContents, FolderId, HomeFacts, HomeSectionKind, ImageRef, Libraries, Library,
+    LibraryError, LocalAccessTarget, LocalArtworkRef, LocalComponentReplacement, MetadataDraft,
+    MetadataEdit, MetadataError, MetadataValues, MusicFolderId, PlaylistAcceptance, PlaylistEdit,
+    PlaylistId, PlaylistSnapshot, PreparedSourceCandidate, ProviderFreshness, RadioSeed,
+    RandomCriteria, ResolvedStream, SearchRequest, SearchResults, SourceHomeSection,
+    SourceHomeSectionKind, SourceId, StreamRequest, TrackId,
 };
+use playback::SourceReportFact;
 
 use crate::{
-    GeneratedTracksRequest, ImageBytes, LyricsSearch, NativeLyrics, PlaybackReport,
-    RandomTrackRequest, SourceConfiguration, SourceError, SourceResult, SourceSettingsInput,
-    SourceSetupInput, StreamDescriptor, StreamRequest,
+    ImageBytes, LyricsSearch, NativeLyrics, SourceConfiguration, SourceError, SourceResult,
+    SourceSettingsInput, SourceSetupInput,
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -37,21 +39,6 @@ pub struct SourceReadProgress {
     pub stage: SourceReadStage,
     pub completed: usize,
     pub total: Option<usize>,
-}
-
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub struct SourceReadSummary {
-    pub albums: usize,
-    pub tracks: usize,
-    pub artists: usize,
-    pub genres: usize,
-    pub music_folders: usize,
-    pub playlists: usize,
-    pub local_files: usize,
-    pub metadata_fallbacks: usize,
-    pub unreadable_files: usize,
-    pub invalid_cues: usize,
-    pub skipped_playlists: usize,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -75,63 +62,60 @@ pub enum SourceFreshness {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct SourceLibraryChange {
-    inner: SourceLibraryChangeKind,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-enum SourceLibraryChangeKind {
+pub enum ObservedSourceChange {
     Full,
-    Jellyfin(BTreeSet<String>),
+    Jellyfin {
+        upserts: BTreeSet<String>,
+        removals: BTreeSet<String>,
+    },
+    LocalPaths(BTreeSet<PathBuf>),
+    LocalRescan,
 }
 
-impl SourceLibraryChange {
-    pub fn merge(&mut self, other: Self) {
-        match (&mut self.inner, other.inner) {
-            (SourceLibraryChangeKind::Full, _) | (_, SourceLibraryChangeKind::Full) => {
-                self.inner = SourceLibraryChangeKind::Full
+impl ObservedSourceChange {
+    pub fn merge(&mut self, other: Self) -> Result<(), Self> {
+        match (&mut *self, other) {
+            (Self::Full, Self::Full | Self::Jellyfin { .. }) => {}
+            (current @ Self::Jellyfin { .. }, Self::Full) => {
+                *current = Self::Full;
             }
             (
-                SourceLibraryChangeKind::Jellyfin(current),
-                SourceLibraryChangeKind::Jellyfin(incoming),
-            ) => current.extend(incoming),
+                Self::Jellyfin { upserts, removals },
+                Self::Jellyfin {
+                    upserts: incoming_upserts,
+                    removals: incoming_removals,
+                },
+            ) => {
+                upserts.retain(|id| !incoming_removals.contains(id));
+                removals.retain(|id| !incoming_upserts.contains(id));
+                upserts.extend(incoming_upserts);
+                removals.extend(incoming_removals);
+            }
+            (Self::LocalRescan, Self::LocalRescan | Self::LocalPaths(_)) => {}
+            (current @ Self::LocalPaths(_), Self::LocalRescan) => {
+                *current = Self::LocalRescan;
+            }
+            (Self::LocalPaths(current), Self::LocalPaths(incoming)) => current.extend(incoming),
+            (_, incoming) => return Err(incoming),
         }
+        Ok(())
     }
 
-    pub(crate) fn jellyfin_items(items: impl IntoIterator<Item = String>) -> Self {
-        Self {
-            inner: SourceLibraryChangeKind::Jellyfin(items.into_iter().collect()),
-        }
+    pub(crate) fn jellyfin(upserts: BTreeSet<String>, removals: BTreeSet<String>) -> Self {
+        Self::Jellyfin { upserts, removals }
     }
 
-    pub(crate) fn full() -> Self {
-        Self {
-            inner: SourceLibraryChangeKind::Full,
-        }
+    pub fn full() -> Self {
+        Self::Full
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum SourceLibraryItemId {
-    Album(AlbumId),
-    Track(TrackId),
-    Artist(ArtistId),
-    Genre(GenreId),
-    Playlist(PlaylistId),
-    MusicFolder(MusicFolderId),
-}
-
-#[derive(Clone, Debug)]
-pub enum SourceLibraryChangeRead {
-    Exact(library::SourceLibraryUpdate),
+#[derive(Debug)]
+pub enum PreparedSourceChange {
+    SourceUpdate(library::SourceLibraryUpdate),
+    LocalReplacement(LocalComponentReplacement),
     Full,
     Ignored,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum MetadataRefresh {
-    Local(LocalFilesystemChange),
-    Source(SourceLibraryChange),
 }
 
 pub struct ConnectedSource {
@@ -143,8 +127,7 @@ pub struct ConnectedSource {
 pub enum SourceEditResult {
     Unchanged,
     ConfigurationOnly(SourceConfiguration),
-    SameAccount(ConnectedSource),
-    DifferentAccount(ConnectedSource),
+    Connected(Box<ConnectedSource>),
 }
 
 pub(crate) trait RemotePlaylistSource {
@@ -223,40 +206,24 @@ impl ConnectedSource {
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum LocalFilesystemChange {
-    Paths(BTreeSet<PathBuf>),
-    Rescan,
+#[derive(Debug, thiserror::Error)]
+pub enum SourceChangePreparationError {
+    #[error(transparent)]
+    Source(#[from] SourceError),
+    #[error(transparent)]
+    Library(#[from] library::LibraryError),
+    #[error("source change preparation task failed: {0}")]
+    Task(#[from] tokio::task::JoinError),
 }
 
-impl LocalFilesystemChange {
-    pub fn merge(&mut self, other: Self) {
-        match (&mut *self, other) {
-            (Self::Rescan, _) => {}
-            (current, Self::Rescan) => *current = Self::Rescan,
-            (Self::Paths(current), Self::Paths(other)) => current.extend(other),
-        }
-    }
-}
-
-pub struct SourceLocalCheck {
-    inner: crate::local::LocalCheck,
-}
-
-impl SourceLocalCheck {
-    pub fn file_seeds(&self) -> &[library::LocalFileSeed] {
-        self.inner.file_seeds()
-    }
-}
-
-pub struct SourceLocalChange {
-    inner: crate::local::LocalChange,
-}
-
-impl SourceLocalChange {
-    pub fn component_seeds(&self) -> &[library::LocalComponentSeed] {
-        self.inner.component_seeds()
-    }
+#[derive(Debug, thiserror::Error)]
+pub enum SourceCandidatePreparationError {
+    #[error(transparent)]
+    Source(#[from] SourceError),
+    #[error(transparent)]
+    Library(#[from] LibraryError),
+    #[error("source candidate task failed: {0}")]
+    Task(#[from] tokio::task::JoinError),
 }
 
 /// Inputs that determine the canonical facts emitted by one source.
@@ -267,142 +234,33 @@ pub struct SourceInputIdentity {
     pub digest: [u8; 32],
 }
 
-/// Terminal facts from one bounded source read.
-///
-/// Canonical batches cross the callback while the concrete source reads them.
-/// Library owns candidate creation, persistence, comparison, and acceptance.
-pub struct SourceFacts {
-    freshness: Option<ProviderFreshness>,
-    home: HomeFacts,
-    summary: SourceReadSummary,
-}
-
-impl SourceFacts {
-    pub fn freshness(&self) -> Option<&ProviderFreshness> {
-        self.freshness.as_ref()
-    }
-
-    pub fn home(&self) -> &HomeFacts {
-        &self.home
-    }
-
-    pub fn summary(&self) -> SourceReadSummary {
-        self.summary
-    }
-
-    pub(crate) fn new(
-        freshness: Option<ProviderFreshness>,
-        home: HomeFacts,
-        summary: SourceReadSummary,
-    ) -> Self {
-        Self {
-            freshness,
-            home,
-            summary,
-        }
-    }
-}
-
 /// Direct bounded edge from a provider response to Library's candidate.
-///
-/// `false` means the caller could not accept the batch. Rufin retains the
-/// actual downstream error and cancels the source operation; Sources does not
-/// need a Library error or handle.
-#[cfg_attr(
-    not(test),
-    allow(dead_code, reason = "provider fixtures use the direct callback sink")
-)]
-enum BatchTarget<'a> {
-    Callback(&'a mut (dyn FnMut(CandidateBatch) -> bool + Send)),
-    Channel(Sender<CandidateBatch>),
+pub(crate) struct BatchEmitter {
+    batches: Sender<CandidateBatch>,
 }
 
-pub(crate) struct BatchEmitter<'a> {
-    target: BatchTarget<'a>,
-    summary: SourceReadSummary,
-}
-
-impl<'a> BatchEmitter<'a> {
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "provider fixtures use the direct callback sink")
-    )]
-    pub(crate) fn new(accept: &'a mut (dyn FnMut(CandidateBatch) -> bool + Send)) -> Self {
-        Self {
-            target: BatchTarget::Callback(accept),
-            summary: SourceReadSummary::default(),
-        }
+impl BatchEmitter {
+    pub(crate) fn new(batches: Sender<CandidateBatch>) -> Self {
+        Self { batches }
     }
 
-    fn channel(sender: Sender<CandidateBatch>) -> Self {
-        Self {
-            target: BatchTarget::Channel(sender),
-            summary: SourceReadSummary::default(),
-        }
-    }
-
-    pub(crate) fn emit(&mut self, batch: CandidateBatch) -> SourceResult<()> {
-        if !self.record(&batch) {
-            return Ok(());
-        }
-        let accepted = match &mut self.target {
-            BatchTarget::Callback(accept) => accept(batch),
-            BatchTarget::Channel(sender) => sender.send_blocking(batch).is_ok(),
-        };
-        if !accepted {
-            return Err(SourceError::Cancelled);
-        }
-        Ok(())
-    }
-
-    pub(crate) async fn emit_async(&mut self, batch: CandidateBatch) -> SourceResult<()> {
-        if !self.record(&batch) {
-            return Ok(());
-        }
-        let accepted = match &mut self.target {
-            BatchTarget::Callback(accept) => accept(batch),
-            BatchTarget::Channel(sender) => sender.send(batch).await.is_ok(),
-        };
-        if !accepted {
-            return Err(SourceError::Cancelled);
-        }
-        Ok(())
-    }
-
-    fn record(&mut self, batch: &CandidateBatch) -> bool {
+    pub(crate) fn emit(&self, batch: CandidateBatch) -> SourceResult<()> {
         if batch.is_empty() {
-            return false;
+            return Ok(());
         }
-        match batch {
-            CandidateBatch::Albums(values) => self.summary.albums += values.len(),
-            CandidateBatch::Tracks(values) => self.summary.tracks += values.len(),
-            CandidateBatch::Artists(values) => self.summary.artists += values.len(),
-            CandidateBatch::Genres(values) => self.summary.genres += values.len(),
-            CandidateBatch::MusicFolders(values) => self.summary.music_folders += values.len(),
-            CandidateBatch::Playlists(values) => self.summary.playlists += values.len(),
-            CandidateBatch::LocalFiles(values) => self.summary.local_files += values.len(),
+        self.batches
+            .send_blocking(batch)
+            .map_err(|_| SourceError::Cancelled)
+    }
+
+    pub(crate) async fn emit_async(&self, batch: CandidateBatch) -> SourceResult<()> {
+        if batch.is_empty() {
+            return Ok(());
         }
-        true
-    }
-
-    pub(crate) fn summary(&self) -> SourceReadSummary {
-        self.summary
-    }
-
-    pub(crate) fn metadata_fallback(&mut self) {
-        self.summary.metadata_fallbacks += 1;
-    }
-
-    pub(crate) fn unreadable_file(&mut self) {
-        self.summary.unreadable_files += 1;
-    }
-
-    pub(crate) fn invalid_cue(&mut self) {
-        self.summary.invalid_cues += 1;
-    }
-
-    pub(crate) fn skipped_playlist(&mut self) {
-        self.summary.skipped_playlists += 1;
+        self.batches
+            .send(batch)
+            .await
+            .map_err(|_| SourceError::Cancelled)
     }
 }
 
@@ -440,9 +298,9 @@ impl Source {
     /// Apply an edit to one configured source without exposing provider payloads
     /// outside Sources.
     ///
-    /// The configured source identity is stable. Authentication may reveal a
-    /// different provider account, but Rufin still owns the same configured
-    /// source slot and decides when its accepted facts are replaced.
+    /// The returned configuration carries the provider's canonical account
+    /// identity. Retaining the current SourceId means the account is unchanged;
+    /// a new SourceId means Rufin must replace the configured account.
     pub async fn edit(
         current: SourceConfiguration,
         current_credential: Option<String>,
@@ -554,9 +412,6 @@ impl Source {
         subject: &library::MetadataSubject,
         values: &MetadataValues,
     ) -> Result<Option<MetadataValues>, String> {
-        if values.title.trim().is_empty() || !self.metadata_source_search(subject) {
-            return Ok(None);
-        }
         match &self.implementation {
             Implementation::Jellyfin(source) => {
                 source.identify_metadata(subject.item(), values).await
@@ -581,30 +436,36 @@ impl Source {
 
     pub async fn write_metadata(
         self: &Arc<Self>,
+        library: Arc<Library>,
         subject: library::MetadataSubject,
         edit: MetadataEdit,
         local_access: Option<Vec<LocalAccessTarget>>,
-    ) -> Result<MetadataRefresh, MetadataError> {
-        match &self.implementation {
+        progress: Arc<dyn Fn(SourceReadProgress) + Send + Sync>,
+        cancelled: Arc<AtomicBool>,
+    ) -> Result<PreparedSourceChange, MetadataError> {
+        let (change, ignored_message) = match &self.implementation {
             Implementation::Local(_) => {
                 let source = Arc::clone(self);
-                tokio::task::spawn_blocking(move || {
+                let paths = tokio::task::spawn_blocking(move || {
                     let Implementation::Local(local) = &source.implementation else {
                         unreachable!("source implementation changed")
                     };
-                    local
-                        .write_metadata(&subject, &edit)
-                        .map(|paths| MetadataRefresh::Local(LocalFilesystemChange::Paths(paths)))
+                    local.write_metadata(&subject, &edit)
                 })
                 .await
-                .map_err(|error| MetadataError::Write(error.to_string()))?
+                .map_err(|error| MetadataError::Write(error.to_string()))??;
+                (
+                    ObservedSourceChange::LocalPaths(paths),
+                    "the written files were not accepted by the Local source",
+                )
             }
-            Implementation::Jellyfin(source) => source
-                .write_metadata(subject.item(), &edit)
-                .await
-                .map(|raw_ids| {
-                    MetadataRefresh::Source(SourceLibraryChange::jellyfin_items(raw_ids))
-                }),
+            Implementation::Jellyfin(source) => {
+                let raw_ids = source.write_metadata(subject.item(), &edit).await?;
+                (
+                    ObservedSourceChange::jellyfin(raw_ids.into_iter().collect(), BTreeSet::new()),
+                    "the source did not return the written item",
+                )
+            }
             Implementation::OpenSubsonic(source) => {
                 if !source.metadata_editing_available() {
                     return Err(MetadataError::Unavailable);
@@ -626,38 +487,36 @@ impl Source {
                     .start_metadata_scan_and_wait()
                     .await
                     .map_err(|error| MetadataError::SavedRefreshFailed(error.to_string()))?;
-                Ok(MetadataRefresh::Source(SourceLibraryChange::full()))
+                (
+                    ObservedSourceChange::Full,
+                    "the source did not return the written item",
+                )
             }
+        };
+        let prepared = self
+            .prepare_change(library, change, progress, cancelled)
+            .await
+            .map_err(|error| MetadataError::SavedRefreshFailed(error.to_string()))?;
+        match prepared {
+            PreparedSourceChange::Ignored => Err(MetadataError::SavedRefreshFailed(
+                ignored_message.to_string(),
+            )),
+            prepared => Ok(prepared),
         }
     }
 
     pub async fn listen_selected_changes(
         self: Arc<Self>,
         catch_up: bool,
-        on_items: impl FnMut(SourceLibraryChange) -> bool + Send + 'static,
-        on_local: impl FnMut(LocalFilesystemChange) -> bool + Send + 'static,
+        on_change: impl FnMut(ObservedSourceChange) -> bool + Send + 'static,
         should_stop: impl Fn() -> bool + Send + Sync + 'static,
     ) -> SourceResult<NativeSourceResult<()>> {
         match &self.implementation {
             Implementation::Jellyfin(source) => {
                 source.refresh_metadata_editing().await;
-                let on_items = std::sync::Mutex::new(on_items);
-                let mut on_ready = |reconnecting| {
-                    let request = feed_needs_catch_up(catch_up, reconnecting);
-                    !request
-                        || on_items
-                            .lock()
-                            .unwrap_or_else(|poisoned| poisoned.into_inner())(
-                            SourceLibraryChange::full(),
-                        )
-                };
-                let mut on_change = |change| {
-                    on_items
-                        .lock()
-                        .unwrap_or_else(|poisoned| poisoned.into_inner())(change)
-                };
+                let mut on_change = on_change;
                 source
-                    .listen_library_changes(&mut on_ready, &mut on_change, &should_stop)
+                    .listen_library_changes(catch_up, &mut on_change)
                     .await
                     .map(NativeSourceResult::Available)
             }
@@ -665,18 +524,18 @@ impl Source {
                 let Implementation::Local(source) = &self.implementation else {
                     unreachable!("selected source implementation changed")
                 };
-                let on_local = std::sync::Mutex::new(on_local);
+                let on_change = std::sync::Mutex::new(on_change);
                 let mut on_ready = |reconnecting| {
                     let request = feed_needs_catch_up(catch_up, reconnecting);
                     !request
-                        || on_local
+                        || on_change
                             .lock()
                             .unwrap_or_else(|poisoned| poisoned.into_inner())(
-                            LocalFilesystemChange::Rescan,
+                            ObservedSourceChange::LocalRescan,
                         )
                 };
                 let mut on_change = |change| {
-                    on_local
+                    on_change
                         .lock()
                         .unwrap_or_else(|poisoned| poisoned.into_inner())(change)
                 };
@@ -689,20 +548,53 @@ impl Source {
         }
     }
 
-    pub async fn read_library_change(
-        &self,
-        change: SourceLibraryChange,
-        contains: &(dyn Fn(&SourceLibraryItemId) -> bool + Send + Sync),
-    ) -> SourceResult<SourceLibraryChangeRead> {
-        match change.inner {
-            SourceLibraryChangeKind::Full => Ok(SourceLibraryChangeRead::Full),
-            SourceLibraryChangeKind::Jellyfin(items) => {
+    pub async fn prepare_change(
+        self: &Arc<Self>,
+        library: Arc<Library>,
+        change: ObservedSourceChange,
+        progress: Arc<dyn Fn(SourceReadProgress) + Send + Sync>,
+        cancelled: Arc<AtomicBool>,
+    ) -> Result<PreparedSourceChange, SourceChangePreparationError> {
+        match change {
+            ObservedSourceChange::Full => Ok(PreparedSourceChange::Full),
+            ObservedSourceChange::Jellyfin { upserts, removals } => {
                 let Implementation::Jellyfin(source) = &self.implementation else {
                     return Err(SourceError::InvalidRequest(
                         "the library change belongs to another source",
-                    ));
+                    )
+                    .into());
                 };
-                source.read_library_change(items, contains).await
+                source
+                    .prepare_change(&library, upserts, removals)
+                    .await
+                    .map_err(Into::into)
+            }
+            change @ (ObservedSourceChange::LocalPaths(_) | ObservedSourceChange::LocalRescan) => {
+                let source = Arc::clone(self);
+                tokio::task::spawn_blocking(move || {
+                    let Implementation::Local(local) = &source.implementation else {
+                        return Err(SourceError::InvalidRequest(
+                            "filesystem change preparation requires a Local source",
+                        )
+                        .into());
+                    };
+                    let should_stop = || cancelled.load(Ordering::Acquire);
+                    local
+                        .prepare_change(
+                            &library,
+                            change,
+                            unix_seconds(),
+                            progress.as_ref(),
+                            &should_stop,
+                        )
+                        .map(|replacement| {
+                            replacement.map_or(
+                                PreparedSourceChange::Ignored,
+                                PreparedSourceChange::LocalReplacement,
+                            )
+                        })
+                })
+                .await?
             }
         }
     }
@@ -783,21 +675,16 @@ impl Source {
 
     pub async fn random_tracks(
         &self,
-        request: RandomTrackRequest,
+        criteria: &RandomCriteria,
     ) -> SourceResult<NativeSourceResult<Vec<library::Track>>> {
         match &self.implementation {
             Implementation::Local(_) => Ok(NativeSourceResult::Unavailable),
             Implementation::Jellyfin(source) => source
-                .random_tracks(request)
+                .random_tracks(criteria)
                 .await
                 .map(NativeSourceResult::Available),
-            Implementation::OpenSubsonic(_)
-                if request.played_filter != crate::PlayedFilter::All =>
-            {
-                Ok(NativeSourceResult::Unavailable)
-            }
             Implementation::OpenSubsonic(source) => source
-                .random_tracks(request)
+                .random_tracks(criteria)
                 .await
                 .map(NativeSourceResult::Available),
         }
@@ -805,16 +692,17 @@ impl Source {
 
     pub async fn generated_tracks(
         &self,
-        request: GeneratedTracksRequest,
+        seed: &RadioSeed,
+        limit: usize,
     ) -> SourceResult<NativeSourceResult<Vec<library::Track>>> {
         match &self.implementation {
             Implementation::Local(_) => Ok(NativeSourceResult::Unavailable),
             Implementation::Jellyfin(source) => source
-                .generated_tracks(request)
+                .generated_tracks(seed, limit)
                 .await
                 .map(NativeSourceResult::Available),
             Implementation::OpenSubsonic(source) => source
-                .generated_tracks(request)
+                .generated_tracks(seed, limit)
                 .await
                 .map(NativeSourceResult::Available),
         }
@@ -823,7 +711,7 @@ impl Source {
     pub async fn stream(
         &self,
         request: &StreamRequest,
-    ) -> SourceResult<NativeSourceResult<StreamDescriptor>> {
+    ) -> SourceResult<NativeSourceResult<ResolvedStream>> {
         match &self.implementation {
             Implementation::Local(_) => Ok(NativeSourceResult::Unavailable),
             Implementation::Jellyfin(source) => source
@@ -901,7 +789,7 @@ impl Source {
 
     pub async fn report_playback(
         &self,
-        report: PlaybackReport,
+        report: SourceReportFact,
     ) -> SourceResult<NativeSourceResult<()>> {
         match &self.implementation {
             Implementation::Local(_) => Ok(NativeSourceResult::Unavailable),
@@ -916,60 +804,62 @@ impl Source {
         }
     }
 
-    pub fn check_local(
-        &self,
-        change: LocalFilesystemChange,
-        cancelled: &(dyn Fn() -> bool + Send + Sync),
-    ) -> SourceResult<SourceLocalCheck> {
-        let Implementation::Local(source) = &self.implementation else {
-            return Err(SourceError::InvalidRequest(
-                "filesystem verification requires a Local source",
-            ));
+    /// Reads one complete source snapshot into an invisible Library candidate.
+    ///
+    /// The bounded writer keeps provider acquisition backpressured. Library
+    /// remains the only owner of persistence, comparison, and later acceptance.
+    pub async fn prepare_library_candidate(
+        self: Arc<Self>,
+        libraries: Libraries,
+        identity: SourceInputIdentity,
+        current: Option<Arc<Library>>,
+        progress: Arc<dyn Fn(SourceReadProgress) + Send + Sync>,
+        cancelled: Arc<AtomicBool>,
+    ) -> Result<PreparedSourceCandidate, SourceCandidatePreparationError> {
+        let header = CandidateHeader {
+            source_id: identity.source_id,
+            input_version: identity.version,
+            input_digest: identity.digest,
         };
-        source
-            .check(change, cancelled)
-            .map(|inner| SourceLocalCheck { inner })
+        let (batches, receiver) = async_channel::bounded(1);
+        let writer = tokio::task::spawn_blocking(move || {
+            let mut candidate = libraries.begin_source_candidate(header)?;
+            while let Ok(batch) = receiver.recv_blocking() {
+                candidate.write(batch)?;
+            }
+            Ok::<_, LibraryError>(candidate)
+        });
+
+        let facts = Arc::clone(&self)
+            .read_source_facts(batches, progress, Arc::clone(&cancelled))
+            .await;
+        let candidate = writer.await??;
+        let (freshness, home) = facts?;
+        if cancelled.load(Ordering::Acquire) {
+            return Err(SourceError::Cancelled.into());
+        }
+
+        tokio::task::spawn_blocking(move || {
+            candidate.finish(
+                CandidateFinish {
+                    freshness,
+                    home,
+                    accepted_at: unix_seconds(),
+                },
+                current.as_ref(),
+            )
+        })
+        .await?
+        .map_err(Into::into)
     }
 
-    pub fn confirm_local_change(
-        &self,
-        check: SourceLocalCheck,
-        baseline: library::LocalFileBaseline,
-        progress: &(dyn Fn(SourceReadProgress) + Send + Sync),
-        cancelled: &(dyn Fn() -> bool + Send + Sync),
-    ) -> SourceResult<Option<SourceLocalChange>> {
-        let Implementation::Local(source) = &self.implementation else {
-            return Err(SourceError::InvalidRequest(
-                "filesystem verification requires a Local source",
-            ));
-        };
-        source
-            .confirm_change(check.inner, baseline, progress, cancelled)
-            .map(|change| change.map(|inner| SourceLocalChange { inner }))
-    }
-
-    pub fn complete_local_change(
-        &self,
-        change: SourceLocalChange,
-        baseline: LocalComponentBaseline,
-        observed_at: i64,
-        cancelled: &(dyn Fn() -> bool + Send + Sync),
-    ) -> SourceResult<LocalComponentReplacement> {
-        let Implementation::Local(source) = &self.implementation else {
-            return Err(SourceError::InvalidRequest(
-                "filesystem replacement requires a Local source",
-            ));
-        };
-        source.complete_change(change.inner, baseline, observed_at, cancelled)
-    }
-
-    pub async fn read_source_facts(
+    async fn read_source_facts(
         self: Arc<Self>,
         batches: Sender<CandidateBatch>,
         progress: Arc<dyn Fn(SourceReadProgress) + Send + Sync>,
         cancelled: Arc<AtomicBool>,
-    ) -> SourceResult<SourceFacts> {
-        let (freshness, home, summary) = match &self.implementation {
+    ) -> Result<(Option<ProviderFreshness>, HomeFacts), SourceCandidatePreparationError> {
+        let (freshness, home) = match &self.implementation {
             Implementation::Local(_) => {
                 let source = Arc::clone(&self);
                 let is_cancelled = move || cancelled.load(Ordering::Acquire);
@@ -977,33 +867,36 @@ impl Source {
                     let Implementation::Local(local) = &source.implementation else {
                         unreachable!("source kind changed while reading Local facts");
                     };
-                    let mut emitter = BatchEmitter::channel(batches);
-                    let result = local.read_facts(&mut emitter, &*progress, &is_cancelled);
-                    result.map(|(freshness, home)| (freshness, home, emitter.summary()))
+                    let emitter = BatchEmitter::new(batches);
+                    local.read_facts(&emitter, &*progress, &is_cancelled)
                 })
-                .await
-                .map_err(|error| SourceError::Other(error.to_string()))??;
+                .await??;
                 completed
             }
             Implementation::Jellyfin(source) => {
-                let mut emitter = BatchEmitter::channel(batches);
+                let emitter = BatchEmitter::new(batches);
                 let is_cancelled = || cancelled.load(Ordering::Acquire);
-                let (freshness, home) = source
-                    .read_facts(&mut emitter, &*progress, &is_cancelled)
-                    .await?;
-                (freshness, home, emitter.summary())
+                source
+                    .read_facts(&emitter, &*progress, &is_cancelled)
+                    .await?
             }
             Implementation::OpenSubsonic(source) => {
-                let mut emitter = BatchEmitter::channel(batches);
+                let emitter = BatchEmitter::new(batches);
                 let is_cancelled = || cancelled.load(Ordering::Acquire);
-                let (freshness, home) = source
-                    .read_facts(&mut emitter, &*progress, &is_cancelled)
-                    .await?;
-                (freshness, home, emitter.summary())
+                source
+                    .read_facts(&emitter, &*progress, &is_cancelled)
+                    .await?
             }
         };
-        Ok(SourceFacts::new(freshness, home, summary))
+        Ok((freshness, home))
     }
+}
+
+fn unix_seconds() -> i64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_secs().min(i64::MAX as u64) as i64)
+        .unwrap_or_default()
 }
 
 pub(crate) fn configured_source_name(configured: Option<String>, provider: String) -> String {
@@ -1093,48 +986,118 @@ async fn edit_remote_playlist(
 mod input_identity_tests {
     use super::*;
     use crate::SourceCacheMatch;
+    use library::MusicFolder;
+
+    fn music_folder(name: &str) -> MusicFolder {
+        MusicFolder {
+            id: MusicFolderId::new(name),
+            name: name.to_string(),
+            image_ref: None,
+        }
+    }
 
     #[test]
-    fn selected_item_changes_coalesce_without_losing_a_full_refresh() {
-        let mut changed =
-            SourceLibraryChange::jellyfin_items(["track:one".to_string(), "track:two".to_string()]);
-        changed.merge(SourceLibraryChange::jellyfin_items([
-            "track:two".to_string(),
-            "album:one".to_string(),
-        ]));
+    fn sync_batch_emitter_suppresses_empty_batches() {
+        let (batches, receiver) = async_channel::unbounded();
+        let emitter = BatchEmitter::new(batches);
+
+        emitter
+            .emit(CandidateBatch::MusicFolders(Vec::new()))
+            .expect("suppress empty batch");
+        emitter
+            .emit(CandidateBatch::MusicFolders(vec![music_folder("first")]))
+            .expect("send populated batch");
+        drop(emitter);
+
+        let emitted = std::iter::from_fn(|| receiver.try_recv().ok()).collect::<Vec<_>>();
+        assert_eq!(emitted.len(), 1);
+        assert!(matches!(
+            &emitted[0],
+            CandidateBatch::MusicFolders(folders) if folders == &[music_folder("first")]
+        ));
+    }
+
+    #[tokio::test]
+    async fn closed_batch_channel_cancels_sync_and_async_senders() {
+        let (sync_batches, sync_receiver) = async_channel::unbounded();
+        let sync_emitter = BatchEmitter::new(sync_batches);
+        drop(sync_receiver);
+        assert!(matches!(
+            sync_emitter.emit(CandidateBatch::MusicFolders(vec![music_folder("sync")])),
+            Err(SourceError::Cancelled)
+        ));
+
+        let (async_batches, async_receiver) = async_channel::unbounded();
+        let async_emitter = BatchEmitter::new(async_batches);
+        drop(async_receiver);
+        assert!(matches!(
+            async_emitter
+                .emit_async(CandidateBatch::MusicFolders(vec![music_folder("async")]))
+                .await,
+            Err(SourceError::Cancelled)
+        ));
+    }
+
+    #[test]
+    fn jellyfin_change_merge_keeps_the_latest_action_and_full_dominates() {
+        let mut changed = ObservedSourceChange::jellyfin(
+            BTreeSet::from(["track-one".to_string(), "track-two".to_string()]),
+            BTreeSet::new(),
+        );
+        changed
+            .merge(ObservedSourceChange::jellyfin(
+                BTreeSet::from(["album-one".to_string()]),
+                BTreeSet::from(["track-one".to_string()]),
+            ))
+            .expect("merge Jellyfin change");
+        changed
+            .merge(ObservedSourceChange::jellyfin(
+                BTreeSet::from(["track-one".to_string()]),
+                BTreeSet::from(["track-two".to_string()]),
+            ))
+            .expect("merge Jellyfin change");
         assert_eq!(
             changed,
-            SourceLibraryChange {
-                inner: SourceLibraryChangeKind::Jellyfin(BTreeSet::from([
-                    "album:one".to_string(),
-                    "track:one".to_string(),
-                    "track:two".to_string(),
-                ])),
+            ObservedSourceChange::Jellyfin {
+                upserts: BTreeSet::from(["album-one".to_string(), "track-one".to_string(),]),
+                removals: BTreeSet::from(["track-two".to_string()]),
             }
         );
 
-        changed.merge(SourceLibraryChange::full());
-        assert_eq!(changed, SourceLibraryChange::full());
+        changed
+            .merge(ObservedSourceChange::full())
+            .expect("full change dominates");
+        changed
+            .merge(ObservedSourceChange::jellyfin(
+                BTreeSet::from(["track-three".to_string()]),
+                BTreeSet::new(),
+            ))
+            .expect("full change remains dominant");
+        assert_eq!(changed, ObservedSourceChange::full());
     }
 
     #[test]
     fn local_file_changes_coalesce_without_losing_a_rescan() {
         let mut changed =
-            LocalFilesystemChange::Paths(BTreeSet::from([PathBuf::from("/music/one.flac")]));
-        changed.merge(LocalFilesystemChange::Paths(BTreeSet::from([
-            PathBuf::from("/music/one.flac"),
-            PathBuf::from("/music/two.flac"),
-        ])));
+            ObservedSourceChange::LocalPaths(BTreeSet::from([PathBuf::from("/music/one.flac")]));
+        changed
+            .merge(ObservedSourceChange::LocalPaths(BTreeSet::from([
+                PathBuf::from("/music/one.flac"),
+                PathBuf::from("/music/two.flac"),
+            ])))
+            .expect("merge Local paths");
         assert_eq!(
             changed,
-            LocalFilesystemChange::Paths(BTreeSet::from([
+            ObservedSourceChange::LocalPaths(BTreeSet::from([
                 PathBuf::from("/music/one.flac"),
                 PathBuf::from("/music/two.flac"),
             ]))
         );
 
-        changed.merge(LocalFilesystemChange::Rescan);
-        assert_eq!(changed, LocalFilesystemChange::Rescan);
+        changed
+            .merge(ObservedSourceChange::LocalRescan)
+            .expect("rescan dominates Local paths");
+        assert_eq!(changed, ObservedSourceChange::LocalRescan);
     }
 
     fn jellyfin(

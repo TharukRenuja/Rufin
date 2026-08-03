@@ -6,14 +6,13 @@ use std::time::Duration;
 use adw::prelude::*;
 use artwork::ArtworkBinding;
 use gtk::{gio, glib};
-use library::{Album, Artist, LoadedLibrary, SearchResults, Track};
+use library::{Album, Artist, Library, SearchResults, Track};
 use localization::{msgid, tr};
 use playback::QueuePlacement;
 
 use crate::format_duration;
 use crate::localization::{bind_search_placeholder, localized_label};
-use crate::runtime::SelectedLibrary;
-use crate::runtime::source::SearchRequest;
+use crate::runtime::{SelectedLibrary, SelectedSourceHandle};
 use crate::shell::Shell;
 use crate::shell::cover::THUMB_COVER_SIZE;
 use crate::shell::cover::presentation::stable_seed;
@@ -50,7 +49,8 @@ struct SearchRouteProjection {
     shell: Weak<Shell>,
     source_id: library::SourceId,
     source_session_epoch: playback::SourceSessionEpoch,
-    loaded: Arc<LoadedLibrary>,
+    source: SelectedSourceHandle,
+    library: Arc<Library>,
     search: gtk::SearchEntry,
     status: gtk::Stack,
     error: gtk::Label,
@@ -109,7 +109,8 @@ impl SearchRouteProjection {
             shell: Rc::downgrade(shell),
             source_id: selected.source_id.clone(),
             source_session_epoch: selected.source_session_epoch,
-            loaded: Arc::clone(&selected.loaded),
+            source: selected.operations.clone(),
+            library: Arc::clone(&selected.library),
             search,
             status,
             error,
@@ -159,14 +160,10 @@ impl SearchRouteProjection {
         self.model.remove_all();
         self.status.set_visible_child_name("loading");
 
-        let Some(shell) = self.shell.upgrade() else {
+        if self.shell.upgrade().is_none() {
             return;
-        };
-        let receiver = shell.products.source.search(SearchRequest {
-            source_id: self.source_id.clone(),
-            source_session_epoch: self.source_session_epoch,
-            search: library::SearchRequest::new(query),
-        });
+        }
+        let receiver = self.source.search(library::SearchRequest::new(query));
         let projection = Rc::downgrade(self);
         glib::spawn_future_local(async move {
             let result = receiver
@@ -219,7 +216,7 @@ impl SearchRouteProjection {
             rows.push(SearchRow::Header(msgid("Albums")));
             rows.extend(results.albums.into_iter().map(|album| {
                 let navigable = self
-                    .loaded
+                    .library
                     .album(&album.id)
                     .is_ok_and(|album| album.is_some());
                 SearchRow::Album { album, navigable }
@@ -229,7 +226,7 @@ impl SearchRouteProjection {
             rows.push(SearchRow::Header(msgid("Artists")));
             rows.extend(results.artists.into_iter().map(|artist| {
                 let navigable = self
-                    .loaded
+                    .library
                     .artist(&artist.id)
                     .is_ok_and(|artist| artist.is_some());
                 SearchRow::Artist { artist, navigable }

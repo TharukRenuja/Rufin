@@ -1,6 +1,6 @@
 use std::{cell::RefCell, cmp::Ordering, rc::Rc, sync::Arc};
 
-use ::library::{GenreSummary, LoadedLibrary, MoodSummary, MusicFolderId};
+use ::library::{GenreSummary, Library, MoodSummary, MusicFolderId};
 use adw::prelude::*;
 use artwork::ArtworkBinding;
 use gtk::{gio, glib};
@@ -192,11 +192,11 @@ impl NamedCollectionItem {
     fn is_downloaded(&self, selected: &SelectedLibrary) -> bool {
         match self {
             Self::Genre(genre) => selected
-                .loaded
+                .library
                 .is_genre_downloaded(&genre.genre.id, selected.music_folder_id.as_ref())
                 .unwrap_or(false),
             Self::Mood(mood) => selected
-                .loaded
+                .library
                 .is_mood_downloaded(&mood.mood.id, selected.music_folder_id.as_ref())
                 .unwrap_or(false),
         }
@@ -621,7 +621,7 @@ impl Shell {
         self: &Rc<Self>,
         kind: NamedCollectionKind,
         source_items: Arc<[NamedCollectionItem]>,
-        loaded: Arc<LoadedLibrary>,
+        loaded: Arc<Library>,
         music_folder_id: Option<MusicFolderId>,
     ) -> MountedRoute {
         let key = kind.key();
@@ -795,7 +795,7 @@ impl Shell {
 }
 
 pub(crate) fn load_named_collection(
-    loaded: &Arc<LoadedLibrary>,
+    loaded: &Arc<Library>,
     music_folder_id: Option<&MusicFolderId>,
     kind: NamedCollectionKind,
     query: &str,

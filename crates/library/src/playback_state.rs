@@ -9,8 +9,8 @@ use std::collections::HashSet;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    AlbumId, ArtistId, CueSegment, ImageRef, Library, LibraryError, LibraryResult, LocalArtworkRef,
-    SourceId, TrackId,
+    AlbumId, ArtistId, CueSegment, ImageRef, Libraries, LibraryError, LibraryResult,
+    LocalArtworkRef, SourceId, TrackId,
 };
 
 #[derive(Clone, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
@@ -119,7 +119,7 @@ pub enum PlaybackLoad {
     DiscardedCorrupt,
 }
 
-impl Library {
+impl Libraries {
     pub fn load_playback(&self, source_id: &SourceId) -> LibraryResult<PlaybackLoad> {
         Ok(self.store.load_playback(source_id.clone())?)
     }

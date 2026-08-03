@@ -2,15 +2,14 @@ use std::sync::Arc;
 
 use library::{
     Album, AlbumArtwork, AlbumId, AlbumRelations, AlbumSummary, CandidateBatch, CandidateFinish,
-    CandidateHeader, HomeFacts, Library, LoadedLibrary, Playlist, PlaylistEntry, PlaylistId,
+    CandidateHeader, HomeFacts, Libraries, Library, Playlist, PlaylistEntry, PlaylistId,
     PlaylistSnapshot, PlaylistSummary, STORE_ROW_BATCH_LIMIT, SmartPlaylist,
     SmartPlaylistDefinition, SmartPlaylistId, SmartPlaylistSortField, SmartPlaylistSummary,
     SourceId, Track, TrackData, TrackId, TrackRelations,
 };
 
-pub(crate) struct LoadedSourceFixture {
-    pub(crate) library: Library,
-    pub(crate) loaded: Arc<LoadedLibrary>,
+pub(crate) struct SourceFixture {
+    pub(crate) library: Arc<Library>,
     _directory: tempfile::TempDir,
 }
 
@@ -138,8 +137,8 @@ pub(crate) fn loaded_source(
     albums: Vec<Album>,
     tracks: Vec<Track>,
     playlists: Vec<PlaylistSnapshot>,
-) -> Arc<LoadedLibrary> {
-    source_fixture(source_id, albums, tracks, playlists).loaded
+) -> Arc<Library> {
+    source_fixture(source_id, albums, tracks, playlists).library
 }
 
 pub(crate) fn source_fixture(
@@ -147,10 +146,10 @@ pub(crate) fn source_fixture(
     albums: Vec<Album>,
     tracks: Vec<Track>,
     playlists: Vec<PlaylistSnapshot>,
-) -> LoadedSourceFixture {
+) -> SourceFixture {
     let directory = tempfile::tempdir().expect("temporary UI Store");
-    let library = Library::open(directory.path().join("library.db")).expect("open UI Store");
-    let mut candidate = library
+    let libraries = Libraries::open(directory.path().join("library.db")).expect("open UI Store");
+    let mut candidate = libraries
         .begin_source_candidate(CandidateHeader {
             source_id: source_id.clone(),
             input_version: 1,
@@ -172,7 +171,7 @@ pub(crate) fn source_fixture(
             .write(CandidateBatch::Playlists(playlists.to_vec()))
             .expect("write UI Playlists");
     }
-    let loaded = candidate
+    let library = candidate
         .finish(
             CandidateFinish {
                 freshness: None,
@@ -183,10 +182,9 @@ pub(crate) fn source_fixture(
         )
         .and_then(|prepared| prepared.accept())
         .expect("accept UI source candidate")
-        .loaded;
-    LoadedSourceFixture {
+        .library;
+    SourceFixture {
         library,
-        loaded,
         _directory: directory,
     }
 }

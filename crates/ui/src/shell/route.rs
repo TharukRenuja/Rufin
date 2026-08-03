@@ -1,6 +1,6 @@
 //! Navigation and the one mounted route.
 //!
-//! A route prepares one complete projection from the selected `LoadedLibrary`
+//! A route prepares one complete projection from the selected `Library`
 //! away from GTK, then builds and mounts its GTK model. Home and playlist
 //! detail have narrow point-update hooks because those operations are
 //! intentionally visible without remounting the whole page.
@@ -680,7 +680,7 @@ impl Shell {
                     .current
                     .borrow()
                     .library_list(LibraryListKey::SmartPlaylists);
-                let loaded = Arc::clone(&selected.loaded);
+                let loaded = Arc::clone(&selected.library);
                 let music_folder_id = selected.music_folder_id.clone();
                 self.queue_route_projection(
                     &selected,
@@ -701,7 +701,7 @@ impl Shell {
                     .current
                     .borrow()
                     .library_list(LibraryListKey::SmartPlaylistTracks);
-                let loaded = Arc::clone(&selected.loaded);
+                let loaded = Arc::clone(&selected.library);
                 let music_folder_id = selected.music_folder_id.clone();
                 self.queue_route_projection(
                     &selected,
@@ -737,7 +737,7 @@ impl Shell {
                     .current
                     .borrow()
                     .library_list(LibraryListKey::Albums);
-                let loaded = Arc::clone(&selected.loaded);
+                let loaded = Arc::clone(&selected.library);
                 let music_folder_id = selected.music_folder_id.clone();
                 self.queue_route_projection(
                     &selected,
@@ -764,7 +764,7 @@ impl Shell {
                     .current
                     .borrow()
                     .library_list(LibraryListKey::Tracks);
-                let loaded = Arc::clone(&selected.loaded);
+                let loaded = Arc::clone(&selected.library);
                 let music_folder_id = selected.music_folder_id.clone();
                 self.queue_route_projection(
                     &selected,
@@ -787,7 +787,7 @@ impl Shell {
                     LibraryListKey::Artists
                 };
                 let settings = self.settings.current.borrow().library_list(key);
-                let loaded = Arc::clone(&selected.loaded);
+                let loaded = Arc::clone(&selected.library);
                 let music_folder_id = selected.music_folder_id.clone();
                 self.queue_route_projection(
                     &selected,
@@ -820,7 +820,7 @@ impl Shell {
                     .current
                     .borrow()
                     .library_list(LibraryListKey::FavoriteTracks);
-                let loaded = Arc::clone(&selected.loaded);
+                let loaded = Arc::clone(&selected.library);
                 let music_folder_id = selected.music_folder_id.clone();
                 self.queue_route_projection(
                     &selected,
@@ -842,7 +842,7 @@ impl Shell {
                     .current
                     .borrow()
                     .library_list(LibraryListKey::History);
-                let loaded = Arc::clone(&selected.loaded);
+                let loaded = Arc::clone(&selected.library);
                 let music_folder_id = selected.music_folder_id.clone();
                 self.queue_route_projection(
                     &selected,
@@ -870,7 +870,7 @@ impl Shell {
                     NamedCollectionKind::Moods
                 };
                 let settings = self.settings.current.borrow().library_list(key);
-                let loaded = Arc::clone(&selected.loaded);
+                let loaded = Arc::clone(&selected.library);
                 let music_folder_id = selected.music_folder_id.clone();
                 self.queue_route_projection(
                     &selected,
@@ -903,7 +903,7 @@ impl Shell {
                     .current
                     .borrow()
                     .library_list(LibraryListKey::Playlists);
-                let loaded = Arc::clone(&selected.loaded);
+                let loaded = Arc::clone(&selected.library);
                 self.queue_route_projection(
                     &selected,
                     route,
@@ -923,7 +923,7 @@ impl Shell {
                     .current
                     .borrow()
                     .library_list(LibraryListKey::AlbumDetailTracks);
-                let loaded = Arc::clone(&selected.loaded);
+                let loaded = Arc::clone(&selected.library);
                 let music_folder_id = selected.music_folder_id.clone();
                 self.queue_route_projection(
                     &selected,
@@ -954,7 +954,7 @@ impl Shell {
                     .current
                     .borrow()
                     .library_list(LibraryListKey::ArtistAlbums);
-                let loaded = Arc::clone(&selected.loaded);
+                let loaded = Arc::clone(&selected.library);
                 let music_folder_id = selected.music_folder_id.clone();
                 self.queue_route_projection(
                     &selected,
@@ -984,7 +984,7 @@ impl Shell {
                     .current
                     .borrow()
                     .library_list(LibraryListKey::ArtistAlbums);
-                let loaded = Arc::clone(&selected.loaded);
+                let loaded = Arc::clone(&selected.library);
                 let music_folder_id = selected.music_folder_id.clone();
                 self.queue_route_projection(
                     &selected,
@@ -1015,7 +1015,7 @@ impl Shell {
                     .current
                     .borrow()
                     .library_list(LibraryListKey::ArtistTracks);
-                let loaded = Arc::clone(&selected.loaded);
+                let loaded = Arc::clone(&selected.library);
                 let music_folder_id = selected.music_folder_id.clone();
                 self.queue_route_projection(
                     &selected,
@@ -1041,7 +1041,7 @@ impl Shell {
                     .current
                     .borrow()
                     .library_list(LibraryListKey::GenreTracks);
-                let loaded = Arc::clone(&selected.loaded);
+                let loaded = Arc::clone(&selected.library);
                 let music_folder_id = selected.music_folder_id.clone();
                 self.queue_route_projection(
                     &selected,
@@ -1067,7 +1067,7 @@ impl Shell {
                     .current
                     .borrow()
                     .library_list(LibraryListKey::MoodTracks);
-                let loaded = Arc::clone(&selected.loaded);
+                let loaded = Arc::clone(&selected.library);
                 let music_folder_id = selected.music_folder_id.clone();
                 self.queue_route_projection(
                     &selected,
@@ -1093,7 +1093,7 @@ impl Shell {
                     .current
                     .borrow()
                     .library_list(LibraryListKey::PlaylistTracks);
-                let loaded = Arc::clone(&selected.loaded);
+                let loaded = Arc::clone(&selected.library);
                 self.queue_route_projection(
                     &selected,
                     route,
@@ -1133,7 +1133,7 @@ impl Shell {
                     source_session_epoch: selected.source_session_epoch,
                     route,
                 },
-                loaded_instance: Arc::as_ptr(&selected.loaded) as usize,
+                loaded_instance: Arc::as_ptr(&selected.library) as usize,
                 music_folder_id: selected.music_folder_id.clone(),
             },
             settings,
@@ -1243,7 +1243,7 @@ impl Shell {
             self.navigation.routes.borrow().current(),
             &selected.source_id,
             selected.source_session_epoch,
-            Arc::as_ptr(&selected.loaded) as usize,
+            Arc::as_ptr(&selected.library) as usize,
             selected.music_folder_id.as_ref(),
         ) {
             return false;
@@ -1258,7 +1258,7 @@ impl Shell {
     pub(crate) fn mounted_route_read_identity(
         &self,
         route: Route,
-        loaded: &Arc<library::LoadedLibrary>,
+        loaded: &Arc<library::Library>,
         music_folder_id: Option<MusicFolderId>,
     ) -> SelectedRouteIdentity {
         let selected = self.library.selected.borrow();
@@ -1266,7 +1266,7 @@ impl Shell {
             .as_ref()
             .expect("a mounted music route requires one selected Library");
         assert!(
-            Arc::ptr_eq(&selected.loaded, loaded)
+            Arc::ptr_eq(&selected.library, loaded)
                 && selected.music_folder_id == music_folder_id
                 && self.navigation.routes.borrow().current() == &route,
             "a mounted route read must use its selected Library and scope"
@@ -1295,7 +1295,7 @@ impl Shell {
             &mounted_route.route,
             &selected.source_id,
             selected.source_session_epoch,
-            Arc::as_ptr(&selected.loaded) as usize,
+            Arc::as_ptr(&selected.library) as usize,
             selected.music_folder_id.as_ref(),
         ) && self.navigation.routes.borrow().current() == &identity.context.route
     }

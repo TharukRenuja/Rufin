@@ -107,8 +107,8 @@ impl Shell {
             refresh();
         }
         self.products
-            .source
-            .move_download(source_id, job_id, target_job_id, after);
+            .downloads
+            .move_job(source_id, job_id, target_job_id, after);
         true
     }
 
@@ -156,7 +156,7 @@ impl Shell {
 
     pub(crate) fn download_subject_title(&self, subject: &DownloadSubject) -> String {
         let selected = self.library.selected.borrow();
-        let loaded = selected.as_ref().map(|selected| &selected.loaded);
+        let loaded = selected.as_ref().map(|selected| &selected.library);
         match subject {
             DownloadSubject::Rule(downloads::DownloadRule::EntireLibrary) => tr("Entire Library"),
             DownloadSubject::Rule(downloads::DownloadRule::Favorites) => tr("Favorites"),
@@ -184,7 +184,7 @@ impl Shell {
                 .as_ref()
                 .and_then(|selected| {
                     selected
-                        .loaded
+                        .library
                         .moods(selected.music_folder_id.as_ref())
                         .ok()
                 })
@@ -222,7 +222,7 @@ impl Shell {
             .as_ref()
             .map(|selected| {
                 let bindings = selected
-                    .loaded
+                    .library
                     .source_artwork()
                     .unwrap_or_default()
                     .iter()
@@ -244,19 +244,19 @@ impl Shell {
         let selected = self.library.selected.borrow();
         let bindings = selected.as_ref().and_then(|selected| match subject {
             DownloadSubject::Track(id) => selected
-                .loaded
+                .library
                 .track(id)
                 .ok()
                 .flatten()
                 .map(|track| vec![ArtworkBinding::track(&track)]),
             DownloadSubject::Album(id) => selected
-                .loaded
+                .library
                 .album(id)
                 .ok()
                 .flatten()
                 .map(|album| vec![ArtworkBinding::album(&album)]),
             DownloadSubject::Artist(id) => selected
-                .loaded
+                .library
                 .artist_overview(id, selected.music_folder_id.as_ref())
                 .ok()
                 .flatten()
@@ -267,7 +267,7 @@ impl Shell {
                     )]
                 }),
             DownloadSubject::Genre(id) => selected
-                .loaded
+                .library
                 .genre_detail(id, selected.music_folder_id.as_ref())
                 .ok()
                 .flatten()
@@ -278,7 +278,7 @@ impl Shell {
                     )
                 }),
             DownloadSubject::Mood(id) => selected
-                .loaded
+                .library
                 .mood_detail(id, selected.music_folder_id.as_ref())
                 .ok()
                 .flatten()
@@ -289,7 +289,7 @@ impl Shell {
                     )
                 }),
             DownloadSubject::Playlist(id) => selected
-                .loaded
+                .library
                 .playlist_detail(id)
                 .ok()
                 .flatten()
@@ -301,7 +301,7 @@ impl Shell {
                     )
                 }),
             DownloadSubject::SmartPlaylist(id) => selected
-                .loaded
+                .library
                 .smart_playlist_detail(id, selected.music_folder_id.as_ref())
                 .ok()
                 .flatten()
@@ -340,7 +340,7 @@ impl Shell {
         rule: downloads::DownloadRule,
     ) -> Option<Vec<ArtworkBinding>> {
         if rule == downloads::DownloadRule::EntireLibrary {
-            let folders = selected.loaded.music_folders().ok()?;
+            let folders = selected.library.music_folders().ok()?;
             let bindings = folders
                 .iter()
                 .filter(|folder| {
@@ -359,13 +359,13 @@ impl Shell {
         let tracks = match rule {
             downloads::DownloadRule::EntireLibrary => unreachable!(),
             downloads::DownloadRule::Favorites => selected
-                .loaded
+                .library
                 .favorite_download_track_list(selected.music_folder_id.as_ref()),
             downloads::DownloadRule::AllPlaylists => selected
-                .loaded
+                .library
                 .all_playlist_track_list(selected.music_folder_id.as_ref()),
             downloads::DownloadRule::LatestFiveAlbums => selected
-                .loaded
+                .library
                 .latest_album_track_list(selected.music_folder_id.as_ref(), 5),
         }
         .ok()?;
@@ -516,8 +516,8 @@ fn operation_feedback_subtitle(kind: &OperationFeedbackKind, count: &str) -> Str
 
 #[cfg(test)]
 mod tests {
-    use downloads::{DownloadQuality, DownloadQueueItem, DownloadQueueState, DownloadSubject};
-    use library::{SourceId, TrackId};
+    use downloads::{DownloadQueueItem, DownloadQueueState, DownloadSubject};
+    use library::{SourceId, StreamQuality, TrackId};
 
     use super::{OperationFeedbackKind, operation_feedback_subtitle, reorder_queue_items};
 
@@ -552,7 +552,7 @@ mod tests {
                 id: id.to_string(),
                 source_id: source_id.clone(),
                 subject: DownloadSubject::Track(TrackId::fake(index)),
-                quality: DownloadQuality::Original,
+                quality: StreamQuality::Original,
                 completed_tracks: 0,
                 total_tracks: 1,
                 state: if index == 0 {

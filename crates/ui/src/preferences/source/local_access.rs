@@ -3,11 +3,12 @@ use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
 use crate::runtime::source::{
-    CredentialInput, CredentialPreset, LocalAccessStatus, MetadataRequest, SourceHandle,
+    CredentialInput, CredentialPreset, LocalAccessStatus, SelectedSourceHandle, SourceHandle,
     SourceLocalAccess, SourceSummary,
 };
 use ::library::{
-    LocalAccessMapping, SourceId, project_local_access_path, reported_path_is_absolute,
+    LocalAccessMapping, MetadataItemId, SourceId, project_local_access_path,
+    reported_path_is_absolute,
 };
 use adw::prelude::*;
 use gtk::{gio, glib};
@@ -57,7 +58,7 @@ struct LocalAccessEditor {
     folder: Rc<RefCell<Option<PathBuf>>>,
     server_prefix: glib::WeakRef<adw::EntryRow>,
     local_prefix: Option<glib::WeakRef<adw::EntryRow>>,
-    metadata: Option<MetadataRequest>,
+    metadata: Option<(SelectedSourceHandle, MetadataItemId)>,
     operation: RefCell<LocalAccessOperation>,
     on_success: Rc<dyn Fn()>,
 }
@@ -69,7 +70,7 @@ impl LocalAccessEditor {
         folder: Option<PathBuf>,
         server_prefix: &adw::EntryRow,
         local_prefix: Option<&adw::EntryRow>,
-        metadata: Option<MetadataRequest>,
+        metadata: Option<(SelectedSourceHandle, MetadataItemId)>,
         on_success: Rc<dyn Fn()>,
     ) -> Rc<Self> {
         Rc::new(Self {
@@ -158,7 +159,10 @@ impl LocalAccessEditor {
         let Some(input) = source_local_access(self.source_id.clone(), &self.draft()) else {
             return;
         };
-        let receiver = self.source.save_local_access(input, self.metadata.clone());
+        let receiver = match self.metadata.clone() {
+            Some((source, item_id)) => source.save_metadata_local_access(input, item_id),
+            None => self.source.save_local_access(input),
+        };
         self.operation.replace(LocalAccessOperation::Pending);
         update();
         let editor = Rc::clone(self);
@@ -503,7 +507,8 @@ fn manage_server_content(
 pub(crate) fn metadata_local_access_recovery_form(
     shell: &Rc<Shell>,
     source_path: &str,
-    metadata: MetadataRequest,
+    selected: &crate::runtime::SelectedLibrary,
+    item_id: MetadataItemId,
     on_success: Rc<dyn Fn()>,
 ) -> gtk::Widget {
     let summary = shell
@@ -512,7 +517,7 @@ pub(crate) fn metadata_local_access_recovery_form(
         .borrow()
         .local_access
         .iter()
-        .find(|summary| summary.source_id == metadata.source_id)
+        .find(|summary| summary.source_id == selected.source_id)
         .cloned();
     let access = summary.as_ref().and_then(|summary| summary.access.clone());
     let suggested = summary
@@ -603,11 +608,11 @@ pub(crate) fn metadata_local_access_recovery_form(
 
     let editor = LocalAccessEditor::new(
         shell,
-        metadata.source_id.clone(),
+        selected.source_id.clone(),
         folder,
         &server_prefix,
         None,
-        Some(metadata),
+        Some((selected.operations.clone(), item_id)),
         on_success,
     );
     let update: Rc<dyn Fn()> = Rc::new({

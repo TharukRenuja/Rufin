@@ -6,8 +6,8 @@ use std::{
 };
 
 use ::library::{
-    AcceptedTrackReplacement, AlbumDetail, AlbumSummary, ArtistSummary, LoadedLibrary,
-    MusicFolderId, PlaylistSummary, SmartPlaylistSummary, TrackList,
+    AcceptedTrackReplacement, AlbumDetail, AlbumSummary, ArtistSummary, Library, MusicFolderId,
+    PlaylistSummary, SmartPlaylistSummary, TrackList,
 };
 use adw::prelude::*;
 use gtk::{gio, glib};
@@ -202,7 +202,7 @@ impl Shell {
         self: &Rc<Self>,
         source_albums: Arc<[AlbumSummary]>,
         prepared_details: Option<Arc<[AlbumDetail]>>,
-        loaded: Arc<LoadedLibrary>,
+        loaded: Arc<Library>,
         music_folder_id: Option<MusicFolderId>,
     ) -> MountedRoute {
         let view_started = Instant::now();
@@ -411,7 +411,7 @@ impl Shell {
     pub(crate) fn library_tracks_route(
         self: &Rc<Self>,
         tracks: TrackList,
-        loaded: Arc<LoadedLibrary>,
+        loaded: Arc<Library>,
         music_folder_id: Option<MusicFolderId>,
     ) -> MountedRoute {
         let source = {
@@ -446,7 +446,7 @@ impl Shell {
     pub(crate) fn favorites_route(
         self: &Rc<Self>,
         favorites: TrackList,
-        loaded: Arc<LoadedLibrary>,
+        loaded: Arc<Library>,
         music_folder_id: Option<MusicFolderId>,
     ) -> MountedRoute {
         let key = LibraryListKey::FavoriteTracks;
@@ -483,7 +483,7 @@ impl Shell {
     pub(crate) fn history_route(
         self: &Rc<Self>,
         history: TrackList,
-        loaded: Arc<LoadedLibrary>,
+        loaded: Arc<Library>,
         music_folder_id: Option<MusicFolderId>,
     ) -> MountedRoute {
         let source = {
@@ -519,7 +519,7 @@ impl Shell {
         self: &Rc<Self>,
         options: RootTrackRouteOptions,
         tracks: TrackList,
-        loaded: Arc<LoadedLibrary>,
+        loaded: Arc<Library>,
         music_folder_id: Option<MusicFolderId>,
         source: TrackRouteSource,
         membership: TrackRouteMembership,
@@ -554,7 +554,7 @@ impl Shell {
         self: &Rc<Self>,
         album_artist: bool,
         source_artists: Arc<[ArtistSummary]>,
-        loaded: Arc<LoadedLibrary>,
+        loaded: Arc<Library>,
         music_folder_id: Option<MusicFolderId>,
     ) -> MountedRoute {
         let view_started = Instant::now();
@@ -734,7 +734,7 @@ impl Shell {
     pub(crate) fn library_playlists_route(
         self: &Rc<Self>,
         source_playlists: Arc<[PlaylistSummary]>,
-        loaded: Arc<LoadedLibrary>,
+        loaded: Arc<Library>,
     ) -> MountedRoute {
         let key = LibraryListKey::Playlists;
         let settings = self.settings.current.borrow().library_list(key);
@@ -879,7 +879,7 @@ impl Shell {
     pub(crate) fn library_smart_playlists_route(
         self: &Rc<Self>,
         initial_playlists: Arc<[SmartPlaylistSummary]>,
-        loaded: Arc<LoadedLibrary>,
+        loaded: Arc<Library>,
         music_folder_id: Option<MusicFolderId>,
     ) -> MountedRoute {
         let key = LibraryListKey::SmartPlaylists;
@@ -1183,7 +1183,7 @@ impl Shell {
 }
 
 pub(crate) fn load_smart_playlists(
-    loaded: &Arc<LoadedLibrary>,
+    loaded: &Arc<Library>,
     music_folder_id: Option<&MusicFolderId>,
 ) -> Result<Arc<[SmartPlaylistSummary]>, String> {
     loaded
@@ -1192,7 +1192,7 @@ pub(crate) fn load_smart_playlists(
 }
 
 pub(crate) fn load_albums(
-    loaded: &Arc<LoadedLibrary>,
+    loaded: &Arc<Library>,
     music_folder_id: Option<&MusicFolderId>,
     query: &str,
     settings: &LibraryListSettings,
@@ -1222,7 +1222,7 @@ pub(crate) fn load_albums(
 }
 
 pub(crate) fn load_tracks(
-    loaded: &Arc<LoadedLibrary>,
+    loaded: &Arc<Library>,
     music_folder_id: Option<&MusicFolderId>,
     settings: &LibraryListSettings,
 ) -> Result<TrackList, String> {
@@ -1236,7 +1236,7 @@ pub(crate) fn load_tracks(
 }
 
 pub(crate) fn load_favorite_tracks(
-    loaded: &Arc<LoadedLibrary>,
+    loaded: &Arc<Library>,
     music_folder_id: Option<&MusicFolderId>,
     settings: &LibraryListSettings,
 ) -> Result<TrackList, String> {
@@ -1250,7 +1250,7 @@ pub(crate) fn load_favorite_tracks(
 }
 
 pub(crate) fn load_history_tracks(
-    loaded: &Arc<LoadedLibrary>,
+    loaded: &Arc<Library>,
     music_folder_id: Option<&MusicFolderId>,
 ) -> Result<TrackList, String> {
     loaded
@@ -1259,7 +1259,7 @@ pub(crate) fn load_history_tracks(
 }
 
 pub(crate) fn load_artists(
-    loaded: &Arc<LoadedLibrary>,
+    loaded: &Arc<Library>,
     music_folder_id: Option<&MusicFolderId>,
     album_artists: bool,
     query: &str,
@@ -1281,7 +1281,7 @@ pub(crate) fn load_artists(
 }
 
 pub(crate) fn load_playlists(
-    loaded: &Arc<LoadedLibrary>,
+    loaded: &Arc<Library>,
     query: &str,
     settings: &LibraryListSettings,
 ) -> Result<PreparedCollection<PlaylistSummary>, String> {

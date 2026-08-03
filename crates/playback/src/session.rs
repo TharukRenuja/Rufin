@@ -1,29 +1,17 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
-use library::{SourceId, Track, TrackId};
+use library::{ResolvedStream, SourceId, StreamRequest, Track, TrackId};
 
 use crate::{
     BackendCommand, BackendEvent, BackendState, Batch, BatchItem, ListeningFact, ListeningOutcome,
     ListeningTrack, NextTransition, OccurrenceId, Placement, PlaybackSettings,
-    PlaybackTransitionMode, PreparedNext, PreparedStream, Provenance, RepeatMode, RunEndReason,
-    RunId, Sequence, SequenceEntry, SequenceError, StreamQuality,
-    external_scrobble_threshold_millis, manual_end_is_skip, qualified_play_threshold_millis,
+    PlaybackTransitionMode, PreparedNext, Provenance, RepeatMode, RunEndReason, RunId, Sequence,
+    SequenceEntry, SequenceError, external_scrobble_threshold_millis, manual_end_is_skip,
+    qualified_play_threshold_millis,
 };
 
 const AUTO_DJ_HISTORY_LIMIT: usize = 10;
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct StreamRequest {
-    pub track_id: TrackId,
-    pub quality: StreamQuality,
-}
-
-impl StreamRequest {
-    pub fn new(track_id: TrackId, quality: StreamQuality) -> Self {
-        Self { track_id, quality }
-    }
-}
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct MaterializationId(u64);
@@ -227,7 +215,7 @@ struct RunContext {
     external_scrobble_emitted: bool,
     last_progress_bucket: Option<u64>,
     desired_playing: bool,
-    resolved_stream: Option<PreparedStream>,
+    resolved_stream: Option<ResolvedStream>,
 }
 
 impl RunContext {
@@ -267,7 +255,7 @@ impl RunContext {
 #[derive(Clone, Debug)]
 enum NextResolution {
     Resolving,
-    Ready(PreparedStream),
+    Ready(ResolvedStream),
 }
 
 #[derive(Clone, Debug)]
@@ -547,7 +535,7 @@ impl PlaybackSession {
         }
     }
 
-    pub fn stream_resolved(&mut self, run: RunId, stream: PreparedStream) -> SessionUpdate {
+    pub fn stream_resolved(&mut self, run: RunId, stream: ResolvedStream) -> SessionUpdate {
         if self.current_run.as_ref().is_some_and(|current| {
             current.id == run && current.status == TransportStatus::Resolving
         }) {
@@ -1325,7 +1313,7 @@ impl PlaybackSession {
         update
     }
 
-    fn current_stream_resolved(&mut self, run: RunId, stream: PreparedStream) -> SessionUpdate {
+    fn current_stream_resolved(&mut self, run: RunId, stream: ResolvedStream) -> SessionUpdate {
         let Some(current) = self
             .current_run
             .as_mut()
@@ -2083,7 +2071,7 @@ mod tests {
             effect,
             SessionEffect::ResolveStream { run, .. } if *run == first
         )));
-        session.stream_resolved(first, PreparedStream::new("file:///track.flac"));
+        session.stream_resolved(first, ResolvedStream::new("file:///track.flac"));
         session.handle_backend(BackendEvent::Started { run: first }, &sample(1));
         session.sequence.set_repeat_mode(RepeatMode::One);
 
@@ -2134,7 +2122,7 @@ mod tests {
             .handle_command(SessionCommand::PlayPause, &sample(0))
             .expect("start first occurrence");
         let first_run = session.current_run().expect("first run");
-        session.stream_resolved(first_run, PreparedStream::new("file:///first.flac"));
+        session.stream_resolved(first_run, ResolvedStream::new("file:///first.flac"));
         session.handle_backend(BackendEvent::Started { run: first_run }, &sample(1));
         session.handle_backend(
             BackendEvent::Position {
@@ -2159,7 +2147,7 @@ mod tests {
         assert_eq!(session.sequence().progress_millis(), 0);
         let second_run = session.current_run().expect("second run");
         let resolved =
-            session.stream_resolved(second_run, PreparedStream::new("file:///second.flac"));
+            session.stream_resolved(second_run, ResolvedStream::new("file:///second.flac"));
         assert!(resolved.effects.iter().any(|effect| matches!(
             effect,
             SessionEffect::Backend(BackendCommand::Start {
@@ -2177,7 +2165,7 @@ mod tests {
             .handle_command(SessionCommand::PlayPause, &sample(0))
             .expect("start");
         let run = session.current_run().expect("run");
-        session.stream_resolved(run, PreparedStream::new("file:///track.flac"));
+        session.stream_resolved(run, ResolvedStream::new("file:///track.flac"));
         let started = session.handle_backend(BackendEvent::Started { run }, &sample(0));
         assert!(started.effects.iter().any(|effect| matches!(
             effect,
@@ -2217,7 +2205,7 @@ mod tests {
             .handle_command(SessionCommand::PlayPause, &sample(0))
             .expect("start");
         let run = session.current_run().expect("run");
-        session.stream_resolved(run, PreparedStream::new("file:///track.flac"));
+        session.stream_resolved(run, ResolvedStream::new("file:///track.flac"));
         session.handle_backend(BackendEvent::Started { run }, &sample(0));
         session.handle_backend(
             BackendEvent::Position {
@@ -2275,7 +2263,7 @@ mod tests {
             .handle_command(SessionCommand::PlayPause, &sample(0))
             .expect("start");
         let run = session.current_run().expect("run");
-        session.stream_resolved(run, PreparedStream::new("file:///track.flac"));
+        session.stream_resolved(run, ResolvedStream::new("file:///track.flac"));
         session.handle_backend(BackendEvent::Started { run }, &sample(0));
         session.handle_backend(
             BackendEvent::Position {
@@ -2645,7 +2633,7 @@ mod tests {
             .handle_command(SessionCommand::PlayPause, &sample(0))
             .expect("start");
         let run = session.current_run().expect("run");
-        session.stream_resolved(run, PreparedStream::new("file:///track.flac"));
+        session.stream_resolved(run, ResolvedStream::new("file:///track.flac"));
         session.handle_backend(BackendEvent::Started { run }, &sample(1));
         session.handle_backend(
             BackendEvent::State {
@@ -2687,7 +2675,7 @@ mod tests {
             .handle_command(SessionCommand::PlayPause, &sample(0))
             .expect("start");
         let run = session.current_run().expect("run");
-        session.stream_resolved(run, PreparedStream::new("file:///track.flac"));
+        session.stream_resolved(run, ResolvedStream::new("file:///track.flac"));
         session.handle_backend(BackendEvent::Started { run }, &sample(1));
         session.handle_backend(
             BackendEvent::State {
@@ -2757,7 +2745,7 @@ mod tests {
             .expect("pause resolving");
         assert_eq!(session.status(), TransportStatus::Paused);
 
-        let resolved = session.stream_resolved(run, PreparedStream::new("file:///track.flac"));
+        let resolved = session.stream_resolved(run, ResolvedStream::new("file:///track.flac"));
         assert_eq!(session.status(), TransportStatus::Paused);
         assert!(
             !resolved.effects.iter().any(|effect| matches!(
@@ -2782,7 +2770,7 @@ mod tests {
             .handle_command(SessionCommand::PlayPause, &sample(0))
             .expect("start");
         let run = session.current_run().expect("run");
-        session.stream_resolved(run, PreparedStream::new("file:///track.flac"));
+        session.stream_resolved(run, ResolvedStream::new("file:///track.flac"));
         session.handle_backend(BackendEvent::Started { run }, &sample(0));
 
         let paused = session
@@ -2823,7 +2811,7 @@ mod tests {
             .handle_command(SessionCommand::PlayPause, &sample(0))
             .expect("start");
         let run = session.current_run().expect("run");
-        session.stream_resolved(run, PreparedStream::new("file:///track.flac"));
+        session.stream_resolved(run, ResolvedStream::new("file:///track.flac"));
         session.handle_backend(BackendEvent::Started { run }, &sample(0));
 
         let paused = session
@@ -2862,7 +2850,7 @@ mod tests {
             .handle_command(SessionCommand::PlayPause, &sample(0))
             .expect("start");
         let run = session.current_run().expect("run");
-        session.stream_resolved(run, PreparedStream::new("file:///track.flac"));
+        session.stream_resolved(run, ResolvedStream::new("file:///track.flac"));
         session.handle_backend(BackendEvent::Started { run }, &sample(0));
         session.handle_backend(
             BackendEvent::Position {
@@ -2901,7 +2889,7 @@ mod tests {
             .handle_command(SessionCommand::PlayPause, &sample(0))
             .expect("start");
         let run = session.current_run().expect("run");
-        session.stream_resolved(run, PreparedStream::new("file:///track.flac"));
+        session.stream_resolved(run, ResolvedStream::new("file:///track.flac"));
 
         let changed = session
             .handle_command(SessionCommand::StreamInputsChanged, &sample(0))

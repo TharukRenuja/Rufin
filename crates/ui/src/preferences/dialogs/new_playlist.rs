@@ -17,11 +17,13 @@ impl Shell {
         let entry = gtk::Entry::new();
         entry.set_placeholder_text(Some(&tr("Playlist name")));
         dialog.set_extra_child(Some(&entry));
-        let source = self.products.source.clone();
+        let source = self.selected_source_operations();
         dialog.connect_response(None, move |_, response| {
             if response == "create" {
                 let name = entry.text().trim().to_string();
-                if !name.is_empty() {
+                if !name.is_empty()
+                    && let Some(source) = source.as_ref()
+                {
                     source.edit_playlist(PlaylistEdit::Create {
                         name,
                         track_ids: Vec::new(),

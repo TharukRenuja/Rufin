@@ -47,10 +47,7 @@ fn present_metadata_dialog_for_selected(
     if !still_selected {
         return;
     }
-    let receiver = shell
-        .products
-        .source
-        .metadata(selected.metadata_request(item_id.clone()));
+    let receiver = selected.operations.metadata(item_id.clone());
     let shell = Rc::clone(shell);
     gtk::glib::spawn_future_local(async move {
         match receiver.recv().await {
@@ -112,7 +109,8 @@ fn present_local_access_recovery(
     let fields = crate::preferences::source::local_access::metadata_local_access_recovery_form(
         shell,
         source_path,
-        selected.metadata_request(item_id),
+        &selected,
+        item_id,
         on_success,
     );
     toolbar.set_content(Some(&fields));
@@ -272,8 +270,8 @@ fn build_dialog(
     });
     connect_field_changes(&state);
     connect_cancel(&state);
-    connect_identify(shell, selected.clone(), &state);
-    connect_save(shell, selected, &state);
+    connect_identify(selected.clone(), &state);
+    connect_save(selected, &state);
     refresh_save_state(&state);
     present_light_dismiss_dialog(&dialog, &shell.chrome.window);
 }
@@ -623,12 +621,8 @@ fn connect_cancel(state: &Rc<EditorState>) {
     });
 }
 
-fn connect_save(
-    shell: &Rc<Shell>,
-    selected: crate::runtime::SelectedLibrary,
-    state: &Rc<EditorState>,
-) {
-    let source = shell.products.source.clone();
+fn connect_save(selected: crate::runtime::SelectedLibrary, state: &Rc<EditorState>) {
+    let source = selected.operations.clone();
     let state_for_save = Rc::clone(state);
     state.save.connect_clicked(move |_| {
         let edit = match metadata_edit(&state_for_save.draft, &state_for_save.rows) {
@@ -647,7 +641,7 @@ fn connect_save(
             .rows
             .set_sensitive(false, &state_for_save.draft.editing);
         state_for_save.save.set_label(&tr("Saving…"));
-        let receiver = source.edit_metadata(selected.metadata_edit_request(edit));
+        let receiver = source.edit_metadata(edit);
         let state = Rc::clone(&state_for_save);
         gtk::glib::spawn_future_local(async move {
             match receiver.recv().await {
@@ -664,12 +658,8 @@ fn connect_save(
     });
 }
 
-fn connect_identify(
-    shell: &Rc<Shell>,
-    selected: crate::runtime::SelectedLibrary,
-    state: &Rc<EditorState>,
-) {
-    let source = shell.products.source.clone();
+fn connect_identify(selected: crate::runtime::SelectedLibrary, state: &Rc<EditorState>) {
+    let source = selected.operations.clone();
     let state_for_identify = Rc::clone(state);
     state.identify.connect_clicked(move |_| {
         let values = identification_values(&state_for_identify);
@@ -690,11 +680,11 @@ fn connect_identify(
         state_for_identify
             .rows
             .set_sensitive(false, &state_for_identify.draft.editing);
-        let receiver = source.identify_metadata(selected.metadata_identification_request(
+        let receiver = source.identify_metadata(
             state_for_identify.draft.item_id.clone(),
             state_for_identify.draft.editing.clone(),
             values,
-        ));
+        );
         let state = Rc::clone(&state_for_identify);
         gtk::glib::spawn_future_local(async move {
             let error = match receiver.recv().await {

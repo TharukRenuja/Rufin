@@ -2,8 +2,8 @@ use std::path::PathBuf;
 use std::rc::Rc;
 
 use desktop_integration::Settings as RichPresenceSettings;
-use downloads::{DownloadQuality, DownloadRule};
-use library::{HomeBlockKind, SourceId};
+use downloads::{DownloadRules, SourceDownloadSettings};
+use library::{HomeBlockKind, SourceId, StreamQuality};
 use localization::{default_language_preference, sanitize_language_preference};
 use lyrics::Settings as LyricsSettings;
 use playback::{
@@ -199,7 +199,7 @@ impl Settings {
         self.download_settings(source_id).rules
     }
 
-    pub fn download_quality(&self, source_id: &SourceId) -> DownloadQuality {
+    pub fn download_quality(&self, source_id: &SourceId) -> StreamQuality {
         self.download_settings(source_id).quality
     }
 
@@ -212,19 +212,14 @@ impl Settings {
             .iter()
             .find(|entry| &entry.source_id == source_id)
             .cloned()
-            .unwrap_or_else(|| SourceDownloadSettings {
-                source_id: source_id.clone(),
-                rules: DownloadRules::default(),
-                quality: DownloadQuality::Original,
-                directory: None,
-            })
+            .unwrap_or_else(|| SourceDownloadSettings::for_source(source_id.clone()))
     }
 
     pub fn set_download_rules(&mut self, source_id: SourceId, rules: DownloadRules) -> bool {
         self.update_download_settings(source_id, |settings| settings.rules = rules)
     }
 
-    pub fn set_download_quality(&mut self, source_id: SourceId, quality: DownloadQuality) -> bool {
+    pub fn set_download_quality(&mut self, source_id: SourceId, quality: StreamQuality) -> bool {
         self.update_download_settings(source_id, |settings| settings.quality = quality)
     }
 
@@ -254,67 +249,6 @@ impl Settings {
                 .sort_by(|left, right| left.source_id.cmp(&right.source_id));
         }
         true
-    }
-}
-
-#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
-pub struct DownloadRules {
-    #[serde(default)]
-    pub entire_library: bool,
-    #[serde(default)]
-    pub favorites: bool,
-    #[serde(default)]
-    pub all_playlists: bool,
-    #[serde(default)]
-    pub latest_five_albums: bool,
-}
-
-impl DownloadRules {
-    pub fn is_empty(self) -> bool {
-        !self.entire_library && !self.favorites && !self.all_playlists && !self.latest_five_albums
-    }
-
-    pub fn contains(self, rule: DownloadRule) -> bool {
-        match rule {
-            DownloadRule::EntireLibrary => self.entire_library,
-            DownloadRule::Favorites => self.favorites,
-            DownloadRule::AllPlaylists => self.all_playlists,
-            DownloadRule::LatestFiveAlbums => self.latest_five_albums,
-        }
-    }
-
-    pub fn set(&mut self, rule: DownloadRule, active: bool) {
-        match rule {
-            DownloadRule::EntireLibrary => self.entire_library = active,
-            DownloadRule::Favorites => self.favorites = active,
-            DownloadRule::AllPlaylists => self.all_playlists = active,
-            DownloadRule::LatestFiveAlbums => self.latest_five_albums = active,
-        }
-    }
-
-    pub fn active(self) -> impl Iterator<Item = DownloadRule> {
-        DownloadRule::ALL
-            .into_iter()
-            .filter(move |rule| self.contains(*rule))
-    }
-}
-
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-pub struct SourceDownloadSettings {
-    pub source_id: SourceId,
-    #[serde(flatten)]
-    pub rules: DownloadRules,
-    #[serde(default)]
-    pub quality: DownloadQuality,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub directory: Option<PathBuf>,
-}
-
-impl SourceDownloadSettings {
-    fn is_default(&self) -> bool {
-        self.rules.is_empty()
-            && self.quality == DownloadQuality::Original
-            && self.directory.is_none()
     }
 }
 

@@ -1,6 +1,7 @@
 use gst::glib;
 use gst::prelude::*;
 use gstreamer as gst;
+use library::ResolvedStream;
 use playback::*;
 use std::collections::VecDeque;
 use std::f64::consts::FRAC_PI_2;
@@ -23,7 +24,7 @@ pub use waveform::generate_waveform_peaks_cancellable;
 
 pub fn verify_audio_file(path: &Path) -> Result<(), String> {
     let uri = glib::filename_to_uri(path, None).map_err(|error| error.to_string())?;
-    let stream = PreparedStream::new(uri.as_str());
+    let stream = ResolvedStream::new(uri.as_str());
     generate_waveform_peaks_cancellable(&stream, || false).map(|_| ())
 }
 

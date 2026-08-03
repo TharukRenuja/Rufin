@@ -1,4 +1,4 @@
-//! Complete read projections over one [`LoadedLibrary`](crate::LoadedLibrary).
+//! Complete read projections over one [`Library`](crate::Library).
 //!
 //! These are product views, not SQLite pages. Each method holds the loaded
 //! read guard only while it gathers shared handles, then releases it before a
@@ -9,9 +9,9 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use crate::{
-    Album, AlbumArtwork, AlbumId, Artist, ArtistId, Folder, FolderId, Genre, GenreId,
-    LoadedLibrary, LoadedLibraryResult, Mood, MoodId, MusicFolder, MusicFolderId, Playlist,
-    PlaylistId, SmartPlaylistId, Track, TrackId,
+    Album, AlbumArtwork, AlbumId, Artist, ArtistId, Folder, FolderId, Genre, GenreId, Library,
+    LibraryQueryResult, Mood, MoodId, MusicFolder, MusicFolderId, Playlist, PlaylistId,
+    SmartPlaylistId, Track, TrackId,
     loaded::{
         ItemSlot, LoadedAlbum, LoadedArtist, LoadedGenre, LoadedItems, LoadedMood, LoadedPlaylist,
         LoadedState, TrackSlot,
@@ -40,7 +40,7 @@ pub enum TrackSort {
     Favorite,
 }
 
-/// One compact ordered Track projection over the selected loaded Library.
+/// One compact ordered Track projection over the selected source Library.
 ///
 /// The projection retains four-byte Track slots, not another catalog of Track
 /// handles. GTK resolves a shallow Track handle only when it binds a row, and
@@ -48,13 +48,13 @@ pub enum TrackSort {
 /// collection.
 #[derive(Clone, Debug)]
 pub struct TrackList {
-    loaded: Arc<LoadedLibrary>,
+    loaded: Arc<Library>,
     slots: Arc<[TrackSlot]>,
     row_played_at: Option<Arc<[i64]>>,
     sorted_by: Option<(TrackSort, bool)>,
 }
 
-/// One loaded-Library Track order that can be prepared away from GTK.
+/// One source-scoped Track order that can be prepared away from GTK.
 ///
 /// Mounted routes pass [`TrackList`] directly. Collection cards and context
 /// actions pass an O(1) Library-owned target, and Rufin derives its compact
@@ -74,31 +74,31 @@ pub struct DownloadStatus {
 enum TrackSelectionKind {
     Prepared(TrackList),
     Album {
-        loaded: Arc<LoadedLibrary>,
+        loaded: Arc<Library>,
         id: AlbumId,
         music_folder_id: Option<MusicFolderId>,
     },
     Artist {
-        loaded: Arc<LoadedLibrary>,
+        loaded: Arc<Library>,
         id: ArtistId,
         music_folder_id: Option<MusicFolderId>,
     },
     Genre {
-        loaded: Arc<LoadedLibrary>,
+        loaded: Arc<Library>,
         id: GenreId,
         music_folder_id: Option<MusicFolderId>,
     },
     Mood {
-        loaded: Arc<LoadedLibrary>,
+        loaded: Arc<Library>,
         id: MoodId,
         music_folder_id: Option<MusicFolderId>,
     },
     Playlist {
-        loaded: Arc<LoadedLibrary>,
+        loaded: Arc<Library>,
         id: PlaylistId,
     },
     SmartPlaylist {
-        loaded: Arc<LoadedLibrary>,
+        loaded: Arc<Library>,
         id: SmartPlaylistId,
         music_folder_id: Option<MusicFolderId>,
     },
@@ -117,7 +117,7 @@ impl TrackSelection {
         }
     }
 
-    pub fn prepare(self) -> LoadedLibraryResult<TrackList> {
+    pub fn prepare(self) -> LibraryQueryResult<TrackList> {
         match self.kind {
             TrackSelectionKind::Prepared(tracks) => Ok(tracks),
             TrackSelectionKind::Album {
@@ -149,7 +149,7 @@ impl TrackSelection {
         }
     }
 
-    pub fn download_status(&self) -> LoadedLibraryResult<DownloadStatus> {
+    pub fn download_status(&self) -> LibraryQueryResult<DownloadStatus> {
         use crate::download_coverage::DownloadCollection;
 
         let (loaded, collection, music_folder_id) = match &self.kind {
@@ -229,7 +229,7 @@ pub struct TrackListChange {
 
 impl TrackList {
     pub(crate) fn new(
-        loaded: Arc<LoadedLibrary>,
+        loaded: Arc<Library>,
         slots: Arc<[TrackSlot]>,
         sorted_by: Option<(TrackSort, bool)>,
     ) -> Self {
@@ -241,7 +241,7 @@ impl TrackList {
         }
     }
 
-    fn with_played_at(loaded: Arc<LoadedLibrary>, rows: Vec<(TrackSlot, i64)>) -> Self {
+    fn with_played_at(loaded: Arc<Library>, rows: Vec<(TrackSlot, i64)>) -> Self {
         let (slots, played_at): (Vec<_>, Vec<_>) = rows.into_iter().unzip();
         Self {
             loaded,
@@ -273,18 +273,18 @@ impl TrackList {
         Arc::ptr_eq(&self.slots, &other.slots)
     }
 
-    pub fn track(&self, position: usize) -> LoadedLibraryResult<Option<Track>> {
+    pub fn track(&self, position: usize) -> LibraryQueryResult<Option<Track>> {
         let Some(slot) = self.slots.get(position).copied() else {
             return Ok(None);
         };
         Ok(self.loaded.read_state()?.tracks.get_slot(slot).cloned())
     }
 
-    pub fn materialize(&self) -> LoadedLibraryResult<Arc<[Track]>> {
+    pub fn materialize(&self) -> LibraryQueryResult<Arc<[Track]>> {
         Ok(self.materialize_owned()?.into())
     }
 
-    pub fn materialize_owned(&self) -> LoadedLibraryResult<Vec<Track>> {
+    pub fn materialize_owned(&self) -> LibraryQueryResult<Vec<Track>> {
         let state = self.loaded.read_state()?;
         self.slots
             .iter()
@@ -293,12 +293,12 @@ impl TrackList {
                     .tracks
                     .get_slot(*slot)
                     .cloned()
-                    .ok_or(crate::LoadedLibraryError::StaleTrackSelection)
+                    .ok_or(crate::LibraryQueryError::StaleTrackSelection)
             })
             .collect()
     }
 
-    pub fn track_ids(&self) -> LoadedLibraryResult<Arc<[crate::TrackId]>> {
+    pub fn track_ids(&self) -> LibraryQueryResult<Arc<[crate::TrackId]>> {
         let state = self.loaded.read_state()?;
         self.slots
             .iter()
@@ -307,13 +307,13 @@ impl TrackList {
                     .tracks
                     .get_slot(*slot)
                     .map(|track| track.id.clone())
-                    .ok_or(crate::LoadedLibraryError::StaleTrackSelection)
+                    .ok_or(crate::LibraryQueryError::StaleTrackSelection)
             })
-            .collect::<LoadedLibraryResult<Vec<_>>>()
+            .collect::<LibraryQueryResult<Vec<_>>>()
             .map(Into::into)
     }
 
-    fn download_status(&self) -> LoadedLibraryResult<DownloadStatus> {
+    fn download_status(&self) -> LibraryQueryResult<DownloadStatus> {
         let state = self.loaded.read_state()?;
         let mut total = 0usize;
         let mut downloaded = 0usize;
@@ -330,7 +330,7 @@ impl TrackList {
         })
     }
 
-    pub fn position(&self, track_id: &crate::TrackId) -> LoadedLibraryResult<Option<u32>> {
+    pub fn position(&self, track_id: &crate::TrackId) -> LibraryQueryResult<Option<u32>> {
         let state = self.loaded.read_state()?;
         let Some(slot) = state.tracks.slot(track_id) else {
             return Ok(None);
@@ -342,7 +342,7 @@ impl TrackList {
             .map(|position| u32::try_from(position).expect("Track list position fits GTK")))
     }
 
-    pub fn sorted(&self, sort: TrackSort, descending: bool) -> LoadedLibraryResult<Self> {
+    pub fn sorted(&self, sort: TrackSort, descending: bool) -> LibraryQueryResult<Self> {
         if self.sorted_by == Some((sort, descending)) {
             return Ok(self.clone());
         }
@@ -354,7 +354,7 @@ impl TrackList {
         mut include: impl FnMut(&Track) -> bool,
         sort: TrackSort,
         descending: bool,
-    ) -> LoadedLibraryResult<Self> {
+    ) -> LibraryQueryResult<Self> {
         let state = self.loaded.read_state()?;
         let mut tracks = self
             .slots
@@ -392,7 +392,7 @@ impl TrackList {
         &self,
         mut include: impl FnMut(&Track) -> bool,
         descending: bool,
-    ) -> LoadedLibraryResult<Self> {
+    ) -> LibraryQueryResult<Self> {
         let state = self.loaded.read_state()?;
         let mut positions = self
             .slots
@@ -426,7 +426,7 @@ impl TrackList {
     }
 
     /// Inserts, removes, or repositions one current Track without rebuilding
-    /// the projection from every Track in the loaded Library.
+    /// the projection from every Track in the source Library.
     ///
     /// The caller supplies the route's membership decision. The ordered value
     /// remains a compact slot array; only row binding materializes a Track.
@@ -434,7 +434,7 @@ impl TrackList {
         &self,
         track_id: &crate::TrackId,
         include: impl FnOnce(&Track) -> bool,
-    ) -> LoadedLibraryResult<Option<TrackListChange>> {
+    ) -> LibraryQueryResult<Option<TrackListChange>> {
         let state = self.loaded.read_state()?;
         let Some(slot) = state.tracks.slot(track_id) else {
             return Ok(None);
@@ -629,7 +629,7 @@ struct PlaylistEntrySlot {
 
 #[derive(Clone, Debug)]
 pub struct PlaylistEntryList {
-    loaded: Arc<LoadedLibrary>,
+    loaded: Arc<Library>,
     entries: Arc<[PlaylistEntrySlot]>,
 }
 
@@ -658,7 +658,7 @@ impl PlaylistEntryList {
         &self,
         positions: &[u32],
         track_id: &crate::TrackId,
-    ) -> LoadedLibraryResult<Option<String>> {
+    ) -> LibraryQueryResult<Option<String>> {
         let state = self.loaded.read_state()?;
         let Some(track) = state.tracks.slot(track_id) else {
             return Ok(None);
@@ -671,7 +671,7 @@ impl PlaylistEntryList {
         }))
     }
 
-    pub fn entry(&self, position: usize) -> LoadedLibraryResult<Option<PlaylistEntryItem>> {
+    pub fn entry(&self, position: usize) -> LibraryQueryResult<Option<PlaylistEntryItem>> {
         let Some(entry) = self.entries.get(position) else {
             return Ok(None);
         };
@@ -690,7 +690,7 @@ impl PlaylistEntryList {
         &self,
         mut include: impl FnMut(&Track) -> bool,
         mut compare: impl FnMut(&Track, &Track) -> Ordering,
-    ) -> LoadedLibraryResult<Vec<u32>> {
+    ) -> LibraryQueryResult<Vec<u32>> {
         let state = self.loaded.read_state()?;
         let mut positions = self
             .entries
@@ -759,7 +759,7 @@ pub struct FolderContents {
     pub tracks: Arc<[Track]>,
 }
 
-impl LoadedLibrary {
+impl Library {
     pub fn empty_track_list(self: &Arc<Self>) -> TrackList {
         TrackList::new(Arc::clone(self), Arc::from([]), None)
     }
@@ -769,7 +769,7 @@ impl LoadedLibrary {
         music_folder_id: Option<&MusicFolderId>,
         sort: TrackSort,
         descending: bool,
-    ) -> LoadedLibraryResult<TrackList> {
+    ) -> LibraryQueryResult<TrackList> {
         let list = {
             let state = self.read_state()?;
             match music_folder_id {
@@ -798,7 +798,7 @@ impl LoadedLibrary {
         music_folder_id: Option<&MusicFolderId>,
         sort: TrackSort,
         descending: bool,
-    ) -> LoadedLibraryResult<TrackList> {
+    ) -> LibraryQueryResult<TrackList> {
         let list = {
             let state = self.read_state()?;
             TrackList::new(
@@ -822,7 +822,7 @@ impl LoadedLibrary {
     pub fn favorite_download_track_list(
         self: &Arc<Self>,
         music_folder_id: Option<&MusicFolderId>,
-    ) -> LoadedLibraryResult<TrackList> {
+    ) -> LibraryQueryResult<TrackList> {
         let state = self.read_state()?;
         let mut seen = HashSet::new();
         let mut slots = state
@@ -870,7 +870,7 @@ impl LoadedLibrary {
     pub fn all_playlist_track_list(
         self: &Arc<Self>,
         music_folder_id: Option<&MusicFolderId>,
-    ) -> LoadedLibraryResult<TrackList> {
+    ) -> LibraryQueryResult<TrackList> {
         let state = self.read_state()?;
         let mut seen = HashSet::new();
         let slots = state
@@ -893,7 +893,7 @@ impl LoadedLibrary {
         self: &Arc<Self>,
         music_folder_id: Option<&MusicFolderId>,
         album_limit: usize,
-    ) -> LoadedLibraryResult<TrackList> {
+    ) -> LibraryQueryResult<TrackList> {
         let state = self.read_state()?;
         let mut albums = state
             .albums
@@ -934,7 +934,7 @@ impl LoadedLibrary {
     pub fn history_track_list(
         self: &Arc<Self>,
         music_folder_id: Option<&MusicFolderId>,
-    ) -> LoadedLibraryResult<TrackList> {
+    ) -> LibraryQueryResult<TrackList> {
         let state = self.read_state()?;
         let rows = state
             .recent_plays
@@ -951,7 +951,7 @@ impl LoadedLibrary {
         Ok(TrackList::with_played_at(Arc::clone(self), rows))
     }
 
-    pub fn track_selection(self: &Arc<Self>, track_id: &TrackId) -> LoadedLibraryResult<TrackList> {
+    pub fn track_selection(self: &Arc<Self>, track_id: &TrackId) -> LibraryQueryResult<TrackList> {
         let state = self.read_state()?;
         let slots = state
             .tracks
@@ -1046,7 +1046,7 @@ impl LoadedLibrary {
         &self,
         album_id: &AlbumId,
         music_folder_id: Option<&MusicFolderId>,
-    ) -> LoadedLibraryResult<bool> {
+    ) -> LibraryQueryResult<bool> {
         let state = self.read_state()?;
         Ok(state.download_coverage.album(album_id, music_folder_id))
     }
@@ -1055,7 +1055,7 @@ impl LoadedLibrary {
         &self,
         artist_id: &ArtistId,
         music_folder_id: Option<&MusicFolderId>,
-    ) -> LoadedLibraryResult<bool> {
+    ) -> LibraryQueryResult<bool> {
         let state = self.read_state()?;
         Ok(state.download_coverage.artist(artist_id, music_folder_id))
     }
@@ -1064,7 +1064,7 @@ impl LoadedLibrary {
         &self,
         genre_id: &GenreId,
         music_folder_id: Option<&MusicFolderId>,
-    ) -> LoadedLibraryResult<bool> {
+    ) -> LibraryQueryResult<bool> {
         let state = self.read_state()?;
         Ok(state.download_coverage.genre(genre_id, music_folder_id))
     }
@@ -1073,12 +1073,12 @@ impl LoadedLibrary {
         &self,
         mood_id: &MoodId,
         music_folder_id: Option<&MusicFolderId>,
-    ) -> LoadedLibraryResult<bool> {
+    ) -> LibraryQueryResult<bool> {
         let state = self.read_state()?;
         Ok(state.download_coverage.mood(mood_id, music_folder_id))
     }
 
-    pub fn is_playlist_downloaded(&self, playlist_id: &PlaylistId) -> LoadedLibraryResult<bool> {
+    pub fn is_playlist_downloaded(&self, playlist_id: &PlaylistId) -> LibraryQueryResult<bool> {
         let state = self.read_state()?;
         Ok(state.download_coverage.playlist(playlist_id))
     }
@@ -1087,7 +1087,7 @@ impl LoadedLibrary {
         self: &Arc<Self>,
         album_id: &AlbumId,
         music_folder_id: Option<&MusicFolderId>,
-    ) -> LoadedLibraryResult<TrackList> {
+    ) -> LibraryQueryResult<TrackList> {
         let state = self.read_state()?;
         let slots = album_track_slots(&state, album_id);
         Ok(TrackList::new(
@@ -1101,7 +1101,7 @@ impl LoadedLibrary {
         self: &Arc<Self>,
         artist_id: &ArtistId,
         music_folder_id: Option<&MusicFolderId>,
-    ) -> LoadedLibraryResult<TrackList> {
+    ) -> LibraryQueryResult<TrackList> {
         let state = self.read_state()?;
         let slots = artist_track_slots(&state, artist_id);
         Ok(TrackList::new(
@@ -1115,7 +1115,7 @@ impl LoadedLibrary {
         self: &Arc<Self>,
         genre_id: &GenreId,
         music_folder_id: Option<&MusicFolderId>,
-    ) -> LoadedLibraryResult<TrackList> {
+    ) -> LibraryQueryResult<TrackList> {
         let state = self.read_state()?;
         let slots = genre_track_slots(&state, genre_id);
         Ok(TrackList::new(
@@ -1129,7 +1129,7 @@ impl LoadedLibrary {
         self: &Arc<Self>,
         mood_id: &MoodId,
         music_folder_id: Option<&MusicFolderId>,
-    ) -> LoadedLibraryResult<TrackList> {
+    ) -> LibraryQueryResult<TrackList> {
         let state = self.read_state()?;
         let slots = mood_track_slots(&state, mood_id);
         Ok(TrackList::new(
@@ -1142,7 +1142,7 @@ impl LoadedLibrary {
     fn playlist_tracks(
         self: &Arc<Self>,
         playlist_id: &PlaylistId,
-    ) -> LoadedLibraryResult<TrackList> {
+    ) -> LibraryQueryResult<TrackList> {
         let state = self.read_state()?;
         Ok(TrackList::new(
             Arc::clone(self),
@@ -1162,7 +1162,7 @@ impl LoadedLibrary {
     pub fn albums(
         &self,
         music_folder_id: Option<&MusicFolderId>,
-    ) -> LoadedLibraryResult<Arc<[AlbumSummary]>> {
+    ) -> LibraryQueryResult<Arc<[AlbumSummary]>> {
         let state = self.read_state()?;
         let mut albums = state
             .albums
@@ -1177,7 +1177,7 @@ impl LoadedLibrary {
         &self,
         album_id: &AlbumId,
         music_folder_id: Option<&MusicFolderId>,
-    ) -> LoadedLibraryResult<Option<AlbumSummary>> {
+    ) -> LibraryQueryResult<Option<AlbumSummary>> {
         let state = self.read_state()?;
         Ok(state
             .albums
@@ -1188,7 +1188,7 @@ impl LoadedLibrary {
     pub fn artists(
         &self,
         music_folder_id: Option<&MusicFolderId>,
-    ) -> LoadedLibraryResult<Arc<[ArtistSummary]>> {
+    ) -> LibraryQueryResult<Arc<[ArtistSummary]>> {
         let state = self.read_state()?;
         let mut artists = state
             .artists
@@ -1210,7 +1210,7 @@ impl LoadedLibrary {
         &self,
         artist_id: &ArtistId,
         music_folder_id: Option<&MusicFolderId>,
-    ) -> LoadedLibraryResult<Option<ArtistSummary>> {
+    ) -> LibraryQueryResult<Option<ArtistSummary>> {
         let state = self.read_state()?;
         Ok(state
             .artists
@@ -1221,7 +1221,7 @@ impl LoadedLibrary {
     pub fn album_artists(
         &self,
         music_folder_id: Option<&MusicFolderId>,
-    ) -> LoadedLibraryResult<Arc<[ArtistSummary]>> {
+    ) -> LibraryQueryResult<Arc<[ArtistSummary]>> {
         let state = self.read_state()?;
         let mut artists = state
             .artists
@@ -1242,7 +1242,7 @@ impl LoadedLibrary {
     pub fn genres(
         &self,
         music_folder_id: Option<&MusicFolderId>,
-    ) -> LoadedLibraryResult<Arc<[GenreSummary]>> {
+    ) -> LibraryQueryResult<Arc<[GenreSummary]>> {
         let state = self.read_state()?;
         let mut seen_tracks = vec![false; state.tracks.slot_capacity()];
         let mut seen_albums = vec![false; state.albums.slot_capacity()];
@@ -1271,7 +1271,7 @@ impl LoadedLibrary {
         &self,
         genre_id: &GenreId,
         music_folder_id: Option<&MusicFolderId>,
-    ) -> LoadedLibraryResult<Option<GenreSummary>> {
+    ) -> LibraryQueryResult<Option<GenreSummary>> {
         let state = self.read_state()?;
         Ok(state
             .genres
@@ -1282,7 +1282,7 @@ impl LoadedLibrary {
     pub fn moods(
         &self,
         music_folder_id: Option<&MusicFolderId>,
-    ) -> LoadedLibraryResult<Arc<[MoodSummary]>> {
+    ) -> LibraryQueryResult<Arc<[MoodSummary]>> {
         let state = self.read_state()?;
         let mut moods = state
             .moods
@@ -1295,7 +1295,7 @@ impl LoadedLibrary {
         Ok(moods.into())
     }
 
-    pub fn playlists(&self) -> LoadedLibraryResult<Arc<[PlaylistSummary]>> {
+    pub fn playlists(&self) -> LibraryQueryResult<Arc<[PlaylistSummary]>> {
         let state = self.read_state()?;
         let mut playlists = state
             .playlists
@@ -1312,7 +1312,7 @@ impl LoadedLibrary {
     pub fn playlist_summary(
         &self,
         playlist_id: &PlaylistId,
-    ) -> LoadedLibraryResult<Option<PlaylistSummary>> {
+    ) -> LibraryQueryResult<Option<PlaylistSummary>> {
         let state = self.read_state()?;
         Ok(state
             .playlists
@@ -1320,7 +1320,7 @@ impl LoadedLibrary {
             .map(|playlist| playlist_summary(&state, playlist)))
     }
 
-    pub fn music_folders(&self) -> LoadedLibraryResult<Arc<[Arc<MusicFolder>]>> {
+    pub fn music_folders(&self) -> LibraryQueryResult<Arc<[Arc<MusicFolder>]>> {
         let state = self.read_state()?;
         let mut folders = state.music_folders.values().cloned().collect::<Vec<_>>();
         folders
@@ -1332,7 +1332,7 @@ impl LoadedLibrary {
         self: &Arc<Self>,
         album_id: &AlbumId,
         music_folder_id: Option<&MusicFolderId>,
-    ) -> LoadedLibraryResult<Option<AlbumDetail>> {
+    ) -> LibraryQueryResult<Option<AlbumDetail>> {
         let state = self.read_state()?;
         let Some(album) = state.albums.get(album_id) else {
             return Ok(None);
@@ -1354,7 +1354,7 @@ impl LoadedLibrary {
     pub fn album_details(
         self: &Arc<Self>,
         music_folder_id: Option<&MusicFolderId>,
-    ) -> LoadedLibraryResult<Arc<[AlbumDetail]>> {
+    ) -> LibraryQueryResult<Arc<[AlbumDetail]>> {
         let state = self.read_state()?;
         Ok(state
             .albums
@@ -1378,7 +1378,7 @@ impl LoadedLibrary {
         self: &Arc<Self>,
         artist_id: &ArtistId,
         music_folder_id: Option<&MusicFolderId>,
-    ) -> LoadedLibraryResult<Option<ArtistOverview>> {
+    ) -> LibraryQueryResult<Option<ArtistOverview>> {
         let state = self.read_state()?;
         let Some(artist) = state.artists.get(artist_id) else {
             return Ok(None);
@@ -1404,7 +1404,7 @@ impl LoadedLibrary {
         self: &Arc<Self>,
         artist_id: &ArtistId,
         music_folder_id: Option<&MusicFolderId>,
-    ) -> LoadedLibraryResult<TrackList> {
+    ) -> LibraryQueryResult<TrackList> {
         let state = self.read_state()?;
         Ok(TrackList::new(
             Arc::clone(self),
@@ -1417,7 +1417,7 @@ impl LoadedLibrary {
         &self,
         artist_id: &ArtistId,
         music_folder_id: Option<&MusicFolderId>,
-    ) -> LoadedLibraryResult<Option<ArtistDiscography>> {
+    ) -> LibraryQueryResult<Option<ArtistDiscography>> {
         let state = self.read_state()?;
         let Some(artist) = state.artists.get(artist_id) else {
             return Ok(None);
@@ -1437,7 +1437,7 @@ impl LoadedLibrary {
         self: &Arc<Self>,
         artist_id: &ArtistId,
         music_folder_id: Option<&MusicFolderId>,
-    ) -> LoadedLibraryResult<Option<ArtistTracks>> {
+    ) -> LibraryQueryResult<Option<ArtistTracks>> {
         let state = self.read_state()?;
         let Some(artist) = state.artists.get(artist_id) else {
             return Ok(None);
@@ -1458,7 +1458,7 @@ impl LoadedLibrary {
         self: &Arc<Self>,
         genre_id: &GenreId,
         music_folder_id: Option<&MusicFolderId>,
-    ) -> LoadedLibraryResult<Option<GenreDetail>> {
+    ) -> LibraryQueryResult<Option<GenreDetail>> {
         let state = self.read_state()?;
         let Some(genre) = state.genres.get(genre_id) else {
             return Ok(None);
@@ -1482,7 +1482,7 @@ impl LoadedLibrary {
         self: &Arc<Self>,
         mood_id: &MoodId,
         music_folder_id: Option<&MusicFolderId>,
-    ) -> LoadedLibraryResult<Option<MoodDetail>> {
+    ) -> LibraryQueryResult<Option<MoodDetail>> {
         let state = self.read_state()?;
         let Some(mood) = state.moods.get(mood_id) else {
             return Ok(None);
@@ -1505,7 +1505,7 @@ impl LoadedLibrary {
     pub fn playlist_detail(
         self: &Arc<Self>,
         playlist_id: &PlaylistId,
-    ) -> LoadedLibraryResult<Option<PlaylistDetail>> {
+    ) -> LibraryQueryResult<Option<PlaylistDetail>> {
         let state = self.read_state()?;
         let Some(playlist) = state.playlists.get(playlist_id) else {
             return Ok(None);
@@ -1534,7 +1534,7 @@ impl LoadedLibrary {
     pub fn local_folder_contents(
         &self,
         folder_id: Option<&FolderId>,
-    ) -> LoadedLibraryResult<Option<FolderContents>> {
+    ) -> LibraryQueryResult<Option<FolderContents>> {
         let state = self.read_state()?;
         if let Some(folder_id) = folder_id
             && !state.local_folders.contains_key(folder_id)

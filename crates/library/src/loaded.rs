@@ -27,24 +27,19 @@ use crate::{
 };
 
 #[derive(Debug, Error)]
-pub enum LoadedLibraryError {
-    #[error("the loaded library lock was poisoned")]
+pub enum LibraryQueryError {
+    #[error("the source library lock was poisoned")]
     Unavailable,
-    #[error("the loaded library belongs to {actual}, not {expected}")]
-    WrongSource {
-        expected: SourceId,
-        actual: SourceId,
-    },
-    #[error("the accepted {kind} {id} is not present in the loaded library")]
+    #[error("the accepted {kind} {id} is not present in the source library")]
     MissingItem { kind: &'static str, id: String },
     #[error("the loaded Track selection changed before playback")]
     StaleTrackSelection,
 }
 
-pub type LoadedLibraryResult<T> = Result<T, LoadedLibraryError>;
+pub type LibraryQueryResult<T> = Result<T, LibraryQueryError>;
 
 #[derive(Clone, Debug)]
-pub(crate) struct LoadedLibraryInput {
+pub(crate) struct LibraryInput {
     pub(crate) library_id: i64,
     pub(crate) source_id: Option<SourceId>,
     pub(crate) input_version: u32,
@@ -104,7 +99,7 @@ impl ItemReplacement {
     }
 }
 
-impl LoadedLibraryInput {
+impl LibraryInput {
     pub(crate) fn new(
         source_id: SourceId,
         library_id: i64,
@@ -413,10 +408,13 @@ pub(crate) struct LoadedState {
 
 /// One accepted source-scoped library.
 ///
-/// It deliberately contains no selected pointer, source client, session
-/// epoch, or route subscription state.
-#[derive(Debug)]
-pub struct LoadedLibrary {
+/// The Store lane and Home session owner are bound when this source is loaded,
+/// so source-scoped reads and accepted writes cannot be paired with the wrong
+/// Store handle. It deliberately contains no selected pointer, source client,
+/// session epoch, or route subscription state.
+pub struct Library {
+    pub(crate) store: crate::store::StoreLane,
+    pub(crate) home_sessions: Arc<crate::home::HomeSessions>,
     source_id: SourceId,
     library_id: i64,
     input_version: u32,
@@ -424,8 +422,20 @@ pub struct LoadedLibrary {
     state: RwLock<LoadedState>,
 }
 
+impl std::fmt::Debug for Library {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("Library")
+            .field("source_id", &self.source_id)
+            .field("library_id", &self.library_id)
+            .field("input_version", &self.input_version)
+            .field("input_digest", &self.input_digest)
+            .finish_non_exhaustive()
+    }
+}
+
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub struct LoadedLibraryCounts {
+pub struct LibraryCounts {
     pub albums: usize,
     pub tracks: usize,
 }
@@ -450,19 +460,23 @@ fn retain_search_result<T>(
     }
 }
 
-impl LoadedLibrary {
-    pub(crate) fn build(mut input: LoadedLibraryInput) -> LoadedLibraryResult<Arc<Self>> {
+impl Library {
+    pub(crate) fn build(
+        mut input: LibraryInput,
+        store: crate::store::StoreLane,
+        home_sessions: Arc<crate::home::HomeSessions>,
+    ) -> LibraryQueryResult<Arc<Self>> {
         let source_id = input
             .source_id
             .take()
-            .ok_or_else(|| LoadedLibraryError::MissingItem {
+            .ok_or_else(|| LibraryQueryError::MissingItem {
                 kind: "source",
                 id: String::new(),
             })?;
         let home_facts = input
             .home
             .take()
-            .ok_or_else(|| LoadedLibraryError::MissingItem {
+            .ok_or_else(|| LibraryQueryError::MissingItem {
                 kind: "Home facts",
                 id: source_id.to_string(),
             })?;
@@ -612,6 +626,8 @@ impl LoadedLibrary {
         apply_sparse_favorites(&mut state, local_favorites);
         crate::download_coverage::rebuild_download_coverage(&mut state);
         Ok(Arc::new(Self {
+            store,
+            home_sessions,
             source_id,
             library_id: input.library_id,
             input_version: input.input_version,
@@ -636,13 +652,13 @@ impl LoadedLibrary {
         &self.input_digest
     }
 
-    pub fn provider_freshness(&self) -> LoadedLibraryResult<Option<crate::ProviderFreshness>> {
+    pub fn provider_freshness(&self) -> LibraryQueryResult<Option<crate::ProviderFreshness>> {
         Ok(self.read()?.freshness.clone())
     }
 
-    pub fn counts(&self) -> LoadedLibraryResult<LoadedLibraryCounts> {
+    pub fn counts(&self) -> LibraryQueryResult<LibraryCounts> {
         let state = self.read()?;
-        Ok(LoadedLibraryCounts {
+        Ok(LibraryCounts {
             albums: state.albums.len(),
             tracks: state.tracks.len(),
         })
@@ -653,7 +669,7 @@ impl LoadedLibrary {
     /// The first part interleaves the ordinary route fronts so a large album
     /// collection cannot consume the decoded-cache budget before Artists,
     /// Genres, or Playlists. The remainder stays deterministic.
-    pub fn source_artwork(&self) -> LoadedLibraryResult<Arc<[SourceArtwork]>> {
+    pub fn source_artwork(&self) -> LibraryQueryResult<Arc<[SourceArtwork]>> {
         const ROUTE_FRONT: usize = 64;
 
         let state = self.read()?;
@@ -775,7 +791,7 @@ impl LoadedLibrary {
         Ok(artwork.into())
     }
 
-    pub fn album(&self, id: &AlbumId) -> LoadedLibraryResult<Option<Arc<Album>>> {
+    pub fn album(&self, id: &AlbumId) -> LibraryQueryResult<Option<Arc<Album>>> {
         Ok(self
             .read()?
             .albums
@@ -783,11 +799,11 @@ impl LoadedLibrary {
             .map(|album| Arc::clone(&album.album)))
     }
 
-    pub fn track(&self, id: &TrackId) -> LoadedLibraryResult<Option<Track>> {
+    pub fn track(&self, id: &TrackId) -> LibraryQueryResult<Option<Track>> {
         Ok(self.read()?.tracks.get(id).cloned())
     }
 
-    pub fn artist(&self, id: &ArtistId) -> LoadedLibraryResult<Option<Arc<Artist>>> {
+    pub fn artist(&self, id: &ArtistId) -> LibraryQueryResult<Option<Arc<Artist>>> {
         Ok(self
             .read()?
             .artists
@@ -798,7 +814,7 @@ impl LoadedLibrary {
     pub fn search(
         &self,
         request: &crate::SearchRequest,
-    ) -> LoadedLibraryResult<crate::SearchResults> {
+    ) -> LibraryQueryResult<crate::SearchResults> {
         let terms = request
             .query()
             .split(|character: char| !character.is_alphanumeric())
@@ -867,7 +883,7 @@ impl LoadedLibrary {
         })
     }
 
-    pub fn genre(&self, id: &GenreId) -> LoadedLibraryResult<Option<Arc<Genre>>> {
+    pub fn genre(&self, id: &GenreId) -> LibraryQueryResult<Option<Arc<Genre>>> {
         Ok(self
             .read()?
             .genres
@@ -875,25 +891,25 @@ impl LoadedLibrary {
             .map(|genre| Arc::clone(&genre.genre)))
     }
 
-    pub fn contains_playlist(&self, id: &PlaylistId) -> LoadedLibraryResult<bool> {
+    pub fn contains_playlist(&self, id: &PlaylistId) -> LibraryQueryResult<bool> {
         Ok(self.read()?.playlists.contains_key(id))
     }
 
-    pub fn contains_music_folder(&self, id: &MusicFolderId) -> LoadedLibraryResult<bool> {
+    pub fn contains_music_folder(&self, id: &MusicFolderId) -> LibraryQueryResult<bool> {
         Ok(self.read()?.music_folders.contains_key(id))
     }
 
     pub(crate) fn playlist(
         &self,
         id: &PlaylistId,
-    ) -> LoadedLibraryResult<Option<Arc<LoadedPlaylist>>> {
+    ) -> LibraryQueryResult<Option<Arc<LoadedPlaylist>>> {
         Ok(self.read()?.playlists.get(id).cloned())
     }
 
     pub fn resolve_tracks(
         &self,
         ids: impl IntoIterator<Item = TrackId>,
-    ) -> LoadedLibraryResult<Vec<Track>> {
+    ) -> LibraryQueryResult<Vec<Track>> {
         let state = self.read()?;
         Ok(ids
             .into_iter()
@@ -904,8 +920,31 @@ impl LoadedLibrary {
     pub(crate) fn replace_provider_freshness(
         &self,
         freshness: Option<crate::ProviderFreshness>,
-    ) -> LoadedLibraryResult<()> {
+    ) -> LibraryQueryResult<()> {
         self.write()?.freshness = freshness;
+        Ok(())
+    }
+
+    pub(crate) fn replace_activity_snapshot(
+        &self,
+        activity: Vec<TrackActivity>,
+        recent_plays: Vec<RecentPlay>,
+    ) -> LibraryQueryResult<()> {
+        let mut state = self.write()?;
+        let activity = activity
+            .into_iter()
+            .map(|activity| (activity.track_id.clone(), activity))
+            .collect::<HashMap<_, _>>();
+        if state.home_facts.is_rufin_defined() {
+            for accepted in activity.values() {
+                if let Some(track) = state.tracks.get_mut(&accepted.track_id) {
+                    apply_track_activity_value(track, accepted);
+                }
+            }
+        }
+        state.activity = activity;
+        state.recent_plays = recent_plays;
+        crate::download_coverage::rebuild_smart_playlist_download_coverage(&mut state);
         Ok(())
     }
 
@@ -913,7 +952,7 @@ impl LoadedLibrary {
         &self,
         item_id: &FavoriteItemId,
         favorite: bool,
-    ) -> LoadedLibraryResult<AcceptedLibraryChange> {
+    ) -> LibraryQueryResult<AcceptedLibraryChange> {
         let mut state = self.write()?;
         let change = match item_id {
             FavoriteItemId::Track(id) => replace_track_favorite(&mut state, id, favorite),
@@ -921,7 +960,7 @@ impl LoadedLibrary {
                 let current = state
                     .albums
                     .get(id)
-                    .ok_or_else(|| LoadedLibraryError::MissingItem {
+                    .ok_or_else(|| LibraryQueryError::MissingItem {
                         kind: "album",
                         id: id.to_string(),
                     })?
@@ -941,7 +980,7 @@ impl LoadedLibrary {
                 let current = state
                     .artists
                     .get(id)
-                    .ok_or_else(|| LoadedLibraryError::MissingItem {
+                    .ok_or_else(|| LibraryQueryError::MissingItem {
                         kind: "artist",
                         id: id.to_string(),
                     })?
@@ -974,24 +1013,29 @@ impl LoadedLibrary {
         &self,
         activity: TrackActivity,
         recent_play: Option<RecentPlay>,
-    ) -> LoadedLibraryResult<Option<AcceptedLibraryChange>> {
+    ) -> LibraryQueryResult<Option<AcceptedLibraryChange>> {
         let mut state = self.write()?;
         let previous_activity = state.activity.get(&activity.track_id).cloned();
         let activity_changed = previous_activity.as_ref() != Some(&activity);
         let mut recent_changed = false;
         if let Some(recent_play) = recent_play {
             let mut recent_plays = state.recent_plays.clone();
-            recent_plays.push(recent_play);
-            recent_plays.sort_by(|left, right| {
-                right
-                    .played_at
-                    .cmp(&left.played_at)
-                    .then_with(|| right.play_id.cmp(&left.play_id))
-            });
-            recent_plays.truncate(100);
-            if recent_plays != state.recent_plays {
-                state.recent_plays = recent_plays;
-                recent_changed = true;
+            if !recent_plays
+                .iter()
+                .any(|accepted| accepted.play_id == recent_play.play_id)
+            {
+                recent_plays.push(recent_play);
+                recent_plays.sort_by(|left, right| {
+                    right
+                        .played_at
+                        .cmp(&left.played_at)
+                        .then_with(|| right.play_id.cmp(&left.play_id))
+                });
+                recent_plays.truncate(100);
+                if recent_plays != state.recent_plays {
+                    state.recent_plays = recent_plays;
+                    recent_changed = true;
+                }
             }
         }
         if !activity_changed && !recent_changed {
@@ -1037,7 +1081,7 @@ impl LoadedLibrary {
     pub(crate) fn favorite_value_if_derived(
         &self,
         item_id: &FavoriteItemId,
-    ) -> LoadedLibraryResult<Option<crate::favorites::FavoriteValue>> {
+    ) -> LibraryQueryResult<Option<crate::favorites::FavoriteValue>> {
         let state = self.read()?;
         match item_id {
             FavoriteItemId::Track(id) => {
@@ -1045,20 +1089,19 @@ impl LoadedLibrary {
                     .tracks
                     .contains_key(id)
                     .then_some(None)
-                    .ok_or_else(|| LoadedLibraryError::MissingItem {
+                    .ok_or_else(|| LibraryQueryError::MissingItem {
                         kind: "track",
                         id: id.to_string(),
                     })
             }
             FavoriteItemId::Album(id) => {
-                let album =
-                    state
-                        .albums
-                        .get(id)
-                        .ok_or_else(|| LoadedLibraryError::MissingItem {
-                            kind: "album",
-                            id: id.to_string(),
-                        })?;
+                let album = state
+                    .albums
+                    .get(id)
+                    .ok_or_else(|| LibraryQueryError::MissingItem {
+                        kind: "album",
+                        id: id.to_string(),
+                    })?;
                 Ok((!album.source_provided)
                     .then(|| crate::favorites::FavoriteValue::Album(album.album.as_ref().clone())))
             }
@@ -1067,7 +1110,7 @@ impl LoadedLibrary {
                     state
                         .artists
                         .get(id)
-                        .ok_or_else(|| LoadedLibraryError::MissingItem {
+                        .ok_or_else(|| LibraryQueryError::MissingItem {
                             kind: "artist",
                             id: id.to_string(),
                         })?;
@@ -1083,12 +1126,12 @@ impl LoadedLibrary {
         id: &AlbumId,
         release_types: Vec<String>,
         is_compilation: Option<bool>,
-    ) -> LoadedLibraryResult<AcceptedLibraryChange> {
+    ) -> LibraryQueryResult<AcceptedLibraryChange> {
         let mut state = self.write()?;
         let current = state
             .albums
             .get(id)
-            .ok_or_else(|| LoadedLibraryError::MissingItem {
+            .ok_or_else(|| LibraryQueryError::MissingItem {
                 kind: "album",
                 id: id.to_string(),
             })?
@@ -1110,7 +1153,7 @@ impl LoadedLibrary {
         })
     }
 
-    pub(crate) fn mark_album_release_resolved(&self, id: &AlbumId) -> LoadedLibraryResult<()> {
+    pub(crate) fn mark_album_release_resolved(&self, id: &AlbumId) -> LibraryQueryResult<()> {
         self.write()?.unresolved_album_releases.remove(id);
         Ok(())
     }
@@ -1118,7 +1161,7 @@ impl LoadedLibrary {
     pub(crate) fn replace_playlist(
         &self,
         snapshot: PlaylistSnapshot,
-    ) -> LoadedLibraryResult<Arc<LoadedPlaylist>> {
+    ) -> LibraryQueryResult<Arc<LoadedPlaylist>> {
         let mut state = self.write()?;
         let playlist = replace_playlist_in_state(&mut state, snapshot);
         crate::download_coverage::rebuild_download_coverage(&mut state);
@@ -1128,7 +1171,7 @@ impl LoadedLibrary {
     pub(crate) fn remove_playlist(
         &self,
         id: &PlaylistId,
-    ) -> LoadedLibraryResult<Option<Arc<LoadedPlaylist>>> {
+    ) -> LibraryQueryResult<Option<Arc<LoadedPlaylist>>> {
         let mut state = self.write()?;
         let playlist = remove_playlist_in_state(&mut state, id);
         if playlist.is_some() {
@@ -1143,7 +1186,7 @@ impl LoadedLibrary {
         unresolved_album_releases: Vec<AlbumId>,
         playlists: Vec<PlaylistSnapshot>,
         removed_playlists: Vec<PlaylistId>,
-    ) -> LoadedLibraryResult<AcceptedLibraryChange> {
+    ) -> LibraryQueryResult<AcceptedLibraryChange> {
         let mut state = self.write()?;
         let mut explicit_playlists = HashSet::new();
         for playlist_id in removed_playlists {
@@ -1166,7 +1209,7 @@ impl LoadedLibrary {
         replacement: &mut ItemReplacement,
         playlists: &mut Vec<PlaylistSnapshot>,
         removed_playlists: &mut Vec<PlaylistId>,
-    ) -> LoadedLibraryResult<()> {
+    ) -> LibraryQueryResult<()> {
         let state = self.read()?;
         replacement.albums.retain(|album| {
             state
@@ -1226,7 +1269,7 @@ impl LoadedLibrary {
         favorites: Vec<FavoriteItemId>,
         activity: Vec<TrackActivity>,
         unresolved_album_releases: Vec<AlbumId>,
-    ) -> LoadedLibraryResult<AcceptedLibraryChange> {
+    ) -> LibraryQueryResult<AcceptedLibraryChange> {
         let mut state = self.write()?;
         apply_track_activity_to_replacement(&mut replacement.tracks, activity);
         apply_favorites_to_replacement(&mut replacement, &favorites);
@@ -1263,7 +1306,7 @@ impl LoadedLibrary {
     pub(crate) fn local_favorite_update(
         &self,
         replacement: &ItemReplacement,
-    ) -> LoadedLibraryResult<LocalFavoriteUpdate> {
+    ) -> LibraryQueryResult<LocalFavoriteUpdate> {
         let state = self.read()?;
         let mut targets = HashSet::new();
         for id in &replacement.removed_tracks {
@@ -1314,24 +1357,24 @@ impl LoadedLibrary {
         Ok(LocalFavoriteUpdate { targets, transfers })
     }
 
-    pub(crate) fn read_state(&self) -> LoadedLibraryResult<RwLockReadGuard<'_, LoadedState>> {
+    pub(crate) fn read_state(&self) -> LibraryQueryResult<RwLockReadGuard<'_, LoadedState>> {
         self.read()
     }
 
-    pub(crate) fn write_state(&self) -> LoadedLibraryResult<RwLockWriteGuard<'_, LoadedState>> {
+    pub(crate) fn write_state(&self) -> LibraryQueryResult<RwLockWriteGuard<'_, LoadedState>> {
         self.write()
     }
 
-    fn read(&self) -> LoadedLibraryResult<RwLockReadGuard<'_, LoadedState>> {
+    fn read(&self) -> LibraryQueryResult<RwLockReadGuard<'_, LoadedState>> {
         self.state
             .read()
-            .map_err(|_| LoadedLibraryError::Unavailable)
+            .map_err(|_| LibraryQueryError::Unavailable)
     }
 
-    fn write(&self) -> LoadedLibraryResult<RwLockWriteGuard<'_, LoadedState>> {
+    fn write(&self) -> LibraryQueryResult<RwLockWriteGuard<'_, LoadedState>> {
         self.state
             .write()
-            .map_err(|_| LoadedLibraryError::Unavailable)
+            .map_err(|_| LibraryQueryError::Unavailable)
     }
 }
 
@@ -1381,11 +1424,11 @@ fn replace_track_favorite(
     state: &mut LoadedState,
     track_id: &TrackId,
     favorite: bool,
-) -> LoadedLibraryResult<AcceptedLibraryChange> {
+) -> LibraryQueryResult<AcceptedLibraryChange> {
     let current = state
         .tracks
         .get(track_id)
-        .ok_or_else(|| LoadedLibraryError::MissingItem {
+        .ok_or_else(|| LibraryQueryError::MissingItem {
             kind: "track",
             id: track_id.to_string(),
         })?
@@ -1424,7 +1467,7 @@ fn apply_item_replacement(
     state: &mut LoadedState,
     replacement: ItemReplacement,
     unresolved_album_releases: Vec<AlbumId>,
-) -> LoadedLibraryResult<AcceptedLibraryChange> {
+) -> LibraryQueryResult<AcceptedLibraryChange> {
     let ItemReplacement {
         albums,
         tracks,

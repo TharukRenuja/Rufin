@@ -25,17 +25,29 @@ const LOCAL_CUE_MAX_BYTES: usize = 1024 * 1024;
 const LOCAL_BATCH_SIZE: usize = 1024;
 
 pub(super) struct LocalCheck {
-    pub(super) file_seeds: Vec<LocalFileSeed>,
+    file_seeds: Vec<LocalFileSeed>,
     inventory: Inventory,
     cue_sheets: HashMap<String, Option<CueSheet>>,
 }
 
+impl LocalCheck {
+    pub(super) fn file_seeds(&self) -> &[LocalFileSeed] {
+        &self.file_seeds
+    }
+}
+
 pub(super) struct LocalChange {
-    pub(super) component_seeds: Vec<LocalComponentSeed>,
+    component_seeds: Vec<LocalComponentSeed>,
     inventory: Inventory,
     changed_paths: BTreeSet<String>,
     affected_paths: HashSet<String>,
     changed_facts: CollectedFacts,
+}
+
+impl LocalChange {
+    pub(super) fn component_seeds(&self) -> &[LocalComponentSeed] {
+        &self.component_seeds
+    }
 }
 
 struct Inventory {
@@ -75,33 +87,15 @@ struct AudioJobResult {
 
 trait FactOutput {
     fn emit(&mut self, batch: CandidateBatch) -> SourceResult<()>;
-
-    fn metadata_fallback(&mut self) {}
-
-    fn unreadable_file(&mut self) {}
-
-    fn invalid_cue(&mut self) {}
 }
 
-struct EmitterOutput<'a, 'b> {
-    emitter: &'a mut BatchEmitter<'b>,
+struct EmitterOutput<'a> {
+    emitter: &'a BatchEmitter,
 }
 
-impl FactOutput for EmitterOutput<'_, '_> {
+impl FactOutput for EmitterOutput<'_> {
     fn emit(&mut self, batch: CandidateBatch) -> SourceResult<()> {
         self.emitter.emit(batch)
-    }
-
-    fn metadata_fallback(&mut self) {
-        self.emitter.metadata_fallback();
-    }
-
-    fn unreadable_file(&mut self) {
-        self.emitter.unreadable_file();
-    }
-
-    fn invalid_cue(&mut self) {
-        self.emitter.invalid_cue();
     }
 }
 
@@ -134,7 +128,7 @@ impl FactOutput for CollectedFacts {
 
 pub(super) fn acquire_complete(
     roots: &[PathBuf],
-    emitter: &mut BatchEmitter<'_>,
+    emitter: &BatchEmitter,
     progress: &(dyn Fn(SourceReadProgress) + Send + Sync),
     cancelled: &(dyn Fn() -> bool + Send + Sync),
 ) -> SourceResult<()> {
@@ -1314,9 +1308,6 @@ fn scan_inventory(
         if file.read_state == LocalReadState::Parsed && !successful_cues.contains(&file.path) {
             file.read_state = LocalReadState::Invalid;
         }
-        if file.read_state == LocalReadState::Invalid {
-            output.invalid_cue();
-        }
     }
     emit_chunks(cues.files, CandidateBatch::LocalFiles, output)?;
 
@@ -1668,7 +1659,7 @@ fn read_audio(worker: &mut tags::Worker, inventory: &Inventory, path: &Path) -> 
 fn file_revision(file: &LocalFile) -> String {
     format!(
         "file:{:016x}",
-        tags::stable_hash(&format!(
+        crate::policy::stable_hash(&format!(
             "{}:{}:{}:{}:{}",
             file.path,
             file.size_bytes.unwrap_or_default(),
@@ -1719,11 +1710,6 @@ fn accept_audio_result(
             if let Some(scanned) = read.scanned {
                 accept_scanned(scanned, aggregates, track_batch, output)?;
             }
-        }
-        match read.state {
-            LocalReadState::MetadataFallback => output.metadata_fallback(),
-            LocalReadState::Unreadable => output.unreadable_file(),
-            _ => {}
         }
         let mut file = inventory
             .entries
@@ -1922,7 +1908,7 @@ impl Aggregates {
                         play_count: None,
                         user_rating: None,
                         favorite: false,
-                        color_seed: tags::stable_hash(album_id.as_str()) as u32,
+                        color_seed: crate::policy::stable_hash(album_id.as_str()) as u32,
                         image_ref: None,
                         local_artwork: track
                             .local_artwork

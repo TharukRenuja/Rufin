@@ -5,7 +5,8 @@
 //! Neither path creates a second accepted UI map.
 
 use crate::{
-    AcceptedLibraryChange, Album, Artist, FavoriteItemId, Library, LibraryResult, LoadedLibrary,
+    AcceptedHomeChange, AcceptedLibraryChange, Album, Artist, FavoriteItemId, Library,
+    LibraryResult,
 };
 
 pub(crate) enum FavoriteValue {
@@ -28,23 +29,23 @@ pub enum FavoriteAcceptance {
 impl Library {
     pub fn accept_favorite(
         &self,
-        loaded: &std::sync::Arc<LoadedLibrary>,
         acceptance: FavoriteAcceptance,
     ) -> LibraryResult<AcceptedLibraryChange> {
         let (item_id, favorite, local) = match acceptance {
             FavoriteAcceptance::RufinOwned { item, favorite } => (item, favorite, true),
             FavoriteAcceptance::SourceAcknowledged { item, favorite } => (item, favorite, false),
         };
-        let fallback = loaded.favorite_value_if_derived(&item_id)?;
+        let fallback = self.favorite_value_if_derived(&item_id)?;
         self.store.set_favorite(
-            loaded.source_id().clone(),
+            self.source_id().clone(),
             item_id.clone(),
             favorite,
             local,
             fallback,
         )?;
-        loaded
-            .replace_favorite(&item_id, favorite)
-            .map_err(Into::into)
+        let mut accepted = self.replace_favorite(&item_id, favorite)?;
+        accepted.home = AcceptedHomeChange::Favorite(item_id);
+        accepted.download_coverage_changed = true;
+        Ok(accepted)
     }
 }

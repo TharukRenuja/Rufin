@@ -4,7 +4,7 @@ use std::sync::Arc;
 use library::{
     Album, AlbumId, AlbumRelations, Artist, ArtistCredit, ArtistId, CandidateBatch,
     CandidateFinish, CandidateHeader, Genre, GenreCredit, GenreId, HOME_SECTION_ITEM_LIMIT,
-    HomeFacts, Library, MoodCredit, MoodId, MusicFolder, MusicFolderId, Playlist, PlaylistEntry,
+    HomeFacts, Libraries, MoodCredit, MoodId, MusicFolder, MusicFolderId, Playlist, PlaylistEntry,
     PlaylistId, PlaylistSnapshot, SearchRequest, SmartPlaylistBuiltin, SmartPlaylistId, SourceId,
     Track, TrackData, TrackRelations, TrackSort,
 };
@@ -25,7 +25,7 @@ fn complete_loaded_projections_stay_compact_at_large_library_sizes() {
 
 fn assert_large_library(track_count: usize) {
     let directory = tempfile::tempdir().expect("temporary Store directory");
-    let library = Library::open(directory.path().join("library.db")).expect("open Library");
+    let library = Libraries::open(directory.path().join("library.db")).expect("open Library");
     let source_id = SourceId::new(format!("subsonic:bounds:{track_count}"));
     let folder_id = MusicFolderId::new("folder:all");
     let album_count = track_count.div_ceil(10);
@@ -75,11 +75,11 @@ fn assert_large_library(track_count: usize) {
         )
         .and_then(|prepared| prepared.accept())
         .expect("accept source candidate")
-        .loaded;
-    library
-        .initialize_smart_playlists(&loaded)
+        .library;
+    loaded
+        .initialize_smart_playlists()
         .expect("initialize smart Playlists");
-    let home = library.home(&loaded, None).expect("compose Home");
+    let home = loaded.home(None).expect("compose Home");
 
     assert_eq!(loaded.counts().expect("read counts").tracks, track_count);
     assert_eq!(loaded.counts().expect("read counts").albums, album_count);

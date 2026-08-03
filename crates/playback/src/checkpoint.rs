@@ -1,5 +1,5 @@
 use library::{
-    ArtistCredit, LoadedLibrary, PlaybackCheckpoint, PlaybackFallbackTrack, PlaybackOccurrence,
+    ArtistCredit, Library, PlaybackCheckpoint, PlaybackFallbackTrack, PlaybackOccurrence,
     PlaybackOccurrenceId, PlaybackProvenance, PlaybackQueueSnapshot, PlaybackState, Track,
     TrackData, TrackId, TrackRelations,
 };
@@ -16,7 +16,7 @@ pub enum CheckpointError {
     Sequence(#[from] SequenceError),
     #[error("playback checkpoint has no fallback for Track {0}")]
     MissingFallback(TrackId),
-    #[error("playback checkpoint could not read the loaded library: {0}")]
+    #[error("playback checkpoint could not read the Library: {0}")]
     Loaded(String),
 }
 
@@ -70,7 +70,7 @@ pub fn build_checkpoint(sequence: &Sequence) -> PlaybackCheckpoint {
 
 pub fn restore_checkpoint(
     checkpoint: &PlaybackCheckpoint,
-    loaded: Option<&LoadedLibrary>,
+    loaded: Option<&Library>,
     repeat_mode: RepeatMode,
     shuffle_enabled: bool,
     shuffle_seed: u64,
@@ -143,6 +143,7 @@ pub fn restore_checkpoint(
 }
 
 fn fallback_track(track: &Track) -> PlaybackFallbackTrack {
+    let album_artwork = track.album_artwork_facts();
     PlaybackFallbackTrack {
         id: track.id.clone(),
         album_id: track.album_id.clone(),
@@ -155,8 +156,12 @@ fn fallback_track(track: &Track) -> PlaybackFallbackTrack {
         favorite: track.favorite,
         track_number: track.track_number,
         disc_number: track.disc_number,
-        image_ref: track.image_ref.clone(),
-        local_artwork: track.local_artwork.clone(),
+        image_ref: album_artwork
+            .and_then(|album| album.image_ref.clone())
+            .or_else(|| track.image_ref.clone()),
+        local_artwork: album_artwork
+            .and_then(|album| album.local_artwork.clone())
+            .or_else(|| track.local_artwork.clone()),
         musicbrainz_recording_id: track.musicbrainz_recording_id.clone(),
         source_format: track.source_format.clone(),
         source_path: track.source_path.clone(),
@@ -246,7 +251,9 @@ fn sequence_provenance(provenance: &PlaybackProvenance) -> Provenance {
 
 #[cfg(test)]
 mod tests {
-    use library::{AlbumId, CueSegment, SourceId, TrackId};
+    use std::sync::Arc;
+
+    use library::{AlbumArtworkFacts, AlbumId, CueSegment, ImageRef, SourceId, TrackId};
 
     use super::*;
     use crate::{Batch, BatchItem, Placement};
@@ -260,7 +267,14 @@ mod tests {
             title: "Cue Track".to_string(),
             artist: "Artist".to_string(),
             album: "Album".to_string(),
-            album_artwork: None,
+            album_artwork: Some(Arc::new(AlbumArtworkFacts {
+                local_artwork: None,
+                image_ref: Some(ImageRef::new("album-art", None)),
+                musicbrainz_release_group_id: None,
+                musicbrainz_album_id: None,
+                artist: "Artist".to_string(),
+                title: "Album".to_string(),
+            })),
             year: 2026,
             release_date: None,
             date_added: None,
@@ -271,7 +285,7 @@ mod tests {
             favorite: false,
             disc_number: 2,
             track_number: 7,
-            image_ref: None,
+            image_ref: Some(ImageRef::new("track-art", None)),
             local_artwork: None,
             musicbrainz_recording_id: Some("recording".to_string()),
             musicbrainz_release_track_id: None,
@@ -303,6 +317,13 @@ mod tests {
 
         assert_eq!(checkpoint.queue.occurrences.len(), 2);
         assert_eq!(checkpoint.queue.fallback_tracks.len(), 1);
+        assert_eq!(
+            checkpoint.queue.fallback_tracks[0]
+                .image_ref
+                .as_ref()
+                .map(|image| image.item_id.as_str()),
+            Some("album-art")
+        );
         let restored = restore_checkpoint(&checkpoint, None, RepeatMode::All, true, 999)
             .expect("restore checkpoint");
         assert_eq!(restored.selected_index(), Some(1));

@@ -9,7 +9,7 @@ use ::ui::{
     LibraryField, LibraryListKey, LibraryListSettings, LibraryListSettingsEntry,
     Settings as UiSettings,
 };
-use library::{HomeBlockKind, HomeSectionKind, MusicFolderId, SourceId};
+use library::{HomeBlockKind, HomeSectionKind, LocalAccessMapping, MusicFolderId, SourceId};
 use scrobbling::Settings as ScrobblingSettings;
 use secrets::{
     CachedSecretStore, ConfigSecretStore, SecretKey, SecretStorageMode, SecretStore,
@@ -42,13 +42,6 @@ pub(crate) fn fresh_secret_scope_id() -> Result<String, String> {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
-pub(crate) struct ConfiguredLocalAccess {
-    pub(crate) root_path: PathBuf,
-    pub(crate) server_prefix: Option<String>,
-    pub(crate) local_prefix: Option<String>,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub(crate) struct ConfiguredSource {
     #[serde(flatten)]
     pub(crate) configuration: SourceConfiguration,
@@ -57,7 +50,7 @@ pub(crate) struct ConfiguredSource {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) music_folder_id: Option<MusicFolderId>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub(crate) local_access: Option<ConfiguredLocalAccess>,
+    pub(crate) local_access: Option<LocalAccessMapping>,
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
@@ -267,7 +260,7 @@ impl SettingsFile {
             .clone()
     }
 
-    pub(crate) fn playback_stream_quality(&self) -> playback::StreamQuality {
+    pub(crate) fn playback_stream_quality(&self) -> library::StreamQuality {
         self.value
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
@@ -736,6 +729,20 @@ mod tests {
         fn operation_count(&self) -> usize {
             self.operations.load(Ordering::Acquire)
         }
+    }
+
+    #[test]
+    fn local_access_mapping_keeps_its_saved_json_shape() {
+        let saved = serde_json::json!({
+            "root_path": "/music",
+            "server_prefix": "/server",
+            "local_prefix": "library",
+        });
+
+        let mapping: LocalAccessMapping =
+            serde_json::from_value(saved.clone()).expect("read saved local access mapping");
+
+        assert_eq!(serde_json::to_value(mapping).expect("save mapping"), saved);
     }
 
     impl SecretStore for FaultSecretStore {

@@ -161,7 +161,7 @@ pub(super) struct PipelineId(pub(super) u64);
 #[derive(Clone, Debug, PartialEq)]
 pub(super) struct PreparedRun {
     pub(super) run: RunId,
-    pub(super) stream: PreparedStream,
+    pub(super) stream: ResolvedStream,
 }
 
 impl PreparedRun {
@@ -510,7 +510,7 @@ impl GstEngine {
             let should_prepare = match next.transition {
                 NextTransition::Crossfade { .. } => true,
                 NextTransition::Gapless => {
-                    next.stream.source_window().is_some()
+                    next.stream.window().is_some()
                         && !streams_are_adjacent_windows(&current.stream, &next.stream)
                 }
                 NextTransition::Default => false,
@@ -556,7 +556,7 @@ impl GstEngine {
             return;
         };
         match incoming.phase {
-            IncomingPhase::Prerolling if incoming.item.stream.source_end_millis().is_some() => {
+            IncomingPhase::Prerolling if incoming.item.stream.end_millis().is_some() => {
                 incoming.phase = IncomingPhase::Seeking;
                 if let Err(error) = self.pipeline_for_slot(slot).seek_millis(0) {
                     self.fail_incoming(slot, id, error);
@@ -785,7 +785,7 @@ impl GstEngine {
         }
         self.push_state(BackendState::Buffering);
         let pipeline_started_at = Instant::now();
-        let needs_preroll_seek = start_millis > 0 || item.stream.source_end_millis().is_some();
+        let needs_preroll_seek = start_millis > 0 || item.stream.end_millis().is_some();
         let startup_state = if needs_preroll_seek {
             gst::State::Paused
         } else {
@@ -805,7 +805,7 @@ impl GstEngine {
         info!(
             run = %item.run,
             uri_scheme = %stream_uri_scheme(item.stream.uri()),
-            source_windowed = item.stream.source_end_millis().is_some(),
+            stream_windowed = item.stream.end_millis().is_some(),
             start_millis,
             audio_output = self.primary.audio_output_factory().as_deref().unwrap_or("unknown"),
             elapsed_ms = command_started_at.elapsed().as_millis(),
@@ -838,7 +838,7 @@ impl GstEngine {
             shared.next = Some(next.clone());
             shared.next_needed = None;
             if shared.about_to_finish_pending && gapless_preload_should_run(&shared, &next) {
-                if next.stream.source_end_millis().is_none()
+                if next.stream.end_millis().is_none()
                     && gapless_preload_source_is_supported(next.stream.uri())
                     && let Some(item) = shared.next.take()
                 {
@@ -971,7 +971,7 @@ impl GstEngine {
     ) -> Result<(u64, bool), String> {
         let (settings, volume, muted, visualizer_enabled, slot) = self.session_context();
         let start_millis = SourceClock::from_stream(&item.stream).physical_seek(position_millis);
-        let needs_preroll_seek = start_millis > 0 || item.stream.source_end_millis().is_some();
+        let needs_preroll_seek = start_millis > 0 || item.stream.end_millis().is_some();
         let startup_state = if needs_preroll_seek {
             gst::State::Paused
         } else {
@@ -1246,7 +1246,7 @@ impl GstEngine {
         self.handle_stream_started_run(started);
     }
 
-    fn handle_stream_started_run(&mut self, started: Option<(RunId, RunId, PreparedStream)>) {
+    fn handle_stream_started_run(&mut self, started: Option<(RunId, RunId, ResolvedStream)>) {
         let Some((old_run, new_run, stream)) = started else {
             return;
         };
@@ -1463,11 +1463,11 @@ impl GstEngine {
         }
     }
 
-    fn handle_end(&mut self, slot: Slot, source_window: bool) {
+    fn handle_end(&mut self, slot: Slot, stream_window: bool) {
         if self.finish_crossfade_if_needed(slot) {
             return;
         }
-        if source_window && self.is_active_slot(slot) && self.promote_adjacent_source_window() {
+        if stream_window && self.is_active_slot(slot) && self.promote_adjacent_stream_window() {
             return;
         }
         if self.is_active_slot(slot) && self.promote_prepared_gapless() {
@@ -1477,7 +1477,7 @@ impl GstEngine {
             let run = self.timing_run_id();
             info!(
                 run = run.map(RunId::get).unwrap_or_default(),
-                source_window, "playback reached end"
+                stream_window, "playback reached end"
             );
             if let Some(run) = run {
                 self.emit_ended_once(run);
@@ -1675,15 +1675,15 @@ impl GstEngine {
         }
     }
 
-    fn promote_adjacent_source_window(&mut self) -> bool {
+    fn promote_adjacent_stream_window(&mut self) -> bool {
         let candidate = (|| {
             let shared = lock_recover(&self.shared);
             let current = shared.current.as_ref()?;
-            let boundary = current.stream.source_end_millis()?;
+            let boundary = current.stream.end_millis()?;
             let next = shared.next.as_ref()?;
             if next.transition != NextTransition::Gapless
                 || next.stream.uri() != current.stream.uri()
-                || next.stream.source_start_millis() != boundary
+                || next.stream.start_millis() != boundary
             {
                 return None;
             }
@@ -1696,7 +1696,7 @@ impl GstEngine {
         let slot = self.active_slot();
         if let Err(error) = self
             .pipeline_for_slot_mut(slot)
-            .rearm_source_window(&next.stream)
+            .rearm_stream_window(&next.stream)
         {
             push_event(
                 &self.events,
@@ -2237,8 +2237,7 @@ pub(super) fn about_to_finish_action(shared: &mut SharedBackendState) -> AboutTo
         return AboutToFinishAction::Ignore;
     }
 
-    if next.stream.source_end_millis().is_some()
-        || !gapless_preload_source_is_supported(next.stream.uri())
+    if next.stream.end_millis().is_some() || !gapless_preload_source_is_supported(next.stream.uri())
     {
         debug!(
             next_run = %next.run,
@@ -2296,10 +2295,10 @@ fn inactive_slot(slot: Slot) -> Slot {
     }
 }
 
-fn streams_are_adjacent_windows(current: &PreparedStream, next: &PreparedStream) -> bool {
-    current.source_end_millis().is_some_and(|boundary| {
-        current.uri() == next.uri() && next.source_start_millis() == boundary
-    })
+fn streams_are_adjacent_windows(current: &ResolvedStream, next: &ResolvedStream) -> bool {
+    current
+        .end_millis()
+        .is_some_and(|boundary| current.uri() == next.uri() && next.start_millis() == boundary)
 }
 pub(super) fn push_event(events: &Arc<Mutex<EventMailbox>>, event: BackendEvent) {
     lock_recover(events).push(event);
@@ -2348,8 +2347,7 @@ mod tests {
 
     #[test]
     fn source_clock_maps_one_cue_window_everywhere() {
-        let stream =
-            PreparedStream::new("file:///music/cue.flac").with_source_window(60_000, 90_000);
+        let stream = ResolvedStream::new("file:///music/cue.flac").with_window(60_000, 90_000);
         let clock = SourceClock::from_stream(&stream);
 
         assert_eq!(clock.physical_seek(12_345), 72_345);
@@ -2367,14 +2365,14 @@ mod tests {
         let current_run = RunId::new(10);
         let next = PreparedNext::new(
             RunId::new(11),
-            PreparedStream::new("file:///music/next.flac"),
+            ResolvedStream::new("file:///music/next.flac"),
             NextTransition::Gapless,
         );
         let mut shared = SharedBackendState::new();
         shared.active = Slot::Primary;
         shared.current = Some(PreparedRun {
             run: current_run,
-            stream: PreparedStream::new("file:///music/current.flac"),
+            stream: ResolvedStream::new("file:///music/current.flac"),
         });
         shared.next = Some(next.clone());
         shared.visualizer_enabled = true;

@@ -4,7 +4,7 @@ use std::{
     sync::Arc,
 };
 
-use ::library::{GenreDetail, GenreSummary, LoadedLibrary, MusicFolderId, RadioSeed};
+use ::library::{GenreDetail, GenreSummary, Library, MusicFolderId, RadioSeed};
 use adw::prelude::*;
 use artwork::ArtworkBinding;
 
@@ -42,7 +42,7 @@ impl Shell {
         self: &Rc<Self>,
         genre_id: ::library::GenreId,
         detail: Option<GenreDetail>,
-        loaded: Arc<LoadedLibrary>,
+        loaded: Arc<Library>,
         music_folder_id: Option<MusicFolderId>,
     ) -> MountedRoute {
         let Some(detail) = detail else {
@@ -264,7 +264,7 @@ impl Shell {
 }
 
 pub(crate) fn load_genre_detail(
-    loaded: &Arc<LoadedLibrary>,
+    loaded: &Arc<Library>,
     genre_id: &::library::GenreId,
     music_folder_id: Option<&MusicFolderId>,
     settings: &LibraryListSettings,

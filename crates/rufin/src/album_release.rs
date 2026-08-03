@@ -8,33 +8,32 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use async_channel::Sender;
-use library::{AlbumReleaseResult, Library, SourceId};
+use library::{AlbumReleaseResult, SourceId};
 use playback::SourceSessionEpoch;
 use tracing::{info, warn};
 use ui::runtime::{SelectedLibraryUpdate, SourceEvent};
 
 use crate::settings::SettingsFile;
-use crate::source::WeakSelectedSourceSession;
+use crate::source::WeakActiveSource;
 
 const LOOKUP_LIMIT: usize = 500;
 
 pub(crate) fn run_selected_album_release_lookup(
-    library: Library,
     settings: SettingsFile,
     events: Sender<SourceEvent>,
     source_id: SourceId,
     source_session_epoch: SourceSessionEpoch,
-    selected: WeakSelectedSourceSession,
+    selected: WeakActiveSource,
     cancelled: Arc<AtomicBool>,
 ) {
     if !lookup_allowed(&settings, &cancelled) {
         return;
     }
-    let Some(current) = selected.snapshot() else {
+    let Some(current) = selected.upgrade().and_then(|selected| selected.resolve()) else {
         return;
     };
-    let library_id = current.loaded.library_id();
-    let candidates = match library.take_album_release_lookups(&current.loaded, LOOKUP_LIMIT) {
+    let library_id = current.library.library_id();
+    let candidates = match current.library.take_album_release_lookups(LOOKUP_LIMIT) {
         Ok(candidates) => candidates,
         Err(error) => {
             warn!(%error, %source_id, "could not read album release lookup candidates");
@@ -79,13 +78,16 @@ pub(crate) fn run_selected_album_release_lookup(
         if !lookup_allowed(&settings, &cancelled) {
             break;
         }
-        let Some(current) = selected.snapshot() else {
+        let Some(current) = selected.upgrade().and_then(|selected| selected.resolve()) else {
             break;
         };
-        if current.loaded.library_id() != library_id {
+        if current.library.library_id() != library_id {
             break;
         }
-        match library.accept_album_release_result(&current.loaded, candidate, result) {
+        match current
+            .library
+            .accept_album_release_result(candidate, result)
+        {
             Ok(Some(change)) if lookup_allowed(&settings, &cancelled) => {
                 let _ = events.try_send(SourceEvent::LibraryUpdate(SelectedLibraryUpdate {
                     source_id: source_id.clone(),

@@ -4,7 +4,7 @@ use std::{
     sync::Arc,
 };
 
-use ::library::{AlbumDetail, AlbumId, AlbumSummary, FavoriteItemId, LoadedLibrary, MusicFolderId};
+use ::library::{AlbumDetail, AlbumId, AlbumSummary, FavoriteItemId, Library, MusicFolderId};
 use adw::prelude::*;
 use artwork::ArtworkBinding;
 
@@ -62,7 +62,7 @@ impl Shell {
         self: &Rc<Self>,
         album_id: AlbumId,
         detail: Option<AlbumDetail>,
-        loaded: Arc<LoadedLibrary>,
+        loaded: Arc<Library>,
         music_folder_id: Option<MusicFolderId>,
     ) -> MountedRoute {
         let Some(detail) = detail else {
@@ -490,7 +490,7 @@ impl Shell {
 }
 
 pub(crate) fn load_album_detail(
-    loaded: &Arc<LoadedLibrary>,
+    loaded: &Arc<Library>,
     album_id: &AlbumId,
     music_folder_id: Option<&MusicFolderId>,
     settings: &LibraryListSettings,

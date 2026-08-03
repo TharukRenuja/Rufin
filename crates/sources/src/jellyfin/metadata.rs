@@ -10,6 +10,7 @@ use serde_json::{Map, Value, json};
 
 use super::client::{JellyfinUser, endpoint};
 use super::item::ItemQueryResult;
+use super::refresh::PageState;
 use super::{JellyfinSource, SourceError, SourceResult};
 
 const TRACK_FIELDS: [MetadataField; 11] = [
@@ -219,8 +220,7 @@ impl JellyfinSource {
         let Some((filter, item_types)) = related else {
             return Ok(ids.into_iter().collect());
         };
-        let limit = super::COLLECTION_PAGE_SIZE;
-        let mut offset = 0;
+        let mut pages = PageState::default();
         loop {
             let mut url = endpoint(&self.base_url, "Items")?;
             url.query_pairs_mut()
@@ -228,18 +228,13 @@ impl JellyfinSource {
                 .append_pair("Recursive", "true")
                 .append_pair("IncludeItemTypes", item_types)
                 .append_pair(filter, raw_id)
-                .append_pair("StartIndex", &offset.to_string())
-                .append_pair("Limit", &limit.to_string());
+                .append_pair("StartIndex", &pages.offset().to_string())
+                .append_pair("Limit", &super::COLLECTION_PAGE_SIZE.to_string());
             let response = self.get_json::<ItemQueryResult>(url).await?;
             let returned = response.items.len();
+            let finished = pages.advance(returned, response.total_record_count)?;
             ids.extend(response.items.into_iter().map(|item| item.id));
-            offset += returned;
-            if returned == 0
-                || returned < limit
-                || response
-                    .total_record_count
-                    .is_some_and(|total| offset >= total)
-            {
+            if finished {
                 break;
             }
         }

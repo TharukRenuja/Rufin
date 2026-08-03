@@ -1,19 +1,19 @@
 use crate::config::{decode_provider_payload, require_payload_version};
+use crate::policy::{raw_item_id, stable_hash, u16_from_option};
 use crate::{
-    ConnectedSource, CredentialHostInput, CredentialSettingsInput, GeneratedTracksRequest,
-    ImageBytes, LyricsSearch, NativeLyricAgent, NativeLyricAgentRole, NativeLyricCue,
-    NativeLyricCueLine, NativeLyricLine, NativeLyrics, NativeLyricsDocument, NativeLyricsOrigin,
-    NativeLyricsRole, PlaybackReport, PlaybackReportKind, PlayedFilter, RandomTrackRequest,
-    SourceConfiguration, SourceEditResult, SourceError, SourceResult, StreamDescriptor,
-    StreamRequest,
+    ConnectedSource, CredentialHostInput, CredentialSettingsInput, ImageBytes, LyricsSearch,
+    NativeLyricAgent, NativeLyricAgentRole, NativeLyricCue, NativeLyricCueLine, NativeLyricLine,
+    NativeLyrics, NativeLyricsDocument, NativeLyricsRole, SourceConfiguration, SourceEditResult,
+    SourceError, SourceResult,
 };
 use library::{
     Album, AlbumId, AlbumRelations, Artist, ArtistCredit, ArtistId, FavoriteItemId, Folder,
     FolderId, Genre, GenreCredit, GenreId, HomeItemId, ImageRef, MoodCredit, MoodId, MusicFolder,
-    MusicFolderId, Playlist, PlaylistEntry, PlaylistId, PlaylistSnapshot, SourceHomeSection,
-    SourceHomeSectionKind, SourceId, Track, TrackData, TrackId, TrackRelations,
-    normalize_release_types,
+    MusicFolderId, PlayedFilter, Playlist, PlaylistEntry, PlaylistId, PlaylistSnapshot, RadioSeed,
+    RandomCriteria, ResolvedStream, SourceHomeSection, SourceHomeSectionKind, SourceId,
+    StreamRequest, Track, TrackData, TrackId, TrackRelations, normalize_release_types,
 };
+use playback::{SourceReportFact, SourceReportPhase};
 use reqwest::{Client, Url};
 use serde::Deserialize;
 use std::sync::Arc;
@@ -172,15 +172,14 @@ pub(crate) async fn edit(
         )
         .await?;
         let next = SubsonicSourceConfig::from_configuration(&authenticated.configuration)?;
-        return if saved.same_account(&next)? {
-            Ok(SourceEditResult::SameAccount(
-                authenticated.connected(Some(current.source_id)),
-            ))
+        let source_id = if saved.same_account(&next)? {
+            Some(current.source_id)
         } else {
-            Ok(SourceEditResult::DifferentAccount(
-                authenticated.connected(None),
-            ))
+            None
         };
+        return Ok(SourceEditResult::Connected(Box::new(
+            authenticated.connected(source_id),
+        )));
     }
 
     let reopen = credentials.trust_invalid_cert != saved.trust_invalid_cert;
@@ -203,10 +202,8 @@ pub(crate) async fn edit(
         return Ok(SourceEditResult::ConfigurationOnly(configuration));
     }
     let source = open(&configuration, current_credential)?;
-    Ok(SourceEditResult::SameAccount(ConnectedSource::subsonic(
-        configuration,
-        source,
-        None,
+    Ok(SourceEditResult::Connected(Box::new(
+        ConnectedSource::subsonic(configuration, source, None),
     )))
 }
 

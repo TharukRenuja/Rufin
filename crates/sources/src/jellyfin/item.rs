@@ -8,6 +8,8 @@ use library::{
 };
 use serde::Deserialize;
 
+use crate::policy::{normalized_date, u16_from_option};
+
 use super::{jellyfin_id, stable_hash};
 
 pub(super) const ALBUM_FIELDS: &str = "Genres,DateCreated,PremiereDate,ProductionYear,RunTimeTicks,AlbumArtists,ArtistItems,ProviderIds,UserData,ImageTags,BackdropImageTags,ParentBackdropItemId,ParentBackdropImageTags,ChildCount";
@@ -349,10 +351,6 @@ fn duration_seconds(ticks: Option<i64>) -> u32 {
         .unwrap_or(0)
 }
 
-fn u16_from_option(value: Option<i32>) -> u16 {
-    value.unwrap_or_default().clamp(0, i32::from(u16::MAX)) as u16
-}
-
 fn favorite(user_data: &Option<UserData>) -> bool {
     user_data
         .as_ref()
@@ -372,20 +370,6 @@ fn user_rating(user_data: &Option<UserData>) -> Option<u8> {
         .as_ref()
         .and_then(|data| data.rating)
         .map(|value| value.clamp(0, i32::from(u8::MAX)) as u8)
-}
-
-fn normalized_date(value: Option<String>) -> Option<String> {
-    let value = value?.trim().to_string();
-    if value.is_empty() {
-        return None;
-    }
-    if let Some(prefix) = value.get(..10)
-        && prefix.as_bytes().get(4) == Some(&b'-')
-        && prefix.as_bytes().get(7) == Some(&b'-')
-    {
-        return Some(prefix.to_string());
-    }
-    Some(value)
 }
 
 fn normalized_timestamp(value: Option<String>) -> Option<String> {

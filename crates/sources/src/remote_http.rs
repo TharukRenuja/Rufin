@@ -270,6 +270,14 @@ async fn response_bytes_bounded(
     Ok(bytes)
 }
 
+pub(crate) async fn bounded_response_body(
+    response: reqwest::Response,
+    policy: RemoteHttpPolicy,
+    limit: BodyLimit,
+) -> SourceResult<Vec<u8>> {
+    response_bytes_bounded(response, policy, limit, None).await
+}
+
 struct CheckedResponse {
     response: reqwest::Response,
     request: RequestMetadata,

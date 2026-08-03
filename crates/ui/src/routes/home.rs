@@ -619,10 +619,12 @@ impl Shell {
             next_view.shift(HomeSectionPageDirection::Next);
         });
         let refresh_view = presentation;
-        let source = self.products.source.clone();
+        let source = self.selected_source_operations();
         refresh.connect_clicked(move |_| {
             refresh_view.reset_page();
-            source.refresh_home(section_kind);
+            if let Some(source) = source.as_ref() {
+                source.refresh_home(section_kind);
+            }
         });
         view
     }

@@ -1,4 +1,5 @@
 use super::*;
+use crate::policy::normalized_date;
 
 pub(super) fn image_ref(
     source: &SubsonicSource,
@@ -312,20 +313,6 @@ pub(super) fn genre_from_dto(source: &SubsonicSource, genre: SubsonicGenre) -> G
         image_ref: None,
     }
 }
-pub(super) fn normalized_date(value: Option<String>) -> Option<String> {
-    let value = value?.trim().to_string();
-    if value.is_empty() {
-        return None;
-    }
-    if let Some(prefix) = value.get(..10)
-        && prefix.as_bytes().get(4) == Some(&b'-')
-        && prefix.as_bytes().get(7) == Some(&b'-')
-    {
-        return Some(prefix.to_string());
-    }
-    Some(value)
-}
-
 fn normalized_timestamp(value: Option<String>) -> Option<String> {
     value
         .map(|value| value.trim().to_string())

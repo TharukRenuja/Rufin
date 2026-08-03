@@ -146,7 +146,7 @@ where
                 .and_then(|item| item_at_from_item::<PlaylistSummary>(&item))
                 .is_some_and(|playlist| {
                     selected
-                        .loaded
+                        .library
                         .is_playlist_downloaded(&playlist.playlist.id)
                         .unwrap_or(false)
                 })
@@ -175,7 +175,7 @@ where
                 .as_ref()
                 .is_some_and(|selected| {
                     selected
-                        .loaded
+                        .library
                         .is_playlist_downloaded(&playlist.playlist.id)
                         .unwrap_or(false)
                 }),
@@ -258,7 +258,7 @@ where
                 .and_then(|item| item_at_from_item::<SmartPlaylistSummary>(&item))
                 .is_some_and(|playlist| {
                     selected
-                        .loaded
+                        .library
                         .is_smart_playlist_downloaded(
                             &playlist.smart_playlist.id,
                             selected.music_folder_id.as_ref(),
@@ -290,7 +290,7 @@ where
                 .as_ref()
                 .is_some_and(|selected| {
                     selected
-                        .loaded
+                        .library
                         .is_smart_playlist_downloaded(
                             &playlist.smart_playlist.id,
                             selected.music_folder_id.as_ref(),
@@ -438,7 +438,7 @@ pub(super) fn track_is_downloaded(shell: &Shell, track: &Track) -> bool {
         .selected
         .borrow()
         .as_ref()
-        .is_some_and(|selected| selected.loaded.is_downloaded(&track.id).unwrap_or(false))
+        .is_some_and(|selected| selected.library.is_downloaded(&track.id).unwrap_or(false))
 }
 
 fn album_is_downloaded(shell: &Shell, album: &AlbumSummary) -> bool {
@@ -449,7 +449,7 @@ fn album_is_downloaded(shell: &Shell, album: &AlbumSummary) -> bool {
         .as_ref()
         .is_some_and(|selected| {
             selected
-                .loaded
+                .library
                 .is_album_downloaded(&album.album.id, selected.music_folder_id.as_ref())
                 .unwrap_or(false)
         })
@@ -877,7 +877,7 @@ where
         let downloaded = setup_shell.download_badge(true, move |selected| {
             downloaded_album.borrow().as_ref().is_some_and(|album| {
                 selected
-                    .loaded
+                    .library
                     .is_album_downloaded(&album.album.id, selected.music_folder_id.as_ref())
                     .unwrap_or(false)
             })
@@ -978,7 +978,7 @@ pub(crate) fn album_merged_column(
         let downloaded = setup_shell.download_badge(true, move |selected| {
             downloaded_album.borrow().as_ref().is_some_and(|album| {
                 selected
-                    .loaded
+                    .library
                     .is_album_downloaded(&album.album.id, selected.music_folder_id.as_ref())
                     .unwrap_or(false)
             })
@@ -1298,7 +1298,7 @@ where
                 .and_then(|item| item_at_from_item::<ArtistSummary>(&item))
                 .is_some_and(|artist| {
                     selected
-                        .loaded
+                        .library
                         .is_artist_downloaded(&artist.artist.id, selected.music_folder_id.as_ref())
                         .unwrap_or(false)
                 })
@@ -1329,7 +1329,7 @@ where
                 .as_ref()
                 .is_some_and(|selected| {
                     selected
-                        .loaded
+                        .library
                         .is_artist_downloaded(&artist.artist.id, selected.music_folder_id.as_ref())
                         .unwrap_or(false)
                 }),
@@ -1558,7 +1558,7 @@ where
                 downloaded_track
                     .borrow()
                     .as_ref()
-                    .is_some_and(|track| selected.loaded.is_downloaded(&track.id).unwrap_or(false))
+                    .is_some_and(|track| selected.library.is_downloaded(&track.id).unwrap_or(false))
             });
             row.append(&downloaded);
             downloaded
@@ -1686,7 +1686,7 @@ where
             downloaded_track
                 .borrow()
                 .as_ref()
-                .is_some_and(|track| selected.loaded.is_downloaded(&track.id).unwrap_or(false))
+                .is_some_and(|track| selected.library.is_downloaded(&track.id).unwrap_or(false))
         });
         title_row.append(&downloaded);
         labels.append(&title_row);

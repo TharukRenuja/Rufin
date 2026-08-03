@@ -604,7 +604,7 @@ impl TrackGridCell {
             downloaded_track
                 .borrow()
                 .as_ref()
-                .is_some_and(|track| selected.loaded.is_downloaded(&track.id).unwrap_or(false))
+                .is_some_and(|track| selected.library.is_downloaded(&track.id).unwrap_or(false))
         }));
         install_dynamic_track_context_menu(&body.card, &shell, Rc::clone(&current_track));
 
@@ -645,7 +645,7 @@ impl ReusableCollectionGridCell<Track> for TrackGridCell {
                 .selected
                 .borrow()
                 .as_ref()
-                .is_some_and(|selected| selected.loaded.is_downloaded(&track.id).unwrap_or(false)),
+                .is_some_and(|selected| selected.library.is_downloaded(&track.id).unwrap_or(false)),
         );
         set_favorite_button_active(&self.favorite, track.favorite);
         *self.current_track.borrow_mut() = Some(track);
@@ -800,7 +800,7 @@ impl AlbumGridCell {
         body.set_download_badge(shell.download_badge(true, move |selected| {
             downloaded_album.borrow().as_ref().is_some_and(|album| {
                 selected
-                    .loaded
+                    .library
                     .is_album_downloaded(&album.album.id, selected.music_folder_id.as_ref())
                     .unwrap_or(false)
             })
@@ -856,7 +856,7 @@ impl ReusableCollectionGridCell<AlbumSummary> for AlbumGridCell {
                 .as_ref()
                 .is_some_and(|selected| {
                     selected
-                        .loaded
+                        .library
                         .is_album_downloaded(&album.album.id, selected.music_folder_id.as_ref())
                         .unwrap_or(false)
                 }),
@@ -1009,7 +1009,7 @@ impl ArtistGridCell {
         body.set_download_badge(shell.download_badge(true, move |selected| {
             downloaded_artist.borrow().as_ref().is_some_and(|artist| {
                 selected
-                    .loaded
+                    .library
                     .is_artist_downloaded(&artist.artist.id, selected.music_folder_id.as_ref())
                     .unwrap_or(false)
             })
@@ -1051,7 +1051,7 @@ impl ReusableCollectionGridCell<ArtistSummary> for ArtistGridCell {
                 .as_ref()
                 .is_some_and(|selected| {
                     selected
-                        .loaded
+                        .library
                         .is_artist_downloaded(&artist.artist.id, selected.music_folder_id.as_ref())
                         .unwrap_or(false)
                 }),
@@ -1173,7 +1173,7 @@ impl PlaylistGridCell {
                 .as_ref()
                 .is_some_and(|playlist| {
                     selected
-                        .loaded
+                        .library
                         .is_playlist_downloaded(&playlist.playlist.id)
                         .unwrap_or(false)
                 })
@@ -1222,7 +1222,7 @@ impl ReusableCollectionGridCell<PlaylistSummary> for PlaylistGridCell {
                 .as_ref()
                 .is_some_and(|selected| {
                     selected
-                        .loaded
+                        .library
                         .is_playlist_downloaded(&playlist.playlist.id)
                         .unwrap_or(false)
                 }),
@@ -1346,7 +1346,7 @@ impl SmartPlaylistGridCell {
                 .as_ref()
                 .is_some_and(|playlist| {
                     selected
-                        .loaded
+                        .library
                         .is_smart_playlist_downloaded(
                             &playlist.smart_playlist.id,
                             selected.music_folder_id.as_ref(),
@@ -1397,7 +1397,7 @@ impl ReusableCollectionGridCell<SmartPlaylistSummary> for SmartPlaylistGridCell 
                 .as_ref()
                 .is_some_and(|selected| {
                     selected
-                        .loaded
+                        .library
                         .is_smart_playlist_downloaded(
                             &playlist.smart_playlist.id,
                             selected.music_folder_id.as_ref(),
@@ -1544,7 +1544,7 @@ fn install_dynamic_smart_playlist_drop_target(
     playlist: Rc<RefCell<Option<SmartPlaylistSummary>>>,
 ) {
     let widget = target.as_ref().downgrade();
-    let smart_playlists = shell.products.smart_playlists.clone();
+    let source = shell.selected_source_operations();
     let drop_target = gtk::DropTarget::new(String::static_type(), gtk::gdk::DragAction::MOVE);
     drop_target.connect_drop(move |_, value, _, y| {
         let Ok(dragged_id) = value.get::<String>() else {
@@ -1561,11 +1561,14 @@ fn install_dynamic_smart_playlist_drop_target(
         if dragged_id == target_id {
             return false;
         }
+        let Some(source) = source.as_ref() else {
+            return false;
+        };
         let Some(widget) = widget.upgrade() else {
             return false;
         };
         let after = y > f64::from(widget.height()) / 2.0;
-        smart_playlists.move_relative(dragged_id, target_id, after);
+        source.move_smart_playlist(dragged_id, target_id, after);
         true
     });
     target.add_controller(drop_target);

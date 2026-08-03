@@ -1,4 +1,4 @@
-//! Native-first radio composition with one common LoadedLibrary fallback.
+//! Native-first radio composition with one common Library fallback.
 //!
 //! Sources acquire native recommendations. Library admits them, deduplicates
 //! every stage, and underfills from genre, artist, then the complete selected
@@ -9,8 +9,8 @@ use std::collections::{HashMap, HashSet};
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    AlbumId, ArtistId, GenreId, LoadedLibrary, LoadedLibraryError, MusicFolderId, PlaylistId,
-    Track, TrackId,
+    AlbumId, ArtistId, GenreId, Library, LibraryQueryError, MusicFolderId, PlaylistId, Track,
+    TrackId,
     loaded::{AlbumSlot, LoadedItems, LoadedState, TrackSlot},
 };
 
@@ -26,39 +26,38 @@ pub enum RadioSeed {
     Playlist(PlaylistId),
 }
 
-#[derive(Clone, Debug)]
-pub enum NativeRadioResult {
-    Candidates(Vec<Track>),
-    Unavailable,
-}
-
-#[derive(Clone, Debug)]
-pub struct RadioComposition {
-    pub seed: RadioSeed,
-    pub native: NativeRadioResult,
-    pub excluded_track_ids: Vec<TrackId>,
-    pub limit: usize,
-    pub include_seed_track: bool,
-    pub variation: u64,
-}
-
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub enum RandomPlayedFilter {
+pub enum PlayedFilter {
     #[default]
     All,
     Unplayed,
     Played,
 }
 
-#[derive(Clone, Debug)]
-pub struct RandomComposition {
-    pub native: Vec<Track>,
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RandomCriteria {
     pub limit: usize,
     pub min_year: Option<u16>,
     pub max_year: Option<u16>,
     pub genre_id: Option<GenreId>,
     pub genre_name: Option<String>,
-    pub played: RandomPlayedFilter,
+    pub played_filter: PlayedFilter,
+}
+
+#[derive(Clone, Debug)]
+pub struct RadioComposition {
+    pub seed: RadioSeed,
+    pub native: Option<Vec<Track>>,
+    pub excluded_track_ids: Vec<TrackId>,
+    pub limit: usize,
+    pub include_seed_track: bool,
+    pub variation: u64,
+}
+
+#[derive(Clone, Debug)]
+pub struct RandomComposition {
+    pub native: Vec<Track>,
+    pub criteria: RandomCriteria,
     pub music_folder_id: Option<MusicFolderId>,
     pub variation: u64,
 }
@@ -70,15 +69,16 @@ pub enum RadioUnavailable {
     #[error("no matching radio tracks were found")]
     Empty,
     #[error(transparent)]
-    Loaded(#[from] LoadedLibraryError),
+    Query(#[from] LibraryQueryError),
 }
 
-impl LoadedLibrary {
+impl Library {
     pub fn compose_random(
         &self,
         request: RandomComposition,
-    ) -> Result<Vec<Track>, LoadedLibraryError> {
-        let limit = request.limit.clamp(1, 500);
+    ) -> Result<Vec<Track>, LibraryQueryError> {
+        let criteria = request.criteria;
+        let limit = criteria.limit.clamp(1, 500);
         let state = self.read_state()?;
         let mut seen = HashSet::new();
         let mut tracks = Vec::with_capacity(limit);
@@ -112,29 +112,29 @@ impl LoadedLibrary {
             {
                 continue;
             }
-            if !request.min_year.is_none_or(|year| track.year >= year)
-                || !request.max_year.is_none_or(|year| track.year <= year)
+            if !criteria.min_year.is_none_or(|year| track.year >= year)
+                || !criteria.max_year.is_none_or(|year| track.year <= year)
             {
                 continue;
             }
-            if !request
+            if !criteria
                 .genre_id
                 .as_ref()
                 .is_none_or(|genre_id| track_has_genre_id(&state, track, genre_id))
             {
                 continue;
             }
-            if !request
+            if !criteria
                 .genre_name
                 .as_deref()
                 .is_none_or(|genre_name| track_has_genre_name(&state, track, genre_name))
             {
                 continue;
             }
-            if !match request.played {
-                RandomPlayedFilter::All => true,
-                RandomPlayedFilter::Unplayed => track.play_count.unwrap_or_default() == 0,
-                RandomPlayedFilter::Played => track.play_count.unwrap_or_default() > 0,
+            if !match criteria.played_filter {
+                PlayedFilter::All => true,
+                PlayedFilter::Unplayed => track.play_count.unwrap_or_default() == 0,
+                PlayedFilter::Played => track.play_count.unwrap_or_default() > 0,
             } {
                 continue;
             }
@@ -160,7 +160,7 @@ impl LoadedLibrary {
         let mut seen = excluded.clone();
         let mut selected = Vec::with_capacity(limit);
 
-        if let NativeRadioResult::Candidates(candidates) = request.native {
+        if let Some(candidates) = request.native {
             let state = self.read_state()?;
             let mut admitted = Vec::with_capacity(candidate_limit);
             for track in candidates {
@@ -277,10 +277,7 @@ struct RadioContext {
     excluded_album: Option<AlbumId>,
 }
 
-fn radio_context(
-    loaded: &LoadedLibrary,
-    seed: &RadioSeed,
-) -> Result<RadioContext, RadioUnavailable> {
+fn radio_context(loaded: &Library, seed: &RadioSeed) -> Result<RadioContext, RadioUnavailable> {
     let state = loaded.read_state()?;
     let context = match seed {
         RadioSeed::Track(track_id) => {

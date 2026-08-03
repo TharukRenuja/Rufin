@@ -3,7 +3,7 @@
 //! Now-playing and source-native reports remain transient. Only a qualified
 //! completed play that an external service has not accepted belongs here.
 
-use crate::{Library, LibraryResult};
+use crate::{Libraries, LibraryResult};
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum ScrobbleService {
@@ -60,7 +60,7 @@ pub struct NewScrobble {
     pub started_at: i64,
 }
 
-impl Library {
+impl Libraries {
     /// Persists one qualified play for all configured external services.
     pub fn queue_scrobbles(&self, scrobbles: Vec<NewScrobble>) -> LibraryResult<usize> {
         for scrobble in &scrobbles {
