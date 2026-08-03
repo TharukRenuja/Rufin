@@ -7,7 +7,7 @@ use crate::runtime::{ReleaseHistory, ReleaseNote, ReleaseUpdate, ReleaseUpdateHa
 use crate::shell::Shell;
 use adw::prelude::*;
 use gtk::glib;
-use localization::{tr, tr_with, trn_with};
+use localization::{tr, trn_with};
 use tracing::warn;
 
 const RELEASE_NOTES_POPUP_WIDTH: i32 = 700;
@@ -360,15 +360,8 @@ pub(crate) fn apply_release_update(shell: &Rc<Shell>, update: ReleaseUpdate) {
             dismiss_release_notification(shell);
             *shell.preferences.release_updating.borrow_mut() = Some(version);
             refresh_open_release_notes(shell);
-            shell
-                .chrome
-                .toast_overlay
-                .add_toast(adw::Toast::new(&tr("Updating Rufin…")));
         }
-        ReleaseUpdate::Updated {
-            version,
-            restart_required,
-        } => {
+        ReleaseUpdate::Updated { version, .. } => {
             dismiss_release_notification(shell);
             clear_updating_version(shell, &version);
             {
@@ -377,24 +370,11 @@ pub(crate) fn apply_release_update(shell: &Rc<Shell>, update: ReleaseUpdate) {
                 history.available_version = None;
             }
             refresh_open_release_notes(shell);
-            let message = if restart_required {
-                tr("✨ A new release is installed. Update to use the new version")
-            } else {
-                tr("✨ A new release is installed")
-            };
-            shell
-                .chrome
-                .toast_overlay
-                .add_toast(adw::Toast::new(&message));
         }
         ReleaseUpdate::Failed { version, error } => {
             clear_updating_version(shell, &version);
             refresh_open_release_notes(shell);
             warn!(%version, %error, "Rufin update failed");
-            let message = tr_with("Rufin could not update: {error}", &[("error", &error)]);
-            let toast = adw::Toast::new(&message);
-            toast.set_timeout(0);
-            shell.chrome.toast_overlay.add_toast(toast);
         }
         ReleaseUpdate::Restarting { version } => {
             dismiss_release_notification(shell);

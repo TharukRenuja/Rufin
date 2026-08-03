@@ -615,7 +615,6 @@ impl Shell {
                 }
                 self.chrome.login_host.append(&view);
             }
-            self.show_reconnect_notice_if_needed();
             return;
         }
         self.render_current_route_content();

@@ -141,7 +141,6 @@ struct EditorState {
     identify: gtk::Button,
     cancel: gtk::Button,
     status: gtk::Label,
-    app_toasts: adw::ToastOverlay,
     external_lookup_allowed: bool,
     saving: Cell<bool>,
     identifying: Cell<bool>,
@@ -266,7 +265,6 @@ fn build_dialog(
         identify,
         cancel,
         status,
-        app_toasts: shell.chrome.toast_overlay.clone(),
         external_lookup_allowed,
         saving: Cell::new(false),
         identifying: Cell::new(false),
@@ -778,7 +776,8 @@ fn restore_touched_state(
 }
 
 fn show_error(state: &EditorState, error: &str) {
-    state.app_toasts.add_toast(adw::Toast::new(error));
+    state.status.set_text(error);
+    state.status.set_visible(true);
 }
 
 fn identification_values(state: &EditorState) -> MetadataValues {

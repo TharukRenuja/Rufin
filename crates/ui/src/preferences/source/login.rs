@@ -26,7 +26,6 @@ use localization::{msgid, tr, tr_with};
 const ADD_SERVER_CLAMP_WIDTH: i32 = 560;
 const SETUP_FORM_PAGE: &str = "form";
 const SETUP_PROGRESS_PAGE: &str = "progress";
-const RECONNECT_NOTICE: &str = "Connect once more to continue using this server.";
 const JELLYFIN_SOURCE_KIND: &str = "jellyfin";
 const LOCAL_SOURCE_KIND: &str = "local";
 
@@ -418,31 +417,6 @@ impl Shell {
             .then(|| self.products.source.configured_source(&source.id).ok())
             .flatten()
             .flatten()
-    }
-
-    pub(crate) fn show_reconnect_notice_if_needed(&self) {
-        let SourceOperation::Failed {
-            source_id: Some(source_id),
-            add_form: true,
-            ..
-        } = &*self.source.operation.borrow()
-        else {
-            return;
-        };
-        let configured = self.source.configured.borrow();
-        let Some(source) = configured
-            .sources
-            .iter()
-            .find(|source| &source.id == source_id)
-        else {
-            return;
-        };
-        if source_presentation(&source.kind).is_none() {
-            return;
-        }
-        self.chrome
-            .quick_toast_overlay
-            .add_toast(adw::Toast::new(&tr(RECONNECT_NOTICE)));
     }
 
     fn begin_source_add_loading(self: &Rc<Self>) {

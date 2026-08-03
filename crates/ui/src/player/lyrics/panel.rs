@@ -502,8 +502,6 @@ impl Shell {
             dialog
                 .status
                 .set_text(&format!("{} {}", tr("Saved to"), path.display()));
-        } else {
-            self.show_notice_toast(&format!("{} {}", tr("Saved to"), path.display()));
         }
     }
 }

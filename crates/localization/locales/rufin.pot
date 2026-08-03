@@ -1426,10 +1426,6 @@ msgstr ""
 msgid "Rows"
 msgstr ""
 
-#, rust-format
-msgid "Rufin could not update: {error}"
-msgstr ""
-
 msgid "Rufin is running in the tray"
 msgstr ""
 
@@ -1770,9 +1766,6 @@ msgstr ""
 msgid "Update"
 msgstr ""
 
-msgid "Updating Rufin\342\200\246"
-msgstr ""
-
 msgid "Use Jellyfin Instant Mix for recommendations"
 msgstr ""
 
@@ -1831,12 +1824,6 @@ msgid "Year"
 msgstr ""
 
 msgid "Yes"
-msgstr ""
-
-msgid "\342\234\250 A new release is installed"
-msgstr ""
-
-msgid "\342\234\250 A new release is installed. Update to use the new version"
 msgstr ""
 
 msgid "above"
