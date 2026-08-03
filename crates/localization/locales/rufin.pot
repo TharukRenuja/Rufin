@@ -342,6 +342,9 @@ msgstr ""
 msgid "Clear queue"
 msgstr ""
 
+msgid "Close app window"
+msgstr ""
+
 msgid "Close fullscreen player"
 msgstr ""
 
@@ -1268,6 +1271,9 @@ msgid "Queue"
 msgstr ""
 
 msgid "Queued"
+msgstr ""
+
+msgid "Quit Rufin"
 msgstr ""
 
 msgid "Quit"
