@@ -84,6 +84,7 @@ mod scrobbles;
 mod search;
 pub mod smart_playlists;
 mod store;
+mod stream;
 
 pub use activity::*;
 pub use album_release::*;
@@ -109,6 +110,7 @@ pub use smart_playlists::{
     SmartPlaylistSummary,
 };
 pub use store::StoreRepairReport;
+pub use stream::*;
 
 #[derive(Debug, Error)]
 pub enum LibraryError {

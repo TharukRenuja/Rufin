@@ -5,15 +5,14 @@ use crate::{
     ImageBytes, LyricsSearch, NativeLyricAgent, NativeLyricAgentRole, NativeLyricCue,
     NativeLyricCueLine, NativeLyricLine, NativeLyrics, NativeLyricsDocument, NativeLyricsOrigin,
     NativeLyricsRole, PlaybackReport, PlaybackReportKind, PlayedFilter, RandomTrackRequest,
-    SourceConfiguration, SourceEditResult, SourceError, SourceResult, StreamDescriptor,
-    StreamRequest,
+    SourceConfiguration, SourceEditResult, SourceError, SourceResult,
 };
 use library::{
     Album, AlbumId, AlbumRelations, Artist, ArtistCredit, ArtistId, FavoriteItemId, Folder,
     FolderId, Genre, GenreCredit, GenreId, HomeItemId, ImageRef, MoodCredit, MoodId, MusicFolder,
-    MusicFolderId, Playlist, PlaylistEntry, PlaylistId, PlaylistSnapshot, SourceHomeSection,
-    SourceHomeSectionKind, SourceId, Track, TrackData, TrackId, TrackRelations,
-    normalize_release_types,
+    MusicFolderId, Playlist, PlaylistEntry, PlaylistId, PlaylistSnapshot, ResolvedStream,
+    SourceHomeSection, SourceHomeSectionKind, SourceId, StreamRequest, Track, TrackData, TrackId,
+    TrackRelations, normalize_release_types,
 };
 use reqwest::{Client, Url};
 use serde::Deserialize;

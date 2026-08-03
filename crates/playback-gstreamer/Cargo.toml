@@ -13,6 +13,7 @@ publish.workspace = true
 [dependencies]
 gstreamer = { workspace = true, features = ["v1_26"] }
 gstreamer-audio = { workspace = true, features = ["v1_26"] }
+library.workspace = true
 playback.workspace = true
 rustfft.workspace = true
 tracing.workspace = true

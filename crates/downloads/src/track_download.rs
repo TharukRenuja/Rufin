@@ -3,20 +3,18 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
-use library::{Library, SourceId, Track, TrackId};
+use library::{Library, SourceId, StreamQuality, StreamRequest, Track, TrackId};
 use reqwest::header::{
     ACCEPT_ENCODING, CONTENT_ENCODING, CONTENT_LENGTH, CONTENT_RANGE, DATE, ETAG, IF_RANGE,
     LAST_MODIFIED, RANGE,
 };
 use serde::{Deserialize, Serialize};
-use sources::{
-    NativeSourceResult, Source, SourceError, SourceResult, StreamQuality, StreamRequest,
-};
+use sources::{NativeSourceResult, Source, SourceError, SourceResult};
 use tokio::io::AsyncWriteExt;
 use tokio::sync::oneshot;
 use tracing::warn;
 
-use crate::{DownloadOwner, DownloadQuality};
+use crate::DownloadOwner;
 
 pub(super) const RECORD_VERSION: u32 = 3;
 pub(super) const AUDIO_EXTENSION: &str = "audio";
@@ -560,7 +558,7 @@ fn download_request_error(error: reqwest::Error) -> SourceError {
 pub(super) async fn run_transfer(
     source: &Source,
     track_id: TrackId,
-    quality: DownloadQuality,
+    quality: StreamQuality,
     paths: &DownloadPaths,
     transfers: &TransferClients,
     mut cancellation: oneshot::Receiver<()>,
@@ -582,10 +580,6 @@ pub(super) async fn run_transfer(
     remove_file_if_present(&paths.record_part)
         .await
         .map_err(SourceError::Other)?;
-    let quality = match quality {
-        DownloadQuality::Original => StreamQuality::Original,
-        DownloadQuality::MaxBitrateKbps(value) => StreamQuality::MaxBitrateKbps(value),
-    };
     let request = StreamRequest::new(track_id, quality);
     let NativeSourceResult::Available(()) = transfers
         .download_cancellable(source, &request, paths, &mut cancellation)
@@ -881,7 +875,7 @@ pub(super) fn new_download_paths(
     source_id: &SourceId,
     track: &Track,
     directory: Option<&Path>,
-    quality: DownloadQuality,
+    quality: StreamQuality,
 ) -> DownloadPaths {
     let mut paths = staging_paths(root, source_id, &track.id, directory);
     let audio_root = directory
@@ -978,8 +972,8 @@ fn safe_path_component(value: &str, fallback: &str) -> String {
     }
 }
 
-fn download_extension(track: &Track, quality: DownloadQuality) -> String {
-    if matches!(quality, DownloadQuality::MaxBitrateKbps(_)) {
+fn download_extension(track: &Track, quality: StreamQuality) -> String {
+    if matches!(quality, StreamQuality::MaxBitrateKbps(_)) {
         return "mp3".to_string();
     }
     let extension = track
@@ -1258,7 +1252,7 @@ mod tests {
             run_transfer(
                 &source,
                 track_id,
-                DownloadQuality::Original,
+                StreamQuality::Original,
                 &task_paths,
                 &TransferClients::default(),
                 cancelled,

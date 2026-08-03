@@ -516,8 +516,8 @@ fn operation_feedback_subtitle(kind: &OperationFeedbackKind, count: &str) -> Str
 
 #[cfg(test)]
 mod tests {
-    use downloads::{DownloadQuality, DownloadQueueItem, DownloadQueueState, DownloadSubject};
-    use library::{SourceId, TrackId};
+    use downloads::{DownloadQueueItem, DownloadQueueState, DownloadSubject};
+    use library::{SourceId, StreamQuality, TrackId};
 
     use super::{OperationFeedbackKind, operation_feedback_subtitle, reorder_queue_items};
 
@@ -552,7 +552,7 @@ mod tests {
                 id: id.to_string(),
                 source_id: source_id.clone(),
                 subject: DownloadSubject::Track(TrackId::fake(index)),
-                quality: DownloadQuality::Original,
+                quality: StreamQuality::Original,
                 completed_tracks: 0,
                 total_tracks: 1,
                 state: if index == 0 {

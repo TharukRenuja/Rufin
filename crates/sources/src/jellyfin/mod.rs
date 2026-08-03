@@ -5,7 +5,7 @@ use crate::{
     JellyfinSettingsInput, JellyfinSetupInput, LyricsSearch, NativeLyricLine, NativeLyrics,
     NativeLyricsDocument, NativeLyricsOrigin, NativeLyricsRole, PlaybackReport, PlaybackReportKind,
     PlayedFilter, RandomTrackRequest, SourceConfiguration, SourceEditResult, SourceError,
-    SourceResult, StreamDescriptor, StreamRequest,
+    SourceResult,
 };
 pub use discovery::{DiscoveredJellyfinServer, discover_jellyfin_servers};
 use item::{
@@ -15,8 +15,8 @@ use item::{
 };
 use library::{
     AlbumId, FavoriteItemId, Folder, FolderId, HomeItemId, ImageRef, MusicFolder, MusicFolderId,
-    Playlist, PlaylistEntry, PlaylistId, PlaylistSnapshot, SourceHomeSection,
-    SourceHomeSectionKind, SourceId, Track, TrackId,
+    Playlist, PlaylistEntry, PlaylistId, PlaylistSnapshot, ResolvedStream, SourceHomeSection,
+    SourceHomeSectionKind, SourceId, StreamRequest, Track, TrackId,
 };
 use reqwest::{Client, Url, header};
 use serde::Deserialize;

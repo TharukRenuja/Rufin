@@ -16,7 +16,8 @@ use std::time::{Instant, SystemTime, UNIX_EPOCH};
 use async_channel::Sender as EventSender;
 use library::{
     AcceptedPlay, AcceptedSkip, Libraries, Library, PlayableFile, PlaybackLoad,
-    PlaybackOccurrenceId, PlaybackProgressUpdate, PlaybackStateUpdate, SourceId, Track, TrackId,
+    PlaybackOccurrenceId, PlaybackProgressUpdate, PlaybackStateUpdate, ResolvedStream, SourceId,
+    StreamRequest, Track, TrackId,
 };
 use playback::{
     LoadedPlayRequest, OccurrenceId, Playback, PlaybackBackend, PlaybackProjection, PlaybackUpdate,
@@ -25,7 +26,7 @@ use playback::{
     SourceReportFact, SourceReportPhase, SourceSessionEpoch, TransportCommandPort,
 };
 use scrobbling::Scrobbler;
-use sources::{NativeSourceResult, PlaybackReport, PlaybackReportKind, Source, StreamDescriptor};
+use sources::{NativeSourceResult, PlaybackReport, PlaybackReportKind, Source};
 use tracing::{debug, warn};
 use ui::runtime::PlaybackPublication;
 
@@ -1123,7 +1124,7 @@ impl PlaybackOwner {
         source_id: SourceId,
         source_session_epoch: SourceSessionEpoch,
         run: playback::RunId,
-        request: playback::StreamRequest,
+        request: StreamRequest,
     ) {
         let active = self.active_matching(instance, &source_id, source_session_epoch);
         let Some(active) = active else {
@@ -1328,7 +1329,7 @@ impl PlaybackOwner {
         let active = self.active_for_media(&media)?;
         let selected = active.selected()?;
         Some(WaveformMedia {
-            request: playback::StreamRequest::new(
+            request: StreamRequest::new(
                 media.track.id.clone(),
                 self.settings.playback_stream_quality(),
             ),
@@ -1602,8 +1603,8 @@ impl TransportCommandPort for PlaybackOwner {
 pub(crate) async fn prepare_stream(
     loaded: Option<Arc<library::Library>>,
     source: Option<Arc<Source>>,
-    request: playback::StreamRequest,
-) -> Result<playback::PreparedStream, String> {
+    request: StreamRequest,
+) -> Result<ResolvedStream, String> {
     let mut local_error = None;
     let local_file = loaded
         .map(|loaded| {
@@ -1629,35 +1630,17 @@ pub(crate) async fn prepare_stream(
 
 async fn source_stream(
     source: &Source,
-    request: playback::StreamRequest,
+    request: StreamRequest,
     unavailable_error: Option<String>,
-) -> Result<playback::PreparedStream, String> {
-    let request = sources::StreamRequest::new(
-        request.track_id,
-        match request.quality {
-            playback::StreamQuality::Original => sources::StreamQuality::Original,
-            playback::StreamQuality::MaxBitrateKbps(value) => {
-                sources::StreamQuality::MaxBitrateKbps(value)
-            }
-        },
-    );
+) -> Result<ResolvedStream, String> {
     match source.stream(&request).await.map_err(string_error)? {
-        NativeSourceResult::Available(stream) => Ok(prepared_source_stream(stream)),
+        NativeSourceResult::Available(stream) => Ok(stream),
         NativeSourceResult::Unavailable => Err(unavailable_error
             .unwrap_or_else(|| "the selected source cannot resolve this track".to_string())),
     }
 }
 
-fn prepared_source_stream(stream: StreamDescriptor) -> playback::PreparedStream {
-    let mut prepared = playback::PreparedStream::with_redacted(stream.uri(), stream.redacted_uri())
-        .with_trust_invalid_certificate(stream.trust_invalid_certificate());
-    if let Some(end) = stream.source_end_millis() {
-        prepared = prepared.with_source_window(stream.source_start_millis(), end);
-    }
-    prepared
-}
-
-fn prepared_local_stream(file: PlayableFile) -> Result<playback::PreparedStream, String> {
+fn prepared_local_stream(file: PlayableFile) -> Result<ResolvedStream, String> {
     let path = file.path();
     if !path.is_file() {
         return Err(format!(
@@ -1668,13 +1651,12 @@ fn prepared_local_stream(file: PlayableFile) -> Result<playback::PreparedStream,
     let url = url::Url::from_file_path(path)
         .map_err(|()| format!("could not create a file URI for {}", path.display()))?;
     Ok(match file {
-        PlayableFile::File { .. } => playback::PreparedStream::new(url.to_string()),
+        PlayableFile::File { .. } => ResolvedStream::new(url.to_string()),
         PlayableFile::Cue {
             start_millis,
             end_millis,
             ..
-        } => playback::PreparedStream::new(url.to_string())
-            .with_source_window(start_millis, end_millis),
+        } => ResolvedStream::new(url.to_string()).with_window(start_millis, end_millis),
     })
 }
 
@@ -2402,7 +2384,7 @@ mod loaded_play_tests {
             .block_on(prepare_stream(
                 Some(loaded),
                 Some(source),
-                playback::StreamRequest::new(TrackId::fake(9), playback::StreamQuality::Original),
+                StreamRequest::new(TrackId::fake(9), library::StreamQuality::Original),
             ))
             .expect_err("missing Local file");
 

@@ -10,8 +10,8 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use async_channel::Sender;
-use library::{Library, SourceId, TrackId};
-use playback::{CurrentMedia, CurrentMediaId, SourceSessionEpoch, StreamRequest};
+use library::{Library, SourceId, StreamRequest, TrackId};
+use playback::{CurrentMedia, CurrentMediaId, SourceSessionEpoch};
 use playback_gstreamer::generate_waveform_peaks_cancellable;
 use serde::{Deserialize, Serialize};
 use sources::Source;

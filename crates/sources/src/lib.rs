@@ -24,7 +24,7 @@ pub use operations::{
     GeneratedTracksRequest, ImageBytes, LyricsSearch, NativeLyricAgent, NativeLyricAgentRole,
     NativeLyricCue, NativeLyricCueLine, NativeLyricLine, NativeLyrics, NativeLyricsDocument,
     NativeLyricsOrigin, NativeLyricsRole, PlaybackReport, PlaybackReportKind, PlayedFilter,
-    RandomTrackRequest, StreamDescriptor, StreamQuality, StreamRequest,
+    RandomTrackRequest,
 };
 pub use source::*;
 

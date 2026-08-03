@@ -267,7 +267,7 @@ impl SettingsFile {
             .clone()
     }
 
-    pub(crate) fn playback_stream_quality(&self) -> playback::StreamQuality {
+    pub(crate) fn playback_stream_quality(&self) -> library::StreamQuality {
         self.value
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())

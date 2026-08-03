@@ -3,13 +3,15 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use adw::prelude::*;
-use downloads::{DownloadQuality, DownloadQueueState, DownloadRule};
+use downloads::{DownloadQueueState, DownloadRule};
 use gtk::gio;
+use library::StreamQuality;
 
 use localization::{msgid, tr};
 
 use super::{
     PreferencesNavigationControls,
+    general::{stream_quality_from_index, stream_quality_index},
     layout::button_row,
     selection_row,
     source::{
@@ -276,12 +278,12 @@ fn library_sources_page(
                 tr("192 kbps"),
                 tr("128 kbps"),
             ],
-            download_quality_index(download_settings.quality),
+            stream_quality_index(download_settings.quality),
             move |selected| {
                 quality_shell.update_app_settings("download quality", |settings| {
                     settings.set_download_quality(
                         quality_source_id.clone(),
-                        download_quality_from_index(selected),
+                        stream_quality_from_index(selected),
                     )
                 });
             },
@@ -636,27 +638,6 @@ fn download_rule_action_name(rule: DownloadRule) -> &'static str {
     }
 }
 
-fn download_quality_index(quality: DownloadQuality) -> u32 {
-    match quality {
-        DownloadQuality::Original => 0,
-        DownloadQuality::MaxBitrateKbps(320) => 1,
-        DownloadQuality::MaxBitrateKbps(256) => 2,
-        DownloadQuality::MaxBitrateKbps(192) => 3,
-        DownloadQuality::MaxBitrateKbps(128) => 4,
-        DownloadQuality::MaxBitrateKbps(_) => 0,
-    }
-}
-
-fn download_quality_from_index(index: u32) -> DownloadQuality {
-    match index {
-        1 => DownloadQuality::MaxBitrateKbps(320),
-        2 => DownloadQuality::MaxBitrateKbps(256),
-        3 => DownloadQuality::MaxBitrateKbps(192),
-        4 => DownloadQuality::MaxBitrateKbps(128),
-        _ => DownloadQuality::Original,
-    }
-}
-
 fn add_download_queue(
     queue: &adw::PreferencesGroup,
     shell: &Rc<Shell>,
@@ -862,8 +843,8 @@ fn download_queue_item_subtitle(job: &downloads::DownloadQueueItem) -> String {
         DownloadQueueState::NeedsAttention => tr("Needs attention"),
     };
     let quality = match job.quality {
-        DownloadQuality::Original => tr("Original"),
-        DownloadQuality::MaxBitrateKbps(value) => format!("{value} kbps"),
+        StreamQuality::Original => tr("Original"),
+        StreamQuality::MaxBitrateKbps(value) => format!("{value} kbps"),
     };
     format!("{state} · {progress} · {quality}")
 }

@@ -3,14 +3,14 @@ use std::sync::Arc;
 
 use library::{
     AlbumArtworkFacts, MetadataChange, MetadataEdit, MetadataField, MetadataItem, MetadataItemId,
-    MetadataValues, PlaylistId, RadioSeed, TrackId,
+    MetadataValues, PlaylistId, RadioSeed, StreamQuality, StreamRequest, TrackId,
 };
 use wiremock::matchers::{body_json, header_regex, method, path, query_param};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 use super::*;
+use crate::CredentialSettingsInput;
 use crate::source::SourceLibraryChangeRead;
-use crate::{CredentialSettingsInput, StreamQuality, StreamRequest};
 
 fn account(base_url: &str, server_id: Option<&str>, user_id: &str) -> JellyfinSourceConfig {
     JellyfinSourceConfig {

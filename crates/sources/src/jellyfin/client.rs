@@ -284,7 +284,7 @@ impl JellyfinSource {
     pub(crate) async fn resolve_stream(
         &self,
         request: &StreamRequest,
-    ) -> SourceResult<StreamDescriptor> {
+    ) -> SourceResult<ResolvedStream> {
         stream_descriptor(
             &self.base_url,
             &self.user_id,
@@ -551,7 +551,7 @@ pub(super) fn stream_descriptor(
     access_token: &str,
     trust_invalid_certificate: bool,
     request: &StreamRequest,
-) -> SourceResult<StreamDescriptor> {
+) -> SourceResult<ResolvedStream> {
     let raw_track_id = raw_item_id(request.track_id.as_str());
     let max_bitrate = request
         .quality
@@ -595,7 +595,7 @@ pub(super) fn stream_descriptor(
         }
     }
     Ok(
-        StreamDescriptor::with_redacted(url.to_string(), redacted_url.to_string())
+        ResolvedStream::with_redacted(url.to_string(), redacted_url.to_string())
             .with_trust_invalid_certificate(trust_invalid_certificate),
     )
 }

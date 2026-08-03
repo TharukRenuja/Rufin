@@ -13,8 +13,7 @@ mod waveform;
 pub use ::playback::PlaybackHandles;
 pub use diagnostics::{DiagnosticsHandle, DiagnosticsPort};
 pub use downloads::{
-    DownloadEvent, DownloadQuality, DownloadQueueItem, DownloadQueueSnapshot, DownloadQueueState,
-    DownloadSubject,
+    DownloadEvent, DownloadQueueItem, DownloadQueueSnapshot, DownloadQueueState, DownloadSubject,
 };
 pub use events::ProductReceivers;
 pub use inputs::{

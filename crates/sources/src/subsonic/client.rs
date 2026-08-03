@@ -246,7 +246,7 @@ impl SubsonicSource {
     pub(crate) async fn resolve_stream(
         &self,
         request: &StreamRequest,
-    ) -> SourceResult<StreamDescriptor> {
+    ) -> SourceResult<ResolvedStream> {
         let mut extra = vec![("id", raw_item_id(request.track_id.as_str()).to_string())];
         if let Some(kbps) = request.quality.max_bitrate_kbps() {
             extra.push(("maxBitRate", kbps.to_string()));
@@ -256,7 +256,7 @@ impl SubsonicSource {
         }
         let url = self.authenticated_url("stream", &extra)?;
         let redacted = redacted_subsonic_url(&url);
-        Ok(StreamDescriptor::with_redacted(url.to_string(), redacted)
+        Ok(ResolvedStream::with_redacted(url.to_string(), redacted)
             .with_trust_invalid_certificate(self.trust_invalid_cert))
     }
 }

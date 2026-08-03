@@ -2,8 +2,8 @@ use std::path::PathBuf;
 use std::rc::Rc;
 
 use desktop_integration::Settings as RichPresenceSettings;
-use downloads::{DownloadQuality, DownloadRules, SourceDownloadSettings};
-use library::{HomeBlockKind, SourceId};
+use downloads::{DownloadRules, SourceDownloadSettings};
+use library::{HomeBlockKind, SourceId, StreamQuality};
 use localization::{default_language_preference, sanitize_language_preference};
 use lyrics::Settings as LyricsSettings;
 use playback::{
@@ -199,7 +199,7 @@ impl Settings {
         self.download_settings(source_id).rules
     }
 
-    pub fn download_quality(&self, source_id: &SourceId) -> DownloadQuality {
+    pub fn download_quality(&self, source_id: &SourceId) -> StreamQuality {
         self.download_settings(source_id).quality
     }
 
@@ -219,7 +219,7 @@ impl Settings {
         self.update_download_settings(source_id, |settings| settings.rules = rules)
     }
 
-    pub fn set_download_quality(&mut self, source_id: SourceId, quality: DownloadQuality) -> bool {
+    pub fn set_download_quality(&mut self, source_id: SourceId, quality: StreamQuality) -> bool {
         self.update_download_settings(source_id, |settings| settings.quality = quality)
     }
 

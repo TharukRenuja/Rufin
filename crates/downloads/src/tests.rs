@@ -310,7 +310,7 @@ fn download_job(
     DownloadJob {
         id: id.to_string(),
         subject,
-        quality: DownloadQuality::Original,
+        quality: StreamQuality::Original,
         total_tracks: remaining.len(),
         completed: Vec::new(),
         remaining,
@@ -768,7 +768,7 @@ async fn pause_preserves_the_queue_and_partial_transfer_until_continue() {
         .enqueue(
             source_id.clone(),
             DownloadSubject::Playlist(library::PlaylistId::fake(1)),
-            DownloadQuality::Original,
+            StreamQuality::Original,
             vec![queued_track.id.clone()],
         )
         .await;
@@ -1037,7 +1037,7 @@ async fn reconciling_a_rule_replaces_its_queue_and_releases_stale_owners() {
         .reconcile_rule(
             source_id.clone(),
             DownloadRule::Favorites,
-            DownloadQuality::Original,
+            StreamQuality::Original,
             desired_tracks
                 .into_iter()
                 .map(|track| track.id.clone())
@@ -1089,14 +1089,14 @@ async fn deleting_a_custom_folder_download_leaves_neighboring_music() {
         &source_id,
         &track,
         Some(custom.path()),
-        DownloadQuality::Original,
+        StreamQuality::Original,
     );
     let other_source_paths = new_download_paths(
         directory.path(),
         &SourceId::fake(2),
         &track,
         Some(custom.path()),
-        DownloadQuality::Original,
+        StreamQuality::Original,
     );
     assert_ne!(paths.audio, other_source_paths.audio);
     assert_eq!(paths.audio.parent(), other_source_paths.audio.parent());

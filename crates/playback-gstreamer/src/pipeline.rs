@@ -10,10 +10,10 @@ pub(super) struct SourceClock {
 }
 
 impl SourceClock {
-    pub(super) fn from_stream(stream: &PreparedStream) -> Self {
+    pub(super) fn from_stream(stream: &ResolvedStream) -> Self {
         Self {
-            origin_millis: stream.source_start_millis(),
-            end_millis: stream.source_end_millis(),
+            origin_millis: stream.start_millis(),
+            end_millis: stream.end_millis(),
         }
     }
 
@@ -194,17 +194,17 @@ impl PlayerPipeline {
             .and_then(|session| session.clock.fixed_duration())
     }
 
-    pub(super) fn set_source_clock(&mut self, stream: &PreparedStream) {
+    pub(super) fn set_source_clock(&mut self, stream: &ResolvedStream) {
         if let Some(session) = self.session.as_mut() {
             session.clock = SourceClock::from_stream(stream);
         }
     }
 
-    pub(super) fn rearm_source_window(&mut self, stream: &PreparedStream) -> Result<(), String> {
+    pub(super) fn rearm_stream_window(&mut self, stream: &ResolvedStream) -> Result<(), String> {
         let Some(session) = self.session.as_mut() else {
             return Err(format!("GStreamer session {} is not active", self.name));
         };
-        session.rearm_source_window(stream)
+        session.rearm_stream_window(stream)
     }
 
     pub(super) fn has_session(&self) -> bool {
@@ -225,7 +225,7 @@ impl PlayerPipeline {
             .and_then(PipelineSession::audio_output_factory)
     }
 
-    pub(super) fn set_stream(&self, stream: &PreparedStream) -> Result<(), String> {
+    pub(super) fn set_stream(&self, stream: &ResolvedStream) -> Result<(), String> {
         let Some(session) = self.session.as_ref() else {
             return Err("GStreamer session is not active".to_string());
         };
@@ -253,7 +253,7 @@ impl PipelineSession {
         id: PipelineId,
         slot: Slot,
         shared: Arc<Mutex<SharedBackendState>>,
-        stream: &PreparedStream,
+        stream: &ResolvedStream,
     ) -> Result<Self, String> {
         let pipeline = make_playbin(name)?;
         let bus = pipeline
@@ -314,7 +314,7 @@ impl PipelineSession {
         Ok(())
     }
 
-    fn set_stream(&self, stream: &PreparedStream) {
+    fn set_stream(&self, stream: &ResolvedStream) {
         self.trust_invalid_certificate
             .store(stream.trust_invalid_certificate(), Ordering::SeqCst);
         self.pipeline.set_property("uri", stream.uri());
@@ -387,7 +387,7 @@ impl PipelineSession {
         result.map_err(|error| error.to_string())
     }
 
-    fn rearm_source_window(&mut self, stream: &PreparedStream) -> Result<(), String> {
+    fn rearm_stream_window(&mut self, stream: &ResolvedStream) -> Result<(), String> {
         let clock = SourceClock::from_stream(stream);
         let start_millis = clock.physical_seek(0);
         let previous = self.clock;

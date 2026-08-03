@@ -10,7 +10,8 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use async_channel::{Receiver, Sender};
 use library::{
-    AcceptedLibraryChange, Library, MusicFolderId, SourceId, TrackId, TrackSelection, TrackSort,
+    AcceptedLibraryChange, Library, MusicFolderId, SourceId, StreamQuality, TrackId,
+    TrackSelection, TrackSort,
 };
 use serde::{Deserialize, Serialize};
 use sources::{NativeSourceResult, Source, SourceError};
@@ -122,7 +123,7 @@ enum DownloadOwner {
 struct DownloadJob {
     id: String,
     subject: DownloadSubject,
-    quality: DownloadQuality,
+    quality: StreamQuality,
     total_tracks: usize,
     #[serde(default)]
     completed: Vec<TrackId>,
@@ -266,20 +267,13 @@ impl DownloadRule {
     ];
 }
 
-#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
-pub enum DownloadQuality {
-    #[default]
-    Original,
-    MaxBitrateKbps(u32),
-}
-
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct SourceDownloadSettings {
     pub source_id: SourceId,
     #[serde(flatten)]
     pub rules: DownloadRules,
     #[serde(default)]
-    pub quality: DownloadQuality,
+    pub quality: StreamQuality,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub directory: Option<PathBuf>,
 }
@@ -289,15 +283,13 @@ impl SourceDownloadSettings {
         Self {
             source_id,
             rules: DownloadRules::default(),
-            quality: DownloadQuality::Original,
+            quality: StreamQuality::Original,
             directory: None,
         }
     }
 
     pub fn is_default(&self) -> bool {
-        self.rules.is_empty()
-            && self.quality == DownloadQuality::Original
-            && self.directory.is_none()
+        self.rules.is_empty() && self.quality == StreamQuality::Original && self.directory.is_none()
     }
 }
 
@@ -393,7 +385,7 @@ pub struct DownloadQueueItem {
     pub id: String,
     pub source_id: SourceId,
     pub subject: DownloadSubject,
-    pub quality: DownloadQuality,
+    pub quality: StreamQuality,
     pub completed_tracks: usize,
     pub total_tracks: usize,
     pub state: DownloadQueueState,
@@ -1064,7 +1056,7 @@ impl Actor {
         &mut self,
         source_id: SourceId,
         subject: DownloadSubject,
-        quality: DownloadQuality,
+        quality: StreamQuality,
         track_ids: Vec<TrackId>,
     ) {
         let Some(attached) = self.attached.get(&source_id) else {
@@ -1177,7 +1169,7 @@ impl Actor {
         &mut self,
         source_id: SourceId,
         rule: DownloadRule,
-        quality: DownloadQuality,
+        quality: StreamQuality,
         track_ids: Vec<TrackId>,
         active: &mut Vec<ActiveDownload>,
     ) {
@@ -1415,7 +1407,7 @@ impl Actor {
         SourceId,
         String,
         DownloadSubject,
-        DownloadQuality,
+        StreamQuality,
         TrackId,
         DownloadQueueState,
     )> {
@@ -2076,7 +2068,7 @@ impl Actor {
 async fn download_track(
     source: Arc<Source>,
     track_id: TrackId,
-    quality: DownloadQuality,
+    quality: StreamQuality,
     paths: DownloadPaths,
     transfers: Arc<TransferClients>,
     cancellation: tokio::sync::oneshot::Receiver<()>,

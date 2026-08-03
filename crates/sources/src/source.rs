@@ -9,14 +9,14 @@ use library::{
     FolderId, GenreId, HomeFacts, HomeSectionKind, ImageRef, LocalAccessTarget, LocalArtworkRef,
     LocalComponentReplacement, MetadataDraft, MetadataEdit, MetadataError, MetadataValues,
     MusicFolderId, PlaylistAcceptance, PlaylistEdit, PlaylistId, PlaylistSnapshot,
-    ProviderFreshness, SearchRequest, SearchResults, SourceHomeSection, SourceHomeSectionKind,
-    SourceId, TrackId,
+    ProviderFreshness, ResolvedStream, SearchRequest, SearchResults, SourceHomeSection,
+    SourceHomeSectionKind, SourceId, StreamRequest, TrackId,
 };
 
 use crate::{
     GeneratedTracksRequest, ImageBytes, LyricsSearch, NativeLyrics, PlaybackReport,
     RandomTrackRequest, SourceConfiguration, SourceError, SourceResult, SourceSettingsInput,
-    SourceSetupInput, StreamDescriptor, StreamRequest,
+    SourceSetupInput,
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -702,7 +702,7 @@ impl Source {
     pub async fn stream(
         &self,
         request: &StreamRequest,
-    ) -> SourceResult<NativeSourceResult<StreamDescriptor>> {
+    ) -> SourceResult<NativeSourceResult<ResolvedStream>> {
         match &self.implementation {
             Implementation::Local(_) => Ok(NativeSourceResult::Unavailable),
             Implementation::Jellyfin(source) => source

@@ -1,11 +1,10 @@
 use std::collections::BTreeMap;
 
-use library::CandidateBatch;
+use library::{CandidateBatch, StreamQuality};
 use wiremock::matchers::{method, path, query_param};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 use super::*;
-use crate::StreamQuality;
 use crate::source::{BatchEmitter, SourceReadProgress};
 
 fn account(base_url: &str, username: &str) -> SubsonicSourceConfig {

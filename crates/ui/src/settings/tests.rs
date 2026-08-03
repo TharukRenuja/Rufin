@@ -262,21 +262,21 @@ fn download_rules_are_independent_addable_entries() {
 }
 
 #[test]
-fn native_download_quality_is_the_source_default() {
+fn original_download_quality_is_the_source_default() {
     let mut settings = Settings::default();
     let source_id = SourceId::new("jellyfin:quality");
 
     assert_eq!(
         settings.download_quality(&source_id),
-        downloads::DownloadQuality::Original
+        library::StreamQuality::Original
     );
     assert!(settings.set_download_quality(
         source_id.clone(),
-        downloads::DownloadQuality::MaxBitrateKbps(192)
+        library::StreamQuality::MaxBitrateKbps(192)
     ));
     assert_eq!(
         settings.download_quality(&source_id),
-        downloads::DownloadQuality::MaxBitrateKbps(192)
+        library::StreamQuality::MaxBitrateKbps(192)
     );
 }
 

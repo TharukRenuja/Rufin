@@ -17,8 +17,8 @@ use crate::player::{
 use crate::runtime::{ScrobblingConnection, ScrobblingConnectionEvent};
 use crate::shell::Shell;
 use adw::prelude::*;
+use library::StreamQuality;
 use localization::{tr, tr_with};
-use playback::StreamQuality;
 use playback::{
     EQUALIZER_BAND_COUNT, MAX_AUTO_DJ_REFILL_THRESHOLD, MAX_CROSSFADE_SECONDS,
     MIN_AUTO_DJ_REFILL_THRESHOLD, MIN_CROSSFADE_SECONDS, PlaybackTransitionMode, ReplayGainMode,
