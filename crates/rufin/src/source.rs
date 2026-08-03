@@ -50,7 +50,7 @@ use crate::settings::{
     fresh_secret_scope_id, load_provider_secret, load_scrobbling_settings, platform_secret_store,
     save_provider_secret,
 };
-use downloads::{DownloadSubject, Downloads};
+use downloads::Downloads;
 
 const SOURCE_CHECK_INTERVAL: Duration = Duration::from_secs(5 * 60);
 
@@ -384,12 +384,6 @@ struct SelectedSlot {
     current: Arc<SelectedSourceState>,
 }
 
-struct ActivityReplay {
-    token: u64,
-    qualifier: SourceQualifier,
-    updates: Vec<RecordedActivity>,
-}
-
 struct RefreshRequest {
     qualifier: SourceQualifier,
     visible: AtomicBool,
@@ -403,7 +397,6 @@ struct OwnerState {
     selected_revealed: bool,
     active_album_release: Option<ActiveAlbumRelease>,
     refresh: Option<Arc<RefreshRequest>>,
-    activity_replay: Option<ActivityReplay>,
 }
 
 impl SourceOwner {
@@ -441,7 +434,6 @@ impl SourceOwner {
                 selected_revealed: false,
                 active_album_release: None,
                 refresh: None,
-                activity_replay: None,
             }),
             lane: tokio::sync::Mutex::new(()),
             acceptance_lane: tokio::sync::Mutex::new(()),
@@ -498,22 +490,6 @@ impl SourceOwner {
             } else {
                 operations.cancel_album_release_lookup(false);
             }
-        });
-    }
-
-    pub(crate) fn download_settings_changed(&self) {
-        self.spawn_selected(false, |operations, selected, _| async move {
-            let directory = operations
-                .shared
-                .settings
-                .load()
-                .ui
-                .download_directory(selected.source_id());
-            operations
-                .shared
-                .downloads
-                .set_directory(selected.source_id().clone(), directory);
-            operations.reconcile_downloads(&selected).await;
         });
     }
 
@@ -852,10 +828,9 @@ impl SourceOwner {
                         .selected()
                         .filter(|current| current.source_id() == source.source_id())
                         .ok_or_else(|| "the selected source is no longer active".to_string())?;
-                    let (candidate, updates) = if cache_input_matches(&identity, &current.library) {
-                        (None, Vec::new())
+                    let candidate = if cache_input_matches(&identity, &current.library) {
+                        None
                     } else {
-                        let replay = self.shared.begin_activity_replay(current.qualifier());
                         let candidate = prepare_refresh_candidate(
                             Arc::clone(&self.shared),
                             SelectedSourceState {
@@ -867,31 +842,20 @@ impl SourceOwner {
                             Arc::clone(&cancelled),
                         )
                         .await;
-                        let candidate = match candidate {
-                            Ok(candidate) => candidate,
-                            Err(error) => {
-                                self.shared.clear_activity_replay(replay);
-                                return Err(error);
-                            }
-                        };
+                        let candidate = candidate?;
                         if cancelled.load(Ordering::Acquire) {
-                            self.shared.clear_activity_replay(replay);
                             return Ok(());
                         }
-                        let acceptance_owner = Arc::clone(&self.shared);
-                        let _acceptance = acceptance_owner.acceptance_lane.lock().await;
-                        (
-                            Some(Box::new(candidate)),
-                            self.shared.take_activity_replay(replay),
-                        )
+                        Some(Box::new(candidate))
                     };
+                    let acceptance_owner = Arc::clone(&self.shared);
+                    let _acceptance = acceptance_owner.acceptance_lane.lock().await;
                     self.commit_selected_update(
                         configured,
                         configuration,
                         source,
                         credential,
                         candidate,
-                        updates,
                     )
                     .await
                 }
@@ -977,7 +941,6 @@ impl SourceOwner {
         let Some(selected) = session.resolve() else {
             return;
         };
-        self.reconcile_downloads(&selected).await;
         let qualifier = selected.qualifier();
         {
             let state = self
@@ -1083,109 +1046,6 @@ impl SourceOwner {
                 shared: Arc::clone(&self.shared),
             }
             .request_freshness_check();
-        }
-    }
-
-    async fn download(
-        &self,
-        selected: Arc<SelectedSourceState>,
-        subject: DownloadSubject,
-        tracks: library::TrackSelection,
-    ) {
-        let download_settings = self
-            .shared
-            .settings
-            .load()
-            .ui
-            .download_settings(selected.source_id());
-        let tracks = match blocking(move || {
-            tracks
-                .prepare()
-                .and_then(|tracks| tracks.materialize_owned())
-                .map_err(string_error)
-        })
-        .await
-        {
-            Ok(tracks) => tracks,
-            Err(error) => {
-                self.shared.warn_nonfatal(&error);
-                return;
-            }
-        };
-        self.shared.downloads.download(
-            selected.source_id().clone(),
-            subject,
-            download_settings.quality,
-            tracks,
-        );
-    }
-
-    async fn remove_download(
-        &self,
-        selected: Arc<SelectedSourceState>,
-        tracks: library::TrackSelection,
-    ) {
-        let track_ids = match blocking(move || {
-            tracks
-                .prepare()
-                .and_then(|tracks| tracks.track_ids())
-                .map(|tracks| tracks.to_vec())
-                .map_err(string_error)
-        })
-        .await
-        {
-            Ok(track_ids) => track_ids,
-            Err(error) => {
-                self.shared.warn_nonfatal(&error);
-                return;
-            }
-        };
-        self.shared.downloads.remove(
-            selected.source_id().clone(),
-            Arc::clone(&selected.library),
-            track_ids,
-            true,
-        );
-    }
-
-    async fn reconcile_downloads(&self, selected: &SelectedSourceState) {
-        let settings = self
-            .shared
-            .settings
-            .load()
-            .ui
-            .download_settings(selected.source_id());
-        let rules = settings.rules;
-        if rules.is_empty() {
-            return;
-        }
-        let loaded = Arc::clone(&selected.library);
-        let folder = selected.music_folder_id.clone();
-        let queued = match blocking(move || {
-            rules
-                .active()
-                .map(|rule| {
-                    download_rule_tracks(&loaded, folder.as_ref(), rule)
-                        .map(|tracks| (rule, tracks))
-                })
-                .collect::<library::LibraryQueryResult<Vec<_>>>()
-                .map_err(string_error)
-        })
-        .await
-        {
-            Ok(queued) => queued,
-            Err(error) => {
-                warn!(%error, source_id = %selected.source_id(), "could not prepare automatic downloads");
-                return;
-            }
-        };
-        for (rule, tracks) in queued {
-            self.shared.downloads.reconcile_rule(
-                selected.source_id().clone(),
-                rule,
-                settings.quality,
-                tracks,
-            );
         }
     }
 
@@ -1366,7 +1226,6 @@ impl SourceOwner {
                 .unwrap_or_else(|poisoned| poisoned.into_inner());
             state.observer.take();
             state.local_access.take();
-            state.activity_replay = None;
         }
         self.shared.stop_playback().await;
     }
@@ -1477,7 +1336,6 @@ impl SourceOwner {
                     progress,
                 })
         });
-        let replay = self.shared.begin_activity_replay(selected.qualifier());
         let prepared = prepare_refresh_candidate(
             Arc::clone(&self.shared),
             (*selected).clone(),
@@ -1486,18 +1344,16 @@ impl SourceOwner {
         )
         .await;
         if cancelled.load(Ordering::Acquire) {
-            self.shared.clear_activity_replay(replay);
             self.shared.finish_refresh(&request);
             return;
         }
         let visible = request.visible.load(Ordering::Acquire);
-        let acceptance_owner = Arc::clone(&self.shared);
-        let _acceptance = acceptance_owner.acceptance_lane.lock().await;
-        let activity_updates = self.shared.take_activity_replay(replay);
         match prepared {
             Ok(prepared) => {
+                let acceptance_owner = Arc::clone(&self.shared);
+                let _acceptance = acceptance_owner.acceptance_lane.lock().await;
                 if let Err(error) = self
-                    .commit_refresh(Arc::clone(&selected), prepared, visible, activity_updates)
+                    .commit_refresh(Arc::clone(&selected), prepared, visible)
                     .await
                 {
                     self.refresh_failed(&selected, visible, error).await;
@@ -1523,8 +1379,6 @@ impl SourceOwner {
         else {
             return;
         };
-        self.shared
-            .record_replay_activity(&qualifier, update.clone());
         let library = Arc::clone(&selected.library);
         match blocking(move || {
             library
@@ -1704,7 +1558,6 @@ impl SourceOwner {
         source: Arc<Source>,
         credential: Option<String>,
         candidate: Option<Box<PreparedSourceCandidate>>,
-        activity_updates: Vec<RecordedActivity>,
     ) -> Result<(), String> {
         let previous = self
             .shared
@@ -1735,7 +1588,6 @@ impl SourceOwner {
                     configured.music_folder_id,
                     configured.local_access,
                     *candidate,
-                    activity_updates,
                     Some(replacement.clone()),
                 )
                 .await?;
@@ -1773,7 +1625,6 @@ impl SourceOwner {
         previous: Arc<SelectedSourceState>,
         prepared: PreparedSourceCandidate,
         visible: bool,
-        activity_updates: Vec<RecordedActivity>,
     ) -> Result<(), String> {
         if !self.shared.matches_selected(&previous.qualifier()) {
             return Err(
@@ -1797,7 +1648,6 @@ impl SourceOwner {
                 requested_folder.clone(),
                 local_access,
                 prepared,
-                activity_updates,
                 None,
             )
             .await?;
@@ -1830,7 +1680,6 @@ impl SourceOwner {
         requested_folder: Option<MusicFolderId>,
         local_access: Option<ConfiguredLocalAccess>,
         candidate: PreparedSourceCandidate,
-        activity_updates: Vec<RecordedActivity>,
         save_before_publish: Option<ConfiguredSource>,
     ) -> Result<Option<SelectedSourceState>, String> {
         let change = candidate.change();
@@ -1867,9 +1716,6 @@ impl SourceOwner {
             None
         };
         let commit = blocking(move || candidate.accept().map_err(string_error)).await?;
-        if change == CandidateChange::Library {
-            replay_activity_updates(Arc::clone(&commit.library), activity_updates).await?;
-        }
         let library = Arc::clone(&commit.library);
         let home_folder = folder.clone();
         let home =
@@ -1900,7 +1746,6 @@ impl SourceOwner {
         } else {
             self.shared.publish_home_replacement(selected.clone()).await;
         }
-        self.reconcile_downloads(&selected).await;
         Ok(Some(selected))
     }
 
@@ -1981,7 +1826,6 @@ impl SourceOwner {
         &mut self,
         selected: Arc<SelectedSourceState>,
         acceptance: SelectedLibraryAcceptance,
-        activity_updates: Vec<RecordedActivity>,
     ) -> Result<(), String> {
         match acceptance {
             SelectedLibraryAcceptance::Source(update) => {
@@ -1991,8 +1835,7 @@ impl SourceOwner {
                 self.accept_local_component(&selected, replacement).await
             }
             SelectedLibraryAcceptance::Full(candidate) => {
-                self.commit_refresh(selected, candidate, false, activity_updates)
-                    .await
+                self.commit_refresh(selected, candidate, false).await
             }
         }
     }
@@ -2235,7 +2078,6 @@ impl SourceOwner {
         mut reply: MetadataReply,
     ) {
         let progress = self.progress(|_| None);
-        let replay = self.shared.begin_activity_replay(selected.qualifier());
         let acceptance = prepare_metadata_acceptance(
             Arc::clone(&self.shared),
             (*selected).clone(),
@@ -2245,15 +2087,15 @@ impl SourceOwner {
             &mut reply,
         )
         .await;
-        let acceptance_owner = Arc::clone(&self.shared);
-        let _acceptance = acceptance_owner.acceptance_lane.lock().await;
-        let activity_updates = self.shared.take_activity_replay(replay);
         let accepted = match acceptance {
             Err(error) => Err(error),
-            Ok(acceptance) => self
-                .accept_selected_library_acceptance(selected, acceptance, activity_updates)
-                .await
-                .map_err(MetadataError::SavedRefreshFailed),
+            Ok(acceptance) => {
+                let acceptance_owner = Arc::clone(&self.shared);
+                let _acceptance = acceptance_owner.acceptance_lane.lock().await;
+                self.accept_selected_library_acceptance(selected, acceptance)
+                    .await
+                    .map_err(MetadataError::SavedRefreshFailed)
+            }
         };
         reply.finish(accepted);
     }
@@ -2308,27 +2150,10 @@ impl SourceOwner {
         if !self.shared.matches_selected(&selected.qualifier()) {
             return;
         }
-        let download_rules = self
-            .shared
-            .settings
-            .load()
-            .ui
-            .download_rules(selected.source_id());
-        let reconcile_downloads = should_reconcile_downloads(&change, &next_home, download_rules);
-        let removed_downloads = change
-            .tracks
-            .iter()
-            .filter(|replacement| replacement.track.is_none())
-            .map(|replacement| replacement.id.clone())
-            .collect::<Vec<_>>();
-        if !removed_downloads.is_empty() {
-            self.shared.downloads.remove(
-                selected.source_id().clone(),
-                Arc::clone(&selected.library),
-                removed_downloads,
-                false,
-            );
-        }
+        let downloads_changed = !matches!(
+            &next_home,
+            NextHome::AcceptedPlay(_) | NextHome::ActivityKeep
+        );
         let source_facts = matches!(&next_home, NextHome::SourceFacts);
         if source_facts {
             self.cancel_album_release_lookup(false);
@@ -2417,6 +2242,11 @@ impl SourceOwner {
             replacement.home = Arc::clone(&home);
             self.shared.replace_selected(replacement);
         }
+        if downloads_changed {
+            self.shared
+                .downloads
+                .library_changed(Arc::clone(&selected.library), change.clone());
+        }
         self.shared
             .send_event(SourceEvent::LibraryUpdate(SelectedLibraryUpdate {
                 source_id: selected.source_id().clone(),
@@ -2425,9 +2255,6 @@ impl SourceOwner {
                 home,
             }))
             .await;
-        if reconcile_downloads {
-            self.reconcile_downloads(selected).await;
-        }
         if source_facts {
             self.start_album_release_lookup();
         }
@@ -2764,9 +2591,6 @@ impl SourceOwner {
         replacement.home = home;
         replacement.music_folder_id = folder_id;
         self.shared.publish_library_replacement(replacement).await;
-        if let Some(selected) = self.shared.selected() {
-            self.reconcile_downloads(&selected).await;
-        }
     }
 
     async fn stage_credential(
@@ -2901,15 +2725,13 @@ impl SourceOwner {
         let prepared =
             blocking(move || playback.prepare_selected(playback_session, playback_selected))
                 .await?;
-        let directory = self
-            .shared
-            .settings
-            .load()
-            .ui
-            .download_directory(selected.source_id());
         self.shared
             .downloads
-            .attach(selected.source.clone(), &selected.library, directory)
+            .attach(
+                selected.source.clone(),
+                &selected.library,
+                selected.music_folder_id.clone(),
+            )
             .await?;
         Ok((session, selected, prepared))
     }
@@ -2929,7 +2751,6 @@ impl SourceOwner {
                 .unwrap_or_else(|poisoned| poisoned.into_inner());
             state.observer.take();
             state.local_access.take();
-            state.activity_replay = None;
         }
         let playback = self.shared.playback()?;
         let playback_for_stop = Arc::clone(&playback);
@@ -2939,45 +2760,6 @@ impl SourceOwner {
             .install_selected_slot(Arc::clone(&session), Arc::clone(&selected));
         Ok(playback.install_prepared(prepared, cutover))
     }
-}
-
-fn download_rule_tracks(
-    loaded: &Arc<Library>,
-    music_folder_id: Option<&MusicFolderId>,
-    rule: downloads::DownloadRule,
-) -> library::LibraryQueryResult<Vec<Track>> {
-    match rule {
-        downloads::DownloadRule::EntireLibrary => loaded
-            .track_list(music_folder_id, TrackSort::Title, false)?
-            .materialize_owned(),
-        downloads::DownloadRule::Favorites => loaded
-            .favorite_download_track_list(music_folder_id)?
-            .materialize_owned(),
-        downloads::DownloadRule::AllPlaylists => loaded
-            .all_playlist_track_list(music_folder_id)?
-            .materialize_owned(),
-        downloads::DownloadRule::LatestFiveAlbums => loaded
-            .latest_album_track_list(music_folder_id, 5)?
-            .materialize_owned(),
-    }
-}
-
-fn should_reconcile_downloads(
-    change: &AcceptedLibraryChange,
-    next_home: &NextHome,
-    rules: ui::DownloadRules,
-) -> bool {
-    !matches!(
-        next_home,
-        NextHome::AcceptedPlay(_) | NextHome::ActivityKeep
-    ) && ((rules.entire_library && !change.tracks.is_empty())
-        || (rules.favorites
-            && (!change.tracks.is_empty()
-                || !change.albums.is_empty()
-                || !change.artists.is_empty()
-                || change.favorite.is_some()))
-        || (rules.all_playlists && (!change.tracks.is_empty() || !change.playlists.is_empty()))
-        || (rules.latest_five_albums && (!change.tracks.is_empty() || !change.albums.is_empty())))
 }
 
 impl Shared {
@@ -3098,66 +2880,6 @@ impl Shared {
         }
     }
 
-    fn begin_activity_replay(&self, qualifier: SourceQualifier) -> u64 {
-        let token = self.next_token.fetch_add(1, Ordering::AcqRel);
-        self.state
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .activity_replay = Some(ActivityReplay {
-            token,
-            qualifier,
-            updates: Vec::new(),
-        });
-        token
-    }
-
-    fn record_replay_activity(&self, qualifier: &SourceQualifier, update: RecordedActivity) {
-        let mut state = self
-            .state
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        if let Some(replay) = state
-            .activity_replay
-            .as_mut()
-            .filter(|replay| &replay.qualifier == qualifier)
-        {
-            replay.updates.push(update);
-        }
-    }
-
-    fn take_activity_replay(&self, token: u64) -> Vec<RecordedActivity> {
-        let mut state = self
-            .state
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        if state
-            .activity_replay
-            .as_ref()
-            .is_some_and(|replay| replay.token == token)
-        {
-            return state
-                .activity_replay
-                .take()
-                .map(|replay| replay.updates)
-                .unwrap_or_default();
-        }
-        Vec::new()
-    }
-
-    fn clear_activity_replay(&self, token: u64) {
-        let mut state = self
-            .state
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        if state
-            .activity_replay
-            .as_ref()
-            .is_some_and(|replay| replay.token == token)
-        {
-            state.activity_replay = None;
-        }
-    }
-
     fn playback(&self) -> Result<Arc<PlaybackOwner>, String> {
         self.playback
             .lock()
@@ -3186,7 +2908,17 @@ impl Shared {
     }
 
     async fn publish_library_replacement(&self, selected: SelectedSourceState) {
-        if !self.replace_selected_runtime(selected).await {
+        let same_library = self
+            .selected()
+            .is_some_and(|current| Arc::ptr_eq(&current.library, &selected.library));
+        if same_library {
+            if !self.replace_selected(selected) {
+                return;
+            }
+            if let Some(selected) = self.selected() {
+                self.attach_selected_downloads(&selected).await;
+            }
+        } else if !self.replace_selected_runtime(selected).await {
             return;
         }
         let Some(session) = self.selected_session() else {
@@ -3229,14 +2961,13 @@ impl Shared {
     }
 
     async fn attach_selected_downloads(&self, selected: &SelectedSourceState) {
-        let directory = self
-            .settings
-            .load()
-            .ui
-            .download_directory(selected.source_id());
         if let Err(error) = self
             .downloads
-            .attach(selected.source.clone(), &selected.library, directory)
+            .attach(
+                selected.source.clone(),
+                &selected.library,
+                selected.music_folder_id.clone(),
+            )
             .await
         {
             self.warn_nonfatal(&error);
@@ -3285,7 +3016,6 @@ impl Shared {
         state.selected = None;
         state.observer = None;
         state.local_access = None;
-        state.activity_replay = None;
     }
 
     fn warn_nonfatal(&self, error: &str) {
@@ -3667,24 +3397,6 @@ async fn blocking<T: Send + 'static>(
         .map_err(string_error)?
 }
 
-async fn replay_activity_updates(
-    library: Arc<Library>,
-    updates: Vec<RecordedActivity>,
-) -> Result<(), String> {
-    if updates.is_empty() {
-        return Ok(());
-    }
-    blocking(move || {
-        for update in updates {
-            library
-                .apply_recorded_activity(&update)
-                .map_err(string_error)?;
-        }
-        Ok(())
-    })
-    .await
-}
-
 impl SourcePort for SourceOwner {
     fn configured_source(&self, source_id: &SourceId) -> Result<Option<EditableSource>, String> {
         self.shared
@@ -4004,18 +3716,6 @@ impl SelectedSourcePort for ActiveSource {
     fn edit_playlist(&self, edit: PlaylistEdit) {
         self.spawn_selected(false, move |mut operations, selected, _| async move {
             operations.edit_playlist(selected, edit).await;
-        });
-    }
-
-    fn download(&self, subject: DownloadSubject, tracks: library::TrackSelection) {
-        self.spawn_selected(false, move |operations, selected, _| async move {
-            operations.download(selected, subject, tracks).await;
-        });
-    }
-
-    fn remove_download(&self, tracks: library::TrackSelection) {
-        self.spawn_selected(false, move |operations, selected, _| async move {
-            operations.remove_download(selected, tracks).await;
         });
     }
 

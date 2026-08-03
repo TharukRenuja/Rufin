@@ -67,8 +67,12 @@ pub(crate) fn runtime_inputs(diagnostics: DiagnosticsHandle) -> Result<RuntimeIn
             artwork::Artwork::new(temporary_artwork_dir(), runtime.clone()).map_err(string_error)?
         }
     };
-    let downloads =
-        downloads::Downloads::new(paths::downloads_dir(), runtime.clone(), download_events);
+    let downloads = downloads::Downloads::new(
+        paths::downloads_dir(),
+        runtime.clone(),
+        download_events,
+        stored.ui.downloads.clone(),
+    );
     let discord = Arc::new(desktop_integration::Discord::new());
     let release_updates = ReleaseUpdateOwner::new(
         settings.clone(),
@@ -137,6 +141,7 @@ pub(crate) fn runtime_inputs(diagnostics: DiagnosticsHandle) -> Result<RuntimeIn
     let settings_playback = Arc::clone(&playback);
     let settings_lyrics = Arc::clone(&lyrics);
     let settings_source = Arc::clone(&source);
+    let settings_downloads = downloads.clone();
     let settings_scrobbling = Arc::clone(&scrobbling);
     let settings_handle = SettingsUiPort::new(settings, move |previous, current| {
         if previous.ui.rich_presence != current.ui.rich_presence
@@ -172,7 +177,7 @@ pub(crate) fn runtime_inputs(diagnostics: DiagnosticsHandle) -> Result<RuntimeIn
                 .album_release_settings_changed(current.ui.allows_external_metadata_lookup());
         }
         if previous.ui.downloads != current.ui.downloads {
-            settings_source.download_settings_changed();
+            settings_downloads.settings_changed(current.ui.downloads.clone());
         }
     });
 

@@ -7,12 +7,11 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use async_channel::Receiver;
-use downloads::DownloadSubject;
 use library::{
     FavoriteItemId, FolderContents, FolderId, HomeSectionKind, MetadataDraft, MetadataEdit,
     MetadataError, MetadataItemId, MetadataValues, MusicFolderId, PlaylistEdit, PlaylistTrackAdd,
     SearchRequest as LibrarySearchRequest, SearchResults, SmartPlaylistBuiltin,
-    SmartPlaylistDefinition, SmartPlaylistId, SourceId, TrackSelection,
+    SmartPlaylistDefinition, SmartPlaylistId, SourceId,
 };
 use secrets::SecretStorageMode;
 
@@ -229,8 +228,6 @@ pub trait SelectedSourcePort: Send + Sync {
     fn set_favorite(&self, item: FavoriteItemId, favorite: bool);
     fn add_playlist_tracks(&self, request: PlaylistTrackAdd) -> usize;
     fn edit_playlist(&self, edit: PlaylistEdit);
-    fn download(&self, subject: DownloadSubject, tracks: TrackSelection);
-    fn remove_download(&self, tracks: TrackSelection);
     fn folder(
         &self,
         folder_id: Option<FolderId>,

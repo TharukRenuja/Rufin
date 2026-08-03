@@ -1,6 +1,7 @@
 use std::{
     cell::{Cell, RefCell},
     rc::Rc,
+    sync::Arc,
 };
 
 use ::library::{
@@ -141,9 +142,11 @@ impl PlaybackTarget {
             return;
         };
         match self.selection(&selected) {
-            Ok(tracks) => selected
-                .operations
-                .download(self.download_subject(), tracks),
+            Ok(tracks) => shell.products.downloads.download(
+                Arc::clone(&selected.library),
+                self.download_subject(),
+                tracks,
+            ),
             Err(error) => {
                 warn!(target = ?self, %error, "failed to identify download tracks");
             }
@@ -155,7 +158,12 @@ impl PlaybackTarget {
             return;
         };
         match self.selection(&selected) {
-            Ok(tracks) => selected.operations.remove_download(tracks),
+            Ok(tracks) => {
+                shell
+                    .products
+                    .downloads
+                    .remove(Arc::clone(&selected.library), tracks, true);
+            }
             Err(error) => {
                 warn!(target = ?self, %error, "failed to identify downloaded tracks");
             }

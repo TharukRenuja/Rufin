@@ -17,33 +17,6 @@ use sources::{
 use super::*;
 
 #[test]
-fn playback_activity_does_not_rebuild_download_policy() {
-    let change = AcceptedLibraryChange {
-        tracks: vec![library::AcceptedTrackReplacement {
-            id: library::TrackId::new("track"),
-            track: None,
-        }],
-        ..AcceptedLibraryChange::default()
-    };
-    let rules = ui::DownloadRules {
-        entire_library: true,
-        ..ui::DownloadRules::default()
-    };
-
-    assert!(should_reconcile_downloads(&change, &NextHome::Keep, rules));
-    assert!(!should_reconcile_downloads(
-        &change,
-        &NextHome::ActivityKeep,
-        rules
-    ));
-    assert!(!should_reconcile_downloads(
-        &change,
-        &NextHome::AcceptedPlay(library::TrackId::new("track")),
-        rules
-    ));
-}
-
-#[test]
 fn active_source_resolves_replacement_and_rejects_retired_session() {
     let directory = tempfile::tempdir().expect("temporary Rufin data directory");
     let runtime = test_runtime();
@@ -488,7 +461,7 @@ fn failed_target_prepare_keeps_the_selected_session() {
 }
 
 #[test]
-fn candidate_acceptance_rebases_activity_recorded_after_preparation() {
+fn activity_publishes_while_candidate_acquisition_is_blocked_and_rebases_once() {
     let directory = tempfile::tempdir().expect("temporary Rufin data directory");
     let path = directory.path().join("library.db");
     let source_id = SourceId::new("local:server:activity-refresh");
@@ -506,6 +479,27 @@ fn candidate_acceptance_rebases_activity_recorded_after_preparation() {
         Vec::new(),
         1,
     );
+    let smart_playlist_id = initial
+        .create_smart_playlist(
+            "Played".to_string(),
+            library::SmartPlaylistDefinition {
+                match_all: vec![library::SmartPlaylistRule {
+                    field: library::SmartPlaylistRuleField::PlayCount,
+                    operator: library::SmartPlaylistRuleOperator::Above,
+                    value: Some(library::SmartPlaylistRuleValue::Number(0)),
+                }],
+                match_any: Vec::new(),
+                sort_field: library::SmartPlaylistSortField::PlayCount,
+                descending: true,
+                limit: None,
+            },
+        )
+        .expect("create activity smart playlist")
+        .expect("new activity smart playlist")
+        .smart_playlists
+        .into_iter()
+        .next()
+        .expect("created activity smart playlist ID");
     let mut replacement = libraries
         .begin_source_candidate(CandidateHeader {
             source_id: source_id.clone(),
@@ -532,30 +526,159 @@ fn candidate_acceptance_rebases_activity_recorded_after_preparation() {
         )
         .expect("prepare replacement source");
 
-    let activity = initial
-        .record_play(AcceptedPlay {
-            play_id: "refresh-play".to_string(),
-            track_id: track_id.clone(),
-            played_at: 1_700_000_000,
-            month: "2023-11".to_string(),
+    let runtime = test_runtime();
+    let (bootstrap, events) = test_owner(
+        directory.path(),
+        &runtime,
+        libraries.clone(),
+        SettingsFile::memory(),
+    );
+    let epoch = SourceSessionEpoch::new(1);
+    let session = install_selected_for_test(
+        &bootstrap.owner,
+        test_configuration(source_id.clone(), "Activity refresh"),
+        None,
+        Arc::clone(&initial),
+        epoch,
+    );
+    let (started, candidate_started) = async_channel::bounded(1);
+    let (resume, candidate_resume) = async_channel::bounded(1);
+    let (accepted, candidate_accepted) = async_channel::bounded(1);
+    bootstrap
+        .owner
+        .spawn_serialized(false, move |operations, _| async move {
+            started
+                .send(())
+                .await
+                .expect("signal candidate acquisition");
+            candidate_resume
+                .recv()
+                .await
+                .expect("finish candidate acquisition");
+            let acceptance_owner = Arc::clone(&operations.shared);
+            let _acceptance = acceptance_owner.acceptance_lane.lock().await;
+            let result = replacement
+                .accept()
+                .map_err(string_error)
+                .and_then(|commit| {
+                    let current = operations
+                        .shared
+                        .selected()
+                        .ok_or_else(|| "the selected source was retired".to_string())?;
+                    let home = commit.library.home(None).map_err(string_error)?;
+                    let library = Arc::clone(&commit.library);
+                    let mut next = (*current).clone();
+                    next.library = commit.library;
+                    next.home = home;
+                    operations
+                        .shared
+                        .replace_selected(next)
+                        .then_some(library)
+                        .ok_or_else(|| "the selected source changed".to_string())
+                });
+            accepted
+                .send(result)
+                .await
+                .expect("report candidate acceptance");
+        });
+    let replacement = runtime.block_on(async {
+        candidate_started
+            .recv()
+            .await
+            .expect("candidate acquisition started");
+        let activity = initial
+            .record_play(AcceptedPlay {
+                play_id: "refresh-play".to_string(),
+                track_id: track_id.clone(),
+                played_at: 1_700_000_000,
+                month: "2023-11".to_string(),
+            })
+            .expect("record play during refresh")
+            .expect("new play during refresh");
+        bootstrap.owner.publish_activity(
+            source_id.clone(),
+            epoch,
+            activity,
+            Some(track_id.clone()),
+        );
+        let publication = tokio::time::timeout(std::time::Duration::from_secs(1), async {
+            loop {
+                if let SourceEvent::LibraryUpdate(update) =
+                    events.recv().await.expect("activity publication")
+                {
+                    break update;
+                }
+            }
         })
-        .expect("record play during refresh")
-        .expect("new play during refresh");
-    initial
-        .apply_recorded_activity(&activity)
-        .expect("apply play to current source");
-    let replacement = replacement.accept().expect("accept replacement source");
+        .await
+        .expect("activity must publish while candidate acquisition is blocked");
+        assert_eq!(
+            publication.change.smart_playlists.as_slice(),
+            std::slice::from_ref(&smart_playlist_id)
+        );
+        assert!(
+            publication.home.is_some(),
+            "accepted play must publish Home"
+        );
+        let current = session.resolve().expect("current selected source");
+        assert!(Arc::ptr_eq(&current.library, &initial));
+        assert_eq!(
+            current
+                .library
+                .track(&track_id)
+                .expect("read current Track")
+                .expect("current Track")
+                .play_count,
+            Some(1)
+        );
+        assert_eq!(
+            current
+                .library
+                .smart_playlist_detail(&smart_playlist_id, None)
+                .expect("read current activity smart playlist")
+                .expect("current activity smart playlist")
+                .tracks
+                .len(),
+            1
+        );
+        resume.send(()).await.expect("finish candidate acquisition");
+        let replacement = candidate_accepted
+            .recv()
+            .await
+            .expect("candidate acceptance result")
+            .expect("accept replacement source");
+        let lane = Arc::clone(&bootstrap.owner.shared);
+        let _finished = lane.lane.lock().await;
+        replacement
+    });
     assert_eq!(
         replacement
-            .library
             .track(&track_id)
             .expect("read replacement Track")
             .expect("replacement Track")
             .play_count,
         Some(1)
     );
+    assert_eq!(
+        replacement
+            .history_track_list(None)
+            .expect("read replacement History")
+            .len(),
+        1
+    );
+    assert_eq!(
+        replacement
+            .smart_playlist_detail(&smart_playlist_id, None)
+            .expect("read replacement activity smart playlist")
+            .expect("replacement activity smart playlist")
+            .tracks
+            .len(),
+        1
+    );
 
     drop(replacement);
+    drop(session);
+    drop(bootstrap);
     drop(initial);
     drop(libraries);
     let reopened = Libraries::open(path)
@@ -570,6 +693,22 @@ fn candidate_acceptance_rebases_activity_recorded_after_preparation() {
             .expect("reopened Track")
             .play_count,
         Some(1)
+    );
+    assert_eq!(
+        reopened
+            .history_track_list(None)
+            .expect("read reopened History")
+            .len(),
+        1
+    );
+    assert_eq!(
+        reopened
+            .smart_playlist_detail(&smart_playlist_id, None)
+            .expect("read reopened activity smart playlist")
+            .expect("reopened activity smart playlist")
+            .tracks
+            .len(),
+        1
     );
 }
 
@@ -1218,7 +1357,7 @@ fn test_track(
 
 fn test_downloads(root: PathBuf, runtime: tokio::runtime::Handle) -> downloads::Downloads {
     let (events, _receiver) = async_channel::unbounded();
-    downloads::Downloads::new(root, runtime, events)
+    downloads::Downloads::new(root, runtime, events, Vec::new())
 }
 
 fn write_silent_wav(path: &Path) -> std::io::Result<()> {
