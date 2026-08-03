@@ -272,8 +272,10 @@ fn positive_u16(value: Option<&Value>) -> Option<u16> {
 }
 
 fn fetch_musicbrainz_json(client: &Client, url: Url, context: &str) -> Result<Value, String> {
-    wait_for_musicbrainz_slot();
-    fetch_json(client, url, context)
+    send_with_musicbrainz_retry(|| {
+        wait_for_musicbrainz_slot();
+        fetch_json(client, url.clone(), context)
+    })
 }
 
 fn fetch_optional_musicbrainz_json(
@@ -281,8 +283,19 @@ fn fetch_optional_musicbrainz_json(
     url: Url,
     context: &str,
 ) -> Result<Option<Value>, String> {
-    wait_for_musicbrainz_slot();
-    fetch_optional_json(client, url, context)
+    send_with_musicbrainz_retry(|| {
+        wait_for_musicbrainz_slot();
+        fetch_optional_json(client, url.clone(), context)
+    })
+}
+
+fn send_with_musicbrainz_retry<T>(
+    mut send: impl FnMut() -> Result<T, String>,
+) -> Result<T, String> {
+    match send() {
+        Err(error) if error.contains("status 503") => send(),
+        result => result,
+    }
 }
 
 fn wait_for_musicbrainz_slot() {
@@ -490,6 +503,19 @@ mod tests {
     use serde_json::json;
 
     use super::*;
+
+    #[test]
+    fn musicbrainz_retries_service_unavailable_once() {
+        let mut responses = [
+            Err("MusicBrainz failed with status 503 Service Unavailable".to_string()),
+            Ok("identified"),
+        ]
+        .into_iter();
+        let result = send_with_musicbrainz_retry(|| responses.next().expect("bounded request"));
+
+        assert_eq!(result.as_deref(), Ok("identified"));
+        assert!(responses.next().is_none());
+    }
 
     #[test]
     fn parses_primary_and_secondary_release_group_types() {

@@ -8,6 +8,7 @@ use library::{
     MetadataScope, MetadataValues,
 };
 use localization::{msgid, tr, trn_with};
+use tracing::warn;
 
 use crate::layout::{large_popup_content_height, large_popup_content_width};
 use crate::preferences::dialogs::popup::present_light_dismiss_dialog;
@@ -588,6 +589,11 @@ fn refresh_identify_undo(state: &EditorState) {
             .get(&row.field)
             .is_some_and(|edit| edit.identified != edit.original);
         row.undo.set_visible(visible);
+        if visible {
+            row.entry.add_css_class("metadata-identified-change");
+        } else {
+            row.entry.remove_css_class("metadata-identified-change");
+        }
     }
 }
 
@@ -605,11 +611,15 @@ fn refresh_identify_undo_field(state: &EditorState, field: MetadataField) {
     {
         identified.remove(&field);
     }
-    row.undo.set_visible(
-        identified
-            .get(&field)
-            .is_some_and(|edit| edit.identified != edit.original),
-    );
+    let visible = identified
+        .get(&field)
+        .is_some_and(|edit| edit.identified != edit.original);
+    row.undo.set_visible(visible);
+    if visible {
+        row.entry.add_css_class("metadata-identified-change");
+    } else {
+        row.entry.remove_css_class("metadata-identified-change");
+    }
 }
 
 fn connect_cancel(state: &Rc<EditorState>) {
@@ -687,23 +697,20 @@ fn connect_identify(selected: crate::runtime::SelectedLibrary, state: &Rc<Editor
         );
         let state = Rc::clone(&state_for_identify);
         gtk::glib::spawn_future_local(async move {
-            let error = match receiver.recv().await {
+            match receiver.recv().await {
                 Ok(Ok(Some(values))) => {
                     apply_identification(&state.rows, &state.draft.editing, &values);
                     remember_identified_changes(&state, &before, &touched_before);
-                    None
                 }
-                Ok(Ok(None)) | Err(_) => None,
-                Ok(Err(error)) => Some(error),
-            };
+                Ok(Ok(None)) => {}
+                Ok(Err(error)) => warn!(%error, "metadata identification failed"),
+                Err(error) => warn!(%error, "metadata identification ended before completion"),
+            }
             state.identifying.set(false);
             state.rows.set_sensitive(true, &state.draft.editing);
             state.identify.set_label(&tr("Identify"));
             refresh_identify_undo(&state);
             refresh_save_state(&state);
-            if let Some(error) = error {
-                show_error(&state, &error);
-            }
         });
     });
 }
