@@ -640,7 +640,7 @@ fn connect_save(selected: crate::runtime::SelectedLibrary, state: &Rc<EditorStat
         state_for_save
             .rows
             .set_sensitive(false, &state_for_save.draft.editing);
-        state_for_save.save.set_label(&tr("Saving…"));
+        state_for_save.save.set_label(&tr("Saving..."));
         let receiver = source.edit_metadata(edit);
         let state = Rc::clone(&state_for_save);
         gtk::glib::spawn_future_local(async move {
@@ -676,7 +676,7 @@ fn connect_identify(selected: crate::runtime::SelectedLibrary, state: &Rc<Editor
         state_for_identify.identifying.set(true);
         state_for_identify.identify.set_sensitive(false);
         state_for_identify.save.set_sensitive(false);
-        state_for_identify.identify.set_label(&tr("Identifying…"));
+        state_for_identify.identify.set_label(&tr("Identifying..."));
         state_for_identify
             .rows
             .set_sensitive(false, &state_for_identify.draft.editing);

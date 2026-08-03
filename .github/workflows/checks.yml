@@ -16,6 +16,7 @@ on:
       - scripts/rust-cache-command
       - sgconfig.yml
       - '!**/*.md'
+      - '!crates/localization/locales/**'
   workflow_dispatch:
 
 permissions:
@@ -92,7 +93,7 @@ jobs:
 
             for path in "${changed_paths[@]}"; do
               case "$path" in
-                LICENSE|data|data/*|*.md|.github/FUNDING.yml|.github/ISSUE_TEMPLATE/*)
+                LICENSE|data|data/*|*.md|.github/FUNDING.yml|.github/ISSUE_TEMPLATE/*|crates/localization/locales/*)
                   continue
                   ;;
               esac

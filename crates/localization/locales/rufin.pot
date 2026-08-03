@@ -61,11 +61,6 @@ msgid ""
 msgstr ""
 
 msgid ""
-"This removes legacy config secrets and signs you out everywhere, including "
-"API secrets. Your app cache stays"
-msgstr ""
-
-msgid ""
 "This removes the server, cached library metadata, queue snapshot, and saved "
 "token for"
 msgstr ""
@@ -73,6 +68,11 @@ msgstr ""
 msgid ""
 "This uses Jellyfin API for play radio, necessary if you want recommendation "
 "plugins to work"
+msgstr ""
+
+msgid ""
+"This will log you out and clear your secrets including API ones. Your app "
+"cache is not touched."
 msgstr ""
 
 #, rust-format
@@ -283,7 +283,7 @@ msgid_plural "Changes apply to {count} tracks"
 msgstr[0] ""
 msgstr[1] ""
 
-msgid "Checking\342\200\246"
+msgid "Checking..."
 msgstr ""
 
 msgid "Choose a local music folder"
@@ -669,7 +669,7 @@ msgstr ""
 msgid "Identify"
 msgstr ""
 
-msgid "Identifying\342\200\246"
+msgid "Identifying..."
 msgstr ""
 
 msgid "If the page doesn't load, then Libre.fm blocks your IP range/VPN"
@@ -1431,7 +1431,7 @@ msgstr ""
 msgid "Saved, sync to preview matches"
 msgstr ""
 
-msgid "Saving\342\200\246"
+msgid "Saving..."
 msgstr ""
 
 msgid "Scrobbling"

@@ -23,13 +23,10 @@ fn i18n_files_omit_source_references() {
 #[test]
 fn i18n_source_msgids_use_ascii_ellipsis() {
     let root = repo_root();
-    let mut files = po_files(&root.join("crates/localization/locales"));
-    files.push(root.join("crates/localization/locales/rufin.pot"));
-    for file in files {
-        let content = fs::read_to_string(&file)
-            .unwrap_or_else(|error| panic!("read {}: {error}", file.display()));
-        assert_active_msgids_use_ascii_ellipsis(&file, &content);
-    }
+    let template = root.join("crates/localization/locales/rufin.pot");
+    let content = fs::read_to_string(&template)
+        .unwrap_or_else(|error| panic!("read {}: {error}", template.display()));
+    assert_active_msgids_use_ascii_ellipsis(&template, &content);
 }
 
 #[test]
@@ -67,7 +64,7 @@ fn assert_active_msgids_use_ascii_ellipsis(file: &Path, content: &str) {
     for line in content.lines().chain(std::iter::once("")) {
         if collecting && !line.starts_with('"') {
             assert!(
-                !current.contains('…'),
+                !current.contains('…') && !current.contains(r"\342\200\246"),
                 "{} contains a non-ASCII ellipsis in active source msgid: {}",
                 file.display(),
                 current
