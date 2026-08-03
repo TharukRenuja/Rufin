@@ -8,6 +8,8 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use serde::{Deserialize, Serialize};
+
 use crate::{
     Libraries, Library, LibraryError, LibraryResult, LocalFile, LocalFileKind, LocalReadState,
     MetadataError, MetadataItem, MetadataItemId, MetadataSubject, SourceId, Track, TrackId,
@@ -31,7 +33,7 @@ pub struct LocalAccessFile {
     pub duration_seconds: u32,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct LocalAccessMapping {
     pub root_path: PathBuf,
     pub server_prefix: Option<String>,

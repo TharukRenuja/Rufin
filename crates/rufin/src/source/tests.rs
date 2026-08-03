@@ -1845,7 +1845,7 @@ fn failed_metadata_access_setting_save_restores_the_accepted_mapping() {
     );
     let previous_root = directory.path().join("previous");
     let previous_path = previous_root.join("Artist/Track.wav");
-    let previous_access = ConfiguredLocalAccess {
+    let previous_access = library::LocalAccessMapping {
         root_path: previous_root.clone(),
         server_prefix: Some("/server/music".to_string()),
         local_prefix: Some(previous_root.to_string_lossy().into_owned()),
@@ -1867,10 +1867,7 @@ fn failed_metadata_access_setting_save_restores_the_accepted_mapping() {
         duration_seconds: 180,
     }];
     library
-        .replace_local_access(
-            configured_local_access_mapping(&previous_access),
-            previous_files.clone(),
-        )
+        .replace_local_access(previous_access.clone(), previous_files.clone())
         .expect("accept previous Local access");
 
     let proposed_root = directory.path().join("proposed");

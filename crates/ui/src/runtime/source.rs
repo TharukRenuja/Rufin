@@ -7,6 +7,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use async_channel::Receiver;
+pub use library::LocalAccessStatus;
 use library::{
     FavoriteItemId, FolderContents, FolderId, HomeSectionKind, MetadataDraft, MetadataEdit,
     MetadataError, MetadataItemId, MetadataValues, MusicFolderId, PlaylistEdit, PlaylistTrackAdd,
@@ -25,17 +26,6 @@ pub struct SourceSummary {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct LocalFolder {
     pub path: String,
-}
-
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
-pub struct LocalAccessStatus {
-    pub sample_source_path: Option<String>,
-    pub sample_local_path: Option<String>,
-    pub direct_match_count: usize,
-    pub prefix_match_count: usize,
-    pub metadata_match_count: usize,
-    pub unmatched_count: usize,
-    pub total_track_count: usize,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
