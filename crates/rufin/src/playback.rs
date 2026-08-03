@@ -1051,7 +1051,6 @@ impl PlaybackOwner {
             }
             SessionEffect::NonfatalError(error) => {
                 debug!(%error, "Playback operation was not available");
-                let _ = self.source_events.try_send(SourceEvent::Notice(error));
             }
             SessionEffect::FatalError(error) => warn!(%error, "Playback session failed"),
             SessionEffect::Backend(_)

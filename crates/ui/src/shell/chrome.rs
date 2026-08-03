@@ -15,7 +15,6 @@ pub(crate) struct WindowChrome {
     pub(crate) application: adw::Application,
     pub(crate) window: adw::ApplicationWindow,
     pub(crate) toast_overlay: adw::ToastOverlay,
-    pub(crate) quick_toast_overlay: adw::ToastOverlay,
     pub(super) control_feedback_label: gtk::Label,
     pub(crate) operation_feedback: gtk::Box,
     pub(crate) operation_feedback_artwork: gtk::Box,
