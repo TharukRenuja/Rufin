@@ -6,14 +6,13 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use async_channel::Sender;
 use library::{
-    AlbumId, ArtistId, CandidateBatch, CandidateFinish, CandidateHeader, FavoriteAcceptance,
-    FavoriteItemId, FolderContents, FolderId, GenreId, HomeFacts, HomeSectionKind, ImageRef,
-    Libraries, Library, LibraryError, LocalAccessTarget, LocalArtworkRef,
-    LocalComponentReplacement, MetadataDraft, MetadataEdit, MetadataError, MetadataValues,
-    MusicFolderId, PlaylistAcceptance, PlaylistEdit, PlaylistId, PlaylistSnapshot,
-    PreparedSourceCandidate, ProviderFreshness, RadioSeed, RandomCriteria, ResolvedStream,
-    SearchRequest, SearchResults, SourceHomeSection, SourceHomeSectionKind, SourceId,
-    StreamRequest, TrackId,
+    CandidateBatch, CandidateFinish, CandidateHeader, FavoriteAcceptance, FavoriteItemId,
+    FolderContents, FolderId, HomeFacts, HomeSectionKind, ImageRef, Libraries, Library,
+    LibraryError, LocalAccessTarget, LocalArtworkRef, LocalComponentReplacement, MetadataDraft,
+    MetadataEdit, MetadataError, MetadataValues, MusicFolderId, PlaylistAcceptance, PlaylistEdit,
+    PlaylistId, PlaylistSnapshot, PreparedSourceCandidate, ProviderFreshness, RadioSeed,
+    RandomCriteria, ResolvedStream, SearchRequest, SearchResults, SourceHomeSection,
+    SourceHomeSectionKind, SourceId, StreamRequest, TrackId,
 };
 use playback::SourceReportFact;
 
@@ -70,43 +69,44 @@ pub struct SourceLibraryChange {
 #[derive(Clone, Debug, Eq, PartialEq)]
 enum SourceLibraryChangeKind {
     Full,
-    Jellyfin(BTreeSet<String>),
+    Jellyfin {
+        upserts: BTreeSet<String>,
+        removals: BTreeSet<String>,
+    },
 }
 
 impl SourceLibraryChange {
     pub fn merge(&mut self, other: Self) {
         match (&mut self.inner, other.inner) {
             (SourceLibraryChangeKind::Full, _) | (_, SourceLibraryChangeKind::Full) => {
-                self.inner = SourceLibraryChangeKind::Full
+                self.inner = SourceLibraryChangeKind::Full;
             }
             (
-                SourceLibraryChangeKind::Jellyfin(current),
-                SourceLibraryChangeKind::Jellyfin(incoming),
-            ) => current.extend(incoming),
+                SourceLibraryChangeKind::Jellyfin { upserts, removals },
+                SourceLibraryChangeKind::Jellyfin {
+                    upserts: incoming_upserts,
+                    removals: incoming_removals,
+                },
+            ) => {
+                upserts.retain(|id| !incoming_removals.contains(id));
+                removals.retain(|id| !incoming_upserts.contains(id));
+                upserts.extend(incoming_upserts);
+                removals.extend(incoming_removals);
+            }
         }
     }
 
-    pub(crate) fn jellyfin_items(items: impl IntoIterator<Item = String>) -> Self {
+    pub(crate) fn jellyfin(upserts: BTreeSet<String>, removals: BTreeSet<String>) -> Self {
         Self {
-            inner: SourceLibraryChangeKind::Jellyfin(items.into_iter().collect()),
+            inner: SourceLibraryChangeKind::Jellyfin { upserts, removals },
         }
     }
 
-    pub(crate) fn full() -> Self {
+    pub fn full() -> Self {
         Self {
             inner: SourceLibraryChangeKind::Full,
         }
     }
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) enum SourceLibraryItemId {
-    Album(AlbumId),
-    Track(TrackId),
-    Artist(ArtistId),
-    Genre(GenreId),
-    Playlist(PlaylistId),
-    MusicFolder(MusicFolderId),
 }
 
 #[derive(Clone, Debug)]
@@ -116,10 +116,10 @@ pub enum SourceLibraryChangeRead {
     Ignored,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug)]
 pub enum MetadataRefresh {
     Local(LocalFilesystemChange),
-    Source(SourceLibraryChange),
+    Source(SourceLibraryChangeRead),
 }
 
 pub struct ConnectedSource {
@@ -454,6 +454,7 @@ impl Source {
 
     pub async fn write_metadata(
         self: &Arc<Self>,
+        library: &Library,
         subject: library::MetadataSubject,
         edit: MetadataEdit,
         local_access: Option<Vec<LocalAccessTarget>>,
@@ -472,12 +473,14 @@ impl Source {
                 .await
                 .map_err(|error| MetadataError::Write(error.to_string()))?
             }
-            Implementation::Jellyfin(source) => source
-                .write_metadata(subject.item(), &edit)
-                .await
-                .map(|raw_ids| {
-                    MetadataRefresh::Source(SourceLibraryChange::jellyfin_items(raw_ids))
-                }),
+            Implementation::Jellyfin(source) => {
+                let raw_ids = source.write_metadata(subject.item(), &edit).await?;
+                source
+                    .read_library_change(library, raw_ids.into_iter().collect(), BTreeSet::new())
+                    .await
+                    .map(MetadataRefresh::Source)
+                    .map_err(|error| MetadataError::SavedRefreshFailed(error.to_string()))
+            }
             Implementation::OpenSubsonic(source) => {
                 if !source.metadata_editing_available() {
                     return Err(MetadataError::Unavailable);
@@ -499,7 +502,7 @@ impl Source {
                     .start_metadata_scan_and_wait()
                     .await
                     .map_err(|error| MetadataError::SavedRefreshFailed(error.to_string()))?;
-                Ok(MetadataRefresh::Source(SourceLibraryChange::full()))
+                Ok(MetadataRefresh::Source(SourceLibraryChangeRead::Full))
             }
         }
     }
@@ -514,23 +517,9 @@ impl Source {
         match &self.implementation {
             Implementation::Jellyfin(source) => {
                 source.refresh_metadata_editing().await;
-                let on_items = std::sync::Mutex::new(on_items);
-                let mut on_ready = |reconnecting| {
-                    let request = feed_needs_catch_up(catch_up, reconnecting);
-                    !request
-                        || on_items
-                            .lock()
-                            .unwrap_or_else(|poisoned| poisoned.into_inner())(
-                            SourceLibraryChange::full(),
-                        )
-                };
-                let mut on_change = |change| {
-                    on_items
-                        .lock()
-                        .unwrap_or_else(|poisoned| poisoned.into_inner())(change)
-                };
+                let mut on_items = on_items;
                 source
-                    .listen_library_changes(&mut on_ready, &mut on_change, &should_stop)
+                    .listen_library_changes(catch_up, &mut on_items)
                     .await
                     .map(NativeSourceResult::Available)
             }
@@ -569,14 +558,13 @@ impl Source {
     ) -> SourceResult<SourceLibraryChangeRead> {
         match change.inner {
             SourceLibraryChangeKind::Full => Ok(SourceLibraryChangeRead::Full),
-            SourceLibraryChangeKind::Jellyfin(items) => {
+            SourceLibraryChangeKind::Jellyfin { upserts, removals } => {
                 let Implementation::Jellyfin(source) = &self.implementation else {
                     return Err(SourceError::InvalidRequest(
                         "the library change belongs to another source",
                     ));
                 };
-                let contains = |item: &SourceLibraryItemId| library_contains_item(library, item);
-                source.read_library_change(items, &contains).await
+                source.read_library_change(library, upserts, removals).await
             }
         }
     }
@@ -893,17 +881,6 @@ impl Source {
     }
 }
 
-fn library_contains_item(library: &Library, item: &SourceLibraryItemId) -> bool {
-    match item {
-        SourceLibraryItemId::Album(id) => library.album(id).ok().flatten().is_some(),
-        SourceLibraryItemId::Track(id) => library.track(id).ok().flatten().is_some(),
-        SourceLibraryItemId::Artist(id) => library.artist(id).ok().flatten().is_some(),
-        SourceLibraryItemId::Genre(id) => library.genre(id).ok().flatten().is_some(),
-        SourceLibraryItemId::Playlist(id) => library.contains_playlist(id).unwrap_or(false),
-        SourceLibraryItemId::MusicFolder(id) => library.contains_music_folder(id).unwrap_or(false),
-    }
-}
-
 fn unix_seconds() -> i64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -1051,25 +1028,34 @@ mod input_identity_tests {
     }
 
     #[test]
-    fn selected_item_changes_coalesce_without_losing_a_full_refresh() {
-        let mut changed =
-            SourceLibraryChange::jellyfin_items(["track:one".to_string(), "track:two".to_string()]);
-        changed.merge(SourceLibraryChange::jellyfin_items([
-            "track:two".to_string(),
-            "album:one".to_string(),
-        ]));
+    fn jellyfin_change_merge_keeps_the_latest_action_and_full_dominates() {
+        let mut changed = SourceLibraryChange::jellyfin(
+            BTreeSet::from(["track-one".to_string(), "track-two".to_string()]),
+            BTreeSet::new(),
+        );
+        changed.merge(SourceLibraryChange::jellyfin(
+            BTreeSet::from(["album-one".to_string()]),
+            BTreeSet::from(["track-one".to_string()]),
+        ));
+        changed.merge(SourceLibraryChange::jellyfin(
+            BTreeSet::from(["track-one".to_string()]),
+            BTreeSet::from(["track-two".to_string()]),
+        ));
         assert_eq!(
             changed,
             SourceLibraryChange {
-                inner: SourceLibraryChangeKind::Jellyfin(BTreeSet::from([
-                    "album:one".to_string(),
-                    "track:one".to_string(),
-                    "track:two".to_string(),
-                ])),
+                inner: SourceLibraryChangeKind::Jellyfin {
+                    upserts: BTreeSet::from(["album-one".to_string(), "track-one".to_string(),]),
+                    removals: BTreeSet::from(["track-two".to_string()]),
+                },
             }
         );
 
         changed.merge(SourceLibraryChange::full());
+        changed.merge(SourceLibraryChange::jellyfin(
+            BTreeSet::from(["track-three".to_string()]),
+            BTreeSet::new(),
+        ));
         assert_eq!(changed, SourceLibraryChange::full());
     }
 

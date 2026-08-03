@@ -3,6 +3,7 @@
 //! Rufin owns selection and operation ordering here. Concrete sources acquire
 //! facts and perform provider operations; Library accepts and queries them.
 
+use std::collections::VecDeque;
 use std::future::Future;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -257,7 +258,7 @@ struct Shared {
     state: Mutex<OwnerState>,
     lane: tokio::sync::Mutex<()>,
     acceptance_lane: tokio::sync::Mutex<()>,
-    interruptible: Mutex<Vec<Weak<AtomicBool>>>,
+    interruptible: Mutex<Vec<InterruptibleTask>>,
     playback: Mutex<Weak<PlaybackOwner>>,
     next_epoch: AtomicU64,
     next_token: AtomicU64,
@@ -347,12 +348,125 @@ enum PreparedConnectionLibrary {
 struct ActiveObserver {
     qualifier: SourceQualifier,
     cancelled: Arc<AtomicBool>,
+    observed: Arc<Mutex<ObservedChangeState>>,
     handle: JoinHandle<()>,
+}
+
+enum SelectedObservedChange {
+    Source(SourceLibraryChange),
+    Local(LocalFilesystemChange),
+    #[cfg(test)]
+    Probe(tests::ObservedChangeProbe),
+}
+
+struct ObservedChangeState {
+    active: Option<u64>,
+    pending: VecDeque<SelectedObservedChange>,
+}
+
+impl ObservedChangeState {
+    fn new() -> Self {
+        Self {
+            active: None,
+            pending: VecDeque::new(),
+        }
+    }
+
+    fn submit(
+        &mut self,
+        token: u64,
+        change: SelectedObservedChange,
+    ) -> Option<SelectedObservedChange> {
+        if self.active.is_none() {
+            self.active = Some(token);
+            return Some(change);
+        }
+        match (self.pending.back_mut(), change) {
+            (
+                Some(SelectedObservedChange::Source(current)),
+                SelectedObservedChange::Source(incoming),
+            ) => current.merge(incoming),
+            (
+                Some(SelectedObservedChange::Local(current)),
+                SelectedObservedChange::Local(incoming),
+            ) => current.merge(incoming),
+            (_, change) => self.pending.push_back(change),
+        }
+        None
+    }
+
+    fn next(&mut self, token: u64) -> Option<SelectedObservedChange> {
+        if self.active != Some(token) {
+            return None;
+        }
+        if let Some(change) = self.pending.pop_front() {
+            self.active = None;
+            Some(change)
+        } else {
+            self.active = None;
+            None
+        }
+    }
+
+    fn activate(&mut self, token: u64) {
+        self.active = Some(token);
+    }
+
+    fn cancel(&mut self, token: u64) {
+        if self.active != Some(token) {
+            return;
+        }
+        self.stop();
+    }
+
+    fn stop(&mut self) {
+        self.active = None;
+        self.pending.clear();
+    }
+}
+
+struct ObservedChangeRun {
+    state: Arc<Mutex<ObservedChangeState>>,
+    token: u64,
+    clear_on_drop: bool,
+}
+
+impl ObservedChangeRun {
+    fn new(state: Arc<Mutex<ObservedChangeState>>, token: u64) -> Self {
+        Self {
+            state,
+            token,
+            clear_on_drop: true,
+        }
+    }
+
+    fn token(&self) -> u64 {
+        self.token
+    }
+
+    fn finish(mut self) {
+        self.clear_on_drop = false;
+    }
+}
+
+impl Drop for ObservedChangeRun {
+    fn drop(&mut self) {
+        if self.clear_on_drop {
+            self.state
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .cancel(self.token);
+        }
+    }
 }
 
 impl Drop for ActiveObserver {
     fn drop(&mut self) {
         self.cancelled.store(true, Ordering::Release);
+        self.observed
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .stop();
         self.handle.abort();
     }
 }
@@ -391,7 +505,85 @@ struct SavedSourceConnection {
 struct RefreshRequest {
     qualifier: SourceQualifier,
     visible: AtomicBool,
+    started: AtomicBool,
+    announced: AtomicBool,
     cancelled: Arc<AtomicBool>,
+}
+
+struct FreshnessAdmission {
+    next_check: tokio::time::Instant,
+    pending: Option<u64>,
+}
+
+impl FreshnessAdmission {
+    fn new(now: tokio::time::Instant) -> Self {
+        Self {
+            next_check: now,
+            pending: None,
+        }
+    }
+
+    fn defer(&mut self, now: tokio::time::Instant) {
+        self.next_check = now + SOURCE_CHECK_INTERVAL;
+    }
+
+    fn admit(&mut self, token: u64, catch_up: bool, now: tokio::time::Instant) -> bool {
+        if !catch_up && now < self.next_check {
+            return false;
+        }
+        self.next_check = now + SOURCE_CHECK_INTERVAL;
+        if self.pending.is_some() {
+            return false;
+        }
+        self.pending = Some(token);
+        true
+    }
+
+    fn finish(&mut self, token: u64) {
+        if self.pending == Some(token) {
+            self.pending = None;
+        }
+    }
+
+    fn cancel(&mut self) {
+        self.pending = None;
+    }
+}
+
+struct PendingFreshnessCheck {
+    shared: Weak<Shared>,
+    token: u64,
+}
+
+impl Drop for PendingFreshnessCheck {
+    fn drop(&mut self) {
+        if let Some(shared) = self.shared.upgrade() {
+            shared.finish_freshness_check(self.token);
+        }
+    }
+}
+
+struct InterruptibleTask {
+    token: u64,
+    cancelled: Arc<AtomicBool>,
+    handle: Option<tokio::task::AbortHandle>,
+}
+
+#[derive(Clone, Copy)]
+struct InterruptibleRegistration {
+    token: u64,
+}
+
+struct ActiveInterruptible {
+    shared: Arc<Shared>,
+    registration: InterruptibleRegistration,
+}
+
+impl Drop for ActiveInterruptible {
+    fn drop(&mut self) {
+        self.shared
+            .unregister_interruptible(self.registration.token);
+    }
 }
 
 struct OwnerState {
@@ -401,6 +593,7 @@ struct OwnerState {
     selected_revealed: bool,
     active_album_release: Option<ActiveAlbumRelease>,
     refresh: Option<Arc<RefreshRequest>>,
+    freshness: FreshnessAdmission,
 }
 
 impl SourceOwner {
@@ -438,6 +631,7 @@ impl SourceOwner {
                 selected_revealed: false,
                 active_album_release: None,
                 refresh: None,
+                freshness: FreshnessAdmission::new(tokio::time::Instant::now()),
             }),
             lane: tokio::sync::Mutex::new(()),
             acceptance_lane: tokio::sync::Mutex::new(()),
@@ -478,7 +672,7 @@ impl SourceOwner {
             interval.tick().await;
             loop {
                 interval.tick().await;
-                periodic.request_freshness_check();
+                periodic.request_freshness_check(false);
             }
         });
         if let Some(source_id) = self.shared.settings.load().sources.selected_source_id {
@@ -514,11 +708,48 @@ impl SourceOwner {
         F: FnOnce(SourceOwner, Arc<AtomicBool>) -> Work + Send + 'static,
         Work: Future<Output = ()> + Send + 'static,
     {
-        if interruptible {
-            self.shared.register_interruptible(&cancelled);
-        }
+        let registration =
+            interruptible.then(|| self.shared.register_interruptible(Arc::clone(&cancelled)));
+        self.spawn_registered(registration, cancelled, work);
+    }
+
+    fn spawn_registered<F, Work>(
+        &self,
+        registration: Option<InterruptibleRegistration>,
+        cancelled: Arc<AtomicBool>,
+        work: F,
+    ) where
+        F: FnOnce(SourceOwner, Arc<AtomicBool>) -> Work + Send + 'static,
+        Work: Future<Output = ()> + Send + 'static,
+    {
         let shared = Arc::clone(&self.shared);
-        self.shared.runtime.spawn(async move {
+        let Some(registration) = registration else {
+            self.shared.runtime.spawn(async move {
+                let lane_owner = Arc::clone(&shared);
+                let _lane = lane_owner.lane.lock().await;
+                if cancelled.load(Ordering::Acquire) {
+                    return;
+                }
+                work(
+                    SourceOwner {
+                        shared: Arc::clone(&shared),
+                    },
+                    cancelled,
+                )
+                .await;
+            });
+            return;
+        };
+        let active = ActiveInterruptible {
+            shared: Arc::clone(&shared),
+            registration,
+        };
+        let (start, started) = tokio::sync::oneshot::channel();
+        let handle = self.shared.runtime.spawn(async move {
+            let _active = active;
+            if started.await.is_err() {
+                return;
+            }
             let lane_owner = Arc::clone(&shared);
             let _lane = lane_owner.lane.lock().await;
             if cancelled.load(Ordering::Acquire) {
@@ -532,22 +763,12 @@ impl SourceOwner {
             )
             .await;
         });
-    }
-
-    fn spawn_selected<F, Work>(&self, interruptible: bool, work: F)
-    where
-        F: FnOnce(SourceOwner, Arc<SelectedSourceState>, Arc<AtomicBool>) -> Work + Send + 'static,
-        Work: Future<Output = ()> + Send + 'static,
-    {
-        let Some(session) = self.shared.selected_session() else {
-            return;
-        };
-        self.spawn_serialized(interruptible, move |operations, cancelled| async move {
-            let Some(selected) = session.resolve() else {
-                return;
-            };
-            work(operations, selected, cancelled).await;
-        });
+        let attached = self
+            .shared
+            .attach_interruptible(registration.token, handle.abort_handle());
+        if attached {
+            let _ = start.send(());
+        }
     }
 
     fn spawn_transition<F, Work>(
@@ -561,13 +782,11 @@ impl SourceOwner {
         Work: Future<Output = Result<(), String>> + Send + 'static,
     {
         self.shared.cancel_interruptible();
-        self.shared.cancel_refresh();
-        let _ = self
-            .shared
-            .outputs
-            .events
-            .try_send(SourceEvent::Operation(operation));
         self.spawn_serialized(true, move |mut operations, cancelled| async move {
+            operations
+                .shared
+                .send_event(SourceEvent::Operation(operation))
+                .await;
             if let Err(error) = work(operations.clone(), Arc::clone(&cancelled)).await
                 && !cancelled.load(Ordering::Acquire)
             {
@@ -579,6 +798,15 @@ impl SourceOwner {
     }
 
     fn request_refresh(&self, source_id: SourceId, visible: bool) {
+        self.request_refresh_while_active(source_id, visible, None);
+    }
+
+    fn request_refresh_while_active(
+        &self,
+        source_id: SourceId,
+        visible: bool,
+        parent_cancelled: Option<&AtomicBool>,
+    ) {
         let Some(selected) = self
             .shared
             .selected()
@@ -593,6 +821,9 @@ impl SourceOwner {
                 .state
                 .lock()
                 .unwrap_or_else(|poisoned| poisoned.into_inner());
+            if parent_cancelled.is_some_and(|cancelled| cancelled.load(Ordering::Acquire)) {
+                return;
+            }
             if let Some(refresh) = state
                 .refresh
                 .as_ref()
@@ -600,32 +831,39 @@ impl SourceOwner {
             {
                 if visible {
                     refresh.visible.store(true, Ordering::Release);
+                    if refresh.started.load(Ordering::Acquire)
+                        && !refresh.announced.swap(true, Ordering::AcqRel)
+                    {
+                        let _ = self.shared.outputs.events.try_send(SourceEvent::Operation(
+                            SourceOperation::Refreshing {
+                                source_id: refresh.qualifier.source_id.clone(),
+                                progress: initial_progress(),
+                            },
+                        ));
+                    }
                 }
                 None
             } else {
                 let request = Arc::new(RefreshRequest {
                     qualifier,
                     visible: AtomicBool::new(visible),
+                    started: AtomicBool::new(false),
+                    announced: AtomicBool::new(false),
                     cancelled: Arc::new(AtomicBool::new(false)),
                 });
+                let registration = self
+                    .shared
+                    .register_interruptible(Arc::clone(&request.cancelled));
                 state.refresh = Some(Arc::clone(&request));
-                Some(request)
+                Some((request, registration))
             }
         };
-        if visible {
-            let _ = self.shared.outputs.events.try_send(SourceEvent::Operation(
-                SourceOperation::Refreshing {
-                    source_id: source_id.clone(),
-                    progress: initial_progress(),
-                },
-            ));
-        }
-        let Some(request) = request else {
+        let Some((request, registration)) = request else {
             return;
         };
         let request_for_work = Arc::clone(&request);
-        self.spawn_serialized_with_cancel(
-            true,
+        self.spawn_registered(
+            Some(registration),
             Arc::clone(&request.cancelled),
             move |mut operations, cancelled| async move {
                 operations.refresh(request_for_work, cancelled).await;
@@ -633,10 +871,53 @@ impl SourceOwner {
         );
     }
 
-    fn request_freshness_check(&self) {
-        self.spawn_selected(true, |mut operations, selected, cancelled| async move {
-            operations.check_freshness(selected, cancelled).await;
-        });
+    fn request_freshness_check(&self, catch_up: bool) {
+        let Some(session) = self.shared.selected_session() else {
+            return;
+        };
+        let Some(selected) = session
+            .resolve()
+            .filter(|selected| selected.source.is_some())
+        else {
+            return;
+        };
+        let qualifier = selected.qualifier();
+        let cancelled = Arc::new(AtomicBool::new(false));
+        let registration = self.shared.reserve_interruptible();
+        let registration = {
+            let mut state = self
+                .shared
+                .state
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            if !state
+                .freshness
+                .admit(registration.token, catch_up, tokio::time::Instant::now())
+            {
+                return;
+            }
+            self.shared
+                .register_reserved_interruptible(registration, Arc::clone(&cancelled));
+            registration
+        };
+        let pending = PendingFreshnessCheck {
+            shared: Arc::downgrade(&self.shared),
+            token: registration.token,
+        };
+        self.spawn_registered(
+            Some(registration),
+            cancelled,
+            move |mut operations, cancelled| async move {
+                let _pending = pending;
+                let Some(selected) = session
+                    .resolve()
+                    .filter(|selected| selected.qualifier() == qualifier)
+                else {
+                    return;
+                };
+                operations.check_freshness(selected, cancelled).await;
+            },
+        );
     }
 }
 
@@ -736,7 +1017,7 @@ impl SourceOwner {
             let configured = configured_source(&changed.sources, &source_id)?;
             let cancelled = Arc::new(AtomicBool::new(false));
             let progress = Arc::new(|_: SourceReadProgress| {});
-            if let Err(error) = select_source(self, configured, progress, cancelled).await {
+            if let Err(error) = select_source(self, configured, progress, cancelled, false).await {
                 self.begin_transition().await;
                 self.fail_transition(Some(source_id), error.clone(), false)
                     .await;
@@ -770,7 +1051,7 @@ impl SourceOwner {
                 .await;
         }
         let progress_source = (selected && local_roots_changed).then_some(source_id);
-        let progress = self.progress(move |progress| {
+        let progress = self.progress(Arc::clone(&cancelled), move |progress| {
             progress_source
                 .as_ref()
                 .map(|source_id| SourceOperation::Refreshing {
@@ -794,6 +1075,9 @@ impl SourceOwner {
                     Ok(())
                 }
                 SourceEditResult::ConfigurationOnly(configuration) => {
+                    if !self.shared.protect_interruptible_commit(&cancelled) {
+                        return Ok(());
+                    }
                     let saved = self
                         .save_source_connection(
                             Some(&configured),
@@ -830,6 +1114,9 @@ impl SourceOwner {
                         return Err("this source account is already configured".to_string());
                     }
                     if !selected {
+                        if !self.shared.protect_interruptible_commit(&cancelled) {
+                            return Ok(());
+                        }
                         let saved = self
                             .save_source_connection(
                                 Some(&configured),
@@ -880,15 +1167,19 @@ impl SourceOwner {
                         Some(source),
                         credential,
                         prepared_library,
+                        Arc::clone(&cancelled),
+                        true,
                     )
                     .await
                 }
             }
         }
         .await;
-        if let Err(error) = result {
+        if let Err(error) = result
+            && !cancelled.load(Ordering::Acquire)
+        {
             self.selected_or_inactive_failure(selected, error).await;
-        } else if local_roots_changed {
+        } else if local_roots_changed && !cancelled.load(Ordering::Acquire) {
             self.shared
                 .send_event(SourceEvent::Operation(SourceOperation::Idle))
                 .await;
@@ -903,6 +1194,103 @@ impl SourceOwner {
         }
     }
 
+    fn queue_observed_change(
+        &self,
+        state: &Arc<Mutex<ObservedChangeState>>,
+        session: &Arc<ActiveSource>,
+        observer_cancelled: &Arc<AtomicBool>,
+        change: SelectedObservedChange,
+    ) -> bool {
+        if resolve_observer_session(observer_cancelled, session).is_none() {
+            return false;
+        }
+        let mut observed = state
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if observer_cancelled.load(Ordering::Acquire) {
+            return false;
+        }
+        let registration = self.shared.reserve_interruptible();
+        let first = observed.submit(registration.token, change);
+        if let Some(first) = first {
+            let cancelled = Arc::new(AtomicBool::new(false));
+            self.shared
+                .register_reserved_interruptible(registration, Arc::clone(&cancelled));
+            self.start_observed_changes(
+                Arc::clone(state),
+                Arc::clone(session),
+                Arc::clone(observer_cancelled),
+                cancelled,
+                registration,
+                first,
+            );
+        }
+        true
+    }
+
+    fn start_observed_changes(
+        &self,
+        state: Arc<Mutex<ObservedChangeState>>,
+        session: Arc<ActiveSource>,
+        observer_cancelled: Arc<AtomicBool>,
+        cancelled: Arc<AtomicBool>,
+        registration: InterruptibleRegistration,
+        change: SelectedObservedChange,
+    ) {
+        let next_state = Arc::clone(&state);
+        let run = ObservedChangeRun::new(state, registration.token);
+        self.spawn_registered(
+            Some(registration),
+            cancelled,
+            move |mut operations, cancelled| async move {
+                let Some(selected) = resolve_observer_session(&observer_cancelled, &session) else {
+                    return;
+                };
+                match change {
+                    SelectedObservedChange::Source(change) => {
+                        operations
+                            .accept_observed_change(selected, change, Arc::clone(&cancelled))
+                            .await;
+                    }
+                    SelectedObservedChange::Local(change) => {
+                        operations
+                            .accept_local_change(selected, change, Arc::clone(&cancelled))
+                            .await;
+                    }
+                    #[cfg(test)]
+                    SelectedObservedChange::Probe(probe) => probe.accept().await,
+                }
+                if cancelled.load(Ordering::Acquire)
+                    || resolve_observer_session(&observer_cancelled, &session).is_none()
+                {
+                    return;
+                }
+                let mut observed = next_state
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner());
+                let next = observed.next(run.token());
+                if let Some(next) = next {
+                    let registration = operations.shared.reserve_interruptible();
+                    let next_cancelled = Arc::new(AtomicBool::new(false));
+                    operations
+                        .shared
+                        .register_reserved_interruptible(registration, Arc::clone(&next_cancelled));
+                    observed.activate(registration.token);
+                    operations.start_observed_changes(
+                        Arc::clone(&next_state),
+                        session,
+                        observer_cancelled,
+                        next_cancelled,
+                        registration,
+                        next,
+                    );
+                }
+                drop(observed);
+                run.finish();
+            },
+        );
+    }
+
     async fn start_selected_access(&mut self, catch_up: bool) {
         let Some(session) = self.shared.selected_session() else {
             return;
@@ -912,7 +1300,7 @@ impl SourceOwner {
         };
         let qualifier = selected.qualifier();
         {
-            let state = self
+            let mut state = self
                 .shared
                 .state
                 .lock()
@@ -923,6 +1311,9 @@ impl SourceOwner {
                 .is_some_and(|observer| observer.qualifier == qualifier)
             {
                 return;
+            }
+            if !catch_up {
+                state.freshness.defer(tokio::time::Instant::now());
             }
         }
         self.stop_observer();
@@ -938,6 +1329,9 @@ impl SourceOwner {
             shared: Arc::clone(&self.shared),
         };
         let local_owner = item_owner.clone();
+        let observed = Arc::new(Mutex::new(ObservedChangeState::new()));
+        let item_observed = Arc::clone(&observed);
+        let local_observed = Arc::clone(&observed);
         let item_session = Arc::clone(&session);
         let local_session = Arc::clone(&session);
         let stop_session = Arc::clone(&session);
@@ -946,44 +1340,20 @@ impl SourceOwner {
                 .listen_selected_changes(
                     catch_up,
                     move |change| {
-                        if resolve_observer_session(&item_cancelled, &item_session).is_none() {
-                            return false;
-                        }
-                        let session = Arc::clone(&item_session);
-                        let observer_cancelled = Arc::clone(&item_cancelled);
-                        item_owner.spawn_serialized(
-                            true,
-                            move |mut operations, cancelled| async move {
-                                if let Some(selected) =
-                                    resolve_observer_session(&observer_cancelled, &session)
-                                {
-                                    operations
-                                        .accept_observed_change(selected, change, cancelled)
-                                        .await;
-                                }
-                            },
-                        );
-                        true
+                        item_owner.queue_observed_change(
+                            &item_observed,
+                            &item_session,
+                            &item_cancelled,
+                            SelectedObservedChange::Source(change),
+                        )
                     },
                     move |change| {
-                        if resolve_observer_session(&local_cancelled, &local_session).is_none() {
-                            return false;
-                        }
-                        let session = Arc::clone(&local_session);
-                        let observer_cancelled = Arc::clone(&local_cancelled);
-                        local_owner.spawn_serialized(
-                            true,
-                            move |mut operations, cancelled| async move {
-                                if let Some(selected) =
-                                    resolve_observer_session(&observer_cancelled, &session)
-                                {
-                                    operations
-                                        .accept_local_change(selected, change, cancelled)
-                                        .await;
-                                }
-                            },
-                        );
-                        true
+                        local_owner.queue_observed_change(
+                            &local_observed,
+                            &local_session,
+                            &local_cancelled,
+                            SelectedObservedChange::Local(change),
+                        )
                     },
                     move || {
                         stop_cancelled.load(Ordering::Acquire) || stop_session.resolve().is_none()
@@ -997,6 +1367,7 @@ impl SourceOwner {
         let observer = ActiveObserver {
             qualifier,
             cancelled,
+            observed,
             handle,
         };
         let mut state = self
@@ -1016,27 +1387,32 @@ impl SourceOwner {
             SourceOwner {
                 shared: Arc::clone(&self.shared),
             }
-            .request_freshness_check();
+            .request_freshness_check(true);
         }
     }
 
     fn stop_observer(&mut self) {
-        self.shared
+        let observer = self
+            .shared
             .state
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
             .observer
             .take();
+        drop(observer);
     }
 
     fn retire_selected_access(&self) {
-        let mut state = self
-            .shared
-            .state
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        state.observer.take();
-        state.local_access.take();
+        let (observer, local_access) = {
+            let mut state = self
+                .shared
+                .state
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            (state.observer.take(), state.local_access.take())
+        };
+        drop(observer);
+        drop(local_access);
     }
 
     async fn start_local_access_refresh(&mut self, selected: &SelectedSourceState) {
@@ -1277,13 +1653,19 @@ impl SourceOwner {
         }
     }
 
-    fn progress<F>(&self, operation: F) -> Arc<dyn Fn(SourceReadProgress) + Send + Sync>
+    fn progress<F>(
+        &self,
+        cancelled: Arc<AtomicBool>,
+        operation: F,
+    ) -> Arc<dyn Fn(SourceReadProgress) + Send + Sync>
     where
         F: Fn(SourceProgress) -> Option<SourceOperation> + Send + Sync + 'static,
     {
         let events = self.shared.outputs.events.clone();
         Arc::new(move |progress| {
-            if let Some(operation) = operation(source_progress(progress)) {
+            if !cancelled.load(Ordering::Acquire)
+                && let Some(operation) = operation(source_progress(progress))
+            {
                 let _ = events.try_send(SourceEvent::Operation(operation));
             }
         })
@@ -1299,8 +1681,19 @@ impl SourceOwner {
             return;
         };
         let source_id = selected.source_id().clone();
+        request.started.store(true, Ordering::Release);
+        if request.visible.load(Ordering::Acquire)
+            && !request.announced.swap(true, Ordering::AcqRel)
+        {
+            self.shared
+                .send_event(SourceEvent::Operation(SourceOperation::Refreshing {
+                    source_id: source_id.clone(),
+                    progress: initial_progress(),
+                }))
+                .await;
+        }
         let visible = Arc::clone(&request);
-        let progress = self.progress(move |progress| {
+        let progress = self.progress(Arc::clone(&cancelled), move |progress| {
             visible
                 .visible
                 .load(Ordering::Acquire)
@@ -1320,21 +1713,32 @@ impl SourceOwner {
             self.shared.finish_refresh(&request);
             return;
         }
-        let visible = request.visible.load(Ordering::Acquire);
-        match prepared {
+        let result = match prepared {
             Ok(prepared) => {
                 let acceptance_owner = Arc::clone(&self.shared);
                 let _acceptance = acceptance_owner.acceptance_lane.lock().await;
-                if let Err(error) = self
-                    .commit_refresh(Arc::clone(&selected), prepared, visible)
-                    .await
-                {
-                    self.refresh_failed(&selected, visible, error).await;
+                if !self.shared.protect_interruptible_commit(&cancelled) {
+                    self.shared.finish_refresh(&request);
+                    return;
                 }
+                self.commit_refresh(Arc::clone(&selected), prepared).await
             }
+            Err(error) => Err(error),
+        };
+        if cancelled.load(Ordering::Acquire) {
+            self.shared.finish_refresh(&request);
+            return;
+        }
+        let visible = self.shared.finish_refresh(&request).unwrap_or(false);
+        match result {
+            Ok(()) if visible => {
+                self.shared
+                    .send_event(SourceEvent::Operation(SourceOperation::Idle))
+                    .await;
+            }
+            Ok(()) => {}
             Err(error) => self.refresh_failed(&selected, visible, error).await,
         }
-        self.shared.finish_refresh(&request);
     }
 
     async fn accept_activity(&mut self, qualifier: SourceQualifier, update: RecordedActivity) {
@@ -1368,6 +1772,8 @@ impl SourceOwner {
         source: Option<Arc<Source>>,
         credential: Option<String>,
         prepared_library: PreparedConnectionLibrary,
+        cancelled: Arc<AtomicBool>,
+        protect_commit: bool,
     ) -> Result<(), String> {
         let same_session = self
             .shared
@@ -1379,6 +1785,9 @@ impl SourceOwner {
         } else {
             None
         };
+        if protect_commit && !self.shared.protect_interruptible_commit(&cancelled) {
+            return Ok(());
+        }
         if same_session {
             let current = self
                 .shared
@@ -1428,7 +1837,9 @@ impl SourceOwner {
                 self.rollback_source_connection(saved).await;
                 return Err(error);
             }
-            self.start_selected_access(true).await;
+            if !cancelled.load(Ordering::Acquire) {
+                self.start_selected_access(true).await;
+            }
             self.shared.publish_configured().await;
             self.finish_source_connection(saved).await;
             return Ok(());
@@ -1540,9 +1951,14 @@ impl SourceOwner {
         self.shared
             .publish_selected(session, Arc::clone(&selected), playback)
             .await;
-        self.start_selected_access(cache_match == Some(SourceCacheMatch::Exact))
-            .await;
+        if !cancelled.load(Ordering::Acquire) {
+            self.start_selected_access(cache_match == Some(SourceCacheMatch::Exact))
+                .await;
+        }
         self.finish_source_connection(saved).await;
+        if cancelled.load(Ordering::Acquire) {
+            return Ok(());
+        }
         if cache_match == Some(SourceCacheMatch::ReaderUpgrade) && selected.source.is_some() {
             SourceOwner {
                 shared: Arc::clone(&self.shared),
@@ -1560,7 +1976,6 @@ impl SourceOwner {
         &mut self,
         previous: Arc<SelectedSourceState>,
         prepared: PreparedSourceCandidate,
-        visible: bool,
     ) -> Result<(), String> {
         if !self.shared.matches_selected(&previous.qualifier()) {
             return Err(
@@ -1598,11 +2013,6 @@ impl SourceOwner {
                 }
             }
             self.start_local_access_refresh(&selected).await;
-        }
-        if visible {
-            self.shared
-                .send_event(SourceEvent::Operation(SourceOperation::Idle))
-                .await;
         }
         Ok(())
     }
@@ -1727,7 +2137,7 @@ impl SourceOwner {
                 .await?
             }
             SelectedLibraryAcceptance::Full(candidate) => {
-                return self.commit_refresh(selected, candidate, false).await;
+                return self.commit_refresh(selected, candidate).await;
             }
         };
         if let Some(change) = change {
@@ -1898,7 +2308,7 @@ impl SourceOwner {
         &mut self,
         selected: Arc<SelectedSourceState>,
         change: SourceLibraryChange,
-        _cancelled: Arc<AtomicBool>,
+        cancelled: Arc<AtomicBool>,
     ) {
         let Some(source) = selected.source.as_ref() else {
             return;
@@ -1909,6 +2319,11 @@ impl SourceOwner {
             .map_err(string_error)
         {
             Ok(SourceLibraryChangeRead::Exact(update)) => {
+                let acceptance_owner = Arc::clone(&self.shared);
+                let _acceptance = acceptance_owner.acceptance_lane.lock().await;
+                if !self.shared.protect_interruptible_commit(&cancelled) {
+                    return;
+                }
                 if let Err(error) = self
                     .accept_selected_library_acceptance(
                         Arc::clone(&selected),
@@ -1919,10 +2334,16 @@ impl SourceOwner {
                     warn!(%error, "could not accept a selected source update");
                 }
             }
-            Ok(SourceLibraryChangeRead::Full) => SourceOwner {
-                shared: Arc::clone(&self.shared),
+            Ok(SourceLibraryChangeRead::Full) => {
+                SourceOwner {
+                    shared: Arc::clone(&self.shared),
+                }
+                .request_refresh_while_active(
+                    selected.source_id().clone(),
+                    false,
+                    Some(&cancelled),
+                );
             }
-            .request_refresh(selected.source_id().clone(), false),
             Ok(SourceLibraryChangeRead::Ignored) => {}
             Err(error) => warn!(%error, "background selected source update failed"),
         }
@@ -1937,8 +2358,20 @@ impl SourceOwner {
         let Some(source) = selected.source.as_ref().cloned() else {
             return;
         };
-        match prepare_local_change(source, Arc::clone(&selected.library), change, cancelled).await {
+        match prepare_local_change(
+            source,
+            Arc::clone(&selected.library),
+            change,
+            Arc::clone(&cancelled),
+        )
+        .await
+        {
             Ok(Some(replacement)) => {
+                let acceptance_owner = Arc::clone(&self.shared);
+                let _acceptance = acceptance_owner.acceptance_lane.lock().await;
+                if !self.shared.protect_interruptible_commit(&cancelled) {
+                    return;
+                }
                 if let Err(error) = self
                     .accept_selected_library_acceptance(
                         Arc::clone(&selected),
@@ -1957,7 +2390,7 @@ impl SourceOwner {
     async fn check_freshness(
         &mut self,
         selected: Arc<SelectedSourceState>,
-        _cancelled: Arc<AtomicBool>,
+        cancelled: Arc<AtomicBool>,
     ) {
         let Some(source) = selected.source.as_ref() else {
             return;
@@ -1970,10 +2403,16 @@ impl SourceOwner {
             }
         };
         match source.check_freshness(freshness.as_ref()).await {
-            Ok(SourceFreshness::Changed(_)) => SourceOwner {
-                shared: Arc::clone(&self.shared),
+            Ok(SourceFreshness::Changed(_)) => {
+                SourceOwner {
+                    shared: Arc::clone(&self.shared),
+                }
+                .request_refresh_while_active(
+                    selected.source_id().clone(),
+                    false,
+                    Some(&cancelled),
+                );
             }
-            .request_refresh(selected.source_id().clone(), false),
             Ok(
                 SourceFreshness::Unavailable | SourceFreshness::Unchanged | SourceFreshness::Busy,
             ) => {}
@@ -1988,7 +2427,7 @@ impl SourceOwner {
         cancelled: Arc<AtomicBool>,
         mut reply: MetadataReply,
     ) {
-        let progress = self.progress(|_| None);
+        let progress = self.progress(Arc::clone(&cancelled), |_| None);
         let acceptance = prepare_metadata_acceptance(
             Arc::clone(&self.shared),
             (*selected).clone(),
@@ -2328,18 +2767,6 @@ impl SourceOwner {
         let replacement = selected
             .then(|| replacement_source(&stored.sources, &source_id))
             .flatten();
-        if selected {
-            self.shared
-                .send_event(SourceEvent::Operation(SourceOperation::Switching {
-                    target: replacement
-                        .as_ref()
-                        .cloned()
-                        .unwrap_or_else(|| source_id.clone()),
-                    progress: initial_progress(),
-                }))
-                .await;
-            self.begin_transition().await;
-        }
         let settings = self.shared.settings.clone();
         let id_for_settings = source_id.clone();
         let saved = blocking(move || {
@@ -2363,6 +2790,18 @@ impl SourceOwner {
             }
             return;
         }
+        if selected {
+            self.shared
+                .send_event(SourceEvent::Operation(SourceOperation::Switching {
+                    target: replacement
+                        .as_ref()
+                        .cloned()
+                        .unwrap_or_else(|| source_id.clone()),
+                    progress: initial_progress(),
+                }))
+                .await;
+            self.begin_transition().await;
+        }
         self.remove_replaced_source_data(source_id.clone()).await;
         if let Some(reference) = removed.and_then(|source| source.credential_ref) {
             self.delete_staged_credential(Some(&reference)).await;
@@ -2372,14 +2811,16 @@ impl SourceOwner {
                 match configured_source(&self.shared.settings.load().sources, &replacement) {
                     Ok(configured) => configured,
                     Err(error) => {
-                        self.shared.warn_nonfatal(&error);
+                        self.shared.publish_configured().await;
+                        self.fail_transition(Some(replacement), error, false).await;
                         return;
                     }
                 };
             let cancelled = Arc::new(AtomicBool::new(false));
-            let progress = self.progress(|_| None);
-            if let Err(error) = select_source(self, configured, progress, cancelled).await {
-                self.shared.warn_nonfatal(&error);
+            let progress = self.progress(Arc::clone(&cancelled), |_| None);
+            if let Err(error) = select_source(self, configured, progress, cancelled, false).await {
+                self.shared.publish_configured().await;
+                self.fail_transition(Some(replacement), error, false).await;
             }
             return;
         }
@@ -2675,40 +3116,112 @@ impl Shared {
             .is_some_and(|selected| selected.qualifier() == *qualifier)
     }
 
-    fn register_interruptible(&self, cancelled: &Arc<AtomicBool>) {
+    fn register_interruptible(&self, cancelled: Arc<AtomicBool>) -> InterruptibleRegistration {
+        let registration = self.reserve_interruptible();
+        self.register_reserved_interruptible(registration, cancelled);
+        registration
+    }
+
+    fn reserve_interruptible(&self) -> InterruptibleRegistration {
+        InterruptibleRegistration {
+            token: self.next_token.fetch_add(1, Ordering::AcqRel),
+        }
+    }
+
+    fn register_reserved_interruptible(
+        &self,
+        registration: InterruptibleRegistration,
+        cancelled: Arc<AtomicBool>,
+    ) {
+        self.interruptible
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .push(InterruptibleTask {
+                token: registration.token,
+                cancelled,
+                handle: None,
+            });
+    }
+
+    fn attach_interruptible(&self, token: u64, handle: tokio::task::AbortHandle) -> bool {
+        let mut handle = Some(handle);
+        let attached = {
+            let mut active = self
+                .interruptible
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            if let Some(entry) = active.iter_mut().find(|entry| entry.token == token)
+                && !entry.cancelled.load(Ordering::Acquire)
+            {
+                entry.handle = handle.take();
+                true
+            } else {
+                active.retain(|entry| entry.token != token);
+                false
+            }
+        };
+        if let Some(handle) = handle {
+            handle.abort();
+        }
+        attached
+    }
+
+    fn unregister_interruptible(&self, token: u64) {
+        self.interruptible
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .retain(|entry| entry.token != token);
+    }
+
+    fn protect_interruptible_commit(&self, cancelled: &Arc<AtomicBool>) -> bool {
         let mut active = self
             .interruptible
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        active.retain(|cancelled| cancelled.strong_count() > 0);
-        active.push(Arc::downgrade(cancelled));
+        let Some(entry) = active
+            .iter_mut()
+            .find(|entry| Arc::ptr_eq(&entry.cancelled, cancelled))
+        else {
+            return false;
+        };
+        if entry.cancelled.load(Ordering::Acquire) {
+            return false;
+        }
+        entry.handle = None;
+        true
     }
 
     fn cancel_interruptible(&self) {
-        for cancelled in self
-            .interruptible
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .drain(..)
-            .filter_map(|cancelled| cancelled.upgrade())
-        {
-            cancelled.store(true, Ordering::Release);
+        let (refresh, active) = {
+            let mut state = self
+                .state
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            state.freshness.cancel();
+            let refresh = state.refresh.take();
+            let active = std::mem::take(
+                &mut *self
+                    .interruptible
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner()),
+            );
+            if let Some(refresh) = &refresh {
+                refresh.cancelled.store(true, Ordering::Release);
+            }
+            for entry in &active {
+                entry.cancelled.store(true, Ordering::Release);
+            }
+            (refresh, active)
+        };
+        drop(refresh);
+        for mut entry in active {
+            if let Some(handle) = entry.handle.take() {
+                handle.abort();
+            }
         }
     }
 
-    fn cancel_refresh(&self) {
-        if let Some(refresh) = self
-            .state
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .refresh
-            .take()
-        {
-            refresh.cancelled.store(true, Ordering::Release);
-        }
-    }
-
-    fn finish_refresh(&self, request: &Arc<RefreshRequest>) {
+    fn finish_refresh(&self, request: &Arc<RefreshRequest>) -> Option<bool> {
         let mut state = self
             .state
             .lock()
@@ -2719,7 +3232,17 @@ impl Shared {
             .is_some_and(|active| Arc::ptr_eq(active, request))
         {
             state.refresh = None;
+            return Some(request.visible.load(Ordering::Acquire));
         }
+        None
+    }
+
+    fn finish_freshness_check(&self, token: u64) {
+        self.state
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .freshness
+            .finish(token);
     }
 
     fn playback(&self) -> Result<Arc<PlaybackOwner>, String> {
@@ -2841,13 +3364,16 @@ impl Shared {
         {
             let _ = acknowledgement.recv().await;
         }
-        let mut state = self
-            .state
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        state.selected = None;
-        state.observer = None;
-        state.local_access = None;
+        let (observer, local_access) = {
+            let mut state = self
+                .state
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            state.selected = None;
+            (state.observer.take(), state.local_access.take())
+        };
+        drop(observer);
+        drop(local_access);
     }
 
     fn warn_nonfatal(&self, error: &str) {
@@ -2906,6 +3432,8 @@ async fn add_source(
             Some(source),
             credential,
             PreparedConnectionLibrary::Candidate(Box::new(prepared)),
+            Arc::clone(&cancelled),
+            true,
         )
         .await
 }
@@ -2915,6 +3443,7 @@ async fn select_source(
     configured: ConfiguredSource,
     progress: Arc<dyn Fn(SourceReadProgress) + Send + Sync>,
     cancelled: Arc<AtomicBool>,
+    protect_commit: bool,
 ) -> Result<(), String> {
     let shared = Arc::clone(&owner.shared);
     let configuration = configured.configuration.clone();
@@ -2990,6 +3519,8 @@ async fn select_source(
             source,
             None,
             prepared_library,
+            Arc::clone(&cancelled),
+            protect_commit,
         )
         .await
 }
@@ -3126,28 +3657,22 @@ async fn prepare_metadata_acceptance(
         local_access,
     } = context;
     reply.mark_write_started();
-    match source.write_metadata(subject, edit, local_access).await? {
-        MetadataRefresh::Source(change) => {
-            match source
-                .read_library_change(&selected.library, change)
-                .await
-                .map_err(string_error)
-            {
-                Ok(SourceLibraryChangeRead::Exact(update)) => {
-                    Ok(SelectedLibraryAcceptance::Source(update))
-                }
-                Ok(SourceLibraryChangeRead::Ignored) => Err(MetadataError::SavedRefreshFailed(
-                    "the source did not return the written item".to_string(),
-                )),
-                Ok(SourceLibraryChangeRead::Full) => {
-                    prepare_refresh_candidate(shared, selected, progress, cancelled)
-                        .await
-                        .map(SelectedLibraryAcceptance::Full)
-                        .map_err(MetadataError::SavedRefreshFailed)
-                }
-                Err(error) => Err(MetadataError::SavedRefreshFailed(error.to_string())),
+    match source
+        .write_metadata(&selected.library, subject, edit, local_access)
+        .await?
+    {
+        MetadataRefresh::Source(change) => match change {
+            SourceLibraryChangeRead::Exact(update) => Ok(SelectedLibraryAcceptance::Source(update)),
+            SourceLibraryChangeRead::Ignored => Err(MetadataError::SavedRefreshFailed(
+                "the source did not return the written item".to_string(),
+            )),
+            SourceLibraryChangeRead::Full => {
+                prepare_refresh_candidate(shared, selected, progress, cancelled)
+                    .await
+                    .map(SelectedLibraryAcceptance::Full)
+                    .map_err(MetadataError::SavedRefreshFailed)
             }
-        }
+        },
         MetadataRefresh::Local(change) => {
             let library = Arc::clone(&selected.library);
             let source = Arc::clone(&source);
@@ -3240,8 +3765,9 @@ impl SourcePort for SourceOwner {
             None,
             true,
             move |mut operations, cancelled| async move {
-                let progress =
-                    operations.progress(|progress| Some(SourceOperation::Adding { progress }));
+                let progress = operations.progress(Arc::clone(&cancelled), |progress| {
+                    Some(SourceOperation::Adding { progress })
+                });
                 add_source(&mut operations, input, progress, cancelled).await
             },
         );
@@ -3263,11 +3789,12 @@ impl SourcePort for SourceOwner {
             .selected()
             .is_some_and(|selected| selected.source_id() == &source_id)
         {
-            let _ = self
-                .shared
-                .outputs
-                .events
-                .try_send(SourceEvent::Operation(SourceOperation::Idle));
+            self.spawn_serialized(false, |operations, _| async move {
+                operations
+                    .shared
+                    .send_event(SourceEvent::Operation(SourceOperation::Idle))
+                    .await;
+            });
             return;
         }
         let target = source_id.clone();
@@ -3282,20 +3809,30 @@ impl SourcePort for SourceOwner {
                 let configured =
                     configured_source(&operations.shared.settings.load().sources, &source_id)?;
                 let progress_target = target.clone();
-                let progress = operations.progress(move |progress| {
+                let progress = operations.progress(Arc::clone(&cancelled), move |progress| {
                     Some(SourceOperation::Switching {
                         target: progress_target.clone(),
                         progress,
                     })
                 });
-                select_source(&mut operations, configured, progress, cancelled).await
+                select_source(&mut operations, configured, progress, cancelled, true).await
             },
         );
     }
 
     fn change_secret_storage(&self, mode: SecretStorageMode) -> Receiver<Result<(), String>> {
         let (result, receiver) = async_channel::bounded(1);
-        self.shared.cancel_interruptible();
+        let stored = self.shared.settings.load();
+        let reconnects_selected = stored.ui.secret_storage_mode != mode
+            && self.shared.selected().is_some_and(|selected| {
+                matches!(
+                    selected.configuration.editable(),
+                    Ok(sources::EditableSource::Credentials { .. })
+                )
+            });
+        if reconnects_selected {
+            self.shared.cancel_interruptible();
+        }
         self.spawn_serialized(false, move |mut operations, _| async move {
             let changed = operations.apply_secret_storage_change(mode).await;
             let _ = result.send(changed).await;
@@ -3395,7 +3932,7 @@ impl SourcePort for SourceOwner {
     }
 
     fn check_for_source_changes(&self) {
-        self.request_freshness_check();
+        self.request_freshness_check(false);
     }
 
     fn save_local_access(&self, input: SourceLocalAccess) -> Receiver<Result<(), String>> {
@@ -3413,7 +3950,13 @@ impl SourcePort for SourceOwner {
     }
 
     fn forget_source(&self, source_id: SourceId) {
-        self.shared.cancel_interruptible();
+        if self
+            .shared
+            .selected()
+            .is_some_and(|selected| selected.source_id() == &source_id)
+        {
+            self.shared.cancel_interruptible();
+        }
         self.spawn_serialized(false, move |mut operations, _| async move {
             operations.forget_now(source_id).await;
         });

@@ -923,7 +923,7 @@ impl JellyfinSource {
         let raw_track_id = raw_item_id(track_id.as_str());
         let local_url = endpoint(&self.base_url, &format!("Audio/{raw_track_id}/Lyrics"))?;
         match self.send_json::<LyricDto>(self.client.get(local_url)).await {
-            Ok(dto) => Ok(Some(lyrics_from_dto(NativeLyricsOrigin::Server, dto))),
+            Ok(dto) => Ok(Some(lyrics_from_dto(dto))),
             Err(SourceError::NotFound) => Ok(None),
             Err(error) => Err(error),
         }
@@ -948,16 +948,15 @@ impl JellyfinSource {
         };
         let lyric_url = endpoint(&self.base_url, &format!("Providers/Lyrics/{}", first.id))?;
         match self.send_json::<LyricDto>(self.client.get(lyric_url)).await {
-            Ok(dto) => Ok(Some(lyrics_from_dto(NativeLyricsOrigin::Remote, dto))),
+            Ok(dto) => Ok(Some(lyrics_from_dto(dto))),
             Err(SourceError::NotFound) => Ok(None),
             Err(error) => Err(error),
         }
     }
 }
 
-pub(super) fn lyrics_from_dto(origin: NativeLyricsOrigin, dto: LyricDto) -> NativeLyrics {
+pub(super) fn lyrics_from_dto(dto: LyricDto) -> NativeLyrics {
     NativeLyrics {
-        origin,
         documents: vec![NativeLyricsDocument {
             role: NativeLyricsRole::Original,
             language: None,

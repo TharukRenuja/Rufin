@@ -7,12 +7,6 @@ pub enum LyricsSearch {
     RemoteThenServer,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum NativeLyricsOrigin {
-    Server,
-    Remote,
-}
-
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct NativeLyricLine {
     pub text: String,
@@ -72,7 +66,6 @@ pub struct NativeLyricsDocument {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct NativeLyrics {
-    pub origin: NativeLyricsOrigin,
     pub documents: Vec<NativeLyricsDocument>,
 }
 

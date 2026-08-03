@@ -23,8 +23,7 @@ pub use config::{
 };
 pub use operations::{
     ImageBytes, LyricsSearch, NativeLyricAgent, NativeLyricAgentRole, NativeLyricCue,
-    NativeLyricCueLine, NativeLyricLine, NativeLyrics, NativeLyricsDocument, NativeLyricsOrigin,
-    NativeLyricsRole,
+    NativeLyricCueLine, NativeLyricLine, NativeLyrics, NativeLyricsDocument, NativeLyricsRole,
 };
 pub use source::*;
 

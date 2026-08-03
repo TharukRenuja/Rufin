@@ -16,6 +16,552 @@ use sources::{
 
 use super::*;
 
+fn test_source_change() -> SelectedObservedChange {
+    SelectedObservedChange::Source(SourceLibraryChange::full())
+}
+
+fn test_local_change(value: usize) -> SelectedObservedChange {
+    SelectedObservedChange::Local(LocalFilesystemChange::Paths(BTreeSet::from([
+        PathBuf::from(format!("/{value}.flac")),
+    ])))
+}
+
+pub(super) struct ObservedChangeProbe {
+    label: &'static str,
+    started: Option<async_channel::Sender<()>>,
+    release: Option<async_channel::Receiver<()>>,
+    accepted: async_channel::Sender<&'static str>,
+}
+
+impl ObservedChangeProbe {
+    pub(super) async fn accept(self) {
+        if let Some(started) = self.started {
+            let _ = started.try_send(());
+        }
+        if let Some(release) = self.release {
+            let _ = release.recv().await;
+        }
+        let _ = self.accepted.try_send(self.label);
+    }
+}
+
+#[test]
+fn observed_change_bursts_have_one_active_preparation_and_one_merged_tail() {
+    let mut source = ObservedChangeState::new();
+    let first = source
+        .submit(1, test_source_change())
+        .expect("first source change starts preparation");
+    for _ in 1..100 {
+        assert!(source.submit(2, test_source_change()).is_none());
+    }
+    let tail = source.next(1).expect("source burst has one tail");
+    assert!(source.next(1).is_none());
+    assert!(matches!(first, SelectedObservedChange::Source(_)));
+    assert!(matches!(tail, SelectedObservedChange::Source(_)));
+
+    let mut local = ObservedChangeState::new();
+    let first = local
+        .submit(1, test_local_change(0))
+        .expect("first Local change starts preparation");
+    for value in 1..100 {
+        assert!(local.submit(2, test_local_change(value)).is_none());
+    }
+    let tail = local.next(1).expect("Local burst has one tail");
+    assert!(local.next(1).is_none());
+    assert!(
+        matches!(first, SelectedObservedChange::Local(LocalFilesystemChange::Paths(paths)) if paths.len() == 1)
+    );
+    assert!(
+        matches!(tail, SelectedObservedChange::Local(LocalFilesystemChange::Paths(paths)) if paths.len() == 99)
+    );
+}
+
+#[test]
+fn observed_change_tail_preserves_cross_kind_arrival_order() {
+    let mut source_source_local = ObservedChangeState::new();
+    let active = source_source_local
+        .submit(1, test_source_change())
+        .expect("first source change starts preparation");
+    source_source_local.submit(2, test_source_change());
+    source_source_local.submit(2, test_local_change(3));
+    assert!(matches!(active, SelectedObservedChange::Source(_)));
+    assert!(matches!(
+        source_source_local.next(1),
+        Some(SelectedObservedChange::Source(_))
+    ));
+    source_source_local.activate(2);
+    assert!(
+        matches!(source_source_local.next(2), Some(SelectedObservedChange::Local(LocalFilesystemChange::Paths(paths))) if paths == BTreeSet::from([PathBuf::from("/3.flac")]))
+    );
+    assert!(source_source_local.next(2).is_none());
+
+    let mut source_local_source = ObservedChangeState::new();
+    source_local_source.submit(1, test_source_change());
+    source_local_source.submit(2, test_local_change(2));
+    source_local_source.submit(2, test_source_change());
+    assert!(
+        matches!(source_local_source.next(1), Some(SelectedObservedChange::Local(LocalFilesystemChange::Paths(paths))) if paths == BTreeSet::from([PathBuf::from("/2.flac")]))
+    );
+    source_local_source.activate(2);
+    assert!(matches!(
+        source_local_source.next(2),
+        Some(SelectedObservedChange::Source(_))
+    ));
+    assert!(source_local_source.next(2).is_none());
+}
+
+#[test]
+fn observed_change_tail_releases_the_source_lane_between_acceptances() {
+    let directory = tempfile::tempdir().expect("temporary Rufin data directory");
+    let runtime = test_runtime();
+    let libraries = Libraries::open(directory.path().join("library.db")).expect("open Library");
+    let source_id = SourceId::new("local:server:observer-fairness");
+    let library = accept_library(&libraries, source_id.clone(), Vec::new(), Vec::new(), 1);
+    let settings = SettingsFile::memory();
+    let (bootstrap, _events) = test_owner(directory.path(), &runtime, libraries, settings);
+    let session = install_selected_for_test(
+        &bootstrap.owner,
+        test_configuration(source_id, "Observer fairness"),
+        None,
+        library,
+        SourceSessionEpoch::new(1),
+    );
+    let observed = Arc::new(Mutex::new(ObservedChangeState::new()));
+    let observer_cancelled = Arc::new(AtomicBool::new(false));
+    let (started, started_receiver) = async_channel::bounded(1);
+    let (release, release_receiver) = async_channel::bounded(1);
+    let (accepted, accepted_receiver) = async_channel::unbounded();
+
+    runtime.block_on(async {
+        assert!(bootstrap.owner.queue_observed_change(
+            &observed,
+            &session,
+            &observer_cancelled,
+            SelectedObservedChange::Probe(ObservedChangeProbe {
+                label: "first",
+                started: Some(started),
+                release: Some(release_receiver),
+                accepted: accepted.clone(),
+            }),
+        ));
+        started_receiver
+            .recv()
+            .await
+            .expect("first observed acceptance started");
+
+        let shared = Arc::clone(&bootstrap.owner.shared);
+        let normal_accepted = accepted.clone();
+        let (normal_queued, normal_queued_receiver) = async_channel::bounded(1);
+        let normal = tokio::spawn(async move {
+            let _ = normal_queued.try_send(());
+            let _lane = shared.lane.lock().await;
+            let _ = normal_accepted.try_send("normal");
+        });
+        normal_queued_receiver
+            .recv()
+            .await
+            .expect("normal source work queued on the lane");
+
+        assert!(bootstrap.owner.queue_observed_change(
+            &observed,
+            &session,
+            &observer_cancelled,
+            SelectedObservedChange::Probe(ObservedChangeProbe {
+                label: "second",
+                started: None,
+                release: None,
+                accepted,
+            }),
+        ));
+        release
+            .send(())
+            .await
+            .expect("release first observed acceptance");
+
+        assert_eq!(accepted_receiver.recv().await.as_deref(), Ok("first"));
+        assert_eq!(accepted_receiver.recv().await.as_deref(), Ok("normal"));
+        assert_eq!(accepted_receiver.recv().await.as_deref(), Ok("second"));
+        normal.await.expect("normal source work completed");
+    });
+}
+
+#[test]
+fn stale_observed_change_run_cannot_clear_a_newer_run() {
+    let state = Arc::new(Mutex::new(ObservedChangeState::new()));
+    {
+        let mut observed = state
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        assert!(observed.submit(1, test_local_change(1)).is_some());
+        assert!(observed.submit(2, test_local_change(2)).is_none());
+    }
+
+    let old = ObservedChangeRun::new(Arc::clone(&state), 1);
+    let prepared = {
+        let mut observed = state
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let prepared = observed.next(1).expect("prepare the queued change");
+        observed.activate(2);
+        prepared
+    };
+    drop(old);
+
+    assert!(matches!(
+        prepared,
+        SelectedObservedChange::Local(LocalFilesystemChange::Paths(paths))
+            if paths == BTreeSet::from([PathBuf::from("/2.flac")])
+    ));
+    let mut observed = state
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    assert_eq!(observed.active, Some(2));
+    assert!(observed.submit(3, test_local_change(3)).is_none());
+    assert!(observed.next(2).is_some());
+}
+
+#[test]
+fn cancelling_interruptible_work_aborts_the_lane_task() {
+    let directory = tempfile::tempdir().expect("temporary Rufin data directory");
+    let runtime = test_runtime();
+    let libraries = Libraries::open(directory.path().join("library.db")).expect("open Library");
+    let settings = SettingsFile::memory();
+    let (bootstrap, _events) = test_owner(directory.path(), &runtime, libraries, settings);
+    let cancelled = Arc::new(AtomicBool::new(false));
+    let qualifier = SourceQualifier {
+        source_id: SourceId::new("navidrome:server:interruptible-lane"),
+        epoch: SourceSessionEpoch::new(1),
+    };
+    let refresh = Arc::new(RefreshRequest {
+        qualifier: qualifier.clone(),
+        visible: AtomicBool::new(false),
+        started: AtomicBool::new(false),
+        announced: AtomicBool::new(false),
+        cancelled: Arc::clone(&cancelled),
+    });
+    {
+        let mut state = bootstrap
+            .owner
+            .shared
+            .state
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        state.refresh = Some(Arc::clone(&refresh));
+        assert!(state.freshness.admit(1, true, tokio::time::Instant::now()));
+    }
+    let (started, started_receiver) = async_channel::bounded(1);
+    let (_release, release_receiver) = async_channel::bounded::<()>(1);
+    let (acquired, acquired_receiver) = async_channel::bounded(1);
+
+    runtime.block_on(async {
+        bootstrap.owner.spawn_serialized_with_cancel(
+            true,
+            Arc::clone(&cancelled),
+            move |_, _| async move {
+                started.send(()).await.expect("report lane acquisition");
+                let _ = release_receiver.recv().await;
+            },
+        );
+        started_receiver
+            .recv()
+            .await
+            .expect("interruptible work acquired the lane");
+
+        bootstrap
+            .owner
+            .spawn_serialized(false, move |_, _| async move {
+                acquired.send(()).await.expect("report lane acquisition");
+            });
+        bootstrap.owner.shared.cancel_interruptible();
+
+        acquired_receiver
+            .recv()
+            .await
+            .expect("queued normal work acquired the released lane");
+    });
+
+    assert!(cancelled.load(Ordering::Acquire));
+    let state = bootstrap
+        .owner
+        .shared
+        .state
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    assert!(state.refresh.is_none());
+    assert!(state.freshness.pending.is_none());
+}
+
+#[test]
+fn protected_commit_finishes_before_a_newer_transition_starts() {
+    let directory = tempfile::tempdir().expect("temporary Rufin data directory");
+    let runtime = test_runtime();
+    let libraries = Libraries::open(directory.path().join("library.db")).expect("open Library");
+    let settings = SettingsFile::memory();
+    let (bootstrap, events) = test_owner(directory.path(), &runtime, libraries, settings);
+    let cancelled = Arc::new(AtomicBool::new(false));
+    let committed = Arc::new(AtomicBool::new(false));
+    let (blocking_started, blocking_started_receiver) = async_channel::bounded(1);
+    let (release, release_receiver) = std::sync::mpsc::channel();
+    let (order, order_receiver) = async_channel::unbounded();
+
+    runtime.block_on(async {
+        let committed_in_task = Arc::clone(&committed);
+        let published = order.clone();
+        bootstrap.owner.spawn_serialized_with_cancel(
+            true,
+            Arc::clone(&cancelled),
+            move |operations, cancelled| async move {
+                assert!(operations.shared.protect_interruptible_commit(&cancelled));
+                tokio::task::spawn_blocking(move || {
+                    blocking_started
+                        .try_send(())
+                        .expect("report blocking commit start");
+                    release_receiver.recv().expect("release blocking commit");
+                    committed_in_task.store(true, Ordering::Release);
+                })
+                .await
+                .expect("join blocking commit");
+                operations
+                    .shared
+                    .send_event(SourceEvent::Operation(SourceOperation::Switching {
+                        target: SourceId::new("local:server:older-commit"),
+                        progress: initial_progress(),
+                    }))
+                    .await;
+                operations.shared.publish_configured().await;
+                published
+                    .send("published")
+                    .await
+                    .expect("report commit publication");
+            },
+        );
+        blocking_started_receiver
+            .recv()
+            .await
+            .expect("protected commit started");
+
+        let moved_on = order.clone();
+        bootstrap.owner.spawn_transition(
+            SourceOperation::Switching {
+                target: SourceId::new("local:server:newer-transition"),
+                progress: initial_progress(),
+            },
+            None,
+            false,
+            move |_, _| async move {
+                moved_on.send("next").await.expect("report next lane task");
+                Ok(())
+            },
+        );
+        release.send(()).expect("release protected commit");
+
+        assert_eq!(order_receiver.recv().await.as_deref(), Ok("published"));
+        assert_eq!(order_receiver.recv().await.as_deref(), Ok("next"));
+        assert!(matches!(events.recv().await, Ok(SourceEvent::Operation(
+            SourceOperation::Switching { target, .. }
+        )) if target == SourceId::new("local:server:older-commit")));
+        assert!(matches!(
+            events.recv().await,
+            Ok(SourceEvent::Configured(_))
+        ));
+        assert!(matches!(events.recv().await, Ok(SourceEvent::Operation(
+            SourceOperation::Switching { target, .. }
+        )) if target == SourceId::new("local:server:newer-transition")));
+    });
+
+    assert!(cancelled.load(Ordering::Acquire));
+    assert!(committed.load(Ordering::Acquire));
+}
+
+#[test]
+fn freshness_admission_throttles_normal_requests_and_reopens_after_cancellation() {
+    let now = tokio::time::Instant::now();
+    let mut admission = FreshnessAdmission::new(now);
+    admission.defer(now);
+
+    assert!(!admission.admit(1, false, now));
+    let catch_up = now + Duration::from_secs(1);
+    assert!(admission.admit(1, true, catch_up));
+    assert!(!admission.admit(2, true, catch_up));
+
+    admission.cancel();
+    assert!(admission.admit(3, true, catch_up));
+    admission.finish(1);
+    assert!(!admission.admit(4, true, catch_up));
+    admission.finish(3);
+
+    let next = catch_up + SOURCE_CHECK_INTERVAL;
+    assert!(!admission.admit(5, false, next - Duration::from_nanos(1)));
+    assert!(admission.admit(5, false, next));
+    admission.finish(5);
+    assert!(!admission.admit(6, false, next));
+}
+
+#[test]
+fn failed_forget_settings_write_keeps_the_selected_runtime() {
+    let directory = tempfile::tempdir().expect("temporary Rufin data directory");
+    let settings_directory = directory.path().join("settings");
+    std::fs::create_dir(&settings_directory).expect("create settings directory");
+    let settings_path = settings_directory.join("settings.json");
+    let settings = SettingsFile::open(settings_path.clone()).expect("open settings");
+    let source_id = SourceId::new("local:server:failed-forget");
+    let configuration = test_configuration(source_id.clone(), "Forget failure");
+    settings
+        .update(|stored| {
+            stored.sources.configured = vec![ConfiguredSource {
+                configuration: configuration.clone(),
+                credential_ref: None,
+                music_folder_id: None,
+                local_access: None,
+            }];
+            stored.sources.selected_source_id = Some(source_id.clone());
+            Ok(())
+        })
+        .expect("save configured source");
+    let runtime = test_runtime();
+    let libraries = Libraries::open(directory.path().join("library.db")).expect("open Library");
+    let library = accept_library(&libraries, source_id.clone(), Vec::new(), Vec::new(), 1);
+    let (bootstrap, events) = test_owner(directory.path(), &runtime, libraries, settings.clone());
+    let session = install_selected_for_test(
+        &bootstrap.owner,
+        configuration,
+        None,
+        library,
+        SourceSessionEpoch::new(1),
+    );
+    runtime.spawn(async move {
+        while let Ok(event) = events.recv().await {
+            if let SourceEvent::ReleaseSelected { acknowledged } = event {
+                let _ = acknowledged.send(()).await;
+            }
+        }
+    });
+
+    std::fs::remove_file(settings_path).expect("remove writable settings file");
+    std::fs::remove_dir(&settings_directory).expect("remove writable settings directory");
+    std::fs::write(&settings_directory, "not a directory").expect("block settings directory");
+
+    runtime.block_on(async {
+        bootstrap
+            .owner
+            .as_ref()
+            .clone()
+            .forget_now(source_id.clone())
+            .await;
+    });
+
+    assert!(session.resolve().is_some());
+    assert_eq!(
+        bootstrap
+            .owner
+            .shared
+            .selected()
+            .map(|selected| selected.source_id().clone()),
+        Some(source_id.clone())
+    );
+    let stored = settings.load();
+    assert_eq!(stored.sources.selected_source_id, Some(source_id.clone()));
+    assert!(
+        stored
+            .sources
+            .configured
+            .iter()
+            .any(|configured| configured.configuration.source_id == source_id)
+    );
+}
+
+#[test]
+fn failed_forget_replacement_publishes_the_remaining_sources_and_failure() {
+    let directory = tempfile::tempdir().expect("temporary Rufin data directory");
+    let runtime = test_runtime();
+    let libraries = Libraries::open(directory.path().join("library.db")).expect("open Library");
+    let removed_id = SourceId::new("local:server:forget-selected");
+    let replacement_id = SourceId::new("invalid:server:forget-replacement");
+    let removed = test_configuration(removed_id.clone(), "Removed");
+    let replacement = SourceConfiguration {
+        source_id: replacement_id.clone(),
+        kind: "invalid".to_string(),
+        name: "Invalid replacement".to_string(),
+        provider_payload: "{}".to_string(),
+    };
+    let settings = SettingsFile::memory();
+    settings
+        .update(|stored| {
+            stored.sources.configured = vec![
+                ConfiguredSource {
+                    configuration: removed.clone(),
+                    credential_ref: None,
+                    music_folder_id: None,
+                    local_access: None,
+                },
+                ConfiguredSource {
+                    configuration: replacement,
+                    credential_ref: None,
+                    music_folder_id: None,
+                    local_access: None,
+                },
+            ];
+            stored.sources.selected_source_id = Some(removed_id.clone());
+            Ok(())
+        })
+        .expect("save configured sources");
+    let library = accept_library(&libraries, removed_id.clone(), Vec::new(), Vec::new(), 1);
+    let (bootstrap, events) = test_owner(directory.path(), &runtime, libraries, settings.clone());
+    let session = install_selected_for_test(
+        &bootstrap.owner,
+        removed,
+        None,
+        library,
+        SourceSessionEpoch::new(1),
+    );
+    let (observed, observed_receiver) = async_channel::unbounded();
+    runtime.spawn(async move {
+        while let Ok(event) = events.recv().await {
+            if let SourceEvent::ReleaseSelected { acknowledged } = &event {
+                let _ = acknowledged.send(()).await;
+            }
+            let _ = observed.send(event).await;
+        }
+    });
+
+    let events = runtime.block_on(async {
+        bootstrap
+            .owner
+            .as_ref()
+            .clone()
+            .forget_now(removed_id.clone())
+            .await;
+        let mut events = Vec::new();
+        for _ in 0..4 {
+            events.push(
+                observed_receiver
+                    .recv()
+                    .await
+                    .expect("forget replacement event"),
+            );
+        }
+        events
+    });
+
+    assert!(matches!(&events[0], SourceEvent::Operation(
+        SourceOperation::Switching { target, .. }
+    ) if target == &replacement_id));
+    assert!(matches!(&events[1], SourceEvent::ReleaseSelected { .. }));
+    assert!(matches!(&events[2], SourceEvent::Configured(_)));
+    assert!(matches!(&events[3], SourceEvent::Operation(
+        SourceOperation::Failed { source_id, .. }
+    ) if source_id.as_ref() == Some(&replacement_id)));
+    assert!(session.resolve().is_none());
+    assert!(bootstrap.owner.shared.selected().is_none());
+    let stored = settings.load();
+    assert!(stored.sources.selected_source_id.is_none());
+    assert_eq!(stored.sources.configured.len(), 1);
+    assert_eq!(
+        stored.sources.configured[0].configuration.source_id,
+        replacement_id
+    );
+}
+
 #[test]
 fn active_source_resolves_replacement_and_rejects_retired_session() {
     let directory = tempfile::tempdir().expect("temporary Rufin data directory");
@@ -158,6 +704,7 @@ fn same_session_executor_change_retires_previous_access_tasks() {
         state.observer = Some(ActiveObserver {
             qualifier: qualifier.clone(),
             cancelled: Arc::clone(&observer_cancelled),
+            observed: Arc::new(Mutex::new(ObservedChangeState::new())),
             handle: observer_handle,
         });
         state.local_access = Some(ActiveLocalAccess {
@@ -168,6 +715,11 @@ fn same_session_executor_change_retires_previous_access_tasks() {
         });
     }
 
+    let update_cancelled = Arc::new(AtomicBool::new(false));
+    let registration = bootstrap
+        .owner
+        .shared
+        .register_interruptible(Arc::clone(&update_cancelled));
     runtime.block_on(async {
         bootstrap
             .owner
@@ -179,10 +731,14 @@ fn same_session_executor_change_retires_previous_access_tasks() {
                     roots: vec![root_b.clone()],
                 },
                 false,
-                Arc::new(AtomicBool::new(false)),
+                update_cancelled,
             )
             .await;
     });
+    bootstrap
+        .owner
+        .shared
+        .unregister_interruptible(registration.token);
 
     assert!(observer_cancelled.load(Ordering::Acquire));
     assert!(local_cancelled.load(Ordering::Acquire));
@@ -1078,6 +1634,7 @@ fn local_metadata_edit_prepares_the_written_file_for_library_acceptance() {
         .expect("read metadata draft");
     let refresh = runtime
         .block_on(source.write_metadata(
+            &accepted,
             library::MetadataSubject::track(edited_track.clone()),
             MetadataEdit {
                 item_id: MetadataItemId::Track(edited_track.id.clone()),

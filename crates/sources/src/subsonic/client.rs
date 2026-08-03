@@ -429,7 +429,6 @@ impl SubsonicSource {
             return Ok(None);
         };
         Ok(Some(NativeLyrics {
-            origin: NativeLyricsOrigin::Server,
             documents: vec![NativeLyricsDocument {
                 role: NativeLyricsRole::Original,
                 language: None,
@@ -531,10 +530,7 @@ pub(super) fn native_lyrics_from_structured(entries: Vec<StructuredLyricsDto>) -
             })
         })
         .collect();
-    NativeLyrics {
-        origin: NativeLyricsOrigin::Server,
-        documents,
-    }
+    NativeLyrics { documents }
 }
 
 fn normalize_native_language(language: String) -> Option<String> {

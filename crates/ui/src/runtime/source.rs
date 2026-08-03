@@ -233,6 +233,7 @@ pub trait SelectedSourcePort: Send + Sync {
         folder_id: Option<FolderId>,
         music_folder_id: Option<MusicFolderId>,
     ) -> Receiver<Result<FolderContents, String>>;
+    /// Dedicated live query route.
     fn search(&self, request: LibrarySearchRequest) -> Receiver<Result<SearchResults, String>>;
     fn metadata_editing_available(&self, item_id: &MetadataItemId) -> bool;
     fn metadata(&self, item_id: MetadataItemId) -> Receiver<Result<MetadataDraft, MetadataError>>;

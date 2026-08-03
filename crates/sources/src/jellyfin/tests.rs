@@ -89,6 +89,34 @@ fn provider(server: &MockServer, token: &str) -> JellyfinSource {
     .expect("open Jellyfin provider")
 }
 
+fn accepted_library(batches: Vec<library::CandidateBatch>) -> Arc<library::Library> {
+    let libraries = library::Libraries::memory().expect("open in-memory Library");
+    let mut candidate = libraries
+        .begin_source_candidate(library::CandidateHeader {
+            source_id: SourceId::new("jellyfin:server:test:user:user-one"),
+            input_version: 1,
+            input_digest: [1; 32],
+        })
+        .expect("begin Jellyfin candidate");
+    for batch in batches {
+        candidate.write(batch).expect("write Jellyfin facts");
+    }
+    candidate
+        .finish(
+            library::CandidateFinish {
+                freshness: None,
+                home: library::HomeFacts::Source {
+                    sections: Vec::new(),
+                },
+                accepted_at: 1,
+            },
+            None,
+        )
+        .and_then(library::PreparedSourceCandidate::accept)
+        .expect("accept Jellyfin library")
+        .library
+}
+
 const METADATA_TRACK_ID: &str = "11111111111111111111111111111111";
 const METADATA_ALBUM_ID: &str = "22222222222222222222222222222222";
 const METADATA_ARTIST_ID: &str = "33333333333333333333333333333333";
@@ -1317,9 +1345,14 @@ async fn exact_track_change_also_acquires_its_referenced_album() {
         .mount(&server)
         .await;
     let source = provider(&server, "secret-token");
+    let library = accepted_library(Vec::new());
 
     let change = source
-        .read_library_change(BTreeSet::from(["track-one".to_string()]), &|_| false)
+        .read_library_change(
+            &library,
+            BTreeSet::from(["track-one".to_string()]),
+            BTreeSet::new(),
+        )
         .await
         .expect("read exact Jellyfin change");
     let SourceLibraryChangeRead::Exact(update) = change else {
@@ -1329,6 +1362,72 @@ async fn exact_track_change_also_acquires_its_referenced_album() {
     assert_eq!(update.tracks.len(), 1);
     assert_eq!(update.albums.len(), 1);
     assert_eq!(update.tracks[0].album_id, Some(update.albums[0].id.clone()));
+}
+
+#[tokio::test]
+async fn removals_use_the_accepted_library_without_fetching_items() {
+    let server = MockServer::start().await;
+    let source = provider(&server, "secret-token");
+    let track = metadata_track();
+    let track_id = track.id.clone();
+    let playlist_id = PlaylistId::new("jellyfin:playlist:playlist-one");
+    let library = accepted_library(vec![
+        library::CandidateBatch::Albums(vec![metadata_album()]),
+        library::CandidateBatch::Artists(vec![metadata_artist()]),
+        library::CandidateBatch::Tracks(vec![track]),
+        library::CandidateBatch::Playlists(vec![library::PlaylistSnapshot {
+            playlist: library::Playlist {
+                id: playlist_id.clone(),
+                name: "Late Set".to_string(),
+                image_ref: None,
+            },
+            entries: Vec::new(),
+        }]),
+    ]);
+
+    let exact = source
+        .read_library_change(
+            &library,
+            BTreeSet::new(),
+            BTreeSet::from([METADATA_TRACK_ID.to_string(), "playlist-one".to_string()]),
+        )
+        .await
+        .expect("resolve exact Jellyfin removals");
+    let SourceLibraryChangeRead::Exact(exact) = exact else {
+        panic!("accepted Track and Playlist removals must remain exact");
+    };
+    assert_eq!(exact.removed_tracks, vec![track_id]);
+    assert_eq!(exact.removed_playlists, vec![playlist_id]);
+
+    assert!(matches!(
+        source
+            .read_library_change(
+                &library,
+                BTreeSet::new(),
+                BTreeSet::from([METADATA_ALBUM_ID.to_string()]),
+            )
+            .await
+            .expect("resolve Album removal"),
+        SourceLibraryChangeRead::Full
+    ));
+    assert!(matches!(
+        source
+            .read_library_change(
+                &library,
+                BTreeSet::new(),
+                BTreeSet::from([METADATA_ARTIST_ID.to_string()]),
+            )
+            .await
+            .expect("resolve Artist removal"),
+        SourceLibraryChangeRead::Full
+    ));
+    assert!(
+        server
+            .received_requests()
+            .await
+            .expect("record Jellyfin requests")
+            .is_empty()
+    );
 }
 
 #[tokio::test]

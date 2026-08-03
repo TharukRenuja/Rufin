@@ -9,6 +9,7 @@ use futures_util::{SinkExt, StreamExt};
 use getrandom::fill;
 use reqwest::StatusCode;
 use serde::Deserialize;
+use std::collections::BTreeSet;
 use std::time::Instant;
 use tokio::time::{Duration, interval, sleep};
 use tokio_tungstenite::{
@@ -24,7 +25,6 @@ const KEEP_ALIVE_INTERVAL: Duration = Duration::from_secs(30);
 const JELLYFIN_WEBSOCKET_KEY_BYTES: usize = 16;
 const FEED_RETRY_MIN: Duration = Duration::from_secs(5);
 const FEED_RETRY_MAX: Duration = Duration::from_secs(60);
-const STOP_POLL_INTERVAL: Duration = Duration::from_millis(500);
 
 impl JellyfinSource {
     async fn connect_library_socket(&self) -> SourceResult<WebSocketStream<reqwest::Upgraded>> {
@@ -72,66 +72,55 @@ impl JellyfinSource {
 
     pub(crate) async fn listen_library_changes(
         &self,
-        on_ready: &mut (dyn FnMut(bool) -> bool + Send),
+        catch_up: bool,
         on_change: &mut (dyn FnMut(SourceLibraryChange) -> bool + Send),
-        should_stop: &(dyn Fn() -> bool + Send + Sync),
     ) -> SourceResult<()> {
         let mut delay = FEED_RETRY_MIN;
         let mut reconnecting = false;
-        while !should_stop() {
-            let result = self
-                .listen_library_changes_once(reconnecting, on_ready, on_change, should_stop)
-                .await;
-            if should_stop() {
+        loop {
+            let keep_listening = match self
+                .listen_library_changes_once(catch_up || reconnecting, on_change)
+                .await
+            {
+                Ok(keep_listening) => keep_listening,
+                Err(error) => {
+                    warn!(%error, "Jellyfin library change feed disconnected");
+                    true
+                }
+            };
+            if !keep_listening {
                 return Ok(());
-            }
-            if let Err(error) = result {
-                warn!(%error, "Jellyfin library change feed disconnected");
             }
             reconnecting = true;
-            if !wait_before_retry(delay, should_stop).await {
-                return Ok(());
-            }
+            sleep(delay).await;
             delay = delay.saturating_mul(2).min(FEED_RETRY_MAX);
         }
-        Ok(())
     }
 
     async fn listen_library_changes_once(
         &self,
-        reconnecting: bool,
-        on_ready: &mut (dyn FnMut(bool) -> bool + Send),
+        catch_up: bool,
         on_change: &mut (dyn FnMut(SourceLibraryChange) -> bool + Send),
-        should_stop: &(dyn Fn() -> bool + Send + Sync),
-    ) -> SourceResult<()> {
+    ) -> SourceResult<bool> {
         let mut socket = self.connect_library_socket().await?;
-        if !on_ready(reconnecting) {
-            return Ok(());
+        if catch_up && !on_change(SourceLibraryChange::full()) {
+            return Ok(false);
         }
         let mut keep_alive = interval(KEEP_ALIVE_INTERVAL);
-        let mut stop_poll = interval(STOP_POLL_INTERVAL);
         loop {
-            if should_stop() {
-                return Ok(());
-            }
             tokio::select! {
-                _ = stop_poll.tick() => {
-                    if should_stop() {
-                        return Ok(());
-                    }
-                }
                 _ = keep_alive.tick() => {
                     send_keep_alive(&mut socket).await?;
                 }
                 message = socket.next() => {
                     let Some(message) = message else {
-                        return Ok(());
+                        return Ok(true);
                     };
                     match message.map_err(websocket_error)? {
                         Message::Text(text) => match library_socket_message(&text)? {
                             JellyfinSocketMessage::Change(change) => {
                                 if !on_change(change) {
-                                    return Ok(());
+                                    return Ok(false);
                                 }
                             }
                             JellyfinSocketMessage::ForceKeepAlive => {
@@ -139,7 +128,7 @@ impl JellyfinSource {
                             }
                             JellyfinSocketMessage::Other => {}
                         },
-                        Message::Close(_) => return Ok(()),
+                        Message::Close(_) => return Ok(true),
                         Message::Ping(payload) => socket
                             .send(Message::Pong(payload))
                             .await
@@ -150,22 +139,6 @@ impl JellyfinSource {
             }
         }
     }
-}
-
-async fn wait_before_retry(
-    delay: Duration,
-    should_stop: &(dyn Fn() -> bool + Send + Sync),
-) -> bool {
-    let mut remaining = delay;
-    while !remaining.is_zero() {
-        let step = remaining.min(STOP_POLL_INTERVAL);
-        sleep(step).await;
-        if should_stop() {
-            return false;
-        }
-        remaining = remaining.saturating_sub(step);
-    }
-    true
 }
 
 #[derive(Deserialize)]
@@ -216,17 +189,19 @@ fn library_socket_message(text: &str) -> SourceResult<JellyfinSocketMessage> {
             {
                 return Ok(JellyfinSocketMessage::Change(SourceLibraryChange::full()));
             }
-            let items = data
+            let upserts = data
                 .items_added
                 .into_iter()
                 .chain(data.items_updated)
-                .chain(data.items_removed)
-                .collect::<std::collections::BTreeSet<_>>();
-            if items.is_empty() {
+                .collect::<BTreeSet<_>>();
+            let removals = data.items_removed.into_iter().collect::<BTreeSet<_>>();
+            if upserts.is_empty() && removals.is_empty() {
                 Ok(JellyfinSocketMessage::Other)
+            } else if !upserts.is_disjoint(&removals) {
+                Ok(JellyfinSocketMessage::Change(SourceLibraryChange::full()))
             } else {
                 Ok(JellyfinSocketMessage::Change(
-                    SourceLibraryChange::jellyfin_items(items),
+                    SourceLibraryChange::jellyfin(upserts, removals),
                 ))
             }
         }
@@ -272,7 +247,7 @@ mod tests {
     }
 
     #[test]
-    fn library_update_unions_item_ids_without_folder_context() {
+    fn library_update_preserves_upserts_and_removals() {
         let message = library_socket_message(
             r#"{"MessageType":"LibraryChanged","Data":{"ItemsAdded":["item-one"],"ItemsUpdated":["item-two","item-one"],"ItemsRemoved":["item-three"]}}"#,
         )
@@ -280,11 +255,23 @@ mod tests {
 
         assert_eq!(
             message,
-            JellyfinSocketMessage::Change(SourceLibraryChange::jellyfin_items([
-                "item-one".to_string(),
-                "item-two".to_string(),
-                "item-three".to_string(),
-            ]))
+            JellyfinSocketMessage::Change(SourceLibraryChange::jellyfin(
+                BTreeSet::from(["item-one".to_string(), "item-two".to_string()]),
+                BTreeSet::from(["item-three".to_string()]),
+            ))
+        );
+    }
+
+    #[test]
+    fn conflicting_item_change_widens_to_full() {
+        let message = library_socket_message(
+            r#"{"MessageType":"LibraryChanged","Data":{"ItemsUpdated":["item-one"],"ItemsRemoved":["item-one"]}}"#,
+        )
+        .expect("parse message");
+
+        assert_eq!(
+            message,
+            JellyfinSocketMessage::Change(SourceLibraryChange::full())
         );
     }
 

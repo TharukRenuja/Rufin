@@ -3,8 +3,8 @@ use crate::policy::{raw_item_id, stable_hash, u16_from_option};
 use crate::{
     ConnectedSource, CredentialHostInput, CredentialSettingsInput, ImageBytes, LyricsSearch,
     NativeLyricAgent, NativeLyricAgentRole, NativeLyricCue, NativeLyricCueLine, NativeLyricLine,
-    NativeLyrics, NativeLyricsDocument, NativeLyricsOrigin, NativeLyricsRole, SourceConfiguration,
-    SourceEditResult, SourceError, SourceResult,
+    NativeLyrics, NativeLyricsDocument, NativeLyricsRole, SourceConfiguration, SourceEditResult,
+    SourceError, SourceResult,
 };
 use library::{
     Album, AlbumId, AlbumRelations, Artist, ArtistCredit, ArtistId, FavoriteItemId, Folder,

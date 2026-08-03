@@ -1,12 +1,10 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::future::Future;
 
-use library::{ArtistId, CandidateBatch, GenreId, HomeFacts, SourceHomeSectionKind};
+use library::{ArtistId, CandidateBatch, GenreId, HomeFacts, Library, SourceHomeSectionKind};
 
 use super::*;
-use crate::source::{
-    BatchEmitter, SourceLibraryChangeRead, SourceLibraryItemId, SourceReadProgress, SourceReadStage,
-};
+use crate::source::{BatchEmitter, SourceLibraryChangeRead, SourceReadProgress, SourceReadStage};
 
 const CHANGED_ITEM_BATCH_SIZE: usize = 100;
 
@@ -244,13 +242,17 @@ impl JellyfinSource {
 impl JellyfinSource {
     pub(crate) async fn read_library_change(
         &self,
-        requested: BTreeSet<String>,
-        contains: &(dyn Fn(&SourceLibraryItemId) -> bool + Send + Sync),
+        library: &Library,
+        upserts: BTreeSet<String>,
+        removals: BTreeSet<String>,
     ) -> SourceResult<SourceLibraryChangeRead> {
-        if requested.is_empty() {
+        if upserts.is_empty() && removals.is_empty() {
             return Ok(SourceLibraryChangeRead::Ignored);
         }
-        let available = self.items_by_ids(&requested).await?;
+        if !upserts.is_disjoint(&removals) {
+            return Ok(SourceLibraryChangeRead::Full);
+        }
+        let available = self.items_by_ids(&upserts).await?;
         let mut albums = BTreeMap::new();
         let mut tracks = BTreeMap::new();
         let mut artists = BTreeMap::new();
@@ -259,22 +261,24 @@ impl JellyfinSource {
         let mut removed_playlists = BTreeSet::new();
         let mut referenced_albums = BTreeSet::new();
 
-        for raw_id in requested {
-            let known = accepted_kinds(&raw_id, contains);
-            let Some(item) = available.get(&raw_id) else {
-                match known.as_slice() {
-                    [] => {}
-                    [AcceptedKind::Track] => {
-                        removed_tracks.insert(TrackId::new(jellyfin_id("track", &raw_id)));
-                    }
-                    [AcceptedKind::Playlist] => {
-                        removed_playlists.insert(PlaylistId::new(jellyfin_id("playlist", &raw_id)));
-                    }
-                    _ => return Ok(SourceLibraryChangeRead::Full),
+        for raw_id in removals {
+            match accepted_kinds(library, &raw_id).as_slice() {
+                [] => {}
+                [AcceptedKind::Track] => {
+                    removed_tracks.insert(TrackId::new(jellyfin_id("track", &raw_id)));
                 }
-                continue;
-            };
+                [AcceptedKind::Playlist] => {
+                    removed_playlists.insert(PlaylistId::new(jellyfin_id("playlist", &raw_id)));
+                }
+                _ => return Ok(SourceLibraryChangeRead::Full),
+            }
+        }
 
+        for raw_id in upserts {
+            let known = accepted_kinds(library, &raw_id);
+            let Some(item) = available.get(&raw_id) else {
+                return Ok(SourceLibraryChangeRead::Full);
+            };
             match current_item_kind(item) {
                 CurrentItemKind::Track if new_or_only(&known, AcceptedKind::Track) => {
                     let track = track_from_item(item.clone());
@@ -315,7 +319,7 @@ impl JellyfinSource {
             .collect::<BTreeSet<_>>();
         let referenced = self.items_by_ids(&missing_albums).await?;
         for raw_id in missing_albums {
-            let known = accepted_kinds(&raw_id, contains);
+            let known = accepted_kinds(library, &raw_id);
             let Some(item) = referenced.get(&raw_id) else {
                 return Ok(SourceLibraryChangeRead::Full);
             };
@@ -382,42 +386,53 @@ enum AcceptedKind {
     MusicFolder,
 }
 
-fn accepted_kinds(
-    raw_id: &str,
-    contains: &(dyn Fn(&SourceLibraryItemId) -> bool + Send + Sync),
-) -> Vec<AcceptedKind> {
-    [
-        (
-            AcceptedKind::Album,
-            SourceLibraryItemId::Album(AlbumId::new(jellyfin_id("album", raw_id))),
-        ),
-        (
-            AcceptedKind::Track,
-            SourceLibraryItemId::Track(TrackId::new(jellyfin_id("track", raw_id))),
-        ),
-        (
-            AcceptedKind::Artist,
-            SourceLibraryItemId::Artist(ArtistId::new(jellyfin_id("artist", raw_id))),
-        ),
-        (
-            AcceptedKind::Genre,
-            SourceLibraryItemId::Genre(GenreId::new(jellyfin_id("genre", raw_id))),
-        ),
-        (
-            AcceptedKind::Playlist,
-            SourceLibraryItemId::Playlist(PlaylistId::new(jellyfin_id("playlist", raw_id))),
-        ),
-        (
-            AcceptedKind::MusicFolder,
-            SourceLibraryItemId::MusicFolder(MusicFolderId::new(jellyfin_id(
-                "music-folder",
-                raw_id,
-            ))),
-        ),
-    ]
-    .into_iter()
-    .filter_map(|(kind, item)| contains(&item).then_some(kind))
-    .collect()
+impl AcceptedKind {
+    const ALL: [Self; 6] = [
+        Self::Album,
+        Self::Track,
+        Self::Artist,
+        Self::Genre,
+        Self::Playlist,
+        Self::MusicFolder,
+    ];
+
+    fn present(self, library: &Library, raw_id: &str) -> bool {
+        match self {
+            Self::Album => library
+                .album(&AlbumId::new(jellyfin_id("album", raw_id)))
+                .ok()
+                .flatten()
+                .is_some(),
+            Self::Track => library
+                .track(&TrackId::new(jellyfin_id("track", raw_id)))
+                .ok()
+                .flatten()
+                .is_some(),
+            Self::Artist => library
+                .artist(&ArtistId::new(jellyfin_id("artist", raw_id)))
+                .ok()
+                .flatten()
+                .is_some(),
+            Self::Genre => library
+                .genre(&GenreId::new(jellyfin_id("genre", raw_id)))
+                .ok()
+                .flatten()
+                .is_some(),
+            Self::Playlist => library
+                .contains_playlist(&PlaylistId::new(jellyfin_id("playlist", raw_id)))
+                .unwrap_or(false),
+            Self::MusicFolder => library
+                .contains_music_folder(&MusicFolderId::new(jellyfin_id("music-folder", raw_id)))
+                .unwrap_or(false),
+        }
+    }
+}
+
+fn accepted_kinds(library: &Library, raw_id: &str) -> Vec<AcceptedKind> {
+    AcceptedKind::ALL
+        .into_iter()
+        .filter(|kind| kind.present(library, raw_id))
+        .collect()
 }
 
 fn new_or_only(known: &[AcceptedKind], kind: AcceptedKind) -> bool {
