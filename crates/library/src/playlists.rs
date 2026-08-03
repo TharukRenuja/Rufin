@@ -184,6 +184,7 @@ impl Library {
         };
         Ok(Some(AcceptedLibraryChange {
             playlists: vec![result],
+            download_coverage_changed: true,
             ..AcceptedLibraryChange::default()
         }))
     }

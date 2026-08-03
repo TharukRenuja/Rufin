@@ -4,7 +4,10 @@
 //! authoritative value, which Library writes into the accepted source facts.
 //! Neither path creates a second accepted UI map.
 
-use crate::{AcceptedLibraryChange, Album, Artist, FavoriteItemId, Library, LibraryResult};
+use crate::{
+    AcceptedHomeChange, AcceptedLibraryChange, Album, Artist, FavoriteItemId, Library,
+    LibraryResult,
+};
 
 pub(crate) enum FavoriteValue {
     Album(Album),
@@ -40,7 +43,9 @@ impl Library {
             local,
             fallback,
         )?;
-        self.replace_favorite(&item_id, favorite)
-            .map_err(Into::into)
+        let mut accepted = self.replace_favorite(&item_id, favorite)?;
+        accepted.home = AcceptedHomeChange::Favorite(item_id);
+        accepted.download_coverage_changed = true;
+        Ok(accepted)
     }
 }

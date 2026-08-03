@@ -121,6 +121,15 @@ pub struct FavoriteAcknowledgement {
     pub favorite: bool,
 }
 
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub enum AcceptedHomeChange {
+    #[default]
+    Keep,
+    Rebuild,
+    Favorite(crate::FavoriteItemId),
+    Played(TrackId),
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct AcceptedLibraryChange {
     pub tracks: Vec<AcceptedTrackReplacement>,
@@ -134,6 +143,9 @@ pub struct AcceptedLibraryChange {
     pub local_folders_changed: bool,
     pub history_changed: bool,
     pub favorite: Option<FavoriteAcknowledgement>,
+    pub home: AcceptedHomeChange,
+    pub download_coverage_changed: bool,
+    pub album_release_candidates_changed: bool,
 }
 
 pub struct SourceCandidate {
@@ -158,6 +170,9 @@ impl Library {
         {
             return Ok(None);
         }
+        let source_items_changed = !update.albums.is_empty()
+            || !update.tracks.is_empty()
+            || !update.removed_tracks.is_empty();
         let SourceLibraryUpdate {
             albums,
             tracks,
@@ -184,14 +199,20 @@ impl Library {
             playlists,
             removed_playlists,
         )?;
-        self.replace_source_update(
+        let mut accepted = self.replace_source_update(
             stored.replacement,
             stored.unresolved_album_releases,
             stored.playlists,
             stored.removed_playlists,
-        )
-        .map(Some)
-        .map_err(LibraryError::from)
+        )?;
+        accepted.home = if source_items_changed {
+            AcceptedHomeChange::Rebuild
+        } else {
+            AcceptedHomeChange::Keep
+        };
+        accepted.download_coverage_changed = true;
+        accepted.album_release_candidates_changed = source_items_changed;
+        Ok(Some(accepted))
     }
 }
 

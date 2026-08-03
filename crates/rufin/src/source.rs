@@ -3,8 +3,6 @@
 //! Rufin owns selection and operation ordering here. Concrete sources acquire
 //! facts and perform provider operations; Library accepts and queries them.
 
-mod acquisition;
-
 use std::future::Future;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -14,11 +12,11 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use artwork::{Artwork, SourceImages};
 use async_channel::{Receiver, Sender};
 use library::{
-    AcceptedLibraryChange, CandidateChange, FavoriteItemId, FolderContents, HomeSectionKind,
-    HomeSnapshot, Libraries, Library, LocalAccessTarget, MetadataDraft, MetadataEdit,
-    MetadataEditing, MetadataError, MetadataItemId, MusicFolderId, PlaylistEdit, PlaylistTrackAdd,
-    PreparedSourceCandidate, RecordedActivity, SmartPlaylistBuiltin, SmartPlaylistDefinition,
-    SmartPlaylistId, SourceId, Track, TrackSort,
+    AcceptedHomeChange, AcceptedLibraryChange, CandidateChange, FavoriteItemId, FolderContents,
+    HomeSectionKind, HomeSnapshot, Libraries, Library, LocalAccessTarget, MetadataDraft,
+    MetadataEdit, MetadataEditing, MetadataError, MetadataItemId, MusicFolderId, PlaylistEdit,
+    PlaylistTrackAdd, PreparedSourceCandidate, RecordedActivity, SmartPlaylistBuiltin,
+    SmartPlaylistDefinition, SmartPlaylistId, SourceId, Track, TrackSort,
 };
 use playback::{PlaybackProjection, SourceSessionEpoch};
 use scrobbling::Scrobbler;
@@ -27,8 +25,8 @@ use sources::{
     CredentialHostInput, CredentialSettingsInput, JellyfinSettingsInput, JellyfinSetupInput,
     LocalFilesystemChange, LocalFolderHostInput, MetadataRefresh, NativeSourceResult, Source,
     SourceCacheMatch, SourceConfiguration, SourceEditResult, SourceFreshness, SourceInputIdentity,
-    SourceLibraryChange, SourceLibraryChangeRead, SourceLibraryItemId, SourceReadProgress,
-    SourceReadStage, SourceSettingsInput, SourceSetupInput, SubsonicFlavor,
+    SourceLibraryChange, SourceLibraryChangeRead, SourceReadProgress, SourceReadStage,
+    SourceSettingsInput, SourceSetupInput, SubsonicFlavor,
 };
 use tokio::task::JoinHandle;
 use tracing::warn;
@@ -302,14 +300,6 @@ impl Drop for MetadataReply {
         };
         let _ = sender.try_send(Err(error));
     }
-}
-
-enum NextHome {
-    Keep,
-    ActivityKeep,
-    Favorite(FavoriteItemId),
-    AcceptedPlay(library::TrackId),
-    SourceFacts,
 }
 
 enum SmartPlaylistOperation {
@@ -642,9 +632,7 @@ impl SourceOwner {
         source_id: SourceId,
         source_session_epoch: SourceSessionEpoch,
         update: RecordedActivity,
-        played_track: Option<library::TrackId>,
     ) {
-        let next_home = played_track.map_or(NextHome::ActivityKeep, NextHome::AcceptedPlay);
         let shared = Arc::clone(&self.shared);
         self.shared.runtime.spawn(async move {
             SourceOwner { shared }
@@ -654,7 +642,6 @@ impl SourceOwner {
                         epoch: source_session_epoch,
                     },
                     update,
-                    next_home,
                 )
                 .await;
         });
@@ -883,15 +870,16 @@ impl SourceOwner {
                     }
                     let source = Arc::new(source);
                     let identity = configuration.input_identity().map_err(string_error)?;
-                    let candidate = acquisition::read_source(
-                        self.shared.library.clone(),
-                        identity,
-                        Arc::clone(&source),
-                        None,
-                        Arc::clone(&progress),
-                        Arc::clone(&cancelled),
-                    )
-                    .await?;
+                    let candidate = Arc::clone(&source)
+                        .prepare_library_candidate(
+                            self.shared.library.clone(),
+                            identity,
+                            None,
+                            Arc::clone(&progress),
+                            Arc::clone(&cancelled),
+                        )
+                        .await
+                        .map_err(string_error)?;
                     let candidate = prepare_candidate_artwork(
                         &self.shared,
                         Arc::clone(&source),
@@ -1364,12 +1352,7 @@ impl SourceOwner {
         self.shared.finish_refresh(&request);
     }
 
-    async fn accept_activity(
-        &mut self,
-        qualifier: SourceQualifier,
-        update: RecordedActivity,
-        next_home: NextHome,
-    ) {
+    async fn accept_activity(&mut self, qualifier: SourceQualifier, update: RecordedActivity) {
         let acceptance_owner = Arc::clone(&self.shared);
         let _acceptance = acceptance_owner.acceptance_lane.lock().await;
         let Some(selected) = self
@@ -1387,7 +1370,7 @@ impl SourceOwner {
         })
         .await
         {
-            Ok(Some(change)) => self.publish_change(&selected, change, next_home).await,
+            Ok(Some(change)) => self.publish_accepted_change(&selected, change).await,
             Ok(None) => {}
             Err(error) => warn!(%error, "could not apply accepted playback activity"),
         }
@@ -1826,17 +1809,28 @@ impl SourceOwner {
         selected: Arc<SelectedSourceState>,
         acceptance: SelectedLibraryAcceptance,
     ) -> Result<(), String> {
-        match acceptance {
+        let change = match acceptance {
             SelectedLibraryAcceptance::Source(update) => {
-                self.accept_source_update(&selected, update).await
+                let library = Arc::clone(&selected.library);
+                blocking(move || library.accept_source_update(update).map_err(string_error)).await?
             }
             SelectedLibraryAcceptance::Local(replacement) => {
-                self.accept_local_component(&selected, replacement).await
+                let library = Arc::clone(&selected.library);
+                blocking(move || {
+                    library
+                        .accept_local_component(replacement)
+                        .map_err(string_error)
+                })
+                .await?
             }
             SelectedLibraryAcceptance::Full(candidate) => {
-                self.commit_refresh(selected, candidate, false).await
+                return self.commit_refresh(selected, candidate, false).await;
             }
+        };
+        if let Some(change) = change {
+            self.publish_accepted_change(&selected, change).await;
         }
+        Ok(())
     }
 
     async fn refresh_home(&mut self, selected: Arc<SelectedSourceState>, kind: HomeSectionKind) {
@@ -1919,8 +1913,7 @@ impl SourceOwner {
         let library = Arc::clone(&selected.library);
         match blocking(move || library.accept_favorite(acceptance).map_err(string_error)).await {
             Ok(change) => {
-                self.publish_change(&selected, change, NextHome::Favorite(item))
-                    .await;
+                self.publish_accepted_change(&selected, change).await;
             }
             Err(message) => {
                 self.shared
@@ -1953,7 +1946,7 @@ impl SourceOwner {
         }
         let library = Arc::clone(&selected.library);
         match blocking(move || library.accept_playlist(acceptance).map_err(string_error)).await {
-            Ok(Some(change)) => self.publish_change(&selected, change, NextHome::Keep).await,
+            Ok(Some(change)) => self.publish_accepted_change(&selected, change).await,
             Ok(None) => {}
             Err(error) => self.shared.warn_nonfatal(&error),
         }
@@ -1992,7 +1985,7 @@ impl SourceOwner {
         })
         .await;
         match change {
-            Ok(Some(change)) => self.publish_change(&selected, change, NextHome::Keep).await,
+            Ok(Some(change)) => self.publish_accepted_change(&selected, change).await,
             Ok(None) => {}
             Err(error) => self.shared.warn_nonfatal(&error),
         }
@@ -2007,9 +2000,19 @@ impl SourceOwner {
         let Some(source) = selected.source.as_ref() else {
             return;
         };
-        match prepare_source_change(source, &selected.library, change).await {
+        match source
+            .read_library_change(&selected.library, change)
+            .await
+            .map_err(string_error)
+        {
             Ok(SourceLibraryChangeRead::Exact(update)) => {
-                if let Err(error) = self.accept_source_update(&selected, update).await {
+                if let Err(error) = self
+                    .accept_selected_library_acceptance(
+                        Arc::clone(&selected),
+                        SelectedLibraryAcceptance::Source(update),
+                    )
+                    .await
+                {
                     warn!(%error, "could not accept a selected source update");
                 }
             }
@@ -2033,7 +2036,13 @@ impl SourceOwner {
         };
         match prepare_local_change(source, Arc::clone(&selected.library), change, cancelled).await {
             Ok(Some(replacement)) => {
-                if let Err(error) = self.accept_local_component(&selected, replacement).await {
+                if let Err(error) = self
+                    .accept_selected_library_acceptance(
+                        Arc::clone(&selected),
+                        SelectedLibraryAcceptance::Local(replacement),
+                    )
+                    .await
+                {
                     warn!(%error, "could not accept a selected Local update");
                 }
             }
@@ -2099,62 +2108,17 @@ impl SourceOwner {
         reply.finish(accepted);
     }
 
-    async fn accept_source_update(
-        &mut self,
-        selected: &SelectedSourceState,
-        update: library::SourceLibraryUpdate,
-    ) -> Result<(), String> {
-        let next_home = if update.albums.is_empty()
-            && update.tracks.is_empty()
-            && update.removed_tracks.is_empty()
-        {
-            NextHome::Keep
-        } else {
-            NextHome::SourceFacts
-        };
-        let library = Arc::clone(&selected.library);
-        let change =
-            blocking(move || library.accept_source_update(update).map_err(string_error)).await?;
-        if let Some(change) = change {
-            self.publish_change(selected, change, next_home).await;
-        }
-        Ok(())
-    }
-
-    async fn accept_local_component(
-        &mut self,
-        selected: &SelectedSourceState,
-        replacement: library::LocalComponentReplacement,
-    ) -> Result<(), String> {
-        let library = Arc::clone(&selected.library);
-        let change = blocking(move || {
-            library
-                .accept_local_component(replacement)
-                .map_err(string_error)
-        })
-        .await?;
-        if let Some(change) = change {
-            self.publish_change(selected, change, NextHome::SourceFacts)
-                .await;
-        }
-        Ok(())
-    }
-
-    async fn publish_change(
+    async fn publish_accepted_change(
         &mut self,
         selected: &SelectedSourceState,
         change: AcceptedLibraryChange,
-        next_home: NextHome,
     ) {
         if !self.shared.matches_selected(&selected.qualifier()) {
             return;
         }
-        let downloads_changed = !matches!(
-            &next_home,
-            NextHome::AcceptedPlay(_) | NextHome::ActivityKeep
-        );
-        let source_facts = matches!(&next_home, NextHome::SourceFacts);
-        if source_facts {
+        let downloads_changed = change.download_coverage_changed;
+        let album_release_candidates_changed = change.album_release_candidates_changed;
+        if album_release_candidates_changed {
             self.cancel_album_release_lookup(false);
         }
         let tracks = change
@@ -2179,53 +2143,24 @@ impl SourceOwner {
                 }
             }
         }
-        let home = match next_home {
-            NextHome::Keep | NextHome::ActivityKeep => None,
-            NextHome::Favorite(favorite) => {
-                let library = Arc::clone(&selected.library);
-                let current = Arc::clone(&selected.home);
-                let folder = selected.music_folder_id.clone();
-                match blocking(move || {
-                    library
-                        .home_after_favorite(folder.as_ref(), &current, &favorite)
-                        .map_err(string_error)
-                })
-                .await
-                {
-                    Ok(home) => Some(home),
-                    Err(error) => {
-                        warn!(%error, source_id = %selected.source_id(), "could not update changed items in the next Home snapshot");
-                        None
-                    }
-                }
-            }
-            NextHome::AcceptedPlay(track_id) => {
-                let library = Arc::clone(&selected.library);
-                let current = Arc::clone(&selected.home);
-                let folder = selected.music_folder_id.clone();
-                match blocking(move || {
-                    library
-                        .home_after_play(folder.as_ref(), &current, &track_id)
-                        .map_err(string_error)
-                })
-                .await
-                {
-                    Ok(home) => Some(home),
-                    Err(error) => {
-                        warn!(%error, source_id = %selected.source_id(), "could not prepare Home after an accepted play");
-                        None
-                    }
-                }
-            }
-            NextHome::SourceFacts => {
-                let library = Arc::clone(&selected.library);
-                let folder = selected.music_folder_id.clone();
-                match blocking(move || library.home(folder.as_ref()).map_err(string_error)).await {
-                    Ok(home) => Some(home),
-                    Err(error) => {
-                        warn!(%error, source_id = %selected.source_id(), "could not prepare the next Home snapshot");
-                        None
-                    }
+        let home = if change.home == AcceptedHomeChange::Keep {
+            None
+        } else {
+            let library = Arc::clone(&selected.library);
+            let current = Arc::clone(&selected.home);
+            let folder = selected.music_folder_id.clone();
+            let home_change = change.home.clone();
+            match blocking(move || {
+                library
+                    .home_after_accepted_change(folder.as_ref(), &current, &home_change)
+                    .map_err(string_error)
+            })
+            .await
+            {
+                Ok(home) => home,
+                Err(error) => {
+                    warn!(%error, source_id = %selected.source_id(), "could not prepare Home after an accepted Library change");
+                    None
                 }
             }
         };
@@ -2254,7 +2189,7 @@ impl SourceOwner {
                 home,
             }))
             .await;
-        if source_facts {
+        if album_release_candidates_changed {
             self.start_album_release_lookup();
         }
     }
@@ -3026,15 +2961,16 @@ async fn add_source(
     let (configuration, source, credential) = connected.into_parts();
     let identity = configuration.input_identity().map_err(string_error)?;
     let source = Arc::new(source);
-    let prepared = acquisition::read_source(
-        shared.library.clone(),
-        identity,
-        Arc::clone(&source),
-        None,
-        Arc::clone(&progress),
-        Arc::clone(&cancelled),
-    )
-    .await?;
+    let prepared = Arc::clone(&source)
+        .prepare_library_candidate(
+            shared.library.clone(),
+            identity,
+            None,
+            Arc::clone(&progress),
+            Arc::clone(&cancelled),
+        )
+        .await
+        .map_err(string_error)?;
     let prepared = prepare_candidate_artwork(
         &shared,
         Arc::clone(&source),
@@ -3123,15 +3059,16 @@ async fn select_source(
         (loaded, true, cache_match == SourceCacheMatch::ReaderUpgrade)
     } else {
         let source = source.as_ref().ok_or_else(source_access_unavailable)?;
-        let prepared = acquisition::read_source(
-            shared.library.clone(),
-            identity,
-            Arc::clone(source),
-            None,
-            Arc::clone(&progress),
-            Arc::clone(&cancelled),
-        )
-        .await?;
+        let prepared = Arc::clone(source)
+            .prepare_library_candidate(
+                shared.library.clone(),
+                identity,
+                None,
+                Arc::clone(&progress),
+                Arc::clone(&cancelled),
+            )
+            .await
+            .map_err(string_error)?;
         let candidate = prepare_candidate_artwork(
             &shared,
             Arc::clone(source),
@@ -3188,15 +3125,16 @@ async fn prepare_refresh_candidate(
         .configuration
         .input_identity()
         .map_err(string_error)?;
-    let prepared = acquisition::read_source(
-        shared.library.clone(),
-        identity,
-        Arc::clone(&source),
-        Some(Arc::clone(&selected.library)),
-        Arc::clone(&progress),
-        Arc::clone(&cancelled),
-    )
-    .await?;
+    let prepared = Arc::clone(&source)
+        .prepare_library_candidate(
+            shared.library.clone(),
+            identity,
+            Some(Arc::clone(&selected.library)),
+            Arc::clone(&progress),
+            Arc::clone(&cancelled),
+        )
+        .await
+        .map_err(string_error)?;
     let prepared =
         prepare_candidate_artwork(&shared, source, prepared, progress, cancelled).await?;
     Ok(prepared)
@@ -3253,18 +3191,6 @@ async fn prepare_candidate_artwork(
     .await
 }
 
-async fn prepare_source_change(
-    source: &Source,
-    loaded: &Library,
-    change: SourceLibraryChange,
-) -> Result<SourceLibraryChangeRead, String> {
-    let contains = |item: &SourceLibraryItemId| selected_contains(loaded, item);
-    source
-        .read_library_change(change, &contains)
-        .await
-        .map_err(string_error)
-}
-
 async fn prepare_local_change(
     source: Arc<Source>,
     loaded: Arc<Library>,
@@ -3301,7 +3227,11 @@ async fn prepare_metadata_acceptance(
     reply.mark_write_started();
     match source.write_metadata(subject, edit, local_access).await? {
         MetadataRefresh::Source(change) => {
-            match prepare_source_change(&source, &selected.library, change).await {
+            match source
+                .read_library_change(&selected.library, change)
+                .await
+                .map_err(string_error)
+            {
                 Ok(SourceLibraryChangeRead::Exact(update)) => {
                     Ok(SelectedLibraryAcceptance::Source(update))
                 }
@@ -3330,17 +3260,6 @@ async fn prepare_metadata_acceptance(
                 .map(SelectedLibraryAcceptance::Local)
                 .map_err(MetadataError::SavedRefreshFailed)
         }
-    }
-}
-
-fn selected_contains(loaded: &Library, item: &SourceLibraryItemId) -> bool {
-    match item {
-        SourceLibraryItemId::Album(id) => loaded.album(id).ok().flatten().is_some(),
-        SourceLibraryItemId::Track(id) => loaded.track(id).ok().flatten().is_some(),
-        SourceLibraryItemId::Artist(id) => loaded.artist(id).ok().flatten().is_some(),
-        SourceLibraryItemId::Genre(id) => loaded.genre(id).ok().flatten().is_some(),
-        SourceLibraryItemId::Playlist(id) => loaded.contains_playlist(id).unwrap_or(false),
-        SourceLibraryItemId::MusicFolder(id) => loaded.contains_music_folder(id).unwrap_or(false),
     }
 }
 

@@ -337,8 +337,27 @@ impl Library {
         self.compose_home(music_folder_id, session.explore_variation)
     }
 
+    /// Applies the bounded Home projection named by one accepted Library operation.
+    pub fn home_after_accepted_change(
+        &self,
+        music_folder_id: Option<&MusicFolderId>,
+        current: &Arc<HomeSnapshot>,
+        change: &crate::AcceptedHomeChange,
+    ) -> LibraryResult<Option<Arc<HomeSnapshot>>> {
+        match change {
+            crate::AcceptedHomeChange::Keep => Ok(None),
+            crate::AcceptedHomeChange::Rebuild => self.home(music_folder_id).map(Some),
+            crate::AcceptedHomeChange::Favorite(item) => self
+                .home_after_favorite(music_folder_id, current, item)
+                .map(Some),
+            crate::AcceptedHomeChange::Played(track_id) => self
+                .home_after_play(music_folder_id, current, track_id)
+                .map(Some),
+        }
+    }
+
     /// Updates one favorited item in the snapshot prepared for the next visit.
-    pub fn home_after_favorite(
+    fn home_after_favorite(
         &self,
         music_folder_id: Option<&MusicFolderId>,
         current: &Arc<HomeSnapshot>,
@@ -430,7 +449,7 @@ impl Library {
     ///
     /// The mounted snapshot remains untouched, and work stays bounded by the
     /// number of items already shown on Home.
-    pub fn home_after_play(
+    fn home_after_play(
         &self,
         music_folder_id: Option<&MusicFolderId>,
         current: &Arc<HomeSnapshot>,

@@ -469,7 +469,6 @@ impl PersistenceTarget {
                     source_id.clone(),
                     source_session_epoch,
                     update,
-                    Some(outcome.track_id.clone()),
                 ),
                 Ok(None) => {}
                 Err(error) => warn!(%error, "could not record accepted play"),
@@ -481,7 +480,7 @@ impl PersistenceTarget {
             }) {
                 Ok(update) => {
                     self.acceptance
-                        .publish_activity(source_id, source_session_epoch, update, None)
+                        .publish_activity(source_id, source_session_epoch, update)
                 }
                 Err(error) => warn!(%error, "could not record accepted skip"),
             }

@@ -2,15 +2,17 @@ use std::collections::BTreeSet;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use async_channel::Sender;
 use library::{
-    AlbumId, ArtistId, CandidateBatch, FavoriteAcceptance, FavoriteItemId, FolderContents,
-    FolderId, GenreId, HomeFacts, HomeSectionKind, ImageRef, LocalAccessTarget, LocalArtworkRef,
+    AlbumId, ArtistId, CandidateBatch, CandidateFinish, CandidateHeader, FavoriteAcceptance,
+    FavoriteItemId, FolderContents, FolderId, GenreId, HomeFacts, HomeSectionKind, ImageRef,
+    Libraries, Library, LibraryError, LocalAccessTarget, LocalArtworkRef,
     LocalComponentReplacement, MetadataDraft, MetadataEdit, MetadataError, MetadataValues,
     MusicFolderId, PlaylistAcceptance, PlaylistEdit, PlaylistId, PlaylistSnapshot,
-    ProviderFreshness, ResolvedStream, SearchRequest, SearchResults, SourceHomeSection,
-    SourceHomeSectionKind, SourceId, StreamRequest, TrackId,
+    PreparedSourceCandidate, ProviderFreshness, ResolvedStream, SearchRequest, SearchResults,
+    SourceHomeSection, SourceHomeSectionKind, SourceId, StreamRequest, TrackId,
 };
 
 use crate::{
@@ -97,7 +99,7 @@ impl SourceLibraryChange {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub enum SourceLibraryItemId {
+pub(crate) enum SourceLibraryItemId {
     Album(AlbumId),
     Track(TrackId),
     Artist(ArtistId),
@@ -232,35 +234,22 @@ pub enum LocalChangePreparationError {
     Library(#[from] library::LibraryError),
 }
 
+#[derive(Debug, thiserror::Error)]
+pub enum SourceCandidatePreparationError {
+    #[error(transparent)]
+    Source(#[from] SourceError),
+    #[error(transparent)]
+    Library(#[from] LibraryError),
+    #[error("source candidate task failed: {0}")]
+    Task(#[from] tokio::task::JoinError),
+}
+
 /// Inputs that determine the canonical facts emitted by one source.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SourceInputIdentity {
     pub source_id: SourceId,
     pub version: u32,
     pub digest: [u8; 32],
-}
-
-/// Terminal facts from one bounded source read.
-///
-/// Canonical batches cross the channel while the concrete source reads them.
-/// Library owns candidate creation, persistence, comparison, and acceptance.
-pub struct SourceFacts {
-    freshness: Option<ProviderFreshness>,
-    home: HomeFacts,
-}
-
-impl SourceFacts {
-    pub fn freshness(&self) -> Option<&ProviderFreshness> {
-        self.freshness.as_ref()
-    }
-
-    pub fn home(&self) -> &HomeFacts {
-        &self.home
-    }
-
-    pub(crate) fn new(freshness: Option<ProviderFreshness>, home: HomeFacts) -> Self {
-        Self { freshness, home }
-    }
 }
 
 /// Direct bounded edge from a provider response to Library's candidate.
@@ -575,8 +564,8 @@ impl Source {
 
     pub async fn read_library_change(
         &self,
+        library: &Library,
         change: SourceLibraryChange,
-        contains: &(dyn Fn(&SourceLibraryItemId) -> bool + Send + Sync),
     ) -> SourceResult<SourceLibraryChangeRead> {
         match change.inner {
             SourceLibraryChangeKind::Full => Ok(SourceLibraryChangeRead::Full),
@@ -586,7 +575,8 @@ impl Source {
                         "the library change belongs to another source",
                     ));
                 };
-                source.read_library_change(items, contains).await
+                let contains = |item: &SourceLibraryItemId| library_contains_item(library, item);
+                source.read_library_change(items, &contains).await
             }
         }
     }
@@ -814,12 +804,61 @@ impl Source {
         source.prepare_change(library, change, observed_at, progress, cancelled)
     }
 
-    pub async fn read_source_facts(
+    /// Reads one complete source snapshot into an invisible Library candidate.
+    ///
+    /// The bounded writer keeps provider acquisition backpressured. Library
+    /// remains the only owner of persistence, comparison, and later acceptance.
+    pub async fn prepare_library_candidate(
+        self: Arc<Self>,
+        libraries: Libraries,
+        identity: SourceInputIdentity,
+        current: Option<Arc<Library>>,
+        progress: Arc<dyn Fn(SourceReadProgress) + Send + Sync>,
+        cancelled: Arc<AtomicBool>,
+    ) -> Result<PreparedSourceCandidate, SourceCandidatePreparationError> {
+        let header = CandidateHeader {
+            source_id: identity.source_id,
+            input_version: identity.version,
+            input_digest: identity.digest,
+        };
+        let (batches, receiver) = async_channel::bounded(1);
+        let writer = tokio::task::spawn_blocking(move || {
+            let mut candidate = libraries.begin_source_candidate(header)?;
+            while let Ok(batch) = receiver.recv_blocking() {
+                candidate.write(batch)?;
+            }
+            Ok::<_, LibraryError>(candidate)
+        });
+
+        let facts = Arc::clone(&self)
+            .read_source_facts(batches, progress, Arc::clone(&cancelled))
+            .await;
+        let candidate = writer.await??;
+        let (freshness, home) = facts?;
+        if cancelled.load(Ordering::Acquire) {
+            return Err(SourceError::Cancelled.into());
+        }
+
+        tokio::task::spawn_blocking(move || {
+            candidate.finish(
+                CandidateFinish {
+                    freshness,
+                    home,
+                    accepted_at: unix_seconds(),
+                },
+                current.as_ref(),
+            )
+        })
+        .await?
+        .map_err(Into::into)
+    }
+
+    async fn read_source_facts(
         self: Arc<Self>,
         batches: Sender<CandidateBatch>,
         progress: Arc<dyn Fn(SourceReadProgress) + Send + Sync>,
         cancelled: Arc<AtomicBool>,
-    ) -> SourceResult<SourceFacts> {
+    ) -> Result<(Option<ProviderFreshness>, HomeFacts), SourceCandidatePreparationError> {
         let (freshness, home) = match &self.implementation {
             Implementation::Local(_) => {
                 let source = Arc::clone(&self);
@@ -831,8 +870,7 @@ impl Source {
                     let emitter = BatchEmitter::new(batches);
                     local.read_facts(&emitter, &*progress, &is_cancelled)
                 })
-                .await
-                .map_err(|error| SourceError::Other(error.to_string()))??;
+                .await??;
                 completed
             }
             Implementation::Jellyfin(source) => {
@@ -850,8 +888,26 @@ impl Source {
                     .await?
             }
         };
-        Ok(SourceFacts::new(freshness, home))
+        Ok((freshness, home))
     }
+}
+
+fn library_contains_item(library: &Library, item: &SourceLibraryItemId) -> bool {
+    match item {
+        SourceLibraryItemId::Album(id) => library.album(id).ok().flatten().is_some(),
+        SourceLibraryItemId::Track(id) => library.track(id).ok().flatten().is_some(),
+        SourceLibraryItemId::Artist(id) => library.artist(id).ok().flatten().is_some(),
+        SourceLibraryItemId::Genre(id) => library.genre(id).ok().flatten().is_some(),
+        SourceLibraryItemId::Playlist(id) => library.contains_playlist(id).unwrap_or(false),
+        SourceLibraryItemId::MusicFolder(id) => library.contains_music_folder(id).unwrap_or(false),
+    }
+}
+
+fn unix_seconds() -> i64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_secs().min(i64::MAX as u64) as i64)
+        .unwrap_or_default()
 }
 
 pub(crate) fn configured_source_name(configured: Option<String>, provider: String) -> String {

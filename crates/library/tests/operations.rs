@@ -1,10 +1,10 @@
 use std::sync::Arc;
 
 use library::{
-    AcceptedLibraryChange, AcceptedPlay, AcceptedSkip, Album, AlbumRelations, Artist, ArtistCredit,
-    CandidateBatch, CandidateChange, CandidateFinish, CandidateHeader, CueSegment,
-    FavoriteAcceptance, FavoriteItemId, FolderId, Genre, GenreCredit, GenreId, HomeFacts,
-    HomeItemId, HomeSectionKind, ImageRef, Libraries, LoadedHomeItem, LocalArtworkRef,
+    AcceptedHomeChange, AcceptedLibraryChange, AcceptedPlay, AcceptedSkip, Album, AlbumRelations,
+    Artist, ArtistCredit, CandidateBatch, CandidateChange, CandidateFinish, CandidateHeader,
+    CueSegment, FavoriteAcceptance, FavoriteItemId, FolderId, Genre, GenreCredit, GenreId,
+    HomeFacts, HomeItemId, HomeSectionKind, ImageRef, Libraries, LoadedHomeItem, LocalArtworkRef,
     LocalComponentReplacement, LocalComponentSeed, LocalFile, LocalFileKind, LocalFileSeed,
     LocalReadState, MoodCredit, MoodId, MusicFolder, MusicFolderId, NativeRadioResult, NewScrobble,
     PendingScrobbleId, Playlist, PlaylistAcceptance, PlaylistEdit, PlaylistEntry, PlaylistId,
@@ -1698,14 +1698,24 @@ fn local_favorite_and_playlist_transactions_reopen_without_parallel_truth() {
             favorite: true,
         })
         .expect("favorite Album");
+    assert_eq!(
+        favorite.home,
+        AcceptedHomeChange::Favorite(FavoriteItemId::Album(album_id.clone()))
+    );
+    assert!(favorite.download_coverage_changed);
+    assert!(!favorite.album_release_candidates_changed);
     let next_home = accepted
         .library
-        .home_after_favorite(
-            None,
-            &mounted_home,
-            &FavoriteItemId::Album(album_id.clone()),
-        )
-        .expect("patch favorite in next Home");
+        .home_after_accepted_change(None, &mounted_home, &favorite.home)
+        .expect("patch favorite in next Home")
+        .expect("favorite changes the next Home");
+    assert!(
+        accepted
+            .library
+            .home_after_accepted_change(None, &mounted_home, &AcceptedHomeChange::Keep)
+            .expect("keep the next Home")
+            .is_none()
+    );
     let mounted_album = mounted_home
         .section(HomeSectionKind::Explore)
         .expect("mounted Explore")
@@ -2080,6 +2090,9 @@ fn local_component_replaces_files_relations_and_dormant_user_data_atomically() {
         })
         .expect("accept Local component")
         .expect("changed Local component must report a change");
+    assert_eq!(result.home, AcceptedHomeChange::Rebuild);
+    assert!(result.download_coverage_changed);
+    assert!(result.album_release_candidates_changed);
     assert_eq!(result.tracks.len(), 1);
     assert_eq!(result.tracks[0].id, changed.id);
     assert_eq!(
@@ -2534,10 +2547,14 @@ fn local_retag_preserves_activity_and_smart_playlist_membership() {
             track_id: original.id.clone(),
         })
         .expect("record skip");
-    accepted
+    let skip_change = accepted
         .library
         .apply_recorded_activity(&skip)
-        .expect("apply skip");
+        .expect("apply skip")
+        .expect("accepted skip changes activity");
+    assert_eq!(skip_change.home, AcceptedHomeChange::Keep);
+    assert!(!skip_change.download_coverage_changed);
+    assert!(!skip_change.album_release_candidates_changed);
     let smart_id = created_smart_playlist_id(
         accepted
             .library
@@ -4040,6 +4057,12 @@ fn accepted_activity_replaces_only_the_next_local_home_and_reopens() {
         .apply_recorded_activity(&accepted_play)
         .expect("apply accepted play")
         .expect("accepted play must change the library");
+    assert_eq!(
+        accepted_play.home,
+        AcceptedHomeChange::Played(play.track_id.clone())
+    );
+    assert!(!accepted_play.download_coverage_changed);
+    assert!(!accepted_play.album_release_candidates_changed);
     assert_eq!(accepted_play.tracks.len(), 1);
     assert_eq!(
         accepted_play.tracks[0]
@@ -4051,8 +4074,9 @@ fn accepted_activity_replaces_only_the_next_local_home_and_reopens() {
     );
     let next = accepted
         .library
-        .home_after_play(None, &mounted, &play.track_id)
-        .expect("prepare Home after accepted play");
+        .home_after_accepted_change(None, &mounted, &accepted_play.home)
+        .expect("prepare Home after accepted play")
+        .expect("accepted play changes the next Home");
     assert!(!Arc::ptr_eq(&mounted, &next));
     assert!(mounted.section(HomeSectionKind::MostPlayed).is_none());
     assert!(Arc::ptr_eq(
@@ -4279,6 +4303,9 @@ fn source_item_replacement_survives_removal_and_reattaches_dormant_consumers() {
         })
         .expect("replace Track")
         .expect("replacement Track must change the library");
+    assert_eq!(replacement.home, AcceptedHomeChange::Rebuild);
+    assert!(replacement.download_coverage_changed);
+    assert!(replacement.album_release_candidates_changed);
     assert_eq!(replacement.tracks.len(), 1);
     assert_eq!(
         replacement.tracks[0]
@@ -4501,7 +4528,10 @@ fn source_item_replacement_survives_removal_and_reattaches_dormant_consumers() {
             .path(),
         std::path::Path::new("/music/New Artist/New Album/Changed.flac")
     );
-    let next_home = loaded.home(None).expect("next Home");
+    let next_home = loaded
+        .home_after_accepted_change(None, &mounted_home, &replacement.home)
+        .expect("prepare next Home")
+        .expect("source item replacement rebuilds Home");
     assert!(!Arc::ptr_eq(&mounted_home, &next_home));
     assert_eq!(
         home_track_title(&mounted_home, HomeSectionKind::RecentlyPlayed),
@@ -4796,6 +4826,9 @@ fn source_update_commits_tracks_and_playlist_readback_as_one_reopenable_value() 
         })
         .expect("accept Track and Playlist update")
         .expect("Track and Playlist update must change the library");
+    assert_eq!(update.home, AcceptedHomeChange::Rebuild);
+    assert!(update.download_coverage_changed);
+    assert!(update.album_release_candidates_changed);
     assert!(update.playlists.contains(&playlist_id));
     let playlist = accepted
         .library

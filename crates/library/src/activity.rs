@@ -5,8 +5,8 @@
 //! it does not redraw a mounted Home or create a general event log.
 
 use crate::{
-    AcceptedLibraryChange, ArtistId, GenreId, Library, LibraryError, LibraryQueryError,
-    LibraryResult, Track, TrackId,
+    AcceptedHomeChange, AcceptedLibraryChange, ArtistId, GenreId, Library, LibraryError,
+    LibraryQueryError, LibraryResult, Track, TrackId,
 };
 use std::collections::HashSet;
 
@@ -225,8 +225,16 @@ impl Library {
         &self,
         update: &RecordedActivity,
     ) -> LibraryResult<Option<AcceptedLibraryChange>> {
-        self.replace_track_activity(update.activity.clone(), update.recent_play.clone())
-            .map_err(Into::into)
+        let played_track = update
+            .recent_play
+            .as_ref()
+            .map(|play| play.track_id.clone());
+        let mut accepted =
+            self.replace_track_activity(update.activity.clone(), update.recent_play.clone())?;
+        if let (Some(change), Some(track_id)) = (&mut accepted, played_track) {
+            change.home = AcceptedHomeChange::Played(track_id);
+        }
+        Ok(accepted)
     }
 }
 

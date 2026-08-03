@@ -687,12 +687,9 @@ fn activity_publishes_while_candidate_acquisition_is_blocked_and_rebases_once() 
             })
             .expect("record play during refresh")
             .expect("new play during refresh");
-        bootstrap.owner.publish_activity(
-            source_id.clone(),
-            epoch,
-            activity,
-            Some(track_id.clone()),
-        );
+        bootstrap
+            .owner
+            .publish_activity(source_id.clone(), epoch, activity);
         let publication = tokio::time::timeout(std::time::Duration::from_secs(1), async {
             loop {
                 if let SourceEvent::LibraryUpdate(update) =
@@ -828,14 +825,14 @@ fn local_file_change_updates_only_the_changed_component() {
     let source = Arc::new(source);
     let libraries = Libraries::open(directory.path().join("library.db")).expect("open Library");
     let accepted = runtime
-        .block_on(acquisition::read_source(
+        .block_on(Arc::clone(&source).prepare_library_candidate(
             libraries,
             identity,
-            Arc::clone(&source),
             None,
             Arc::new(|_: SourceReadProgress| {}),
             Arc::new(AtomicBool::new(false)),
         ))
+        .map_err(string_error)
         .and_then(|candidate| candidate.accept().map_err(string_error))
         .expect("accept initial Local source")
         .library;
@@ -920,14 +917,14 @@ fn local_metadata_edit_prepares_the_written_file_for_library_acceptance() {
     let source = Arc::new(source);
     let libraries = Libraries::open(directory.path().join("library.db")).expect("open Library");
     let accepted = runtime
-        .block_on(acquisition::read_source(
+        .block_on(Arc::clone(&source).prepare_library_candidate(
             libraries,
             identity,
-            Arc::clone(&source),
             None,
             Arc::new(|_: SourceReadProgress| {}),
             Arc::new(AtomicBool::new(false)),
         ))
+        .map_err(string_error)
         .and_then(|candidate| candidate.accept().map_err(string_error))
         .expect("accept initial Local source")
         .library;

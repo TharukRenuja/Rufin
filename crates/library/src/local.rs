@@ -10,8 +10,8 @@ use std::path::Path;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    AcceptedLibraryChange, Album, AlbumId, Artist, ArtistId, Genre, GenreId, Library,
-    LibraryResult, Track, TrackId,
+    AcceptedHomeChange, AcceptedLibraryChange, Album, AlbumId, Artist, ArtistId, Genre, GenreId,
+    Library, LibraryResult, Track, TrackId,
     loaded::{ItemReplacement, LocalArtworkItemId},
 };
 
@@ -202,7 +202,7 @@ impl Library {
             replacement,
             favorite_update,
         )?;
-        let accepted = self.replace_local_component(
+        let mut accepted = self.replace_local_component(
             stored.files,
             stored.removed_paths,
             stored.replacement,
@@ -211,6 +211,9 @@ impl Library {
             stored.activity,
             stored.unresolved_album_releases,
         )?;
+        accepted.home = AcceptedHomeChange::Rebuild;
+        accepted.download_coverage_changed = true;
+        accepted.album_release_candidates_changed = true;
         Ok(Some(accepted))
     }
 }

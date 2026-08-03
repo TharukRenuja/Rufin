@@ -1,9 +1,10 @@
 use library::{
-    AcceptedLibraryChange, Album, AlbumId, AlbumRelations, Artist, ArtistCredit, ArtistId,
-    CandidateBatch, CandidateFinish, CandidateHeader, FavoriteAcceptance, FavoriteItemId, Genre,
-    GenreCredit, GenreId, HomeFacts, Libraries, Library, LocalComponentReplacement, Playlist,
-    PlaylistAcceptance, PlaylistEdit, PlaylistEntry, PlaylistId, PlaylistSnapshot,
-    ProviderFreshness, SourceId, SourceLibraryUpdate, Track, TrackData, TrackId, TrackRelations,
+    AcceptedHomeChange, AcceptedLibraryChange, Album, AlbumId, AlbumRelations, Artist,
+    ArtistCredit, ArtistId, CandidateBatch, CandidateFinish, CandidateHeader, FavoriteAcceptance,
+    FavoriteItemId, Genre, GenreCredit, GenreId, HomeFacts, Libraries, Library,
+    LocalComponentReplacement, Playlist, PlaylistAcceptance, PlaylistEdit, PlaylistEntry,
+    PlaylistId, PlaylistSnapshot, ProviderFreshness, SourceId, SourceLibraryUpdate, Track,
+    TrackData, TrackId, TrackRelations,
 };
 use proptest::prelude::*;
 use proptest::test_runner::FileFailurePersistence;
@@ -329,10 +330,14 @@ fn remote_exact_patch(harness: &mut Harness, model: &mut Model, slot: Slot, time
         playlists: vec![remote_playlist(slot, source)],
         ..SourceLibraryUpdate::default()
     };
-    harness
+    let accepted = harness
         .loaded(slot)
         .accept_source_update(update)
-        .expect("accept exact remote source patch");
+        .expect("accept exact remote source patch")
+        .expect("changed remote source facts");
+    assert_eq!(accepted.home, AcceptedHomeChange::Rebuild);
+    assert!(accepted.download_coverage_changed);
+    assert!(accepted.album_release_candidates_changed);
 }
 
 fn local_exact_patch(
@@ -380,10 +385,14 @@ fn local_exact_patch(
         }
         _ => return,
     };
-    harness
+    let accepted = harness
         .loaded(Slot::Local)
         .accept_local_component(replacement)
-        .expect("accept exact Local patch");
+        .expect("accept exact Local patch")
+        .expect("changed Local component");
+    assert_eq!(accepted.home, AcceptedHomeChange::Rebuild);
+    assert!(accepted.download_coverage_changed);
+    assert!(accepted.album_release_candidates_changed);
 }
 
 fn candidate_drop(harness: &Harness, model: &Model, slot: Slot, finished: bool, accepted_at: i64) {
@@ -446,14 +455,23 @@ fn favorite(
         _ => unreachable!("favorite kind is bounded"),
     };
     let acceptance = if slot.is_remote() {
-        FavoriteAcceptance::SourceAcknowledged { item, favorite }
+        FavoriteAcceptance::SourceAcknowledged {
+            item: item.clone(),
+            favorite,
+        }
     } else {
-        FavoriteAcceptance::RufinOwned { item, favorite }
+        FavoriteAcceptance::RufinOwned {
+            item: item.clone(),
+            favorite,
+        }
     };
-    harness
+    let accepted = harness
         .loaded(slot)
         .accept_favorite(acceptance)
         .expect("accept favorite");
+    assert_eq!(accepted.home, AcceptedHomeChange::Favorite(item));
+    assert!(accepted.download_coverage_changed);
+    assert!(!accepted.album_release_candidates_changed);
     model.source_mut(slot).favorites[kind][index] = favorite;
 }
 
@@ -465,12 +483,16 @@ fn playlist(harness: &mut Harness, model: &mut Model, slot: Slot) {
         } else {
             vec![0, 1, 0]
         };
-        harness
+        let accepted = harness
             .loaded(slot)
             .accept_playlist(PlaylistAcceptance::SourceSnapshot(remote_playlist(
                 slot, source,
             )))
-            .expect("accept exact remote playlist readback");
+            .expect("accept exact remote playlist readback")
+            .expect("changed remote playlist");
+        assert_eq!(accepted.home, AcceptedHomeChange::Keep);
+        assert!(accepted.download_coverage_changed);
+        assert!(!accepted.album_release_candidates_changed);
         return;
     }
 
@@ -489,6 +511,9 @@ fn playlist(harness: &mut Harness, model: &mut Model, slot: Slot) {
             }))
             .expect("create local playlist")
             .expect("local playlist creation changes the Library");
+        assert_eq!(change.home, AcceptedHomeChange::Keep);
+        assert!(change.download_coverage_changed);
+        assert!(!change.album_release_candidates_changed);
         let id = created_playlist_id(change);
         model.source_mut(Slot::Local).local_playlist = Some(LocalPlaylist {
             id,
@@ -520,13 +545,17 @@ fn playlist(harness: &mut Harness, model: &mut Model, slot: Slot) {
         .expect("created local Playlist")
         .id
         .clone();
-    harness
+    let accepted = harness
         .loaded(Slot::Local)
         .accept_playlist(PlaylistAcceptance::RufinOwned(PlaylistEdit::AddTracks {
             playlist_id: playlist,
             track_ids: vec![track_id(Slot::Local, track)],
         }))
-        .expect("add local playlist occurrence");
+        .expect("add local playlist occurrence")
+        .expect("added local playlist occurrence");
+    assert_eq!(accepted.home, AcceptedHomeChange::Keep);
+    assert!(accepted.download_coverage_changed);
+    assert!(!accepted.album_release_candidates_changed);
     model
         .source_mut(Slot::Local)
         .local_playlist
