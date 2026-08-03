@@ -4,7 +4,7 @@ use std::future::Future;
 use library::{ArtistId, CandidateBatch, GenreId, HomeFacts, Library, SourceHomeSectionKind};
 
 use super::*;
-use crate::source::{BatchEmitter, SourceLibraryChangeRead, SourceReadProgress, SourceReadStage};
+use crate::source::{BatchEmitter, PreparedSourceChange, SourceReadProgress, SourceReadStage};
 
 const CHANGED_ITEM_BATCH_SIZE: usize = 100;
 
@@ -240,17 +240,17 @@ impl JellyfinSource {
 }
 
 impl JellyfinSource {
-    pub(crate) async fn read_library_change(
+    pub(crate) async fn prepare_change(
         &self,
         library: &Library,
         upserts: BTreeSet<String>,
         removals: BTreeSet<String>,
-    ) -> SourceResult<SourceLibraryChangeRead> {
+    ) -> SourceResult<PreparedSourceChange> {
         if upserts.is_empty() && removals.is_empty() {
-            return Ok(SourceLibraryChangeRead::Ignored);
+            return Ok(PreparedSourceChange::Ignored);
         }
         if !upserts.is_disjoint(&removals) {
-            return Ok(SourceLibraryChangeRead::Full);
+            return Ok(PreparedSourceChange::Full);
         }
         let available = self.items_by_ids(&upserts).await?;
         let mut albums = BTreeMap::new();
@@ -270,14 +270,14 @@ impl JellyfinSource {
                 [AcceptedKind::Playlist] => {
                     removed_playlists.insert(PlaylistId::new(jellyfin_id("playlist", &raw_id)));
                 }
-                _ => return Ok(SourceLibraryChangeRead::Full),
+                _ => return Ok(PreparedSourceChange::Full),
             }
         }
 
         for raw_id in upserts {
             let known = accepted_kinds(library, &raw_id);
             let Some(item) = available.get(&raw_id) else {
-                return Ok(SourceLibraryChangeRead::Full);
+                return Ok(PreparedSourceChange::Full);
             };
             match current_item_kind(item) {
                 CurrentItemKind::Track if new_or_only(&known, AcceptedKind::Track) => {
@@ -309,7 +309,7 @@ impl JellyfinSource {
                 | CurrentItemKind::Playlist
                 | CurrentItemKind::Genre
                 | CurrentItemKind::Folder
-                | CurrentItemKind::Other => return Ok(SourceLibraryChangeRead::Full),
+                | CurrentItemKind::Other => return Ok(PreparedSourceChange::Full),
             }
         }
 
@@ -321,12 +321,12 @@ impl JellyfinSource {
         for raw_id in missing_albums {
             let known = accepted_kinds(library, &raw_id);
             let Some(item) = referenced.get(&raw_id) else {
-                return Ok(SourceLibraryChangeRead::Full);
+                return Ok(PreparedSourceChange::Full);
             };
             if current_item_kind(item) != CurrentItemKind::Album
                 || !new_or_only(&known, AcceptedKind::Album)
             {
-                return Ok(SourceLibraryChangeRead::Full);
+                return Ok(PreparedSourceChange::Full);
             }
             let album = album_from_item(item.clone());
             albums.insert(album.id.clone(), album);
@@ -339,9 +339,9 @@ impl JellyfinSource {
             && removed_tracks.is_empty()
             && removed_playlists.is_empty()
         {
-            return Ok(SourceLibraryChangeRead::Ignored);
+            return Ok(PreparedSourceChange::Ignored);
         }
-        Ok(SourceLibraryChangeRead::Exact(
+        Ok(PreparedSourceChange::SourceUpdate(
             library::SourceLibraryUpdate {
                 albums: albums.into_values().collect(),
                 tracks: tracks.into_values().collect(),

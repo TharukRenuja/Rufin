@@ -12,8 +12,7 @@ pub(super) struct ActiveObserver {
 }
 
 pub(super) enum SelectedObservedChange {
-    Source(SourceLibraryChange),
-    Local(LocalFilesystemChange),
+    Change(ObservedSourceChange),
     #[cfg(test)]
     Probe(tests::ObservedChangeProbe),
 }
@@ -40,16 +39,18 @@ impl ObservedChangeState {
             self.active = Some(token);
             return Some(change);
         }
-        match (self.pending.back_mut(), change) {
+        let change = match (self.pending.back_mut(), change) {
             (
-                Some(SelectedObservedChange::Source(current)),
-                SelectedObservedChange::Source(incoming),
-            ) => current.merge(incoming),
-            (
-                Some(SelectedObservedChange::Local(current)),
-                SelectedObservedChange::Local(incoming),
-            ) => current.merge(incoming),
-            (_, change) => self.pending.push_back(change),
+                Some(SelectedObservedChange::Change(current)),
+                SelectedObservedChange::Change(incoming),
+            ) => match current.merge(incoming) {
+                Ok(()) => None,
+                Err(incoming) => Some(SelectedObservedChange::Change(incoming)),
+            },
+            (_, change) => Some(change),
+        };
+        if let Some(change) = change {
+            self.pending.push_back(change);
         }
         None
     }
@@ -367,14 +368,9 @@ impl SourceOwner {
                     return;
                 };
                 match change {
-                    SelectedObservedChange::Source(change) => {
+                    SelectedObservedChange::Change(change) => {
                         operations
                             .accept_observed_change(selected, change, Arc::clone(&cancelled))
-                            .await;
-                    }
-                    SelectedObservedChange::Local(change) => {
-                        operations
-                            .accept_local_change(selected, change, Arc::clone(&cancelled))
                             .await;
                     }
                     #[cfg(test)]
@@ -518,34 +514,40 @@ impl SourceOwner {
     pub(super) async fn accept_observed_change(
         &mut self,
         selected: Arc<SelectedSourceState>,
-        change: SourceLibraryChange,
+        change: ObservedSourceChange,
         cancelled: Arc<AtomicBool>,
     ) {
-        let Some(source) = selected.source.as_ref() else {
+        let Some(source) = selected.source.as_ref().cloned() else {
             return;
         };
+        let progress = Arc::new(|_: SourceReadProgress| {});
         match source
-            .read_library_change(&selected.library, change)
+            .prepare_change(
+                Arc::clone(&selected.library),
+                change,
+                progress,
+                Arc::clone(&cancelled),
+            )
             .await
             .map_err(string_error)
         {
-            Ok(SourceLibraryChangeRead::Exact(update)) => {
+            Ok(
+                prepared @ (PreparedSourceChange::SourceUpdate(_)
+                | PreparedSourceChange::LocalReplacement(_)),
+            ) => {
                 let acceptance_owner = Arc::clone(&self.shared);
                 let _acceptance = acceptance_owner.acceptance_lane.lock().await;
                 if !self.shared.protect_interruptible_commit(&cancelled) {
                     return;
                 }
                 if let Err(error) = self
-                    .accept_selected_library_acceptance(
-                        Arc::clone(&selected),
-                        SelectedLibraryAcceptance::Source(update),
-                    )
+                    .accept_prepared_change(Arc::clone(&selected), prepared)
                     .await
                 {
                     warn!(%error, "could not accept a selected source update");
                 }
             }
-            Ok(SourceLibraryChangeRead::Full) => {
+            Ok(PreparedSourceChange::Full) => {
                 SourceOwner {
                     shared: Arc::clone(&self.shared),
                 }
@@ -555,7 +557,7 @@ impl SourceOwner {
                     Some(&cancelled),
                 );
             }
-            Ok(SourceLibraryChangeRead::Ignored) => {}
+            Ok(PreparedSourceChange::Ignored) => {}
             Err(error) => warn!(%error, "background selected source update failed"),
         }
     }

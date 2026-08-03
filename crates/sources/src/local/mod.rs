@@ -141,16 +141,24 @@ impl LocalSource {
     pub(crate) fn prepare_change(
         &self,
         library: &library::Library,
-        change: crate::LocalFilesystemChange,
+        change: crate::ObservedSourceChange,
         observed_at: i64,
         progress: &(dyn Fn(SourceReadProgress) + Send + Sync),
         cancelled: &(dyn Fn() -> bool + Send + Sync),
-    ) -> Result<Option<LocalComponentReplacement>, crate::LocalChangePreparationError> {
+    ) -> Result<Option<LocalComponentReplacement>, crate::SourceChangePreparationError> {
         let check = match change {
-            crate::LocalFilesystemChange::Paths(paths) => {
+            crate::ObservedSourceChange::LocalPaths(paths) => {
                 scan::check_exact(&self.roots, paths, cancelled)
             }
-            crate::LocalFilesystemChange::Rescan => scan::check_automatic(&self.roots, cancelled),
+            crate::ObservedSourceChange::LocalRescan => {
+                scan::check_automatic(&self.roots, cancelled)
+            }
+            crate::ObservedSourceChange::Full | crate::ObservedSourceChange::Jellyfin { .. } => {
+                return Err(crate::SourceError::InvalidRequest(
+                    "filesystem change preparation requires a Local change",
+                )
+                .into());
+            }
         }?;
         let file_baseline = library.local_file_baseline(check.file_seeds())?;
         let Some(change) = scan::confirm_change(check, file_baseline, progress, cancelled)? else {
@@ -192,7 +200,7 @@ impl LocalSource {
     pub(crate) fn watch(
         &self,
         on_ready: &mut dyn FnMut(bool) -> bool,
-        on_change: &mut dyn FnMut(crate::LocalFilesystemChange) -> bool,
+        on_change: &mut dyn FnMut(crate::ObservedSourceChange) -> bool,
         should_stop: &dyn Fn() -> bool,
     ) -> SourceResult<()> {
         watch::LocalChangeFeed::new(self.roots.clone()).listen_forever(

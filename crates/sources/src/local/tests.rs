@@ -101,7 +101,7 @@ fn exact_replacement(
     source
         .prepare_change(
             loaded,
-            crate::LocalFilesystemChange::Paths(BTreeSet::from([path])),
+            crate::ObservedSourceChange::LocalPaths(BTreeSet::from([path])),
             observed_at,
             &|_| {},
             &|| false,
@@ -1045,7 +1045,7 @@ fn unchanged_rescan_returns_no_component_plan() {
         source
             .prepare_change(
                 &accepted.library,
-                crate::LocalFilesystemChange::Rescan,
+                crate::ObservedSourceChange::LocalRescan,
                 2,
                 &|progress| {
                     if progress.stage == SourceReadStage::Tracks {
@@ -1114,7 +1114,7 @@ fn unchanged_file_identity_keeps_an_accepted_unreadable_file() {
         source
             .prepare_change(
                 &accepted.library,
-                crate::LocalFilesystemChange::Paths(BTreeSet::from([path.clone()])),
+                crate::ObservedSourceChange::LocalPaths(BTreeSet::from([path.clone()])),
                 2,
                 &|_| {},
                 &|| false,
@@ -1243,7 +1243,7 @@ fn exact_file_change_does_not_parse_or_replace_flat_folder_siblings() {
         source
             .prepare_change(
                 &accepted.library,
-                crate::LocalFilesystemChange::Paths(BTreeSet::from([changed_path.clone()])),
+                crate::ObservedSourceChange::LocalPaths(BTreeSet::from([changed_path.clone()])),
                 2,
                 &|progress| {
                     if progress.stage == SourceReadStage::Tracks {
@@ -1270,7 +1270,7 @@ fn exact_file_change_does_not_parse_or_replace_flat_folder_siblings() {
     let replacement = source
         .prepare_change(
             &accepted.library,
-            crate::LocalFilesystemChange::Paths(BTreeSet::from([changed_path])),
+            crate::ObservedSourceChange::LocalPaths(BTreeSet::from([changed_path])),
             2,
             &|progress| {
                 if progress.stage == SourceReadStage::Tracks {
@@ -1304,7 +1304,7 @@ fn exact_file_change_does_not_parse_or_replace_flat_folder_siblings() {
     let replacement = source
         .prepare_change(
             &accepted.library,
-            crate::LocalFilesystemChange::Rescan,
+            crate::ObservedSourceChange::LocalRescan,
             3,
             &|progress| {
                 if progress.stage == SourceReadStage::Tracks {
@@ -1553,7 +1553,7 @@ fn arbitrary_part_directories_share_one_album_and_parent_cover() {
     let replacement = source
         .prepare_change(
             &accepted.library,
-            crate::LocalFilesystemChange::Paths(BTreeSet::from([first.clone()])),
+            crate::ObservedSourceChange::LocalPaths(BTreeSet::from([first.clone()])),
             2,
             &|_| {},
             &|| false,
@@ -1741,7 +1741,7 @@ fn new_cross_directory_album_uses_an_existing_parent_cover() {
     let replacement = source
         .prepare_change(
             &accepted.library,
-            crate::LocalFilesystemChange::Paths(BTreeSet::from([first, second])),
+            crate::ObservedSourceChange::LocalPaths(BTreeSet::from([first, second])),
             2,
             &|_| {},
             &|| false,

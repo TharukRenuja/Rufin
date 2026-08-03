@@ -10,7 +10,7 @@ use wiremock::{Mock, MockServer, ResponseTemplate};
 
 use super::*;
 use crate::CredentialSettingsInput;
-use crate::source::SourceLibraryChangeRead;
+use crate::source::PreparedSourceChange;
 
 fn account(base_url: &str, server_id: Option<&str>, user_id: &str) -> JellyfinSourceConfig {
     JellyfinSourceConfig {
@@ -1348,14 +1348,14 @@ async fn exact_track_change_also_acquires_its_referenced_album() {
     let library = accepted_library(Vec::new());
 
     let change = source
-        .read_library_change(
+        .prepare_change(
             &library,
             BTreeSet::from(["track-one".to_string()]),
             BTreeSet::new(),
         )
         .await
         .expect("read exact Jellyfin change");
-    let SourceLibraryChangeRead::Exact(update) = change else {
+    let PreparedSourceChange::SourceUpdate(update) = change else {
         panic!("a resolvable Track change must remain exact");
     };
 
@@ -1386,14 +1386,14 @@ async fn removals_use_the_accepted_library_without_fetching_items() {
     ]);
 
     let exact = source
-        .read_library_change(
+        .prepare_change(
             &library,
             BTreeSet::new(),
             BTreeSet::from([METADATA_TRACK_ID.to_string(), "playlist-one".to_string()]),
         )
         .await
         .expect("resolve exact Jellyfin removals");
-    let SourceLibraryChangeRead::Exact(exact) = exact else {
+    let PreparedSourceChange::SourceUpdate(exact) = exact else {
         panic!("accepted Track and Playlist removals must remain exact");
     };
     assert_eq!(exact.removed_tracks, vec![track_id]);
@@ -1401,25 +1401,25 @@ async fn removals_use_the_accepted_library_without_fetching_items() {
 
     assert!(matches!(
         source
-            .read_library_change(
+            .prepare_change(
                 &library,
                 BTreeSet::new(),
                 BTreeSet::from([METADATA_ALBUM_ID.to_string()]),
             )
             .await
             .expect("resolve Album removal"),
-        SourceLibraryChangeRead::Full
+        PreparedSourceChange::Full
     ));
     assert!(matches!(
         source
-            .read_library_change(
+            .prepare_change(
                 &library,
                 BTreeSet::new(),
                 BTreeSet::from([METADATA_ARTIST_ID.to_string()]),
             )
             .await
             .expect("resolve Artist removal"),
-        SourceLibraryChangeRead::Full
+        PreparedSourceChange::Full
     ));
     assert!(
         server

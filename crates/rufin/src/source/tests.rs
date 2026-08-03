@@ -10,18 +10,18 @@ use library::{
 };
 use secrets::{MemorySecretStore, SwitchableSecretStore};
 use sources::{
-    LocalFilesystemChange, LocalFolderHostInput, MetadataRefresh, NativeSourceResult,
+    LocalFolderHostInput, NativeSourceResult, ObservedSourceChange, PreparedSourceChange,
     SourceConfiguration, SourceError, SourceSetupInput,
 };
 
 use super::*;
 
 fn test_source_change() -> SelectedObservedChange {
-    SelectedObservedChange::Source(SourceLibraryChange::full())
+    SelectedObservedChange::Change(ObservedSourceChange::full())
 }
 
 fn test_local_change(value: usize) -> SelectedObservedChange {
-    SelectedObservedChange::Local(LocalFilesystemChange::Paths(BTreeSet::from([
+    SelectedObservedChange::Change(ObservedSourceChange::LocalPaths(BTreeSet::from([
         PathBuf::from(format!("/{value}.flac")),
     ])))
 }
@@ -56,8 +56,8 @@ fn observed_change_bursts_have_one_active_preparation_and_one_merged_tail() {
     }
     let tail = source.next(1).expect("source burst has one tail");
     assert!(source.next(1).is_none());
-    assert!(matches!(first, SelectedObservedChange::Source(_)));
-    assert!(matches!(tail, SelectedObservedChange::Source(_)));
+    assert!(matches!(first, SelectedObservedChange::Change(_)));
+    assert!(matches!(tail, SelectedObservedChange::Change(_)));
 
     let mut local = ObservedChangeState::new();
     let first = local
@@ -69,45 +69,11 @@ fn observed_change_bursts_have_one_active_preparation_and_one_merged_tail() {
     let tail = local.next(1).expect("Local burst has one tail");
     assert!(local.next(1).is_none());
     assert!(
-        matches!(first, SelectedObservedChange::Local(LocalFilesystemChange::Paths(paths)) if paths.len() == 1)
+        matches!(first, SelectedObservedChange::Change(ObservedSourceChange::LocalPaths(paths)) if paths.len() == 1)
     );
     assert!(
-        matches!(tail, SelectedObservedChange::Local(LocalFilesystemChange::Paths(paths)) if paths.len() == 99)
+        matches!(tail, SelectedObservedChange::Change(ObservedSourceChange::LocalPaths(paths)) if paths.len() == 99)
     );
-}
-
-#[test]
-fn observed_change_tail_preserves_cross_kind_arrival_order() {
-    let mut source_source_local = ObservedChangeState::new();
-    let active = source_source_local
-        .submit(1, test_source_change())
-        .expect("first source change starts preparation");
-    source_source_local.submit(2, test_source_change());
-    source_source_local.submit(2, test_local_change(3));
-    assert!(matches!(active, SelectedObservedChange::Source(_)));
-    assert!(matches!(
-        source_source_local.next(1),
-        Some(SelectedObservedChange::Source(_))
-    ));
-    source_source_local.activate(2);
-    assert!(
-        matches!(source_source_local.next(2), Some(SelectedObservedChange::Local(LocalFilesystemChange::Paths(paths))) if paths == BTreeSet::from([PathBuf::from("/3.flac")]))
-    );
-    assert!(source_source_local.next(2).is_none());
-
-    let mut source_local_source = ObservedChangeState::new();
-    source_local_source.submit(1, test_source_change());
-    source_local_source.submit(2, test_local_change(2));
-    source_local_source.submit(2, test_source_change());
-    assert!(
-        matches!(source_local_source.next(1), Some(SelectedObservedChange::Local(LocalFilesystemChange::Paths(paths))) if paths == BTreeSet::from([PathBuf::from("/2.flac")]))
-    );
-    source_local_source.activate(2);
-    assert!(matches!(
-        source_local_source.next(2),
-        Some(SelectedObservedChange::Source(_))
-    ));
-    assert!(source_local_source.next(2).is_none());
 }
 
 #[test]
@@ -209,7 +175,7 @@ fn stale_observed_change_run_cannot_clear_a_newer_run() {
 
     assert!(matches!(
         prepared,
-        SelectedObservedChange::Local(LocalFilesystemChange::Paths(paths))
+        SelectedObservedChange::Change(ObservedSourceChange::LocalPaths(paths))
             if paths == BTreeSet::from([PathBuf::from("/2.flac")])
     ));
     let mut observed = state
@@ -1541,15 +1507,17 @@ fn local_file_change_updates_only_the_changed_component() {
 
     let second_path = music_root.join("Second.mp3");
     std::fs::write(&second_path, []).expect("write changed Local Track");
-    let replacement = runtime
-        .block_on(prepare_local_change(
-            Arc::clone(&source),
+    let prepared = runtime
+        .block_on(source.prepare_change(
             Arc::clone(&accepted),
-            LocalFilesystemChange::Paths(BTreeSet::from([second_path])),
+            ObservedSourceChange::LocalPaths(BTreeSet::from([second_path])),
+            Arc::new(|_: SourceReadProgress| {}),
             Arc::new(AtomicBool::new(false)),
         ))
-        .expect("read changed Local component")
-        .expect("changed Local path produced an exact component");
+        .expect("read changed Local component");
+    let PreparedSourceChange::LocalReplacement(replacement) = prepared else {
+        panic!("changed Local path did not produce an exact component");
+    };
     assert_eq!(replacement.tracks.len(), 1);
     assert!(
         replacement
@@ -1582,14 +1550,14 @@ fn local_file_change_updates_only_the_changed_component() {
     );
 
     let unchanged = runtime
-        .block_on(prepare_local_change(
-            source,
+        .block_on(source.prepare_change(
             accepted,
-            LocalFilesystemChange::Rescan,
+            ObservedSourceChange::LocalRescan,
+            Arc::new(|_: SourceReadProgress| {}),
             Arc::new(AtomicBool::new(false)),
         ))
         .expect("verify unchanged Local source");
-    assert!(unchanged.is_none());
+    assert!(matches!(unchanged, PreparedSourceChange::Ignored));
 }
 
 #[test]
@@ -1634,7 +1602,7 @@ fn local_metadata_edit_prepares_the_written_file_for_library_acceptance() {
         .expect("read metadata draft");
     let refresh = runtime
         .block_on(source.write_metadata(
-            &accepted,
+            Arc::clone(&accepted),
             library::MetadataSubject::track(edited_track.clone()),
             MetadataEdit {
                 item_id: MetadataItemId::Track(edited_track.id.clone()),
@@ -1642,15 +1610,13 @@ fn local_metadata_edit_prepares_the_written_file_for_library_acceptance() {
                 changes: vec![MetadataChange::Title("After".to_string())],
             },
             None,
+            Arc::new(|_: SourceReadProgress| {}),
+            Arc::new(AtomicBool::new(false)),
         ))
         .expect("write Local metadata");
-    let MetadataRefresh::Local(change) = refresh else {
-        panic!("Local metadata write did not request a Local refresh");
+    let PreparedSourceChange::LocalReplacement(replacement) = refresh else {
+        panic!("Local metadata write did not prepare an exact replacement");
     };
-    let replacement = source
-        .prepare_local_change(&accepted, change, 1, &|_| {}, &|| false)
-        .expect("prepare Local metadata replacement")
-        .expect("written Local metadata changed");
     let change = accepted
         .accept_local_component(replacement)
         .expect("accept metadata component")

@@ -62,28 +62,26 @@ pub enum SourceFreshness {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct SourceLibraryChange {
-    inner: SourceLibraryChangeKind,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-enum SourceLibraryChangeKind {
+pub enum ObservedSourceChange {
     Full,
     Jellyfin {
         upserts: BTreeSet<String>,
         removals: BTreeSet<String>,
     },
+    LocalPaths(BTreeSet<PathBuf>),
+    LocalRescan,
 }
 
-impl SourceLibraryChange {
-    pub fn merge(&mut self, other: Self) {
-        match (&mut self.inner, other.inner) {
-            (SourceLibraryChangeKind::Full, _) | (_, SourceLibraryChangeKind::Full) => {
-                self.inner = SourceLibraryChangeKind::Full;
+impl ObservedSourceChange {
+    pub fn merge(&mut self, other: Self) -> Result<(), Self> {
+        match (&mut *self, other) {
+            (Self::Full, Self::Full | Self::Jellyfin { .. }) => {}
+            (current @ Self::Jellyfin { .. }, Self::Full) => {
+                *current = Self::Full;
             }
             (
-                SourceLibraryChangeKind::Jellyfin { upserts, removals },
-                SourceLibraryChangeKind::Jellyfin {
+                Self::Jellyfin { upserts, removals },
+                Self::Jellyfin {
                     upserts: incoming_upserts,
                     removals: incoming_removals,
                 },
@@ -93,33 +91,31 @@ impl SourceLibraryChange {
                 upserts.extend(incoming_upserts);
                 removals.extend(incoming_removals);
             }
+            (Self::LocalRescan, Self::LocalRescan | Self::LocalPaths(_)) => {}
+            (current @ Self::LocalPaths(_), Self::LocalRescan) => {
+                *current = Self::LocalRescan;
+            }
+            (Self::LocalPaths(current), Self::LocalPaths(incoming)) => current.extend(incoming),
+            (_, incoming) => return Err(incoming),
         }
+        Ok(())
     }
 
     pub(crate) fn jellyfin(upserts: BTreeSet<String>, removals: BTreeSet<String>) -> Self {
-        Self {
-            inner: SourceLibraryChangeKind::Jellyfin { upserts, removals },
-        }
+        Self::Jellyfin { upserts, removals }
     }
 
     pub fn full() -> Self {
-        Self {
-            inner: SourceLibraryChangeKind::Full,
-        }
+        Self::Full
     }
 }
 
-#[derive(Clone, Debug)]
-pub enum SourceLibraryChangeRead {
-    Exact(library::SourceLibraryUpdate),
+#[derive(Debug)]
+pub enum PreparedSourceChange {
+    SourceUpdate(library::SourceLibraryUpdate),
+    LocalReplacement(LocalComponentReplacement),
     Full,
     Ignored,
-}
-
-#[derive(Clone, Debug)]
-pub enum MetadataRefresh {
-    Local(LocalFilesystemChange),
-    Source(SourceLibraryChangeRead),
 }
 
 pub struct ConnectedSource {
@@ -210,28 +206,14 @@ impl ConnectedSource {
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum LocalFilesystemChange {
-    Paths(BTreeSet<PathBuf>),
-    Rescan,
-}
-
-impl LocalFilesystemChange {
-    pub fn merge(&mut self, other: Self) {
-        match (&mut *self, other) {
-            (Self::Rescan, _) => {}
-            (current, Self::Rescan) => *current = Self::Rescan,
-            (Self::Paths(current), Self::Paths(other)) => current.extend(other),
-        }
-    }
-}
-
 #[derive(Debug, thiserror::Error)]
-pub enum LocalChangePreparationError {
+pub enum SourceChangePreparationError {
     #[error(transparent)]
     Source(#[from] SourceError),
     #[error(transparent)]
     Library(#[from] library::LibraryError),
+    #[error("source change preparation task failed: {0}")]
+    Task(#[from] tokio::task::JoinError),
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -454,32 +436,35 @@ impl Source {
 
     pub async fn write_metadata(
         self: &Arc<Self>,
-        library: &Library,
+        library: Arc<Library>,
         subject: library::MetadataSubject,
         edit: MetadataEdit,
         local_access: Option<Vec<LocalAccessTarget>>,
-    ) -> Result<MetadataRefresh, MetadataError> {
-        match &self.implementation {
+        progress: Arc<dyn Fn(SourceReadProgress) + Send + Sync>,
+        cancelled: Arc<AtomicBool>,
+    ) -> Result<PreparedSourceChange, MetadataError> {
+        let (change, ignored_message) = match &self.implementation {
             Implementation::Local(_) => {
                 let source = Arc::clone(self);
-                tokio::task::spawn_blocking(move || {
+                let paths = tokio::task::spawn_blocking(move || {
                     let Implementation::Local(local) = &source.implementation else {
                         unreachable!("source implementation changed")
                     };
-                    local
-                        .write_metadata(&subject, &edit)
-                        .map(|paths| MetadataRefresh::Local(LocalFilesystemChange::Paths(paths)))
+                    local.write_metadata(&subject, &edit)
                 })
                 .await
-                .map_err(|error| MetadataError::Write(error.to_string()))?
+                .map_err(|error| MetadataError::Write(error.to_string()))??;
+                (
+                    ObservedSourceChange::LocalPaths(paths),
+                    "the written files were not accepted by the Local source",
+                )
             }
             Implementation::Jellyfin(source) => {
                 let raw_ids = source.write_metadata(subject.item(), &edit).await?;
-                source
-                    .read_library_change(library, raw_ids.into_iter().collect(), BTreeSet::new())
-                    .await
-                    .map(MetadataRefresh::Source)
-                    .map_err(|error| MetadataError::SavedRefreshFailed(error.to_string()))
+                (
+                    ObservedSourceChange::jellyfin(raw_ids.into_iter().collect(), BTreeSet::new()),
+                    "the source did not return the written item",
+                )
             }
             Implementation::OpenSubsonic(source) => {
                 if !source.metadata_editing_available() {
@@ -502,24 +487,36 @@ impl Source {
                     .start_metadata_scan_and_wait()
                     .await
                     .map_err(|error| MetadataError::SavedRefreshFailed(error.to_string()))?;
-                Ok(MetadataRefresh::Source(SourceLibraryChangeRead::Full))
+                (
+                    ObservedSourceChange::Full,
+                    "the source did not return the written item",
+                )
             }
+        };
+        let prepared = self
+            .prepare_change(library, change, progress, cancelled)
+            .await
+            .map_err(|error| MetadataError::SavedRefreshFailed(error.to_string()))?;
+        match prepared {
+            PreparedSourceChange::Ignored => Err(MetadataError::SavedRefreshFailed(
+                ignored_message.to_string(),
+            )),
+            prepared => Ok(prepared),
         }
     }
 
     pub async fn listen_selected_changes(
         self: Arc<Self>,
         catch_up: bool,
-        on_items: impl FnMut(SourceLibraryChange) -> bool + Send + 'static,
-        on_local: impl FnMut(LocalFilesystemChange) -> bool + Send + 'static,
+        on_change: impl FnMut(ObservedSourceChange) -> bool + Send + 'static,
         should_stop: impl Fn() -> bool + Send + Sync + 'static,
     ) -> SourceResult<NativeSourceResult<()>> {
         match &self.implementation {
             Implementation::Jellyfin(source) => {
                 source.refresh_metadata_editing().await;
-                let mut on_items = on_items;
+                let mut on_change = on_change;
                 source
-                    .listen_library_changes(catch_up, &mut on_items)
+                    .listen_library_changes(catch_up, &mut on_change)
                     .await
                     .map(NativeSourceResult::Available)
             }
@@ -527,18 +524,18 @@ impl Source {
                 let Implementation::Local(source) = &self.implementation else {
                     unreachable!("selected source implementation changed")
                 };
-                let on_local = std::sync::Mutex::new(on_local);
+                let on_change = std::sync::Mutex::new(on_change);
                 let mut on_ready = |reconnecting| {
                     let request = feed_needs_catch_up(catch_up, reconnecting);
                     !request
-                        || on_local
+                        || on_change
                             .lock()
                             .unwrap_or_else(|poisoned| poisoned.into_inner())(
-                            LocalFilesystemChange::Rescan,
+                            ObservedSourceChange::LocalRescan,
                         )
                 };
                 let mut on_change = |change| {
-                    on_local
+                    on_change
                         .lock()
                         .unwrap_or_else(|poisoned| poisoned.into_inner())(change)
                 };
@@ -551,20 +548,53 @@ impl Source {
         }
     }
 
-    pub async fn read_library_change(
-        &self,
-        library: &Library,
-        change: SourceLibraryChange,
-    ) -> SourceResult<SourceLibraryChangeRead> {
-        match change.inner {
-            SourceLibraryChangeKind::Full => Ok(SourceLibraryChangeRead::Full),
-            SourceLibraryChangeKind::Jellyfin { upserts, removals } => {
+    pub async fn prepare_change(
+        self: &Arc<Self>,
+        library: Arc<Library>,
+        change: ObservedSourceChange,
+        progress: Arc<dyn Fn(SourceReadProgress) + Send + Sync>,
+        cancelled: Arc<AtomicBool>,
+    ) -> Result<PreparedSourceChange, SourceChangePreparationError> {
+        match change {
+            ObservedSourceChange::Full => Ok(PreparedSourceChange::Full),
+            ObservedSourceChange::Jellyfin { upserts, removals } => {
                 let Implementation::Jellyfin(source) = &self.implementation else {
                     return Err(SourceError::InvalidRequest(
                         "the library change belongs to another source",
-                    ));
+                    )
+                    .into());
                 };
-                source.read_library_change(library, upserts, removals).await
+                source
+                    .prepare_change(&library, upserts, removals)
+                    .await
+                    .map_err(Into::into)
+            }
+            change @ (ObservedSourceChange::LocalPaths(_) | ObservedSourceChange::LocalRescan) => {
+                let source = Arc::clone(self);
+                tokio::task::spawn_blocking(move || {
+                    let Implementation::Local(local) = &source.implementation else {
+                        return Err(SourceError::InvalidRequest(
+                            "filesystem change preparation requires a Local source",
+                        )
+                        .into());
+                    };
+                    let should_stop = || cancelled.load(Ordering::Acquire);
+                    local
+                        .prepare_change(
+                            &library,
+                            change,
+                            unix_seconds(),
+                            progress.as_ref(),
+                            &should_stop,
+                        )
+                        .map(|replacement| {
+                            replacement.map_or(
+                                PreparedSourceChange::Ignored,
+                                PreparedSourceChange::LocalReplacement,
+                            )
+                        })
+                })
+                .await?
             }
         }
     }
@@ -772,25 +802,6 @@ impl Source {
                 .await
                 .map(NativeSourceResult::Available),
         }
-    }
-
-    /// Prepares one Local filesystem change against Library's accepted facts.
-    /// The returned replacement is inert until Library accepts it.
-    pub fn prepare_local_change(
-        &self,
-        library: &library::Library,
-        change: LocalFilesystemChange,
-        observed_at: i64,
-        progress: &(dyn Fn(SourceReadProgress) + Send + Sync),
-        cancelled: &(dyn Fn() -> bool + Send + Sync),
-    ) -> Result<Option<LocalComponentReplacement>, LocalChangePreparationError> {
-        let Implementation::Local(source) = &self.implementation else {
-            return Err(SourceError::InvalidRequest(
-                "filesystem change preparation requires a Local source",
-            )
-            .into());
-        };
-        source.prepare_change(library, change, observed_at, progress, cancelled)
     }
 
     /// Reads one complete source snapshot into an invisible Library candidate.
@@ -1029,54 +1040,64 @@ mod input_identity_tests {
 
     #[test]
     fn jellyfin_change_merge_keeps_the_latest_action_and_full_dominates() {
-        let mut changed = SourceLibraryChange::jellyfin(
+        let mut changed = ObservedSourceChange::jellyfin(
             BTreeSet::from(["track-one".to_string(), "track-two".to_string()]),
             BTreeSet::new(),
         );
-        changed.merge(SourceLibraryChange::jellyfin(
-            BTreeSet::from(["album-one".to_string()]),
-            BTreeSet::from(["track-one".to_string()]),
-        ));
-        changed.merge(SourceLibraryChange::jellyfin(
-            BTreeSet::from(["track-one".to_string()]),
-            BTreeSet::from(["track-two".to_string()]),
-        ));
+        changed
+            .merge(ObservedSourceChange::jellyfin(
+                BTreeSet::from(["album-one".to_string()]),
+                BTreeSet::from(["track-one".to_string()]),
+            ))
+            .expect("merge Jellyfin change");
+        changed
+            .merge(ObservedSourceChange::jellyfin(
+                BTreeSet::from(["track-one".to_string()]),
+                BTreeSet::from(["track-two".to_string()]),
+            ))
+            .expect("merge Jellyfin change");
         assert_eq!(
             changed,
-            SourceLibraryChange {
-                inner: SourceLibraryChangeKind::Jellyfin {
-                    upserts: BTreeSet::from(["album-one".to_string(), "track-one".to_string(),]),
-                    removals: BTreeSet::from(["track-two".to_string()]),
-                },
+            ObservedSourceChange::Jellyfin {
+                upserts: BTreeSet::from(["album-one".to_string(), "track-one".to_string(),]),
+                removals: BTreeSet::from(["track-two".to_string()]),
             }
         );
 
-        changed.merge(SourceLibraryChange::full());
-        changed.merge(SourceLibraryChange::jellyfin(
-            BTreeSet::from(["track-three".to_string()]),
-            BTreeSet::new(),
-        ));
-        assert_eq!(changed, SourceLibraryChange::full());
+        changed
+            .merge(ObservedSourceChange::full())
+            .expect("full change dominates");
+        changed
+            .merge(ObservedSourceChange::jellyfin(
+                BTreeSet::from(["track-three".to_string()]),
+                BTreeSet::new(),
+            ))
+            .expect("full change remains dominant");
+        assert_eq!(changed, ObservedSourceChange::full());
     }
 
     #[test]
     fn local_file_changes_coalesce_without_losing_a_rescan() {
         let mut changed =
-            LocalFilesystemChange::Paths(BTreeSet::from([PathBuf::from("/music/one.flac")]));
-        changed.merge(LocalFilesystemChange::Paths(BTreeSet::from([
-            PathBuf::from("/music/one.flac"),
-            PathBuf::from("/music/two.flac"),
-        ])));
+            ObservedSourceChange::LocalPaths(BTreeSet::from([PathBuf::from("/music/one.flac")]));
+        changed
+            .merge(ObservedSourceChange::LocalPaths(BTreeSet::from([
+                PathBuf::from("/music/one.flac"),
+                PathBuf::from("/music/two.flac"),
+            ])))
+            .expect("merge Local paths");
         assert_eq!(
             changed,
-            LocalFilesystemChange::Paths(BTreeSet::from([
+            ObservedSourceChange::LocalPaths(BTreeSet::from([
                 PathBuf::from("/music/one.flac"),
                 PathBuf::from("/music/two.flac"),
             ]))
         );
 
-        changed.merge(LocalFilesystemChange::Rescan);
-        assert_eq!(changed, LocalFilesystemChange::Rescan);
+        changed
+            .merge(ObservedSourceChange::LocalRescan)
+            .expect("rescan dominates Local paths");
+        assert_eq!(changed, ObservedSourceChange::LocalRescan);
     }
 
     fn jellyfin(

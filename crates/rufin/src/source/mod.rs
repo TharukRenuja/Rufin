@@ -7,7 +7,7 @@ use std::future::Future;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, Weak};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::Duration;
 
 use artwork::{Artwork, SourceImages};
 use async_channel::{Receiver, Sender};
@@ -23,10 +23,9 @@ use scrobbling::Scrobbler;
 use secrets::{SecretStorageMode, SwitchableSecretStore};
 use sources::{
     CredentialHostInput, CredentialSettingsInput, JellyfinSettingsInput, JellyfinSetupInput,
-    LocalFilesystemChange, LocalFolderHostInput, MetadataRefresh, NativeSourceResult, Source,
+    LocalFolderHostInput, NativeSourceResult, ObservedSourceChange, PreparedSourceChange, Source,
     SourceCacheMatch, SourceConfiguration, SourceEditResult, SourceFreshness, SourceInputIdentity,
-    SourceLibraryChange, SourceLibraryChangeRead, SourceReadProgress, SourceReadStage,
-    SourceSettingsInput, SourceSetupInput, SubsonicFlavor,
+    SourceReadProgress, SourceReadStage, SourceSettingsInput, SourceSetupInput, SubsonicFlavor,
 };
 use tracing::warn;
 use ui::runtime::source::{
@@ -55,9 +54,9 @@ mod local_access;
 mod observer;
 
 use connection::{add_source, configured_source, prepare_refresh_candidate, select_source};
+use local_access::ActiveLocalAccess;
 #[cfg(test)]
 use local_access::accept_metadata_local_access_mapping;
-use local_access::{ActiveLocalAccess, prepare_local_change};
 #[cfg(test)]
 use observer::ObservedChangeRun;
 use observer::{
@@ -340,12 +339,6 @@ enum SmartPlaylistOperation {
         target: SmartPlaylistId,
         after: bool,
     },
-}
-
-enum SelectedLibraryAcceptance {
-    Source(library::SourceLibraryUpdate),
-    Local(library::LocalComponentReplacement),
-    Full(PreparedSourceCandidate),
 }
 
 struct ActiveAlbumRelease {
@@ -647,37 +640,25 @@ impl SourceOwner {
             return;
         };
         let cancelled = Arc::new(AtomicBool::new(false));
-        let item_cancelled = Arc::clone(&cancelled);
-        let local_cancelled = Arc::clone(&cancelled);
+        let change_cancelled = Arc::clone(&cancelled);
         let stop_cancelled = Arc::clone(&cancelled);
-        let item_owner = SourceOwner {
+        let change_owner = SourceOwner {
             shared: Arc::clone(&self.shared),
         };
-        let local_owner = item_owner.clone();
         let observed = Arc::new(Mutex::new(ObservedChangeState::new()));
-        let item_observed = Arc::clone(&observed);
-        let local_observed = Arc::clone(&observed);
-        let item_session = Arc::clone(&session);
-        let local_session = Arc::clone(&session);
+        let change_observed = Arc::clone(&observed);
+        let change_session = Arc::clone(&session);
         let stop_session = Arc::clone(&session);
         let handle = self.shared.runtime.spawn(async move {
             let result = source
                 .listen_selected_changes(
                     catch_up,
                     move |change| {
-                        item_owner.queue_observed_change(
-                            &item_observed,
-                            &item_session,
-                            &item_cancelled,
-                            SelectedObservedChange::Source(change),
-                        )
-                    },
-                    move |change| {
-                        local_owner.queue_observed_change(
-                            &local_observed,
-                            &local_session,
-                            &local_cancelled,
-                            SelectedObservedChange::Local(change),
+                        change_owner.queue_observed_change(
+                            &change_observed,
+                            &change_session,
+                            &change_cancelled,
+                            SelectedObservedChange::Change(change),
                         )
                     },
                     move || {
@@ -864,17 +845,17 @@ impl SourceOwner {
         self.start_selected_access(true).await;
     }
 
-    async fn accept_selected_library_acceptance(
+    async fn accept_prepared_change(
         &mut self,
         selected: Arc<SelectedSourceState>,
-        acceptance: SelectedLibraryAcceptance,
+        prepared: PreparedSourceChange,
     ) -> Result<(), String> {
-        let change = match acceptance {
-            SelectedLibraryAcceptance::Source(update) => {
+        let change = match prepared {
+            PreparedSourceChange::SourceUpdate(update) => {
                 let library = Arc::clone(&selected.library);
                 blocking(move || library.accept_source_update(update).map_err(string_error)).await?
             }
-            SelectedLibraryAcceptance::Local(replacement) => {
+            PreparedSourceChange::LocalReplacement(replacement) => {
                 let library = Arc::clone(&selected.library);
                 blocking(move || {
                     library
@@ -883,8 +864,8 @@ impl SourceOwner {
                 })
                 .await?
             }
-            SelectedLibraryAcceptance::Full(candidate) => {
-                return self.commit_refresh(selected, candidate).await;
+            PreparedSourceChange::Full | PreparedSourceChange::Ignored => {
+                return Err("the source change was not prepared for exact acceptance".to_string());
             }
         };
         if let Some(change) = change {
@@ -1059,21 +1040,53 @@ impl SourceOwner {
         mut reply: MetadataReply,
     ) {
         let progress = self.progress(Arc::clone(&cancelled), |_| None);
-        let acceptance = prepare_metadata_acceptance(
-            Arc::clone(&self.shared),
-            (*selected).clone(),
-            edit,
-            progress,
-            cancelled,
-            &mut reply,
-        )
-        .await;
-        let accepted = match acceptance {
+        let prepared = match selected.metadata_access_context(&edit.item_id) {
             Err(error) => Err(error),
-            Ok(acceptance) => {
+            Ok(None) => Err(MetadataError::Unavailable),
+            Ok(Some(context)) => {
+                reply.mark_write_started();
+                context
+                    .source
+                    .write_metadata(
+                        Arc::clone(&selected.library),
+                        context.subject,
+                        edit,
+                        context.local_access,
+                        progress,
+                        Arc::clone(&cancelled),
+                    )
+                    .await
+            }
+        };
+        let accepted = match prepared {
+            Err(error) => Err(error),
+            Ok(PreparedSourceChange::Full) => {
+                let candidate = prepare_refresh_candidate(
+                    Arc::clone(&self.shared),
+                    (*selected).clone(),
+                    self.progress(Arc::clone(&cancelled), |_| None),
+                    Arc::clone(&cancelled),
+                )
+                .await
+                .map_err(MetadataError::SavedRefreshFailed);
+                match candidate {
+                    Err(error) => Err(error),
+                    Ok(candidate) => {
+                        let acceptance_owner = Arc::clone(&self.shared);
+                        let _acceptance = acceptance_owner.acceptance_lane.lock().await;
+                        self.commit_refresh(selected, candidate)
+                            .await
+                            .map_err(MetadataError::SavedRefreshFailed)
+                    }
+                }
+            }
+            Ok(PreparedSourceChange::Ignored) => Err(MetadataError::SavedRefreshFailed(
+                "the source did not return the written item".to_string(),
+            )),
+            Ok(prepared) => {
                 let acceptance_owner = Arc::clone(&self.shared);
                 let _acceptance = acceptance_owner.acceptance_lane.lock().await;
-                self.accept_selected_library_acceptance(selected, acceptance)
+                self.accept_prepared_change(selected, prepared)
                     .await
                     .map_err(MetadataError::SavedRefreshFailed)
             }
@@ -1521,56 +1534,6 @@ impl Shared {
     async fn send_event(&self, event: SourceEvent) {
         if self.outputs.events.send(event).await.is_err() {
             warn!("source event lane is unavailable");
-        }
-    }
-}
-
-async fn prepare_metadata_acceptance(
-    shared: Arc<Shared>,
-    selected: SelectedSourceState,
-    edit: MetadataEdit,
-    progress: Arc<dyn Fn(SourceReadProgress) + Send + Sync>,
-    cancelled: Arc<AtomicBool>,
-    reply: &mut MetadataReply,
-) -> Result<SelectedLibraryAcceptance, MetadataError> {
-    let context = selected.metadata_access_context(&edit.item_id)?;
-    let Some(context) = context else {
-        return Err(MetadataError::Unavailable);
-    };
-    let MetadataContext {
-        source,
-        subject,
-        local_access,
-    } = context;
-    reply.mark_write_started();
-    match source
-        .write_metadata(&selected.library, subject, edit, local_access)
-        .await?
-    {
-        MetadataRefresh::Source(change) => match change {
-            SourceLibraryChangeRead::Exact(update) => Ok(SelectedLibraryAcceptance::Source(update)),
-            SourceLibraryChangeRead::Ignored => Err(MetadataError::SavedRefreshFailed(
-                "the source did not return the written item".to_string(),
-            )),
-            SourceLibraryChangeRead::Full => {
-                prepare_refresh_candidate(shared, selected, progress, cancelled)
-                    .await
-                    .map(SelectedLibraryAcceptance::Full)
-                    .map_err(MetadataError::SavedRefreshFailed)
-            }
-        },
-        MetadataRefresh::Local(change) => {
-            let library = Arc::clone(&selected.library);
-            let source = Arc::clone(&source);
-            prepare_local_change(source, library, change, cancelled)
-                .await
-                .and_then(|replacement| {
-                    replacement.ok_or_else(|| {
-                        "the written files were not accepted by the Local source".to_string()
-                    })
-                })
-                .map(SelectedLibraryAcceptance::Local)
-                .map_err(MetadataError::SavedRefreshFailed)
         }
     }
 }
@@ -2618,10 +2581,4 @@ pub(crate) fn source_access_unavailable() -> String {
 
 fn string_error(error: impl std::fmt::Display) -> String {
     error.to_string()
-}
-
-fn unix_seconds() -> i64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0, |duration| duration.as_secs() as i64)
 }

@@ -168,44 +168,6 @@ impl SourceOwner {
         }
     }
 
-    pub(super) async fn accept_local_change(
-        &mut self,
-        selected: Arc<SelectedSourceState>,
-        change: LocalFilesystemChange,
-        cancelled: Arc<AtomicBool>,
-    ) {
-        let Some(source) = selected.source.as_ref().cloned() else {
-            return;
-        };
-        match prepare_local_change(
-            source,
-            Arc::clone(&selected.library),
-            change,
-            Arc::clone(&cancelled),
-        )
-        .await
-        {
-            Ok(Some(replacement)) => {
-                let acceptance_owner = Arc::clone(&self.shared);
-                let _acceptance = acceptance_owner.acceptance_lane.lock().await;
-                if !self.shared.protect_interruptible_commit(&cancelled) {
-                    return;
-                }
-                if let Err(error) = self
-                    .accept_selected_library_acceptance(
-                        Arc::clone(&selected),
-                        SelectedLibraryAcceptance::Local(replacement),
-                    )
-                    .await
-                {
-                    warn!(%error, "could not accept a selected Local update");
-                }
-            }
-            Ok(None) => {}
-            Err(error) => warn!(%error, "background selected Local update failed"),
-        }
-    }
-
     pub(super) async fn apply_local_access(
         &mut self,
         input: SourceLocalAccess,
@@ -408,21 +370,6 @@ impl SourceOwner {
     }
 }
 
-pub(super) async fn prepare_local_change(
-    source: Arc<Source>,
-    loaded: Arc<Library>,
-    change: LocalFilesystemChange,
-    cancelled: Arc<AtomicBool>,
-) -> Result<Option<library::LocalComponentReplacement>, String> {
-    blocking(move || {
-        let should_stop = || cancelled.load(Ordering::Acquire);
-        let progress = |_: SourceReadProgress| {};
-        source
-            .prepare_local_change(&loaded, change, unix_seconds(), &progress, &should_stop)
-            .map_err(string_error)
-    })
-    .await
-}
 pub(super) fn save_local_access_setting(
     settings: &SettingsFile,
     access: &SourceLocalAccess,

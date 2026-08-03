@@ -19,7 +19,7 @@ use tokio_tungstenite::{
 use tracing::{debug, warn};
 
 use super::*;
-use crate::SourceLibraryChange;
+use crate::ObservedSourceChange;
 
 const KEEP_ALIVE_INTERVAL: Duration = Duration::from_secs(30);
 const JELLYFIN_WEBSOCKET_KEY_BYTES: usize = 16;
@@ -73,7 +73,7 @@ impl JellyfinSource {
     pub(crate) async fn listen_library_changes(
         &self,
         catch_up: bool,
-        on_change: &mut (dyn FnMut(SourceLibraryChange) -> bool + Send),
+        on_change: &mut (dyn FnMut(ObservedSourceChange) -> bool + Send),
     ) -> SourceResult<()> {
         let mut delay = FEED_RETRY_MIN;
         let mut reconnecting = false;
@@ -100,10 +100,10 @@ impl JellyfinSource {
     async fn listen_library_changes_once(
         &self,
         catch_up: bool,
-        on_change: &mut (dyn FnMut(SourceLibraryChange) -> bool + Send),
+        on_change: &mut (dyn FnMut(ObservedSourceChange) -> bool + Send),
     ) -> SourceResult<bool> {
         let mut socket = self.connect_library_socket().await?;
-        if catch_up && !on_change(SourceLibraryChange::full()) {
+        if catch_up && !on_change(ObservedSourceChange::full()) {
             return Ok(false);
         }
         let mut keep_alive = interval(KEEP_ALIVE_INTERVAL);
@@ -151,7 +151,7 @@ struct SocketMessage {
 
 #[derive(Debug, Eq, PartialEq)]
 enum JellyfinSocketMessage {
-    Change(SourceLibraryChange),
+    Change(ObservedSourceChange),
     ForceKeepAlive,
     Other,
 }
@@ -187,7 +187,7 @@ fn library_socket_message(text: &str) -> SourceResult<JellyfinSocketMessage> {
                 || !data.folders_removed_from.is_empty()
                 || !data.collection_folders.is_empty()
             {
-                return Ok(JellyfinSocketMessage::Change(SourceLibraryChange::full()));
+                return Ok(JellyfinSocketMessage::Change(ObservedSourceChange::full()));
             }
             let upserts = data
                 .items_added
@@ -198,10 +198,10 @@ fn library_socket_message(text: &str) -> SourceResult<JellyfinSocketMessage> {
             if upserts.is_empty() && removals.is_empty() {
                 Ok(JellyfinSocketMessage::Other)
             } else if !upserts.is_disjoint(&removals) {
-                Ok(JellyfinSocketMessage::Change(SourceLibraryChange::full()))
+                Ok(JellyfinSocketMessage::Change(ObservedSourceChange::full()))
             } else {
                 Ok(JellyfinSocketMessage::Change(
-                    SourceLibraryChange::jellyfin(upserts, removals),
+                    ObservedSourceChange::jellyfin(upserts, removals),
                 ))
             }
         }
@@ -242,7 +242,7 @@ mod tests {
 
         assert_eq!(
             message,
-            JellyfinSocketMessage::Change(SourceLibraryChange::full())
+            JellyfinSocketMessage::Change(ObservedSourceChange::full())
         );
     }
 
@@ -255,7 +255,7 @@ mod tests {
 
         assert_eq!(
             message,
-            JellyfinSocketMessage::Change(SourceLibraryChange::jellyfin(
+            JellyfinSocketMessage::Change(ObservedSourceChange::jellyfin(
                 BTreeSet::from(["item-one".to_string(), "item-two".to_string()]),
                 BTreeSet::from(["item-three".to_string()]),
             ))
@@ -271,7 +271,7 @@ mod tests {
 
         assert_eq!(
             message,
-            JellyfinSocketMessage::Change(SourceLibraryChange::full())
+            JellyfinSocketMessage::Change(ObservedSourceChange::full())
         );
     }
 
