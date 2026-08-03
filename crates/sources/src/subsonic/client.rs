@@ -181,15 +181,15 @@ impl SubsonicSource {
     ) -> SourceResult<Vec<Track>> {
         match seed {
             library::RadioSeed::Track(track_id) => {
-                self.similar_songs("getSimilarSongs", raw_item_id(track_id.as_str()), limit)
+                self.similar_songs(raw_item_id(track_id.as_str()), limit)
                     .await
             }
             library::RadioSeed::Album(album_id) => {
-                self.similar_songs("getSimilarSongs", raw_item_id(album_id.as_str()), limit)
+                self.similar_songs(raw_item_id(album_id.as_str()), limit)
                     .await
             }
             library::RadioSeed::Artist(artist_id) => {
-                self.similar_songs("getSimilarSongs2", raw_item_id(artist_id.as_str()), limit)
+                self.similar_songs(raw_item_id(artist_id.as_str()), limit)
                     .await
             }
             library::RadioSeed::Genre { id, name } => {
@@ -206,12 +206,8 @@ impl SubsonicSource {
             library::RadioSeed::Playlist(playlist_id) => {
                 let snapshot = self.read_playlist(playlist_id).await?;
                 let seed = snapshot.entries.first().ok_or(SourceError::NotFound)?;
-                self.similar_songs(
-                    "getSimilarSongs",
-                    raw_item_id(seed.track_id.as_str()),
-                    limit,
-                )
-                .await
+                self.similar_songs(raw_item_id(seed.track_id.as_str()), limit)
+                    .await
             }
         }
     }
@@ -955,15 +951,10 @@ impl SubsonicSource {
             .collect())
     }
 
-    async fn similar_songs(
-        &self,
-        method: &str,
-        raw_id: &str,
-        count: usize,
-    ) -> SourceResult<Vec<Track>> {
+    async fn similar_songs(&self, raw_id: &str, count: usize) -> SourceResult<Vec<Track>> {
         let body: SimilarSongsBody = self
             .get_json(
-                method,
+                "getSimilarSongs",
                 &[
                     ("id", raw_id.to_string()),
                     ("count", count.clamp(1, 500).to_string()),
@@ -1143,7 +1134,7 @@ pub(super) struct RandomSongsBody {
 }
 #[derive(Clone, Debug, Default, Deserialize)]
 pub(super) struct SimilarSongsBody {
-    #[serde(default, rename = "similarSongs", alias = "similarSongs2")]
+    #[serde(default, rename = "similarSongs")]
     pub(super) similar_songs: Option<SongsList>,
 }
 #[derive(Clone, Debug, Deserialize)]

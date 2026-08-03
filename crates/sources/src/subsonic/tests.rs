@@ -147,16 +147,32 @@ fn settings_input(
     }
 }
 
-#[test]
-fn similar_song_response_accepts_both_endpoint_keys() {
-    for response in [
-        r#"{"similarSongs":{"song":[]}}"#,
-        r#"{"similarSongs2":{"song":[]}}"#,
-    ] {
-        let body: SimilarSongsBody =
-            serde_json::from_str(response).expect("similar-song response shape");
-        assert!(body.similar_songs.is_some());
-    }
+#[tokio::test]
+async fn artist_radio_uses_the_common_similar_songs_endpoint() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/rest/getSimilarSongs.view"))
+        .and(query_param("id", "artist-one"))
+        .and(query_param("count", "25"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(envelope(serde_json::json!({
+                "similarSongs": { "song": [] }
+            }))),
+        )
+        .expect(1)
+        .mount(&server)
+        .await;
+    let source = provider(&server);
+
+    let tracks = source
+        .generated_tracks(
+            &library::RadioSeed::Artist(library::ArtistId::new(source.id("artist", "artist-one"))),
+            25,
+        )
+        .await
+        .expect("artist radio recommendations");
+
+    assert!(tracks.is_empty());
 }
 
 #[tokio::test]
