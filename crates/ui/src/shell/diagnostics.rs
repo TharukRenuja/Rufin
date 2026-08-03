@@ -6,6 +6,7 @@ use adw::prelude::*;
 use gtk::gio::prelude::FileExtManual;
 use gtk::{gio, glib};
 use localization::tr;
+use tracing::warn;
 
 use crate::layout::{large_popup_content_height, large_popup_content_width};
 use crate::preferences::dialogs::popup::present_light_dismiss_dialog;
@@ -73,6 +74,11 @@ pub(super) fn present_diagnostics(shell: &Rc<Shell>) {
         .halign(gtk::Align::End)
         .build();
     save.add_css_class("suggested-action");
+    let status = gtk::Label::new(None);
+    status.set_halign(gtk::Align::Start);
+    status.set_wrap(true);
+    status.set_visible(false);
+    content.append(&status);
     content.append(&save);
     toolbar.set_content(Some(&content));
 
@@ -88,7 +94,7 @@ pub(super) fn present_diagnostics(shell: &Rc<Shell>) {
 
     let changing_debug = Rc::new(Cell::new(false));
     let diagnostics = shell.diagnostics.clone();
-    let toast_overlay = shell.chrome.toast_overlay.clone();
+    let debug_status = status.clone();
     let changing_debug_for_notify = Rc::clone(&changing_debug);
     debug.connect_active_notify(move |row| {
         if changing_debug_for_notify.get() {
@@ -99,7 +105,10 @@ pub(super) fn present_diagnostics(shell: &Rc<Shell>) {
             changing_debug_for_notify.set(true);
             row.set_active(!enabled);
             changing_debug_for_notify.set(false);
-            toast_overlay.add_toast(adw::Toast::new(&error));
+            warn!(%error, "could not change debug logging");
+            debug_status.add_css_class("error");
+            debug_status.set_text(&error);
+            debug_status.set_visible(true);
         }
     });
 
@@ -131,11 +140,11 @@ pub(super) fn present_diagnostics(shell: &Rc<Shell>) {
 
     let save_window = shell.chrome.window.clone();
     let save_buffer = log.buffer();
-    let save_toasts = shell.chrome.toast_overlay.clone();
+    let save_status = status.clone();
     save.connect_clicked(move |_| {
         let window = save_window.clone();
         let buffer = save_buffer.clone();
-        let toasts = save_toasts.clone();
+        let status = save_status.clone();
         glib::spawn_future_local(async move {
             let chooser = gtk::FileDialog::builder()
                 .title(tr("Save Diagnostic Log"))
@@ -157,12 +166,16 @@ pub(super) fn present_diagnostics(shell: &Rc<Shell>) {
                 )
                 .await
             {
-                Ok(_) => toasts.add_toast(adw::Toast::new(&tr("Diagnostic log saved"))),
+                Ok(_) => {
+                    status.remove_css_class("error");
+                    status.set_text(&tr("Diagnostic log saved"));
+                    status.set_visible(true);
+                }
                 Err((_, error)) => {
-                    toasts.add_toast(adw::Toast::new(&format!(
-                        "{}: {error}",
-                        tr("Could not save diagnostic log")
-                    )));
+                    warn!(%error, "could not save diagnostic log");
+                    status.add_css_class("error");
+                    status.set_text(&format!("{}: {error}", tr("Could not save diagnostic log")));
+                    status.set_visible(true);
                 }
             }
         });

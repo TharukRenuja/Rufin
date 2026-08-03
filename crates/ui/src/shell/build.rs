@@ -125,7 +125,6 @@ pub fn build(app: &adw::Application, inputs: RuntimeInputs) {
         discovery_running: Cell::new(false),
         discovery_started: Cell::new(false),
         add_server: RefCell::new(None),
-        progress_toast: RefCell::new(None),
     };
     let startup = StartupState {
         route_revealed: Cell::new(!defer_initial_route),
@@ -389,19 +388,15 @@ pub fn build(app: &adw::Application, inputs: RuntimeInputs) {
     root_stack.add_named(&login_host, Some("login"));
     root_stack.add_named(&app_root_overlay, Some("app"));
     let layout_state = ShellLayoutState::new(&root_stack);
-    let quick_toast_overlay = adw::ToastOverlay::new();
-    quick_toast_overlay.add_css_class("quick-toast-overlay");
-    quick_toast_overlay.set_child(Some(&layout_state.owner));
     let toast_overlay = adw::ToastOverlay::new();
     toast_overlay.add_css_class("app-toast-overlay");
-    toast_overlay.set_child(Some(&quick_toast_overlay));
+    toast_overlay.set_child(Some(&layout_state.owner));
     window.set_content(Some(&toast_overlay));
 
     let chrome = WindowChrome {
         application: app.clone(),
         window,
         toast_overlay,
-        quick_toast_overlay,
         control_feedback_label,
         operation_feedback,
         operation_feedback_artwork,

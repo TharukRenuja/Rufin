@@ -20,7 +20,6 @@ pub(crate) struct SourceState {
     pub(crate) discovery_running: Cell<bool>,
     pub(crate) discovery_started: Cell<bool>,
     pub(crate) add_server: RefCell<Option<login::SourceSetupViewHandle>>,
-    pub(crate) progress_toast: RefCell<Option<adw::Toast>>,
 }
 
 impl SourceState {

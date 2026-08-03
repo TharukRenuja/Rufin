@@ -138,7 +138,6 @@ pub enum SourceEvent {
     LibraryUpdate(SelectedLibraryUpdate),
     FavoriteFailure(FavoriteFailure),
     Downloads(downloads::DownloadEvent),
-    Notice(String),
     ReleaseSelected {
         acknowledged: async_channel::Sender<()>,
     },

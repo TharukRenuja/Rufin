@@ -10,7 +10,6 @@ use crate::player::fullscreen::{FullscreenPlaybackRefresh, fullscreen_playback_r
 use crate::player::state::current_playback_media_id;
 use crate::player::{now_playing_notification_can_send, now_playing_notification_should_withdraw};
 use crate::preferences::dialogs::release_notes::apply_release_update;
-use crate::preferences::source::source_operation_text;
 use crate::routes::playlist_picker::refresh_context_playlist_picker;
 use crate::routes::route::Route;
 use crate::runtime::source::{DiscoveryStatus, DiscoveryUpdate, SourceOperation};
@@ -113,7 +112,6 @@ fn apply_source_event(shell: &Rc<Shell>, event: SourceEvent) {
         SourceEvent::LibraryUpdate(update) => apply_selected_library_update(shell, update),
         SourceEvent::FavoriteFailure(failure) => apply_favorite_failure(shell, failure),
         SourceEvent::Downloads(event) => shell.apply_download_event(event),
-        SourceEvent::Notice(message) => shell.show_notice_toast(&message),
         SourceEvent::ReleaseSelected { acknowledged } => {
             release_selected_source(shell);
             let _ = acknowledged.try_send(());
@@ -432,7 +430,7 @@ fn apply_favorite_failure(shell: &Rc<Shell>, failure: FavoriteFailure) {
         return;
     }
     shell.restore_failed_favorite_change(&failure.item_id, failure.authoritative_favorite);
-    shell.show_notice_toast(&failure.message);
+    warn!(error = %failure.message, "favorite change failed");
 }
 
 fn apply_source_operation(shell: &Rc<Shell>, operation: SourceOperation) {
@@ -469,15 +467,10 @@ fn apply_source_operation(shell: &Rc<Shell>, operation: SourceOperation) {
                 shell.enter_startup_loading();
             }
         }
-        SourceOperation::Refreshing { .. } => {
-            if let Some(message) = source_operation_text(&operation) {
-                show_or_update_source_progress(shell, &message);
-            }
-        }
+        SourceOperation::Refreshing { .. } => {}
         SourceOperation::Failed {
             message, add_form, ..
         } => {
-            dismiss_source_progress(shell);
             warn!(error = %message, "source operation failed");
             if *add_form {
                 let first_run = shell.source.configured.borrow().first_run;
@@ -489,30 +482,19 @@ fn apply_source_operation(shell: &Rc<Shell>, operation: SourceOperation) {
                         shell.render_current_route();
                     }
                 }
-                let restored_dialog = if first_run {
+                if first_run {
                     shell.update_add_server_dialog();
-                    false
                 } else {
-                    shell.restore_add_server_dialog_after_failure()
-                };
-                if !first_run && !restored_dialog {
-                    shell.show_notice_toast(message);
-                }
-                if first_run && setup_was_mounted {
-                    shell.show_reconnect_notice_if_needed();
+                    shell.restore_add_server_dialog_after_failure();
                 }
                 if !first_run && previously_blocked {
                     shell.schedule_startup_route_reveal();
                 }
-            } else {
-                shell.show_notice_toast(message);
-                if previously_blocked {
-                    shell.schedule_startup_route_reveal();
-                }
+            } else if previously_blocked {
+                shell.schedule_startup_route_reveal();
             }
         }
         SourceOperation::Idle => {
-            dismiss_source_progress(shell);
             if completed_add {
                 shell.complete_add_server_dialog();
             }
@@ -529,24 +511,6 @@ fn apply_source_operation(shell: &Rc<Shell>, operation: SourceOperation) {
 
 fn source_add_completed(previous: &SourceOperation, next: &SourceOperation) -> bool {
     matches!(previous, SourceOperation::Adding { .. }) && matches!(next, SourceOperation::Idle)
-}
-
-fn show_or_update_source_progress(shell: &Shell, message: &str) {
-    if let Some(toast) = shell.source.progress_toast.borrow().as_ref() {
-        toast.set_title(message);
-        toast.set_timeout(0);
-        return;
-    }
-    let toast = adw::Toast::new(message);
-    toast.set_timeout(0);
-    shell.chrome.toast_overlay.add_toast(toast.clone());
-    *shell.source.progress_toast.borrow_mut() = Some(toast);
-}
-
-fn dismiss_source_progress(shell: &Shell) {
-    if let Some(toast) = shell.source.progress_toast.borrow_mut().take() {
-        toast.dismiss();
-    }
 }
 
 fn apply_source_discovery(shell: &Rc<Shell>, update: DiscoveryUpdate) {
@@ -583,12 +547,6 @@ fn finish_playback_projection(
     notices: Vec<playback::PlaybackNotice>,
     queue_page_changed: bool,
 ) {
-    let playback_error = new_playback_error(
-        previous_player
-            .as_ref()
-            .and_then(|player| player.transport.error.as_deref()),
-        next_player.transport.error.as_deref(),
-    );
     let previous_media = previous_player
         .as_ref()
         .and_then(|player| player.transport.current.as_ref())
@@ -711,9 +669,6 @@ fn finish_playback_projection(
     if lyrics_timing_changed {
         shell.update_lyrics_highlight();
     }
-    if let Some(error) = playback_error {
-        shell.show_notice_toast(error);
-    }
     if media_controls_static_changed {
         shell.update_media_controls_after(media_controls_discontinuity);
     } else {
@@ -770,11 +725,6 @@ fn media_controls_static_state_changed(
     })
 }
 
-fn new_playback_error<'a>(previous: Option<&str>, next: Option<&'a str>) -> Option<&'a str> {
-    let next = next.filter(|error| !error.trim().is_empty())?;
-    (previous != Some(next)).then_some(next)
-}
-
 fn apply_waveform(shell: &Rc<Shell>, waveform: WaveformProjection) {
     *shell.playback.waveform.borrow_mut() = waveform;
     shell.update_bottom_player_transport();
@@ -811,14 +761,6 @@ fn apply_lyrics_event(shell: &Rc<Shell>, event: lyrics::LyricsEvent) {
     }
 }
 
-impl Shell {
-    pub(crate) fn show_notice_toast(&self, message: &str) {
-        self.chrome
-            .toast_overlay
-            .add_toast(adw::Toast::new(message));
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use library::SourceId;
@@ -828,7 +770,7 @@ mod tests {
 
     use super::{
         bottom_player_can_update_position_only, media_controls_static_state_changed,
-        new_playback_error, queue_panel_refresh_needed, source_add_completed,
+        queue_panel_refresh_needed, source_add_completed,
     };
     use crate::runtime::source::{SourceOperation, SourceProgress, SourceProgressStage};
 
@@ -840,26 +782,6 @@ mod tests {
                 total: None,
             },
         }
-    }
-
-    #[test]
-    fn a_playback_failure_is_announced_once_until_the_error_changes() {
-        assert_eq!(
-            new_playback_error(None, Some("the file is missing")),
-            Some("the file is missing")
-        );
-        assert_eq!(
-            new_playback_error(Some("the file is missing"), Some("the file is missing")),
-            None
-        );
-        assert_eq!(
-            new_playback_error(
-                Some("the file is missing"),
-                Some("the server is unavailable")
-            ),
-            Some("the server is unavailable")
-        );
-        assert_eq!(new_playback_error(Some("old error"), None), None);
     }
 
     #[test]

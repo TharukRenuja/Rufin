@@ -1241,7 +1241,7 @@ impl Actor {
                 let mut roots = match local_roots(&local.configuration) {
                     Ok(roots) => roots,
                     Err(error) => {
-                        self.shared.send_notice(error).await;
+                        self.shared.warn_nonfatal(&error);
                         return false;
                     }
                 };
@@ -1257,16 +1257,14 @@ impl Actor {
             }
             WorkRequest::RemoveLocalFolder(path) => {
                 let Some(local) = self.local_configuration() else {
-                    self.shared
-                        .send_notice("Local is not configured".to_string())
-                        .await;
+                    self.shared.warn_nonfatal("Local is not configured");
                     return false;
                 };
                 let source_id = local.configuration.source_id.clone();
                 let mut roots = match local_roots(&local.configuration) {
                     Ok(roots) => roots,
                     Err(error) => {
-                        self.shared.send_notice(error).await;
+                        self.shared.warn_nonfatal(&error);
                         return false;
                     }
                 };
@@ -1286,7 +1284,7 @@ impl Actor {
         let configured = match configured_source(&self.shared.settings.load().sources, &source_id) {
             Ok(configured) => configured,
             Err(error) => {
-                self.shared.send_notice(error).await;
+                self.shared.warn_nonfatal(&error);
                 return false;
             }
         };
@@ -1438,7 +1436,7 @@ impl Actor {
         {
             Ok(tracks) => tracks,
             Err(error) => {
-                self.shared.send_notice(error).await;
+                self.shared.warn_nonfatal(&error);
                 return;
             }
         };
@@ -1469,7 +1467,7 @@ impl Actor {
         {
             Ok(track_ids) => track_ids,
             Err(error) => {
-                self.shared.send_notice(error).await;
+                self.shared.warn_nonfatal(&error);
                 return;
             }
         };
@@ -1573,7 +1571,7 @@ impl Actor {
         let baseline = match selected.loaded.local_access_files() {
             Ok(files) => files,
             Err(error) => {
-                self.shared.send_notice(error.to_string()).await;
+                self.shared.warn_nonfatal(&error.to_string());
                 return;
             }
         };
@@ -1685,7 +1683,7 @@ impl Actor {
         }
         .await;
         if let Err(error) = outcome {
-            self.shared.send_notice(error).await;
+            self.shared.warn_nonfatal(&error);
         }
     }
 
@@ -2406,7 +2404,7 @@ impl Actor {
                     }
                     Err(error) => {
                         warn!(%error, "could not update Playback after accepting refreshed source facts");
-                        self.shared.send_notice(error).await;
+                        self.shared.warn_nonfatal(&error);
                     }
                 }
                 self.start_album_release_lookup();
@@ -2452,7 +2450,7 @@ impl Actor {
         };
         match result {
             Ok(()) => self.shared.publish_configured().await,
-            Err(error) => self.shared.send_notice(error).await,
+            Err(error) => self.shared.warn_nonfatal(&error),
         }
         if selected {
             self.start_selected_access(true).await;
@@ -2475,12 +2473,12 @@ impl Actor {
         };
         match result {
             Ok(()) => self.shared.publish_configured().await,
-            Err(error) => self.shared.send_notice(error).await,
+            Err(error) => self.shared.warn_nonfatal(&error),
         }
     }
 
     async fn selected_update_failed(&mut self, error: String) {
-        self.shared.send_notice(error).await;
+        self.shared.warn_nonfatal(&error);
         self.shared
             .send_event(SourceEvent::Operation(SourceOperation::Idle))
             .await;
@@ -2543,7 +2541,7 @@ impl Actor {
                             }))
                             .await;
                     }
-                    Err(error) => self.shared.send_notice(error).await,
+                    Err(error) => self.shared.warn_nonfatal(&error),
                 }
             }
             PointPrepared::Favorite {
@@ -2606,7 +2604,7 @@ impl Actor {
                         self.publish_change(&selected, change, NextHome::Keep).await
                     }
                     Ok(None) => {}
-                    Err(error) => self.shared.send_notice(error).await,
+                    Err(error) => self.shared.warn_nonfatal(&error),
                 }
             }
             PointPrepared::SmartPlaylist(operation) => {
@@ -2643,7 +2641,7 @@ impl Actor {
                         self.publish_change(&selected, change, NextHome::Keep).await
                     }
                     Ok(None) => {}
-                    Err(error) => self.shared.send_notice(error).await,
+                    Err(error) => self.shared.warn_nonfatal(&error),
                 }
             }
             PointPrepared::LibraryUpdate(update) => {
@@ -2794,7 +2792,7 @@ impl Actor {
                         .await;
                 }
                 Err(error) => {
-                    self.shared.send_notice(error).await;
+                    self.shared.warn_nonfatal(&error);
                 }
             }
         }
@@ -2916,7 +2914,7 @@ impl Actor {
                 if selected {
                     self.selected_update_failed(error).await;
                 } else {
-                    self.shared.send_notice(error).await;
+                    self.shared.warn_nonfatal(&error);
                 }
             }
             WorkPurpose::Selected {
@@ -2926,7 +2924,7 @@ impl Actor {
             }
             WorkPurpose::Selected {
                 automatic: false, ..
-            } => self.shared.send_notice(error).await,
+            } => self.shared.warn_nonfatal(&error),
         }
     }
 
@@ -3152,7 +3150,7 @@ impl Actor {
             })
             .await
             {
-                self.shared.send_notice(error).await;
+                self.shared.warn_nonfatal(&error);
             } else if let Err(error) = self.shared.playback().and_then(|playback| {
                 playback.stream_inputs_changed(selected.source_id(), selected.source_session_epoch)
             }) {
@@ -3213,7 +3211,7 @@ impl Actor {
                     .await
                 };
                 if let Err(error) = store_result {
-                    self.shared.send_notice(error).await;
+                    self.shared.warn_nonfatal(&error);
                 } else if let Some(selected) = selected
                     && let Err(error) = self.shared.playback().and_then(|playback| {
                         playback.stream_inputs_changed(
@@ -3226,7 +3224,7 @@ impl Actor {
                 }
                 self.shared.publish_configured().await;
             }
-            Err(error) => self.shared.send_notice(error).await,
+            Err(error) => self.shared.warn_nonfatal(&error),
         }
     }
 
@@ -3276,7 +3274,7 @@ impl Actor {
             if selected {
                 self.fail_transition(Some(source_id), error, false).await;
             } else {
-                self.shared.send_notice(error).await;
+                self.shared.warn_nonfatal(&error);
             }
             return;
         }
@@ -3306,7 +3304,7 @@ impl Actor {
         let folder_id = match normalize_music_folder(&selected.loaded, folder_id) {
             Ok(folder) => folder,
             Err(error) => {
-                self.shared.send_notice(error).await;
+                self.shared.warn_nonfatal(&error);
                 return;
             }
         };
@@ -3322,7 +3320,7 @@ impl Actor {
         {
             Ok(home) => home,
             Err(error) => {
-                self.shared.send_notice(error).await;
+                self.shared.warn_nonfatal(&error);
                 return;
             }
         };
@@ -3334,7 +3332,7 @@ impl Actor {
         })
         .await
         {
-            self.shared.send_notice(error).await;
+            self.shared.warn_nonfatal(&error);
             return;
         }
         selected.music_folder_id = folder_id;
@@ -3485,10 +3483,10 @@ impl Actor {
         })
         .await
         {
-            self.shared.send_notice(error).await;
+            self.shared.warn_nonfatal(&error);
         }
         if let Err(error) = self.shared.artwork.invalidate_source(&source_id) {
-            self.shared.send_notice(error.to_string()).await;
+            self.shared.warn_nonfatal(&error.to_string());
         }
     }
 
@@ -3703,7 +3701,7 @@ impl Shared {
             .attach(selected.source.clone(), &selected.loaded, directory)
             .await
         {
-            self.send_notice(error).await;
+            self.warn_nonfatal(&error);
         }
     }
 
@@ -3761,8 +3759,8 @@ impl Shared {
             .take();
     }
 
-    async fn send_notice(&self, message: String) {
-        self.send_event(SourceEvent::Notice(message)).await;
+    fn warn_nonfatal(&self, error: &str) {
+        warn!(%error, "operation was not available");
     }
 
     async fn send_event(&self, event: SourceEvent) {
