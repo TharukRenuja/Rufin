@@ -81,18 +81,6 @@ msgstr ""
 "Need kaustad on koondatud kohalikku andmekogusse ja neid saad näha kaustade "
 "sirvimise vaatest."
 
-#, fuzzy
-#| msgid ""
-#| "Changing secret backend removes legacy config secrets and signs you out "
-#| "everywhere, including API secrets. App cache is not affected."
-msgid ""
-"This removes legacy config secrets and signs you out everywhere, including "
-"API secrets. Your app cache stays"
-msgstr ""
-"Saladuste salvestamise taustateenuse muutmine eemaldab vanad seadistuste "
-"saladused/salasõnad ja logib sind kõikjalt välja, sealhulgas ka API-"
-"saladuste puhul. Rakenduse vahemälu see ei mõjuta."
-
 msgid ""
 "This removes the server, cached library metadata, queue snapshot, and saved "
 "token for"
@@ -110,6 +98,18 @@ msgid ""
 msgstr ""
 "Siinkohal on raadiorežiimi kontekstis kasutusel Jellyfini API ja see on "
 "nõutav, kui tahad, et soovituste lisamoodul toimiks."
+
+#, fuzzy
+#| msgid ""
+#| "Changing secret backend removes legacy config secrets and signs you out "
+#| "everywhere, including API secrets. App cache is not affected."
+msgid ""
+"This will log you out and clear your secrets including API ones. Your app "
+"cache is not touched."
+msgstr ""
+"Saladuste salvestamise taustateenuse muutmine eemaldab vanad seadistuste "
+"saladused/salasõnad ja logib sind kõikjalt välja, sealhulgas ka API-"
+"saladuste puhul. Rakenduse vahemälu see ei mõjuta."
 
 #, fuzzy
 #| msgid ""
@@ -349,8 +349,10 @@ msgid_plural "Changes apply to {count} tracks"
 msgstr[0] "{count} lugu"
 msgstr[1] "{count} lugu"
 
-msgid "Checking…"
-msgstr ""
+#, fuzzy
+#| msgid "Searching..."
+msgid "Checking..."
+msgstr "Otsin…"
 
 msgid "Choose a local music folder"
 msgstr "Vali kohalik muusikakaust"
@@ -763,7 +765,7 @@ msgstr "Avaleht"
 msgid "Identify"
 msgstr ""
 
-msgid "Identifying…"
+msgid "Identifying..."
 msgstr ""
 
 msgid "If the page doesn't load, then Libre.fm blocks your IP range/VPN"
@@ -1638,9 +1640,9 @@ msgstr ""
 "sünkrooni"
 
 #, fuzzy
-#| msgid "Loading…"
-msgid "Saving…"
-msgstr "Laadin andmeid…"
+#| msgid "Searching..."
+msgid "Saving..."
+msgstr "Otsin…"
 
 msgid "Scrobbling"
 msgstr "Kraasimine"
@@ -2121,6 +2123,11 @@ msgid "{count} year ago"
 msgid_plural "{count} years ago"
 msgstr[0] "{count} aasta tagasi"
 msgstr[1] "{count} aastat tagasi"
+
+#, fuzzy
+#~| msgid "Loading…"
+#~ msgid "Saving…"
+#~ msgstr "Laadin andmeid…"
 
 #~ msgid "Activity links and MusicBrainz covers"
 #~ msgstr "Tegevuste lingid ja kaanepildid MusicBrainz’ist"

@@ -85,18 +85,6 @@ msgstr ""
 "Эти папки объединены в локальный источник и отображаются при просмотре "
 "содержимого папок."
 
-#, fuzzy
-#| msgid ""
-#| "Changing secret backend removes legacy config secrets and signs you out "
-#| "everywhere, including API secrets. App cache is not affected."
-msgid ""
-"This removes legacy config secrets and signs you out everywhere, including "
-"API secrets. Your app cache stays"
-msgstr ""
-"Изменение секретного ключа приводит к удалению устаревших конфигурационных "
-"данных и завершению всех сеансов, включая ключи доступа к API. Кэш "
-"приложения не затрагивается."
-
 msgid ""
 "This removes the server, cached library metadata, queue snapshot, and saved "
 "token for"
@@ -114,6 +102,18 @@ msgid ""
 msgstr ""
 "Для работы функции радио используется API Jellyfin, что необходимо для "
 "работы плагинов рекомендаций."
+
+#, fuzzy
+#| msgid ""
+#| "Changing secret backend removes legacy config secrets and signs you out "
+#| "everywhere, including API secrets. App cache is not affected."
+msgid ""
+"This will log you out and clear your secrets including API ones. Your app "
+"cache is not touched."
+msgstr ""
+"Изменение секретного ключа приводит к удалению устаревших конфигурационных "
+"данных и завершению всех сеансов, включая ключи доступа к API. Кэш "
+"приложения не затрагивается."
 
 #, fuzzy
 #| msgid ""
@@ -360,8 +360,10 @@ msgstr[0] "{count} трек"
 msgstr[1] "{count} трека"
 msgstr[2] "{count} треков"
 
-msgid "Checking…"
-msgstr ""
+#, fuzzy
+#| msgid "Searching..."
+msgid "Checking..."
+msgstr "Выполняется поиск..."
 
 msgid "Choose a local music folder"
 msgstr "Выбрать локальную папку с музыкой"
@@ -775,7 +777,7 @@ msgstr "Главная"
 msgid "Identify"
 msgstr ""
 
-msgid "Identifying…"
+msgid "Identifying..."
 msgstr ""
 
 msgid "If the page doesn't load, then Libre.fm blocks your IP range/VPN"
@@ -1652,9 +1654,9 @@ msgstr ""
 "просмотра соответствий"
 
 #, fuzzy
-#| msgid "Loading…"
-msgid "Saving…"
-msgstr "Загрузка…"
+#| msgid "Searching..."
+msgid "Saving..."
+msgstr "Выполняется поиск..."
 
 msgid "Scrobbling"
 msgstr "Скробблинг"
@@ -2145,6 +2147,11 @@ msgid_plural "{count} years ago"
 msgstr[0] "{count} год назад"
 msgstr[1] "{count} года назад"
 msgstr[2] "{count} лет назад"
+
+#, fuzzy
+#~| msgid "Loading…"
+#~ msgid "Saving…"
+#~ msgstr "Загрузка…"
 
 #~ msgid "Activity links and MusicBrainz covers"
 #~ msgstr "Ссылки на активность и обложки с сайта MusicBrainz"

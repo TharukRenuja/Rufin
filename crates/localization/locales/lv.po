@@ -85,18 +85,6 @@ msgstr ""
 "Šīs mapes tiek apvienotas lokālajā avotā un parādītas, izmantojot mapes "
 "pārlūkošanu."
 
-#, fuzzy
-#| msgid ""
-#| "Changing secret backend removes legacy config secrets and signs you out "
-#| "everywhere, including API secrets. App cache is not affected."
-msgid ""
-"This removes legacy config secrets and signs you out everywhere, including "
-"API secrets. Your app cache stays"
-msgstr ""
-"Mainot konfidenciālo aizkulises iestatījumu, tiks dzēstas vecās "
-"konfigurācijas slepenās atslēgas un jūs tiksiet izrakstīts no visām sesijām, "
-"ieskaitot API atslēgas. Lietojumprogrammas kešatmiņa netiks skarta."
-
 msgid ""
 "This removes the server, cached library metadata, queue snapshot, and saved "
 "token for"
@@ -114,6 +102,18 @@ msgid ""
 msgstr ""
 "Šī funkcija izmanto Jellyfin API radio atskaņošanai, kas ir nepieciešams "
 "ieteikumu spraudņu darbībai."
+
+#, fuzzy
+#| msgid ""
+#| "Changing secret backend removes legacy config secrets and signs you out "
+#| "everywhere, including API secrets. App cache is not affected."
+msgid ""
+"This will log you out and clear your secrets including API ones. Your app "
+"cache is not touched."
+msgstr ""
+"Mainot konfidenciālo aizkulises iestatījumu, tiks dzēstas vecās "
+"konfigurācijas slepenās atslēgas un jūs tiksiet izrakstīts no visām sesijām, "
+"ieskaitot API atslēgas. Lietojumprogrammas kešatmiņa netiks skarta."
 
 #, fuzzy
 #| msgid ""
@@ -357,8 +357,10 @@ msgstr[0] "{count} dziesmas"
 msgstr[1] "{count} dziesma"
 msgstr[2] "{count} dziesmas"
 
-msgid "Checking…"
-msgstr ""
+#, fuzzy
+#| msgid "Searching..."
+msgid "Checking..."
+msgstr "Tiek veikta meklēšana..."
 
 msgid "Choose a local music folder"
 msgstr "Izvēlieties lokālo mūzikas mapi"
@@ -771,7 +773,7 @@ msgstr "Sākums"
 msgid "Identify"
 msgstr ""
 
-msgid "Identifying…"
+msgid "Identifying..."
 msgstr ""
 
 msgid "If the page doesn't load, then Libre.fm blocks your IP range/VPN"
@@ -1646,9 +1648,9 @@ msgstr ""
 "Lokālā kartēšana saglabāta. Sinhronizējiet, lai priekšskatītu atbilstības"
 
 #, fuzzy
-#| msgid "Loading…"
-msgid "Saving…"
-msgstr "Ielādē…"
+#| msgid "Searching..."
+msgid "Saving..."
+msgstr "Tiek veikta meklēšana..."
 
 msgid "Scrobbling"
 msgstr "Skroblēšana"
@@ -2136,6 +2138,11 @@ msgid_plural "{count} years ago"
 msgstr[0] "pirms {count} gadiem"
 msgstr[1] "pirms {count} gada"
 msgstr[2] "pirms {count} gadiem"
+
+#, fuzzy
+#~| msgid "Loading…"
+#~ msgid "Saving…"
+#~ msgstr "Ielādē…"
 
 #~ msgid "Activity links and MusicBrainz covers"
 #~ msgstr "Aktivitātes saites un MusicBrainz vāki"

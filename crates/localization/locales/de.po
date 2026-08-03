@@ -81,18 +81,6 @@ msgstr ""
 "Diese Ordner werden in der lokalen Quelle kombiniert und über die "
 "Ordnersuche bereitgestellt."
 
-#, fuzzy
-#| msgid ""
-#| "Changing secret backend removes legacy config secrets and signs you out "
-#| "everywhere, including API secrets. App cache is not affected."
-msgid ""
-"This removes legacy config secrets and signs you out everywhere, including "
-"API secrets. Your app cache stays"
-msgstr ""
-"Das Ändern des Secret-Backends entfernt Legacy-Konfigurationsgeheimnisse und "
-"meldet Sie überall ab, inklusive der API-Zugangsdaten. Der App-Cache wird "
-"nicht beeinflusst."
-
 msgid ""
 "This removes the server, cached library metadata, queue snapshot, and saved "
 "token for"
@@ -110,6 +98,18 @@ msgid ""
 msgstr ""
 "Nutzt die Jellyfin-API zur Radio-Wiedergabe; notwendig, damit Empfehlungs-"
 "Plugins funktionieren."
+
+#, fuzzy
+#| msgid ""
+#| "Changing secret backend removes legacy config secrets and signs you out "
+#| "everywhere, including API secrets. App cache is not affected."
+msgid ""
+"This will log you out and clear your secrets including API ones. Your app "
+"cache is not touched."
+msgstr ""
+"Das Ändern des Secret-Backends entfernt Legacy-Konfigurationsgeheimnisse und "
+"meldet Sie überall ab, inklusive der API-Zugangsdaten. Der App-Cache wird "
+"nicht beeinflusst."
 
 #, fuzzy
 #| msgid ""
@@ -349,8 +349,10 @@ msgid_plural "Changes apply to {count} tracks"
 msgstr[0] "{count} Titel"
 msgstr[1] "{count} Titel"
 
-msgid "Checking…"
-msgstr ""
+#, fuzzy
+#| msgid "Searching..."
+msgid "Checking..."
+msgstr "Suche..."
 
 msgid "Choose a local music folder"
 msgstr "Lokalen Musikordner auswählen"
@@ -762,7 +764,7 @@ msgstr "Übersicht"
 msgid "Identify"
 msgstr ""
 
-msgid "Identifying…"
+msgid "Identifying..."
 msgstr ""
 
 msgid "If the page doesn't load, then Libre.fm blocks your IP range/VPN"
@@ -1636,8 +1638,10 @@ msgstr ""
 "Lokale Zuordnung gespeichert. Synchronisieren, um Übereinstimmungen "
 "anzuzeigen."
 
-msgid "Saving…"
-msgstr ""
+#, fuzzy
+#| msgid "Searching..."
+msgid "Saving..."
+msgstr "Suche..."
 
 msgid "Scrobbling"
 msgstr "Scrobbling"

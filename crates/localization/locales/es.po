@@ -79,11 +79,6 @@ msgstr ""
 "Estas carpetas se combinan en la fuente local y se muestran a través de la "
 "navegación de carpetas."
 
-msgid ""
-"This removes legacy config secrets and signs you out everywhere, including "
-"API secrets. Your app cache stays"
-msgstr ""
-
 #, fuzzy
 msgid ""
 "This removes the server, cached library metadata, queue snapshot, and saved "
@@ -99,6 +94,11 @@ msgid ""
 msgstr ""
 "Esto utiliza la API de Jellyfin para reproducir radio, necesaria si desea "
 "que los plugins de recomendación funcionen."
+
+msgid ""
+"This will log you out and clear your secrets including API ones. Your app "
+"cache is not touched."
+msgstr ""
 
 msgid ""
 "Unsaved changes. {direct} direct, {prefix} prefix, {metadata} metadata, "
@@ -306,7 +306,7 @@ msgid_plural "Changes apply to {count} tracks"
 msgstr[0] ""
 msgstr[1] ""
 
-msgid "Checking…"
+msgid "Checking..."
 msgstr ""
 
 msgid "Choose a local music folder"
@@ -690,7 +690,7 @@ msgstr ""
 msgid "Identify"
 msgstr ""
 
-msgid "Identifying…"
+msgid "Identifying..."
 msgstr ""
 
 msgid "If the page doesn't load, then Libre.fm blocks your IP range/VPN"
@@ -1458,7 +1458,7 @@ msgstr ""
 msgid "Saved, sync to preview matches"
 msgstr ""
 
-msgid "Saving…"
+msgid "Saving..."
 msgstr ""
 
 msgid "Scrobbling"
