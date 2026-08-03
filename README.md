@@ -37,7 +37,8 @@
 - System tray integration
 - Secure storage for all server credentials and API secrets
 - Simple private mode for pausing external activity
-- Best-effort path matching with your music server and local folders, you can play from your local files while keeping server reporting
+- Path matching with your music server and local folders, you can play from your local files while keeping server reporting
+- Automatic updates for Windows and MacOS builds
 
 
 # Screenshots
@@ -93,12 +94,14 @@ To add it to your profile:
 nix profile install nixpkgs#rufin
 ```
 
-You can also run `main` or an older release directly:
+You can also run `main` or an older release directly. 
 
 ```bash
 nix run github:screwys/Rufin/main
 nix run github:screwys/Rufin/vX.Y.Z
 ```
+You might want to use github repo for profile as well, since it takes more than a week for an update to get merged into nixpkgs repository.
+
 
 ## Windows
 
