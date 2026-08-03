@@ -189,15 +189,14 @@ pub(crate) async fn edit(
         })
         .await?;
         let next = JellyfinSourceConfig::from_configuration(&authenticated.configuration)?;
-        return if saved.same_account(&next)? {
-            Ok(SourceEditResult::SameAccount(
-                authenticated.connected(Some(current.source_id)),
-            ))
+        let source_id = if saved.same_account(&next)? {
+            Some(current.source_id)
         } else {
-            Ok(SourceEditResult::DifferentAccount(
-                authenticated.connected(None),
-            ))
+            None
         };
+        return Ok(SourceEditResult::Connected(Box::new(
+            authenticated.connected(source_id),
+        )));
     }
 
     let reopen = credentials.trust_invalid_cert != saved.trust_invalid_cert
@@ -223,10 +222,8 @@ pub(crate) async fn edit(
         return Ok(SourceEditResult::ConfigurationOnly(configuration));
     }
     let source = open(&configuration, current_credential, device_id)?;
-    Ok(SourceEditResult::SameAccount(ConnectedSource::jellyfin(
-        configuration,
-        source,
-        None,
+    Ok(SourceEditResult::Connected(Box::new(
+        ConnectedSource::jellyfin(configuration, source, None),
     )))
 }
 

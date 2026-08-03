@@ -130,8 +130,7 @@ pub struct ConnectedSource {
 pub enum SourceEditResult {
     Unchanged,
     ConfigurationOnly(SourceConfiguration),
-    SameAccount(ConnectedSource),
-    DifferentAccount(ConnectedSource),
+    Connected(Box<ConnectedSource>),
 }
 
 pub(crate) trait RemotePlaylistSource {
@@ -316,9 +315,9 @@ impl Source {
     /// Apply an edit to one configured source without exposing provider payloads
     /// outside Sources.
     ///
-    /// The configured source identity is stable. Authentication may reveal a
-    /// different provider account, but Rufin still owns the same configured
-    /// source slot and decides when its accepted facts are replaced.
+    /// The returned configuration carries the provider's canonical account
+    /// identity. Retaining the current SourceId means the account is unchanged;
+    /// a new SourceId means Rufin must replace the configured account.
     pub async fn edit(
         current: SourceConfiguration,
         current_credential: Option<String>,

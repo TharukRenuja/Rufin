@@ -1059,7 +1059,7 @@ async fn password_backed_same_account_edit_keeps_the_configured_jellyfin_source(
     let current = saved_configuration(&server, "Before", false);
     let input = settings_input(&server, "After", "new-password", false);
 
-    let SourceEditResult::SameAccount(connected) = edit(
+    let SourceEditResult::Connected(connected) = edit(
         current.clone(),
         Some("old-token".to_string()),
         input,
@@ -1101,7 +1101,7 @@ async fn password_backed_different_account_edit_returns_a_new_jellyfin_source() 
     let mut input = settings_input(&server, "After", "new-password", false);
     input.credentials.username = "Other Listener".to_string();
 
-    let SourceEditResult::DifferentAccount(connected) = edit(
+    let SourceEditResult::Connected(connected) = edit(
         current.clone(),
         Some("old-token".to_string()),
         input,
@@ -1128,7 +1128,7 @@ async fn trust_only_edit_reopens_jellyfin_from_the_saved_credential_without_netw
     let current = saved_configuration(&server, "Before", false);
     let input = settings_input(&server, "Before", "", true);
 
-    let SourceEditResult::SameAccount(connected) = edit(
+    let SourceEditResult::Connected(connected) = edit(
         current.clone(),
         Some("saved-token".to_string()),
         input,

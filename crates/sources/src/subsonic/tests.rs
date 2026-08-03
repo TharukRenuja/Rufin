@@ -860,7 +860,7 @@ async fn password_backed_same_account_edit_keeps_the_configured_opensubsonic_sou
     let current_identity = current.input_identity().expect("legacy Navidrome identity");
     let input = settings_input(&server, "After", "new-password", false);
 
-    let SourceEditResult::SameAccount(connected) = edit(
+    let SourceEditResult::Connected(connected) = edit(
         current.clone(),
         Some("old-salt:old-token".to_string()),
         input,
@@ -929,7 +929,7 @@ async fn password_backed_different_account_edit_returns_a_new_opensubsonic_sourc
     let mut input = settings_input(&server, "After", "new-password", false);
     input.username = "Other Listener".to_string();
 
-    let SourceEditResult::DifferentAccount(connected) = edit(
+    let SourceEditResult::Connected(connected) = edit(
         current.clone(),
         Some("old-salt:old-token".to_string()),
         input,
@@ -962,7 +962,7 @@ async fn trust_only_edit_reopens_opensubsonic_from_the_saved_credential_without_
     let current = saved_configuration(&server, "Before", false);
     let input = settings_input(&server, "Before", "", true);
 
-    let SourceEditResult::SameAccount(connected) = edit(
+    let SourceEditResult::Connected(connected) = edit(
         current.clone(),
         Some("saved-salt:saved-token".to_string()),
         input,

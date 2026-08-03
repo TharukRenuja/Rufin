@@ -41,7 +41,7 @@ use ui::runtime::{
 };
 
 use crate::album_release::run_selected_album_release_lookup;
-use crate::playback::{PlaybackOwner, PreparedPlayback};
+use crate::playback::PlaybackOwner;
 use crate::settings::{
     ConfiguredLocalAccess, ConfiguredSource, CredentialRef, SettingsFile, SourceSettings,
     StoredSettings, all_secret_keys, delete_provider_secret, fresh_credential_ref,
@@ -217,6 +217,15 @@ impl ActiveSource {
     }
 }
 
+fn resolve_observer_session(
+    cancelled: &AtomicBool,
+    session: &ActiveSource,
+) -> Option<Arc<SelectedSourceState>> {
+    (!cancelled.load(Ordering::Acquire))
+        .then(|| session.resolve())
+        .flatten()
+}
+
 #[derive(Clone)]
 pub(crate) struct SourceOutputs {
     pub(crate) events: Sender<SourceEvent>,
@@ -321,20 +330,18 @@ enum SmartPlaylistOperation {
     },
 }
 
-#[derive(Clone, Copy)]
-enum ReplacementReason {
-    Add,
-    Select {
-        cached: bool,
-        refresh_after_select: bool,
-    },
-    DifferentAccount,
-}
-
 enum SelectedLibraryAcceptance {
     Source(library::SourceLibraryUpdate),
     Local(library::LocalComponentReplacement),
     Full(PreparedSourceCandidate),
+}
+
+enum PreparedConnectionLibrary {
+    Candidate(Box<PreparedSourceCandidate>),
+    Accepted {
+        library: Arc<Library>,
+        cache_match: SourceCacheMatch,
+    },
 }
 
 struct ActiveObserver {
@@ -372,6 +379,13 @@ struct ActiveAlbumRelease {
 struct SelectedSlot {
     session: Arc<ActiveSource>,
     current: Arc<SelectedSourceState>,
+}
+
+struct SavedSourceConnection {
+    configured: ConfiguredSource,
+    previous: Option<ConfiguredSource>,
+    previous_selected_source_id: Option<SourceId>,
+    staged_credential: Option<CredentialRef>,
 }
 
 struct RefreshRequest {
@@ -777,128 +791,95 @@ impl SourceOwner {
             {
                 SourceEditResult::Unchanged => {
                     self.shared.publish_configured().await;
-                    if selected {
-                        self.start_selected_access(true).await;
-                    }
                     Ok(())
                 }
                 SourceEditResult::ConfigurationOnly(configuration) => {
-                    let mut replacement = configured;
-                    replacement.configuration = configuration.clone();
-                    let settings = self.shared.settings.clone();
-                    blocking(move || replace_saved_source(&settings, replacement)).await?;
+                    let saved = self
+                        .save_source_connection(
+                            Some(&configured),
+                            configuration.clone(),
+                            None,
+                            false,
+                            configured.music_folder_id.clone(),
+                            configured.local_access.clone(),
+                        )
+                        .await?;
                     if selected && let Some(active) = self.shared.selected() {
                         let mut active = (*active).clone();
                         active.configuration = configuration;
                         self.shared.replace_selected(active);
-                        self.start_selected_access(true).await;
                     }
+                    self.finish_source_connection(saved).await;
                     self.shared.publish_configured().await;
                     Ok(())
                 }
-                SourceEditResult::SameAccount(connected) => {
+                SourceEditResult::Connected(connected) => {
                     let (configuration, source, credential) = connected.into_parts();
+                    let same_account =
+                        configuration.source_id == configured.configuration.source_id;
+                    if !same_account
+                        && self
+                            .shared
+                            .settings
+                            .load()
+                            .sources
+                            .configured
+                            .iter()
+                            .any(|saved| saved.configuration.source_id == configuration.source_id)
+                    {
+                        return Err("this source account is already configured".to_string());
+                    }
                     if !selected {
-                        return self
-                            .commit_inactive_connection(
-                                configured,
+                        let saved = self
+                            .save_source_connection(
+                                Some(&configured),
                                 configuration,
                                 credential,
                                 false,
+                                same_account
+                                    .then_some(configured.music_folder_id.clone())
+                                    .flatten(),
+                                configured.local_access.clone(),
                             )
-                            .await;
+                            .await?;
+                        self.finish_source_connection(saved).await;
+                        self.shared.publish_configured().await;
+                        return Ok(());
                     }
                     let source = Arc::new(source);
                     let identity = configuration.input_identity().map_err(string_error)?;
                     let current = self
                         .shared
                         .selected()
-                        .filter(|current| current.source_id() == source.source_id())
                         .ok_or_else(|| "the selected source is no longer active".to_string())?;
-                    let candidate = if cache_input_matches(&identity, &current.library) {
-                        None
-                    } else {
-                        let candidate = prepare_refresh_candidate(
-                            Arc::clone(&self.shared),
-                            SelectedSourceState {
-                                configuration: configuration.clone(),
-                                source: Some(Arc::clone(&source)),
-                                ..(*current).clone()
-                            },
-                            progress,
-                            Arc::clone(&cancelled),
-                        )
-                        .await;
-                        let candidate = candidate?;
-                        if cancelled.load(Ordering::Acquire) {
-                            return Ok(());
-                        }
-                        Some(Box::new(candidate))
-                    };
-                    let acceptance_owner = Arc::clone(&self.shared);
-                    let _acceptance = acceptance_owner.acceptance_lane.lock().await;
-                    self.commit_selected_update(
-                        configured,
-                        configuration,
-                        source,
-                        credential,
-                        candidate,
-                    )
-                    .await
-                }
-                SourceEditResult::DifferentAccount(connected) => {
-                    let (configuration, source, credential) = connected.into_parts();
-                    if self
-                        .shared
-                        .settings
-                        .load()
-                        .sources
-                        .configured
-                        .iter()
-                        .any(|saved| {
-                            saved.configuration.source_id == configuration.source_id
-                                && saved.configuration.source_id
-                                    != configured.configuration.source_id
-                        })
-                    {
-                        return Err("this source account is already configured".to_string());
-                    }
-                    if !selected {
-                        return self
-                            .commit_inactive_connection(configured, configuration, credential, true)
-                            .await;
-                    }
-                    let source = Arc::new(source);
-                    let identity = configuration.input_identity().map_err(string_error)?;
-                    let candidate = Arc::clone(&source)
-                        .prepare_library_candidate(
-                            self.shared.library.clone(),
-                            identity,
-                            None,
-                            Arc::clone(&progress),
-                            Arc::clone(&cancelled),
-                        )
-                        .await
-                        .map_err(string_error)?;
-                    let candidate = prepare_candidate_artwork(
-                        &self.shared,
-                        Arc::clone(&source),
-                        candidate,
-                        progress,
-                        Arc::clone(&cancelled),
-                    )
-                    .await?;
+                    let prepared_library =
+                        if same_account && cache_input_matches(&identity, &current.library) {
+                            PreparedConnectionLibrary::Accepted {
+                                library: Arc::clone(&current.library),
+                                cache_match: SourceCacheMatch::Exact,
+                            }
+                        } else {
+                            PreparedConnectionLibrary::Candidate(Box::new(
+                                prepare_source_candidate(
+                                    &self.shared,
+                                    Arc::clone(&source),
+                                    identity,
+                                    same_account.then(|| Arc::clone(&current.library)),
+                                    progress,
+                                    Arc::clone(&cancelled),
+                                )
+                                .await?,
+                            ))
+                        };
                     if cancelled.load(Ordering::Acquire) {
                         return Ok(());
                     }
-                    let library = accept_candidate(candidate).await?;
-                    self.activate_replacement(
-                        ReplacementReason::DifferentAccount,
+                    self.commit_selected_connection(
                         Some(configured),
                         configuration,
                         Some(source),
                         credential,
-                        library,
+                        prepared_library,
                     )
                     .await
                 }
@@ -965,16 +946,17 @@ impl SourceOwner {
                 .listen_selected_changes(
                     catch_up,
                     move |change| {
-                        if item_cancelled.load(Ordering::Acquire)
-                            || item_session.resolve().is_none()
-                        {
+                        if resolve_observer_session(&item_cancelled, &item_session).is_none() {
                             return false;
                         }
                         let session = Arc::clone(&item_session);
+                        let observer_cancelled = Arc::clone(&item_cancelled);
                         item_owner.spawn_serialized(
                             true,
                             move |mut operations, cancelled| async move {
-                                if let Some(selected) = session.resolve() {
+                                if let Some(selected) =
+                                    resolve_observer_session(&observer_cancelled, &session)
+                                {
                                     operations
                                         .accept_observed_change(selected, change, cancelled)
                                         .await;
@@ -984,16 +966,17 @@ impl SourceOwner {
                         true
                     },
                     move |change| {
-                        if local_cancelled.load(Ordering::Acquire)
-                            || local_session.resolve().is_none()
-                        {
+                        if resolve_observer_session(&local_cancelled, &local_session).is_none() {
                             return false;
                         }
                         let session = Arc::clone(&local_session);
+                        let observer_cancelled = Arc::clone(&local_cancelled);
                         local_owner.spawn_serialized(
                             true,
                             move |mut operations, cancelled| async move {
-                                if let Some(selected) = session.resolve() {
+                                if let Some(selected) =
+                                    resolve_observer_session(&observer_cancelled, &session)
+                                {
                                     operations
                                         .accept_local_change(selected, change, cancelled)
                                         .await;
@@ -1044,6 +1027,16 @@ impl SourceOwner {
             .unwrap_or_else(|poisoned| poisoned.into_inner())
             .observer
             .take();
+    }
+
+    fn retire_selected_access(&self) {
+        let mut state = self
+            .shared
+            .state
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        state.observer.take();
+        state.local_access.take();
     }
 
     async fn start_local_access_refresh(&mut self, selected: &SelectedSourceState) {
@@ -1206,15 +1199,7 @@ impl SourceOwner {
 
     async fn retire_selected_session(&mut self) {
         self.cancel_album_release_lookup(true);
-        {
-            let mut state = self
-                .shared
-                .state
-                .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner());
-            state.observer.take();
-            state.local_access.take();
-        }
+        self.retire_selected_access();
         self.shared.stop_playback().await;
     }
 
@@ -1376,38 +1361,99 @@ impl SourceOwner {
         }
     }
 
-    async fn activate_replacement(
+    async fn commit_selected_connection(
         &mut self,
-        reason: ReplacementReason,
         previous: Option<ConfiguredSource>,
         configuration: SourceConfiguration,
         source: Option<Arc<Source>>,
         credential: Option<String>,
-        library: Arc<Library>,
+        prepared_library: PreparedConnectionLibrary,
     ) -> Result<(), String> {
-        let replaced_source_id = if matches!(reason, ReplacementReason::DifferentAccount) {
-            Some(
-                previous
-                    .as_ref()
-                    .ok_or_else(|| "the previous source account no longer exists".to_string())?
-                    .configuration
-                    .source_id
-                    .clone(),
-            )
+        let same_session = self
+            .shared
+            .selected()
+            .is_some_and(|selected| selected.source_id() == &configuration.source_id);
+        let acceptance_owner = Arc::clone(&self.shared);
+        let _acceptance = if same_session {
+            Some(acceptance_owner.acceptance_lane.lock().await)
         } else {
             None
         };
-        let refresh_after_select = matches!(
-            reason,
-            ReplacementReason::Select {
-                refresh_after_select: true,
-                ..
+        if same_session {
+            let current = self
+                .shared
+                .selected()
+                .filter(|selected| selected.source_id() == &configuration.source_id)
+                .ok_or_else(|| "the selected source changed while it was prepared".to_string())?;
+            let saved = self
+                .save_source_connection(
+                    previous.as_ref(),
+                    configuration.clone(),
+                    credential,
+                    true,
+                    previous
+                        .as_ref()
+                        .and_then(|configured| configured.music_folder_id.clone()),
+                    previous
+                        .as_ref()
+                        .and_then(|configured| configured.local_access.clone()),
+                )
+                .await?;
+            self.retire_selected_access();
+            let updated = match prepared_library {
+                PreparedConnectionLibrary::Candidate(candidate) => self
+                    .accept_same_session_candidate(
+                        &current,
+                        configuration,
+                        source,
+                        saved.configured.music_folder_id.clone(),
+                        saved.configured.local_access.clone(),
+                        *candidate,
+                    )
+                    .await
+                    .map(|_| ()),
+                PreparedConnectionLibrary::Accepted { library, .. } => {
+                    let mut selected = (*current).clone();
+                    selected.configuration = configuration;
+                    selected.source = source;
+                    selected.library = library;
+                    self.shared
+                        .replace_selected_runtime(selected)
+                        .await
+                        .then_some(())
+                        .ok_or_else(|| "the selected source changed before cutover".to_string())
+                }
+            };
+            if let Err(error) = updated {
+                self.rollback_source_connection(saved).await;
+                return Err(error);
             }
-        ) && source.is_some();
+            self.start_selected_access(true).await;
+            self.shared.publish_configured().await;
+            self.finish_source_connection(saved).await;
+            return Ok(());
+        }
+        let (library, cache_match) = match prepared_library {
+            PreparedConnectionLibrary::Candidate(candidate) => (
+                blocking(move || {
+                    (*candidate)
+                        .accept()
+                        .map(|commit| commit.library)
+                        .map_err(string_error)
+                })
+                .await?,
+                None,
+            ),
+            PreparedConnectionLibrary::Accepted {
+                library,
+                cache_match,
+            } => (library, Some(cache_match)),
+        };
+        let replaces_account = previous
+            .as_ref()
+            .is_some_and(|previous| previous.configuration.source_id != configuration.source_id);
         let selected_source_id = configuration.source_id.clone();
-        if matches!(reason, ReplacementReason::DifferentAccount)
-            || matches!(reason, ReplacementReason::Add) && previous.is_none()
-        {
+        if replaces_account || previous.is_none() {
             let library = Arc::clone(&library);
             blocking(move || {
                 library
@@ -1417,107 +1463,87 @@ impl SourceOwner {
             })
             .await?;
         }
-        let music_folder_id = match reason {
-            ReplacementReason::DifferentAccount => None,
-            _ => previous
+        let music_folder_id = normalize_music_folder(
+            &library,
+            previous
                 .as_ref()
+                .filter(|_| !replaces_account)
                 .and_then(|configured| configured.music_folder_id.clone()),
-        };
+        )?;
         let local_access = previous
             .as_ref()
             .and_then(|configured| configured.local_access.clone());
-        let (session, selected, prepared_playback) = self
-            .prepare_runtime(
-                configuration.clone(),
-                source,
-                library,
-                music_folder_id.clone(),
-                local_access.clone(),
+        if let Some(access) = local_access.as_ref() {
+            let library = Arc::clone(&library);
+            let access = access.clone();
+            blocking(move || {
+                library
+                    .configure_local_access(configured_local_access_mapping(&access))
+                    .map_err(string_error)
+            })
+            .await?;
+        }
+        let home = {
+            let library = Arc::clone(&library);
+            let folder = music_folder_id.clone();
+            blocking(move || library.home(folder.as_ref()).map_err(string_error)).await?
+        };
+        let selected = Arc::new(SelectedSourceState {
+            configuration: configuration.clone(),
+            source,
+            source_session_epoch: SourceSessionEpoch::new(
+                self.shared.next_epoch.fetch_add(1, Ordering::AcqRel),
+            ),
+            library,
+            home,
+            music_folder_id,
+        });
+        let session = ActiveSource::new(&self.shared, &selected);
+        let playback = self.shared.playback()?;
+        let prepared_playback = {
+            let playback = Arc::clone(&playback);
+            let session = Arc::clone(&session);
+            let selected = Arc::clone(&selected);
+            blocking(move || playback.prepare_selected(session, selected)).await?
+        };
+        let saved = self
+            .save_source_connection(
+                previous.as_ref(),
+                configuration,
+                credential,
+                true,
+                selected.music_folder_id.clone(),
+                local_access,
             )
             .await?;
-        let staged_credential = if matches!(reason, ReplacementReason::Select { .. }) {
-            None
-        } else {
-            self.stage_credential(credential).await?
-        };
-        let previous_credential = previous
-            .as_ref()
-            .and_then(|configured| configured.credential_ref.clone());
-        let credential_ref = match reason {
-            ReplacementReason::DifferentAccount => staged_credential.clone(),
-            _ => staged_credential
-                .clone()
-                .or_else(|| previous_credential.clone()),
-        };
-        let configured = ConfiguredSource {
-            configuration,
-            credential_ref,
-            music_folder_id: selected.music_folder_id.clone(),
-            local_access,
-        };
-        if replaced_source_id.is_some() {
+        if saved.previous.as_ref().is_some_and(|previous| {
+            previous.configuration.source_id != saved.configured.configuration.source_id
+        }) {
             self.shared
                 .send_event(SourceEvent::Operation(SourceOperation::Switching {
-                    target: configured.configuration.source_id.clone(),
+                    target: selected_source_id.clone(),
                     progress: initial_progress(),
                 }))
                 .await;
         }
-        let previous_settings = self.shared.settings.load();
-        let saved = if let Some(previous) = replaced_source_id.as_ref() {
-            self.save_selected_account_replacement(previous, configured.clone())
-                .await
-        } else {
-            self.save_selected_configuration(configured.clone()).await
+        self.cancel_album_release_lookup(true);
+        self.retire_selected_access();
+        let cutover = {
+            let playback = Arc::clone(&playback);
+            blocking(move || Ok(playback.stop_for_source_switch())).await?
         };
-        if let Err(error) = saved {
-            self.delete_staged_credential(staged_credential.as_ref())
-                .await;
-            return Err(error);
-        }
-        let previous_selected = self.shared.selected();
-        let playback = match self
-            .install_runtime(
-                Arc::clone(&session),
-                Arc::clone(&selected),
-                prepared_playback,
-            )
-            .await
-        {
-            Ok(playback) => playback,
-            Err(error) => {
-                let settings = self.shared.settings.clone();
-                if let Err(rollback_error) = blocking(move || {
-                    settings.update(|stored| {
-                        *stored = previous_settings;
-                        Ok(())
-                    })
-                })
-                .await
-                {
-                    warn!(%rollback_error, "could not restore source settings after a failed cutover");
-                }
-                self.delete_staged_credential(staged_credential.as_ref())
-                    .await;
-                return Err(error);
-            }
-        };
-        let catch_up = matches!(
-            reason,
-            ReplacementReason::Select {
-                cached: true,
-                refresh_after_select: false,
-            }
-        );
+        self.shared.release_selected().await;
+        self.shared
+            .install_selected_slot(Arc::clone(&session), Arc::clone(&selected));
+        self.shared.attach_selected_downloads(&selected).await;
+        let playback = playback.install_prepared(prepared_playback, cutover);
         self.shared
             .publish_selected(session, Arc::clone(&selected), playback)
             .await;
-        drop(previous_selected);
-        self.start_selected_access(catch_up).await;
-        if let Some(previous) = replaced_source_id {
-            self.remove_replaced_source_data(previous).await;
-        }
-        if refresh_after_select {
+        self.start_selected_access(cache_match == Some(SourceCacheMatch::Exact))
+            .await;
+        self.finish_source_connection(saved).await;
+        if cache_match == Some(SourceCacheMatch::ReaderUpgrade) && selected.source.is_some() {
             SourceOwner {
                 shared: Arc::clone(&self.shared),
             }
@@ -1525,79 +1551,6 @@ impl SourceOwner {
         } else {
             self.shared
                 .send_event(SourceEvent::Operation(SourceOperation::Idle))
-                .await;
-        }
-        if previous_credential != configured.credential_ref {
-            self.delete_staged_credential(previous_credential.as_ref())
-                .await;
-        }
-        Ok(())
-    }
-
-    async fn commit_selected_update(
-        &mut self,
-        configured: ConfiguredSource,
-        configuration: SourceConfiguration,
-        source: Arc<Source>,
-        credential: Option<String>,
-        candidate: Option<Box<PreparedSourceCandidate>>,
-    ) -> Result<(), String> {
-        let previous = self
-            .shared
-            .selected()
-            .filter(|selected| selected.source_id() == &configuration.source_id)
-            .ok_or_else(|| "the selected source is no longer active".to_string())?;
-        let previous_credential = configured.credential_ref.clone();
-        let staged_credential = self.stage_credential(credential).await?;
-        let replacement = ConfiguredSource {
-            configuration: configuration.clone(),
-            credential_ref: staged_credential
-                .clone()
-                .or_else(|| previous_credential.clone()),
-            music_folder_id: configured.music_folder_id.clone(),
-            local_access: configured.local_access.clone(),
-        };
-        let result = async {
-            if !self.shared.matches_selected(&previous.qualifier()) {
-                return Err(
-                    "the selected source changed while its settings were prepared".to_string(),
-                );
-            }
-            if let Some(candidate) = candidate {
-                self.accept_same_session_candidate(
-                    &previous,
-                    configuration,
-                    Some(source),
-                    configured.music_folder_id,
-                    configured.local_access,
-                    *candidate,
-                    Some(replacement.clone()),
-                )
-                .await?;
-                self.shared.publish_configured().await;
-            } else {
-                self.save_selected_configuration(replacement.clone())
-                    .await?;
-                let mut selected = (*previous).clone();
-                selected.configuration = configuration;
-                selected.source = Some(source);
-                if !self.shared.replace_selected_runtime(selected).await {
-                    return Err(
-                        "the selected source changed while its settings were saved".to_string()
-                    );
-                }
-                self.shared.publish_configured().await;
-            }
-            Ok(())
-        }
-        .await;
-        if result.is_err() {
-            self.delete_staged_credential(staged_credential.as_ref())
-                .await;
-            return result;
-        }
-        if previous_credential != replacement.credential_ref {
-            self.delete_staged_credential(previous_credential.as_ref())
                 .await;
         }
         Ok(())
@@ -1631,7 +1584,6 @@ impl SourceOwner {
                 requested_folder.clone(),
                 local_access,
                 prepared,
-                None,
             )
             .await?;
         if let Some(selected) = accepted {
@@ -1663,18 +1615,23 @@ impl SourceOwner {
         requested_folder: Option<MusicFolderId>,
         local_access: Option<ConfiguredLocalAccess>,
         candidate: PreparedSourceCandidate,
-        save_before_publish: Option<ConfiguredSource>,
     ) -> Result<Option<SelectedSourceState>, String> {
         let change = candidate.change();
         if change == CandidateChange::None {
             let commit = blocking(move || candidate.accept().map_err(string_error)).await?;
-            if let Some(configured) = save_before_publish {
-                self.save_selected_configuration(configured).await?;
+            let source_changed = match (&previous.source, &source) {
+                (Some(previous), Some(next)) => !Arc::ptr_eq(previous, next),
+                (None, None) => false,
+                _ => true,
+            };
+            if previous.configuration != configuration || source_changed {
                 let mut selected = previous.clone();
                 selected.configuration = configuration;
                 selected.source = source;
                 selected.library = commit.library;
-                self.shared.replace_selected_runtime(selected.clone()).await;
+                if !self.shared.replace_selected_runtime(selected.clone()).await {
+                    return Err("the selected source changed before cutover".to_string());
+                }
                 return Ok(Some(selected));
             }
             return Ok(None);
@@ -1710,9 +1667,6 @@ impl SourceOwner {
             home,
             music_folder_id: folder,
         };
-        if let Some(configured) = save_before_publish {
-            self.save_selected_configuration(configured).await?;
-        }
         if let Some((playback, refresh)) = playback {
             self.cancel_album_release_lookup(false);
             self.shared
@@ -1743,57 +1697,6 @@ impl SourceOwner {
         } else {
             warn!(%error, "background source refresh failed");
         }
-    }
-
-    async fn commit_inactive_connection(
-        &self,
-        configured: ConfiguredSource,
-        configuration: SourceConfiguration,
-        credential: Option<String>,
-        replaces_account: bool,
-    ) -> Result<(), String> {
-        let previous_source_id = configured.configuration.source_id.clone();
-        let previous_credential = configured.credential_ref.clone();
-        let staged_credential = self.stage_credential(credential).await?;
-        let replacement = ConfiguredSource {
-            configuration,
-            credential_ref: if replaces_account {
-                staged_credential.clone()
-            } else {
-                staged_credential
-                    .clone()
-                    .or_else(|| previous_credential.clone())
-            },
-            music_folder_id: (!replaces_account)
-                .then_some(configured.music_folder_id)
-                .flatten(),
-            local_access: configured.local_access,
-        };
-        let replacement_credential = replacement.credential_ref.clone();
-        let settings = self.shared.settings.clone();
-        let saved = if replaces_account {
-            let previous = previous_source_id.clone();
-            blocking(move || {
-                replace_source_account(&settings, &previous, replacement.clone(), false)
-            })
-            .await
-        } else {
-            blocking(move || replace_saved_source(&settings, replacement.clone())).await
-        };
-        if let Err(error) = saved {
-            self.delete_staged_credential(staged_credential.as_ref())
-                .await;
-            return Err(error);
-        }
-        if replaces_account {
-            self.remove_replaced_source_data(previous_source_id).await;
-        }
-        if previous_credential != replacement_credential {
-            self.delete_staged_credential(previous_credential.as_ref())
-                .await;
-        }
-        self.shared.publish_configured().await;
-        Ok(())
     }
 
     async fn selected_update_failed(&mut self, error: String) {
@@ -2527,20 +2430,6 @@ impl SourceOwner {
         self.shared.publish_library_replacement(replacement).await;
     }
 
-    async fn stage_credential(
-        &self,
-        credential: Option<String>,
-    ) -> Result<Option<CredentialRef>, String> {
-        let Some(credential) = credential else {
-            return Ok(None);
-        };
-        let reference = fresh_credential_ref()?;
-        let secrets = Arc::clone(&self.shared.secrets);
-        let saved_reference = reference.clone();
-        blocking(move || save_provider_secret(&secrets, &saved_reference, credential)).await?;
-        Ok(Some(reference))
-    }
-
     async fn delete_staged_credential(&self, reference: Option<&CredentialRef>) {
         let Some(reference) = reference.cloned() else {
             return;
@@ -2551,36 +2440,142 @@ impl SourceOwner {
         }
     }
 
-    async fn save_selected_configuration(
+    async fn save_source_connection(
         &self,
-        configured: ConfiguredSource,
-    ) -> Result<(), String> {
+        previous: Option<&ConfiguredSource>,
+        configuration: SourceConfiguration,
+        credential: Option<String>,
+        select: bool,
+        music_folder_id: Option<MusicFolderId>,
+        local_access: Option<ConfiguredLocalAccess>,
+    ) -> Result<SavedSourceConnection, String> {
+        let replaced_source_id = previous
+            .filter(|previous| previous.configuration.source_id != configuration.source_id)
+            .map(|previous| previous.configuration.source_id.clone());
+        let previous_credential = previous.and_then(|source| source.credential_ref.clone());
+        let staged_credential = if let Some(credential) = credential {
+            let reference = fresh_credential_ref()?;
+            let secrets = Arc::clone(&self.shared.secrets);
+            let saved_reference = reference.clone();
+            blocking(move || save_provider_secret(&secrets, &saved_reference, credential)).await?;
+            Some(reference)
+        } else {
+            None
+        };
+        let configured = ConfiguredSource {
+            configuration,
+            credential_ref: if replaced_source_id.is_some() {
+                staged_credential.clone()
+            } else {
+                staged_credential
+                    .clone()
+                    .or_else(|| previous_credential.clone())
+            },
+            music_folder_id,
+            local_access,
+        };
+        let previous_selected_source_id = self.shared.settings.load().sources.selected_source_id;
         let settings = self.shared.settings.clone();
-        blocking(move || {
+        let previous_id = previous.map(|source| source.configuration.source_id.clone());
+        let saved = configured.clone();
+        let source_id = saved.configuration.source_id.clone();
+        if let Err(error) = blocking(move || {
             settings.update(|stored| {
-                if let Some(saved) = stored.sources.configured.iter_mut().find(|saved| {
-                    saved.configuration.source_id == configured.configuration.source_id
-                }) {
-                    *saved = configured.clone();
-                } else {
-                    stored.sources.configured.push(configured.clone());
+                if previous_id
+                    .as_ref()
+                    .is_some_and(|previous| previous != &source_id)
+                    && stored
+                        .sources
+                        .configured
+                        .iter()
+                        .any(|source| source.configuration.source_id == source_id)
+                {
+                    return Err("this source account is already configured".to_string());
                 }
-                stored.sources.selected_source_id =
-                    Some(configured.configuration.source_id.clone());
+                if let Some(previous) = previous_id.as_ref() {
+                    let source = stored
+                        .sources
+                        .configured
+                        .iter_mut()
+                        .find(|source| &source.configuration.source_id == previous)
+                        .ok_or_else(|| "the configured source no longer exists".to_string())?;
+                    *source = saved.clone();
+                } else {
+                    stored.sources.configured.push(saved.clone());
+                }
+                if select {
+                    stored.sources.selected_source_id = Some(source_id.clone());
+                }
                 Ok(())
             })
         })
         .await
+        {
+            self.delete_staged_credential(staged_credential.as_ref())
+                .await;
+            return Err(error);
+        }
+        Ok(SavedSourceConnection {
+            configured,
+            previous: previous.cloned(),
+            previous_selected_source_id,
+            staged_credential,
+        })
     }
 
-    async fn save_selected_account_replacement(
-        &self,
-        previous: &SourceId,
-        configured: ConfiguredSource,
-    ) -> Result<(), String> {
+    async fn rollback_source_connection(&self, saved: SavedSourceConnection) {
+        let SavedSourceConnection {
+            configured,
+            previous,
+            previous_selected_source_id,
+            staged_credential,
+            ..
+        } = saved;
         let settings = self.shared.settings.clone();
-        let previous = previous.clone();
-        blocking(move || replace_source_account(&settings, &previous, configured, true)).await
+        let replacement_id = configured.configuration.source_id;
+        match blocking(move || {
+            settings.update(|stored| {
+                let position = stored
+                    .sources
+                    .configured
+                    .iter()
+                    .position(|source| source.configuration.source_id == replacement_id)
+                    .ok_or_else(|| "the replacement source no longer exists".to_string())?;
+                if let Some(previous) = previous.clone() {
+                    stored.sources.configured[position] = previous;
+                } else {
+                    stored.sources.configured.remove(position);
+                }
+                stored.sources.selected_source_id = previous_selected_source_id.clone();
+                Ok(())
+            })
+        })
+        .await
+        {
+            Ok(()) => {
+                self.delete_staged_credential(staged_credential.as_ref())
+                    .await;
+            }
+            Err(error) => {
+                warn!(%error, "could not restore source settings after a failed cutover");
+            }
+        }
+    }
+
+    async fn finish_source_connection(&self, saved: SavedSourceConnection) {
+        let previous_credential = saved
+            .previous
+            .as_ref()
+            .and_then(|previous| previous.credential_ref.as_ref());
+        if previous_credential != saved.configured.credential_ref.as_ref() {
+            self.delete_staged_credential(previous_credential).await;
+        }
+        if let Some(previous) = saved.previous.filter(|previous| {
+            previous.configuration.source_id != saved.configured.configuration.source_id
+        }) {
+            self.remove_replaced_source_data(previous.configuration.source_id)
+                .await;
+        }
     }
 
     async fn remove_replaced_source_data(&self, source_id: SourceId) {
@@ -2606,86 +2601,6 @@ impl SourceOwner {
         if let Err(error) = self.shared.artwork.invalidate_source(&source_id) {
             self.shared.warn_nonfatal(&error.to_string());
         }
-    }
-
-    async fn prepare_runtime(
-        &self,
-        configuration: SourceConfiguration,
-        source: Option<Arc<Source>>,
-        library: Arc<Library>,
-        music_folder_id: Option<MusicFolderId>,
-        local_access: Option<ConfiguredLocalAccess>,
-    ) -> Result<
-        (
-            Arc<ActiveSource>,
-            Arc<SelectedSourceState>,
-            PreparedPlayback,
-        ),
-        String,
-    > {
-        let music_folder_id = normalize_music_folder(&library, music_folder_id)?;
-        if let Some(access) = local_access {
-            let library_for_access = Arc::clone(&library);
-            blocking(move || {
-                library_for_access
-                    .configure_local_access(configured_local_access_mapping(&access))
-                    .map(|_| ())
-                    .map_err(string_error)
-            })
-            .await?;
-        }
-        let library_for_home = Arc::clone(&library);
-        let folder_for_home = music_folder_id.clone();
-        let home = blocking(move || {
-            library_for_home
-                .home(folder_for_home.as_ref())
-                .map_err(string_error)
-        })
-        .await?;
-        let selected = Arc::new(SelectedSourceState {
-            configuration,
-            source,
-            source_session_epoch: SourceSessionEpoch::new(
-                self.shared.next_epoch.fetch_add(1, Ordering::AcqRel),
-            ),
-            library,
-            home,
-            music_folder_id,
-        });
-        let session = ActiveSource::new(&self.shared, &selected);
-        let playback = self.shared.playback()?;
-        let playback_session = Arc::clone(&session);
-        let playback_selected = Arc::clone(&selected);
-        let prepared =
-            blocking(move || playback.prepare_selected(playback_session, playback_selected))
-                .await?;
-        Ok((session, selected, prepared))
-    }
-
-    async fn install_runtime(
-        &mut self,
-        session: Arc<ActiveSource>,
-        selected: Arc<SelectedSourceState>,
-        prepared: PreparedPlayback,
-    ) -> Result<PlaybackProjection, String> {
-        self.cancel_album_release_lookup(true);
-        {
-            let mut state = self
-                .shared
-                .state
-                .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner());
-            state.observer.take();
-            state.local_access.take();
-        }
-        let playback = self.shared.playback()?;
-        let playback_for_stop = Arc::clone(&playback);
-        let cutover = blocking(move || playback_for_stop.stop_for_source_switch()).await?;
-        self.shared.release_selected().await;
-        self.shared
-            .install_selected_slot(session, Arc::clone(&selected));
-        self.shared.attach_selected_downloads(&selected).await;
-        Ok(playback.install_prepared(prepared, cutover))
     }
 }
 
@@ -2907,7 +2822,7 @@ impl Shared {
         let Ok(playback) = self.playback() else {
             return;
         };
-        if let Err(error) = blocking(move || playback.stop_for_source_switch()).await {
+        if let Err(error) = blocking(move || Ok(playback.stop_for_source_switch())).await {
             warn!(%error, "could not stop Playback for a source transition");
         }
     }
@@ -2961,20 +2876,11 @@ async fn add_source(
     let (configuration, source, credential) = connected.into_parts();
     let identity = configuration.input_identity().map_err(string_error)?;
     let source = Arc::new(source);
-    let prepared = Arc::clone(&source)
-        .prepare_library_candidate(
-            shared.library.clone(),
-            identity,
-            None,
-            Arc::clone(&progress),
-            Arc::clone(&cancelled),
-        )
-        .await
-        .map_err(string_error)?;
-    let prepared = prepare_candidate_artwork(
+    let prepared = prepare_source_candidate(
         &shared,
         Arc::clone(&source),
-        prepared,
+        identity,
+        None,
         progress,
         Arc::clone(&cancelled),
     )
@@ -2990,18 +2896,16 @@ async fn add_source(
         .iter()
         .find(|configured| configured.configuration.source_id == configuration.source_id)
         .cloned();
-    let library = accept_candidate(prepared).await?;
     if cancelled.load(Ordering::Acquire) {
         return Err("source selection was cancelled".to_string());
     }
     owner
-        .activate_replacement(
-            ReplacementReason::Add,
+        .commit_selected_connection(
             previous,
             configuration,
             Some(source),
             credential,
-            library,
+            PreparedConnectionLibrary::Candidate(Box::new(prepared)),
         )
         .await
 }
@@ -3055,24 +2959,18 @@ async fn select_source(
         }
         Err(error) => return Err(error),
     };
-    let (library, cached, refresh_after_select) = if let Some((loaded, cache_match)) = cached {
-        (loaded, true, cache_match == SourceCacheMatch::ReaderUpgrade)
+    let prepared_library = if let Some((library, cache_match)) = cached {
+        PreparedConnectionLibrary::Accepted {
+            library,
+            cache_match,
+        }
     } else {
         let source = source.as_ref().ok_or_else(source_access_unavailable)?;
-        let prepared = Arc::clone(source)
-            .prepare_library_candidate(
-                shared.library.clone(),
-                identity,
-                None,
-                Arc::clone(&progress),
-                Arc::clone(&cancelled),
-            )
-            .await
-            .map_err(string_error)?;
-        let candidate = prepare_candidate_artwork(
+        let candidate = prepare_source_candidate(
             &shared,
             Arc::clone(source),
-            prepared,
+            identity,
+            None,
             progress,
             Arc::clone(&cancelled),
         )
@@ -3080,34 +2978,20 @@ async fn select_source(
         if cancelled.load(Ordering::Acquire) {
             return Err("source selection was cancelled".to_string());
         }
-        (accept_candidate(candidate).await?, false, false)
+        PreparedConnectionLibrary::Candidate(Box::new(candidate))
     };
     if cancelled.load(Ordering::Acquire) {
         return Err("source selection was cancelled".to_string());
     }
     owner
-        .activate_replacement(
-            ReplacementReason::Select {
-                cached,
-                refresh_after_select,
-            },
+        .commit_selected_connection(
             Some(configured),
             configuration,
             source,
             None,
-            library,
+            prepared_library,
         )
         .await
-}
-
-async fn accept_candidate(candidate: PreparedSourceCandidate) -> Result<Arc<Library>, String> {
-    blocking(move || {
-        candidate
-            .accept()
-            .map(|commit| commit.library)
-            .map_err(string_error)
-    })
-    .await
 }
 
 async fn prepare_refresh_candidate(
@@ -3125,19 +3009,36 @@ async fn prepare_refresh_candidate(
         .configuration
         .input_identity()
         .map_err(string_error)?;
+    prepare_source_candidate(
+        &shared,
+        source,
+        identity,
+        Some(Arc::clone(&selected.library)),
+        progress,
+        cancelled,
+    )
+    .await
+}
+
+async fn prepare_source_candidate(
+    shared: &Shared,
+    source: Arc<Source>,
+    identity: SourceInputIdentity,
+    base: Option<Arc<Library>>,
+    progress: Arc<dyn Fn(SourceReadProgress) + Send + Sync>,
+    cancelled: Arc<AtomicBool>,
+) -> Result<PreparedSourceCandidate, String> {
     let prepared = Arc::clone(&source)
         .prepare_library_candidate(
             shared.library.clone(),
             identity,
-            Some(Arc::clone(&selected.library)),
+            base,
             Arc::clone(&progress),
             Arc::clone(&cancelled),
         )
         .await
         .map_err(string_error)?;
-    let prepared =
-        prepare_candidate_artwork(&shared, source, prepared, progress, cancelled).await?;
-    Ok(prepared)
+    prepare_candidate_artwork(shared, source, prepared, progress, cancelled).await
 }
 
 async fn prepare_candidate_artwork(
@@ -4089,44 +3990,6 @@ fn replacement_source(settings: &SourceSettings, removed: &SourceId) -> Option<S
         .iter()
         .find(|source| &source.configuration.source_id != removed)
         .map(|source| source.configuration.source_id.clone())
-}
-
-fn replace_saved_source(
-    settings: &SettingsFile,
-    configured: ConfiguredSource,
-) -> Result<(), String> {
-    settings.update(|stored| {
-        let saved = stored
-            .sources
-            .configured
-            .iter_mut()
-            .find(|saved| saved.configuration.source_id == configured.configuration.source_id)
-            .ok_or_else(|| "the configured source no longer exists".to_string())?;
-        *saved = configured;
-        Ok(())
-    })
-}
-
-fn replace_source_account(
-    settings: &SettingsFile,
-    previous: &SourceId,
-    configured: ConfiguredSource,
-    select: bool,
-) -> Result<(), String> {
-    let replacement_id = configured.configuration.source_id.clone();
-    settings.update(|stored| {
-        let saved = stored
-            .sources
-            .configured
-            .iter_mut()
-            .find(|saved| &saved.configuration.source_id == previous)
-            .ok_or_else(|| "the configured source no longer exists".to_string())?;
-        *saved = configured;
-        if select {
-            stored.sources.selected_source_id = Some(replacement_id);
-        }
-        Ok(())
-    })
 }
 
 fn save_music_folder(

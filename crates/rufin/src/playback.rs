@@ -850,7 +850,7 @@ impl PlaybackOwner {
         projection
     }
 
-    pub(crate) fn stop_for_source_switch(&self) -> Result<PlaybackCutover, String> {
+    pub(crate) fn stop_for_source_switch(&self) -> PlaybackCutover {
         let active = self
             .active
             .lock()
@@ -859,11 +859,13 @@ impl PlaybackOwner {
         self.queue_intents.retire();
         self.publish_current_media(None);
         self.observe_discord(None, false);
-        let shutdown = active
-            .map(|active| active.playback.shutdown().map_err(string_error))
-            .transpose();
+        if let Some(active) = active
+            && let Err(error) = active.playback.shutdown()
+        {
+            warn!(%error, "could not shut down retired Playback");
+        }
         self.persistence.drain();
-        shutdown.map(|_| PlaybackCutover)
+        PlaybackCutover
     }
 
     pub(crate) fn refresh_accepted_tracks(
@@ -1593,9 +1595,7 @@ impl TransportCommandPort for PlaybackOwner {
     }
 
     fn shutdown(&self) {
-        if let Err(error) = self.stop_for_source_switch() {
-            warn!(%error, "could not stop Playback");
-        }
+        self.stop_for_source_switch();
     }
 }
 

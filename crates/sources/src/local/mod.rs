@@ -254,9 +254,8 @@ pub(crate) fn edit(
     if configuration == current {
         return Ok(SourceEditResult::Unchanged);
     }
-    Ok(SourceEditResult::SameAccount(ConnectedSource::local(
-        configuration,
-        source,
+    Ok(SourceEditResult::Connected(Box::new(
+        ConnectedSource::local(configuration, source),
     )))
 }
 

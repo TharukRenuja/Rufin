@@ -1,7 +1,7 @@
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::sync::atomic::AtomicBool;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use library::{
     AcceptedPlay, CandidateBatch, CandidateFinish, CandidateHeader, FolderContents, HomeFacts,
@@ -69,6 +69,144 @@ fn active_source_resolves_replacement_and_rejects_retired_session() {
     assert_eq!(
         next.resolve().expect("new session").source_session_epoch,
         SourceSessionEpoch::new(2)
+    );
+}
+
+#[test]
+fn same_session_executor_change_retires_previous_access_tasks() {
+    let directory = tempfile::tempdir().expect("temporary Rufin data directory");
+    let root_a = directory.path().join("A");
+    let root_b = directory.path().join("B");
+    std::fs::create_dir(&root_a).expect("create first Local root");
+    std::fs::create_dir(&root_b).expect("create replacement Local root");
+    let runtime = test_runtime();
+    let libraries = Libraries::open(directory.path().join("library.db")).expect("open Library");
+    let connected = runtime
+        .block_on(Source::connect(SourceSetupInput::Local(
+            LocalFolderHostInput {
+                roots: vec![root_a],
+            },
+        )))
+        .expect("connect first Local source");
+    let (configuration, source, credential) = connected.into_parts();
+    assert_eq!(credential, None);
+    let source = Arc::new(source);
+    let candidate = runtime
+        .block_on(
+            Arc::clone(&source).prepare_library_candidate(
+                libraries.clone(),
+                configuration
+                    .input_identity()
+                    .expect("first Local input identity"),
+                None,
+                Arc::new(|_| {}),
+                Arc::new(AtomicBool::new(false)),
+            ),
+        )
+        .expect("prepare first Local library");
+    let library = candidate
+        .accept()
+        .expect("accept first Local library")
+        .library;
+    let settings = SettingsFile::memory();
+    settings
+        .update(|stored| {
+            stored.sources.configured = vec![ConfiguredSource {
+                configuration: configuration.clone(),
+                credential_ref: None,
+                music_folder_id: None,
+                local_access: None,
+            }];
+            stored.sources.selected_source_id = Some(configuration.source_id.clone());
+            Ok(())
+        })
+        .expect("save first Local source");
+    let (bootstrap, _events) = test_owner(directory.path(), &runtime, libraries, settings);
+    let playback = attach_test_playback(&bootstrap.owner, &runtime, directory.path());
+    let session = install_selected_for_test(
+        &bootstrap.owner,
+        configuration.clone(),
+        Some(Arc::clone(&source)),
+        library,
+        SourceSessionEpoch::new(1),
+    );
+    let prepared = playback
+        .prepare_selected(
+            Arc::clone(&session),
+            session.resolve().expect("selected source for Playback"),
+        )
+        .expect("prepare selected Playback");
+    let cutover = playback.stop_for_source_switch();
+    let _projection = playback.install_prepared(prepared, cutover);
+    let qualifier = session.resolve().expect("selected source").qualifier();
+    let observer_cancelled = Arc::new(AtomicBool::new(false));
+    let local_cancelled = Arc::new(AtomicBool::new(false));
+    let queued_observer_work = {
+        let session = Arc::clone(&session);
+        let cancelled = Arc::clone(&observer_cancelled);
+        move || resolve_observer_session(&cancelled, &session)
+    };
+    let observer_handle = runtime.spawn(std::future::pending::<()>());
+    let local_handle = runtime.spawn(std::future::pending::<()>());
+    {
+        let mut state = bootstrap
+            .owner
+            .shared
+            .state
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        state.observer = Some(ActiveObserver {
+            qualifier: qualifier.clone(),
+            cancelled: Arc::clone(&observer_cancelled),
+            handle: observer_handle,
+        });
+        state.local_access = Some(ActiveLocalAccess {
+            token: 1,
+            qualifier,
+            cancelled: Arc::clone(&local_cancelled),
+            handle: local_handle.abort_handle(),
+        });
+    }
+
+    runtime.block_on(async {
+        bootstrap
+            .owner
+            .as_ref()
+            .clone()
+            .apply_source_update(
+                configuration.source_id.clone(),
+                SourceSettingsInput::Local {
+                    roots: vec![root_b.clone()],
+                },
+                false,
+                Arc::new(AtomicBool::new(false)),
+            )
+            .await;
+    });
+
+    assert!(observer_cancelled.load(Ordering::Acquire));
+    assert!(local_cancelled.load(Ordering::Acquire));
+    assert!(
+        queued_observer_work().is_none(),
+        "work queued by the retired observer must not resolve the retained session"
+    );
+    let selected = session.resolve().expect("same selected session");
+    assert_eq!(selected.source_session_epoch, SourceSessionEpoch::new(1));
+    assert!(!Arc::ptr_eq(
+        &source,
+        selected
+            .source
+            .as_ref()
+            .expect("replacement source executor")
+    ));
+    let saved = configured_source(
+        &bootstrap.owner.shared.settings.load().sources,
+        &configuration.source_id,
+    )
+    .expect("saved replacement Local source");
+    assert_eq!(
+        local_roots(&saved.configuration).expect("saved replacement Local roots"),
+        vec![root_b.canonicalize().expect("canonical replacement root")]
     );
 }
 
@@ -502,7 +640,7 @@ fn preparing_a_replacement_keeps_downloads_on_the_current_library() {
         Arc::clone(&current),
         SourceSessionEpoch::new(1),
     );
-    let _playback = attach_test_playback(&bootstrap.owner, &runtime, directory.path());
+    let playback = attach_test_playback(&bootstrap.owner, &runtime, directory.path());
 
     runtime.block_on(async {
         bootstrap
@@ -512,17 +650,18 @@ fn preparing_a_replacement_keeps_downloads_on_the_current_library() {
             .attach(None, &current, None)
             .await
             .expect("attach current downloads");
-        let operations = bootstrap.owner.as_ref().clone();
-        let (_session, _selected, prepared) = operations
-            .prepare_runtime(
-                test_configuration(replacement_id, "Replacement"),
-                None,
-                replacement,
-                None,
-                None,
-            )
-            .await
-            .expect("prepare replacement runtime");
+        let selected = Arc::new(SelectedSourceState {
+            configuration: test_configuration(replacement_id, "Replacement"),
+            source: None,
+            source_session_epoch: SourceSessionEpoch::new(2),
+            home: replacement.home(None).expect("prepare replacement Home"),
+            library: replacement,
+            music_folder_id: None,
+        });
+        let session = ActiveSource::new(&bootstrap.owner.shared, &selected);
+        let prepared = playback
+            .prepare_selected(session, selected)
+            .expect("prepare replacement Playback");
 
         let tracks: library::TrackSelection = current
             .track_list(None, TrackSort::Title, false)
