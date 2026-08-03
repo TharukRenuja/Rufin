@@ -12,7 +12,7 @@ use tracing::debug;
 use crate::{
     ExternalLyricsProvider, LyricsAgent, LyricsAgentRole, LyricsBundle as Lyrics, LyricsCue,
     LyricsCueLine, LyricsDocument, LyricsLine as LyricLine, LyricsOrigin, LyricsRole,
-    LyricsSearchResult, normalize_language_tag,
+    LyricsSearchContent, LyricsSearchResult, normalize_language_tag,
 };
 
 const EXTERNAL_LYRICS_REQUEST_TIMEOUT: Duration = Duration::from_secs(5);
@@ -126,9 +126,9 @@ impl crate::Settings {
 }
 
 pub(crate) fn lyrics_from_native(native: sources::NativeLyrics) -> Lyrics {
-    Lyrics {
-        origin: LyricsOrigin::Native,
-        documents: native
+    Lyrics::from_documents(
+        LyricsOrigin::Native,
+        native
             .documents
             .into_iter()
             .map(|document| {
@@ -206,7 +206,7 @@ pub(crate) fn lyrics_from_native(native: sources::NativeLyrics) -> Lyrics {
                 }
             })
             .collect(),
-    }
+    )
 }
 
 fn shifted_lyrics_time(time: Option<u64>, offset_millis: i64) -> Option<u64> {
@@ -228,9 +228,12 @@ pub(crate) fn cached_lyrics_allowed(lyrics: &Lyrics, plan: &LyricsPlan, cue_trac
 }
 
 fn lyrics_from_text_content(provider: ExternalLyricsProvider, content: &str) -> Lyrics {
-    Lyrics {
-        origin: LyricsOrigin::External(provider),
-        documents: vec![LyricsDocument {
+    if content_marks_instrumental(content, Some(provider)) {
+        return Lyrics::instrumental(LyricsOrigin::External(provider));
+    }
+    Lyrics::from_documents(
+        LyricsOrigin::External(provider),
+        vec![LyricsDocument {
             role: LyricsRole::Original,
             language: None,
             offset_millis: 0,
@@ -241,21 +244,53 @@ fn lyrics_from_text_content(provider: ExternalLyricsProvider, content: &str) -> 
                 .collect(),
             agents: Vec::new(),
         }],
-    }
+    )
 }
 
 pub(crate) fn lyrics_with_displayable_content(mut lyrics: Lyrics) -> Option<Lyrics> {
+    if lyrics.is_instrumental() {
+        return Some(lyrics);
+    }
     if let LyricsOrigin::External(provider) = lyrics.origin {
-        for document in &mut lyrics.documents {
+        for document in lyrics.documents_mut() {
             document
                 .lines
                 .retain(|line| provider_line_has_content(provider, line));
         }
     }
     lyrics
-        .documents
+        .documents_mut()
         .retain(|document| !document.lines.is_empty());
-    (!lyrics.documents.is_empty()).then_some(lyrics)
+    (!lyrics.documents().is_empty()).then_some(lyrics)
+}
+
+fn content_marks_instrumental(content: &str, provider: Option<ExternalLyricsProvider>) -> bool {
+    const NETEASE_INSTRUMENTAL_TEXT: &str = "纯音乐，请欣赏";
+    let has_marker = content.lines().any(|line| {
+        let trimmed = line.trim().trim_start_matches('\u{feff}');
+        lrc_tag_value(trimmed, "au").is_some_and(|value| value.eq_ignore_ascii_case("instrumental"))
+            || provider == Some(ExternalLyricsProvider::Netease)
+                && lyric_line_from_text(trimmed)
+                    .is_some_and(|line| line.text.trim() == NETEASE_INSTRUMENTAL_TEXT)
+    });
+    has_marker
+        && !content
+            .lines()
+            .filter_map(lyric_line_from_text)
+            .any(|line| {
+                provider.map_or_else(
+                    || !line.text.trim().is_empty(),
+                    |provider| provider_line_has_content(provider, &line),
+                )
+            })
+}
+
+fn lrc_tag_value<'a>(line: &'a str, tag: &str) -> Option<&'a str> {
+    let inner = line.strip_prefix('[')?.strip_suffix(']')?;
+    let (name, value) = inner.split_once(':')?;
+    name.trim()
+        .eq_ignore_ascii_case(tag)
+        .then_some(value.trim())
 }
 
 fn provider_line_has_content(provider: ExternalLyricsProvider, line: &LyricLine) -> bool {
@@ -334,6 +369,26 @@ fn fraction_to_millis(fraction: &str) -> Option<u64> {
     Some(millis)
 }
 
+fn inline_search_content(
+    synced_lyrics: Option<String>,
+    plain_lyrics: Option<String>,
+) -> LyricsSearchContent {
+    if synced_lyrics
+        .as_deref()
+        .is_some_and(|lyrics| !lyrics.trim().is_empty())
+        || plain_lyrics
+            .as_deref()
+            .is_some_and(|lyrics| !lyrics.trim().is_empty())
+    {
+        LyricsSearchContent::Inline {
+            synced_lyrics,
+            plain_lyrics,
+        }
+    } else {
+        LyricsSearchContent::Unavailable
+    }
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct LrcLibLyricsDto {
@@ -352,6 +407,8 @@ pub(crate) struct LrcLibLyricsDto {
     synced_lyrics: Option<String>,
     #[serde(default)]
     plain_lyrics: Option<String>,
+    #[serde(default)]
+    instrumental: bool,
 }
 impl From<LrcLibLyricsDto> for LyricsSearchResult {
     fn from(value: LrcLibLyricsDto) -> Self {
@@ -366,8 +423,11 @@ impl From<LrcLibLyricsDto> for LyricsSearchResult {
             artist_name: value.artist_name,
             album_name: value.album_name.unwrap_or_default(),
             duration_seconds: value.duration.unwrap_or_default().round() as u32,
-            synced_lyrics: value.synced_lyrics,
-            plain_lyrics: value.plain_lyrics,
+            content: if value.instrumental {
+                LyricsSearchContent::Instrumental
+            } else {
+                inline_search_content(value.synced_lyrics, value.plain_lyrics)
+            },
         }
     }
 }
@@ -437,6 +497,8 @@ struct GeniusSong {
     title: String,
     #[serde(default)]
     url: String,
+    #[serde(default)]
+    instrumental: bool,
 }
 #[derive(Debug, Deserialize)]
 struct SimpMusicSearchResponse {
@@ -709,7 +771,9 @@ pub(crate) fn external_best_lyrics(
         }
         match lyrics_from_search_result(&result) {
             Ok(Some(lyrics))
-                if !prefer_translations || lyrics.has_preferred_translation(&selection) =>
+                if lyrics.is_instrumental()
+                    || !prefer_translations
+                    || lyrics.has_preferred_translation(&selection) =>
             {
                 return Ok(Some(lyrics));
             }
@@ -906,8 +970,7 @@ pub(crate) fn parse_netease_search_body(body: &str) -> Result<Vec<LyricsSearchRe
                 .join(", "),
             album_name: song.album.map(|album| album.name).unwrap_or_default(),
             duration_seconds: song.duration.unwrap_or_default().div_ceil(1000) as u32,
-            synced_lyrics: None,
-            plain_lyrics: None,
+            content: LyricsSearchContent::Deferred,
         })
         .collect())
 }
@@ -923,6 +986,18 @@ fn netease_fetch_lyrics_bundle(id: &str) -> Result<Option<Lyrics>, String> {
     )?))
 }
 fn lyrics_from_netease_response(response: NeteaseLyricsResponse) -> Option<Lyrics> {
+    if response
+        .lrc
+        .as_ref()
+        .and_then(|body| body.lyric.as_deref())
+        .is_some_and(|content| {
+            content_marks_instrumental(content, Some(ExternalLyricsProvider::Netease))
+        })
+    {
+        return Some(Lyrics::instrumental(LyricsOrigin::External(
+            ExternalLyricsProvider::Netease,
+        )));
+    }
     let mut documents = Vec::new();
     for (role, language, body) in [
         (LyricsRole::Original, None, response.lrc),
@@ -946,10 +1021,10 @@ fn lyrics_from_netease_response(response: NeteaseLyricsResponse) -> Option<Lyric
             agents: Vec::new(),
         });
     }
-    lyrics_with_displayable_content(Lyrics {
-        origin: LyricsOrigin::External(ExternalLyricsProvider::Netease),
+    lyrics_with_displayable_content(Lyrics::from_documents(
+        LyricsOrigin::External(ExternalLyricsProvider::Netease),
         documents,
-    })
+    ))
 }
 fn netease_fetch_lyrics_response(id: &str) -> Result<NeteaseLyricsResponse, String> {
     let mut url = reqwest::Url::parse("https://music.163.com/api/song/lyric")
@@ -1012,8 +1087,11 @@ pub(crate) fn parse_genius_search_body(body: &str) -> Result<Vec<LyricsSearchRes
                 artist_name: hit.result.artist_names,
                 album_name: String::new(),
                 duration_seconds: 0,
-                synced_lyrics: None,
-                plain_lyrics: None,
+                content: if hit.result.instrumental {
+                    LyricsSearchContent::Instrumental
+                } else {
+                    LyricsSearchContent::Deferred
+                },
             });
         }
     }
@@ -1070,8 +1148,10 @@ pub(crate) fn parse_simpmusic_search_body(body: &str) -> Result<Vec<LyricsSearch
             artist_name: song.artist_name,
             album_name: song.album_name.unwrap_or_default(),
             duration_seconds: song.duration_seconds.unwrap_or_default(),
-            synced_lyrics: song.synced_lyrics,
-            plain_lyrics: song.plain_lyric,
+            content: match inline_search_content(song.synced_lyrics, song.plain_lyric) {
+                LyricsSearchContent::Unavailable => LyricsSearchContent::Deferred,
+                content => content,
+            },
         })
         .collect())
 }
@@ -1207,9 +1287,17 @@ fn lrclib_search_priority_urls(
     }
 }
 pub fn lyrics_from_search_result(result: &LyricsSearchResult) -> Result<Option<Lyrics>, String> {
-    if result.provider == ExternalLyricsProvider::Netease && lyrics_result_content(result).is_none()
-    {
-        return netease_fetch_lyrics_bundle(&result.id);
+    match &result.content {
+        LyricsSearchContent::Instrumental => {
+            return Ok(Some(Lyrics::instrumental(LyricsOrigin::External(
+                result.provider,
+            ))));
+        }
+        LyricsSearchContent::Unavailable => return Ok(None),
+        LyricsSearchContent::Deferred if result.provider == ExternalLyricsProvider::Netease => {
+            return netease_fetch_lyrics_bundle(&result.id);
+        }
+        LyricsSearchContent::Inline { .. } | LyricsSearchContent::Deferred => {}
     }
     let content = match lyrics_result_content(result) {
         Some(content) => Some(content.to_string()),
@@ -1549,8 +1637,8 @@ pub(crate) fn lrclib_has_synced_lyrics(result: &LyricsSearchResult) -> bool {
 }
 fn result_has_synced_lyrics(result: &LyricsSearchResult) -> bool {
     result
-        .synced_lyrics
-        .as_deref()
+        .content
+        .synced_lyrics()
         .is_some_and(|lyrics| !lyrics.trim().is_empty())
 }
 pub(crate) fn lrclib_has_plain_lyrics(result: &LyricsSearchResult) -> bool {
@@ -1558,8 +1646,8 @@ pub(crate) fn lrclib_has_plain_lyrics(result: &LyricsSearchResult) -> bool {
 }
 fn result_has_plain_lyrics(result: &LyricsSearchResult) -> bool {
     result
-        .plain_lyrics
-        .as_deref()
+        .content
+        .plain_lyrics()
         .is_some_and(|lyrics| !lyrics.trim().is_empty())
 }
 pub fn save_lyrics_search_result(
@@ -1613,13 +1701,13 @@ pub fn save_current_lyrics(
 }
 pub(crate) fn lyrics_result_content(result: &LyricsSearchResult) -> Option<&str> {
     result
-        .synced_lyrics
-        .as_deref()
+        .content
+        .synced_lyrics()
         .filter(|lyrics| !lyrics.trim().is_empty())
         .or_else(|| {
             result
-                .plain_lyrics
-                .as_deref()
+                .content
+                .plain_lyrics()
                 .filter(|lyrics| !lyrics.trim().is_empty())
         })
 }
@@ -1640,19 +1728,24 @@ pub(crate) fn local_sidecar_lyrics(input: &LocalLyricsInput) -> Option<Lyrics> {
 }
 fn lyrics_from_sidecar_file(path: &Path) -> Option<Lyrics> {
     let content = read_text_file_bounded(path, LOCAL_LYRICS_MAX_BYTES).ok()?;
+    if content_marks_instrumental(&content, None) {
+        return Some(Lyrics::instrumental(LyricsOrigin::Local));
+    }
     let lines = content
         .lines()
         .filter_map(lyric_line_from_text)
         .collect::<Vec<_>>();
-    (!lines.is_empty()).then(|| Lyrics {
-        origin: LyricsOrigin::Local,
-        documents: vec![LyricsDocument {
-            role: LyricsRole::Original,
-            language: None,
-            offset_millis: 0,
-            lines,
-            agents: Vec::new(),
-        }],
+    (!lines.is_empty()).then(|| {
+        Lyrics::from_documents(
+            LyricsOrigin::Local,
+            vec![LyricsDocument {
+                role: LyricsRole::Original,
+                language: None,
+                offset_millis: 0,
+                lines,
+                agents: Vec::new(),
+            }],
+        )
     })
 }
 fn local_sidecar_candidates(
@@ -1807,16 +1900,16 @@ mod tests {
     fn plans_keep_cached_external_lyrics_in_private_mode() {
         let mut settings = crate::Settings::default();
         let track_id = track().id.clone();
-        let external = Lyrics {
-            origin: LyricsOrigin::External(ExternalLyricsProvider::Lrclib),
-            documents: vec![LyricsDocument {
+        let external = Lyrics::from_documents(
+            LyricsOrigin::External(ExternalLyricsProvider::Lrclib),
+            vec![LyricsDocument {
                 role: LyricsRole::Original,
                 language: None,
                 offset_millis: 0,
                 lines: vec![test_line("cached", None)],
                 agents: Vec::new(),
             }],
-        };
+        );
         let plan = settings.configured_lyrics_plan(false, &track_id);
         assert_eq!(plan.native_search, sources::LyricsSearch::ServerThenRemote);
         assert!(plan.allow_external_fallback);
@@ -1868,7 +1961,7 @@ mod tests {
         };
         let lyrics = local_sidecar_lyrics(&input).expect("lyrics");
         assert_eq!(
-            lyrics.documents[0].lines,
+            lyrics.documents()[0].lines,
             vec![test_line("right", Some(2_500))]
         );
 
@@ -1888,13 +1981,41 @@ mod tests {
     }
 
     #[test]
+    fn local_sidecar_recognizes_the_instrumental_lrc_tag() {
+        let directory = tempdir().expect("tempdir");
+        let audio = directory.path().join("instrumental.flac");
+        fs::write(&audio, []).expect("audio");
+        fs::write(audio.with_extension("lrc"), "[au: instrumental]\n").expect("lyrics");
+
+        assert!(
+            local_sidecar_lyrics(&LocalLyricsInput {
+                audio_path: audio,
+                title: "Instrumental".to_string(),
+                cue_track: false,
+            })
+            .is_some_and(|lyrics| lyrics.is_instrumental())
+        );
+    }
+
+    #[test]
+    fn instrumental_lrc_tag_does_not_hide_real_lyrics() {
+        let lyrics = lyrics_from_text_content(
+            ExternalLyricsProvider::Lrclib,
+            "[au: instrumental]\n[00:01.00]A real line",
+        );
+
+        assert!(!lyrics.is_instrumental());
+        assert_eq!(lyrics.documents()[0].lines[0].text, "A real line");
+    }
+
+    #[test]
     fn parser_keeps_timing_and_filters_netease_placeholders() {
         let lyrics = lyrics_from_text_content(
             ExternalLyricsProvider::Netease,
             "[00:00.00] 作曲 : Composer\n[00:05.00]纯音乐，请欣赏\n[00:10.005]actual line",
         );
         assert_eq!(
-            lyrics.documents[0].lines,
+            lyrics.documents()[0].lines,
             vec![test_line("actual line", Some(10_005))]
         );
         assert_eq!(
@@ -1914,10 +2035,10 @@ mod tests {
         .expect("NetEase response");
         let lyrics = lyrics_from_netease_response(response).expect("lyrics bundle");
 
-        assert_eq!(lyrics.documents.len(), 2);
-        assert_eq!(lyrics.documents[0].role, LyricsRole::Original);
-        assert_eq!(lyrics.documents[1].role, LyricsRole::Translation);
-        assert_eq!(lyrics.documents[1].language.as_deref(), Some("zh"));
+        assert_eq!(lyrics.documents().len(), 2);
+        assert_eq!(lyrics.documents()[0].role, LyricsRole::Original);
+        assert_eq!(lyrics.documents()[1].role, LyricsRole::Translation);
+        assert_eq!(lyrics.documents()[1].language.as_deref(), Some("zh"));
         let english = crate::Settings {
             prefer_translations: true,
             preferred_translation_language: "en".to_string(),
@@ -1942,6 +2063,18 @@ mod tests {
     }
 
     #[test]
+    fn netease_instrumental_message_is_a_positive_result() {
+        let response = serde_json::from_str::<NeteaseLyricsResponse>(
+            r#"{"lrc":{"lyric":"[00:00.00]纯音乐，请欣赏"}}"#,
+        )
+        .expect("NetEase response");
+
+        assert!(
+            lyrics_from_netease_response(response).is_some_and(|lyrics| lyrics.is_instrumental())
+        );
+    }
+
+    #[test]
     fn provider_payloads_and_genius_url_boundary_are_preserved() {
         let lrclib = parse_lrclib_search_body(
             r#"[{"id":7,"trackName":"Song","artistName":"Artist","duration":185,"syncedLyrics":"[00:01.00]line"}]"#,
@@ -1958,11 +2091,28 @@ mod tests {
         assert_eq!(netease[0].duration_seconds, 95);
 
         let genius = parse_genius_search_body(
-            r#"{"response":{"sections":[{"hits":[{"result":{"artist_names":"Artist","title":"Song","url":"https://example.test/song"}},{"result":{"artist_names":"Artist","title":"Song","url":"https://genius.com/artist-song-lyrics"}}]}]}}"#,
+            r#"{"response":{"sections":[{"hits":[{"result":{"artist_names":"Artist","title":"Song","url":"https://example.test/song"}},{"result":{"artist_names":"Artist","title":"Song","url":"https://genius.com/artist-song-lyrics","instrumental":true}}]}]}}"#,
         )
         .expect("Genius");
         assert_eq!(genius.len(), 1);
         assert!(genius[0].id.starts_with("https://genius.com/"));
+        assert_eq!(genius[0].content, LyricsSearchContent::Instrumental);
+    }
+
+    #[test]
+    fn lrclib_instrumental_flag_is_a_positive_result() {
+        let result = parse_lrclib_search_body(
+            r#"[{"id":7,"trackName":"Song","artistName":"Artist","instrumental":true,"syncedLyrics":null,"plainLyrics":null}]"#,
+        )
+        .expect("LRCLIB")
+        .pop()
+        .expect("result");
+
+        assert!(
+            lyrics_from_search_result(&result)
+                .expect("lyrics lookup")
+                .is_some_and(|lyrics| lyrics.is_instrumental())
+        );
     }
 
     #[test]
@@ -1976,8 +2126,10 @@ mod tests {
                 artist_name: "The Cure".to_string(),
                 album_name: String::new(),
                 duration_seconds: 210,
-                synced_lyrics: None,
-                plain_lyrics: Some("line".to_string()),
+                content: LyricsSearchContent::Inline {
+                    synced_lyrics: None,
+                    plain_lyrics: Some("line".to_string()),
+                },
             },
             LyricsSearchResult {
                 provider: ExternalLyricsProvider::Lrclib,
@@ -1986,8 +2138,10 @@ mod tests {
                 artist_name: "The Cure".to_string(),
                 album_name: String::new(),
                 duration_seconds: 310,
-                synced_lyrics: Some("[00:01.00]line".to_string()),
-                plain_lyrics: Some("line".to_string()),
+                content: LyricsSearchContent::Inline {
+                    synced_lyrics: Some("[00:01.00]line".to_string()),
+                    plain_lyrics: Some("line".to_string()),
+                },
             },
             LyricsSearchResult {
                 provider: ExternalLyricsProvider::Lrclib,
@@ -1996,8 +2150,10 @@ mod tests {
                 artist_name: "The Cure".to_string(),
                 album_name: String::new(),
                 duration_seconds: 211,
-                synced_lyrics: None,
-                plain_lyrics: Some("line".to_string()),
+                content: LyricsSearchContent::Inline {
+                    synced_lyrics: None,
+                    plain_lyrics: Some("line".to_string()),
+                },
             },
         ];
         filter_external_results_for_lookup(&mut results, &lookup);
@@ -2022,19 +2178,24 @@ mod tests {
             artist_name: "The Cure".to_string(),
             album_name: "Disintegration".to_string(),
             duration_seconds: 210,
-            synced_lyrics: Some("[00:01.00]line".to_string()),
-            plain_lyrics: None,
+            content: LyricsSearchContent::Inline {
+                synced_lyrics: Some("[00:01.00]line".to_string()),
+                plain_lyrics: None,
+            },
         };
         let (path, lyrics) = save_lyrics_search_result(&result, output.clone())
             .expect("save")
             .expect("lyrics");
         assert_eq!(path, output);
         assert_eq!(fs::read_to_string(path).expect("saved"), "[00:01.00]line");
-        assert_eq!(lyrics.documents[0].lines[0].start_millis, Some(1_000));
+        assert_eq!(lyrics.documents()[0].lines[0].start_millis, Some(1_000));
 
         let placeholder = LyricsSearchResult {
             provider: ExternalLyricsProvider::Netease,
-            synced_lyrics: Some("[00:01.00]暂无文本歌词".to_string()),
+            content: LyricsSearchContent::Inline {
+                synced_lyrics: Some("[00:01.00]暂无文本歌词".to_string()),
+                plain_lyrics: None,
+            },
             ..result
         };
         assert_eq!(

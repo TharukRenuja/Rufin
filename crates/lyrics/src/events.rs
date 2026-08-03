@@ -6,6 +6,15 @@ use playback::CurrentMediaId;
 use crate::{LyricsDocument, LyricsOrigin, LyricsQuery, LyricsSearchResult};
 
 #[derive(Clone, Debug)]
+pub enum CurrentLyricsContent {
+    Instrumental,
+    Document {
+        document: Arc<LyricsDocument>,
+        pronunciation: Option<Arc<LyricsDocument>>,
+    },
+}
+
+#[derive(Clone, Debug)]
 pub enum CurrentLyrics {
     Cleared,
     Loading {
@@ -13,8 +22,7 @@ pub enum CurrentLyrics {
     },
     Ready {
         media_id: CurrentMediaId,
-        document: Option<Arc<LyricsDocument>>,
-        pronunciation: Option<Arc<LyricsDocument>>,
+        content: Option<CurrentLyricsContent>,
         origin: Option<LyricsOrigin>,
     },
 }

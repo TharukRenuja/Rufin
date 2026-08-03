@@ -64,6 +64,16 @@ pub(crate) enum LyricsFollowScrollPause {
     Expired,
 }
 
+pub(crate) enum LyricsPaneContent<'a> {
+    Document {
+        lyrics: &'a LyricsDocument,
+        pronunciation: Option<&'a LyricsDocument>,
+    },
+    Instrumental,
+    Loading,
+    Empty(String),
+}
+
 impl LyricsPane {
     pub fn new() -> Self {
         let root = gtk::Overlay::new();
@@ -207,10 +217,11 @@ impl LyricsPane {
         self.save_button.set_sensitive(enabled);
     }
 
-    pub fn set_clear_auto_search_action(&self, label: &str, enabled: bool) {
+    pub fn set_clear_auto_search_action(&self, label: &str, enabled: bool, visible: bool) {
         self.clear_auto_search_button.set_tooltip_text(Some(label));
         self.clear_auto_search_button
             .update_property(&[gtk::accessible::Property::Label(label)]);
+        self.clear_auto_search_button.set_visible(visible);
         self.clear_auto_search_button.set_sensitive(enabled);
     }
 
@@ -257,13 +268,10 @@ impl LyricsPane {
 
     pub fn set_content(
         &self,
-        lyrics: Option<&LyricsDocument>,
-        pronunciation: Option<&LyricsDocument>,
+        content: LyricsPaneContent<'_>,
         show_furigana: bool,
         show_romanization: bool,
         word_by_word_highlighting: bool,
-        loading: bool,
-        empty_status: String,
         seek: Rc<dyn Fn(u64)>,
     ) {
         while let Some(child) = self.body.first_child() {
@@ -272,13 +280,17 @@ impl LyricsPane {
         self.rows.borrow_mut().clear();
         self.active_index.set(None);
         self.cancel_scroll_animation();
-        if lyrics.is_none() {
+        if !matches!(&content, LyricsPaneContent::Document { .. }) {
             self.body.add_css_class("lyrics-placeholder");
         } else {
             self.body.remove_css_class("lyrics-placeholder");
         }
 
-        if let Some(current_lyrics) = lyrics {
+        if let LyricsPaneContent::Document {
+            lyrics: current_lyrics,
+            pronunciation,
+        } = content
+        {
             self.append_document_rows(
                 current_lyrics,
                 LyricsRowTrack::Primary,
@@ -300,7 +312,23 @@ impl LyricsPane {
                     seek,
                 );
             }
-        } else if loading {
+        } else if matches!(&content, LyricsPaneContent::Instrumental) {
+            let indicator = gtk::Box::new(gtk::Orientation::Vertical, 20);
+            indicator.set_halign(gtk::Align::Center);
+            indicator.set_valign(gtk::Align::Center);
+            indicator.set_vexpand(true);
+
+            let icon = gtk::Image::from_icon_name("audio-x-generic-symbolic");
+            icon.set_pixel_size(36);
+            icon.add_css_class("dim-label");
+            indicator.append(&icon);
+
+            let label = gtk::Label::new(Some(&tr(msgid("Instrumental"))));
+            label.add_css_class("dim-label");
+            label.add_css_class("heading");
+            indicator.append(&label);
+            self.body.append(&indicator);
+        } else if matches!(&content, LyricsPaneContent::Loading) {
             let placeholder = gtk::Box::new(gtk::Orientation::Vertical, 0);
             placeholder.set_halign(gtk::Align::Fill);
             placeholder.set_valign(gtk::Align::Fill);
@@ -316,7 +344,7 @@ impl LyricsPane {
             spinner.start();
             placeholder.append(&spinner);
             self.body.append(&placeholder);
-        } else {
+        } else if let LyricsPaneContent::Empty(empty_status) = content {
             let status = gtk::Label::new(Some(&empty_status));
             status.add_css_class("muted");
             status.set_wrap(true);

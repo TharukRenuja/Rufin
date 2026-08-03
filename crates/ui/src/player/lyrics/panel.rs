@@ -1,8 +1,9 @@
 use super::search::{
     LyricsSearchDialog, clear_list_box, lyrics_result_subtitle_markup, lyrics_result_title_markup,
-    lyrics_search_response_matches_query, lyrics_search_result_has_content, submit_lyrics_search,
+    lyrics_search_response_matches_query, lyrics_search_result_can_save,
+    lyrics_search_result_has_content, submit_lyrics_search,
 };
-use super::view::LyricsPane;
+use super::view::{LyricsPane, LyricsPaneContent};
 use crate::player::state::{current_playback_media_id, current_playback_track_id};
 use crate::preferences::dialogs::popup::present_light_dismiss_dialog;
 use crate::shell::Shell;
@@ -84,6 +85,7 @@ impl Shell {
             (tr("No track playing"), false)
         };
         let lyrics = self.visible_lyrics();
+        let instrumental = self.visible_lyrics_are_instrumental();
         let pronunciation = self.visible_lyrics_pronunciation();
         let lyrics_origin = self.visible_lyrics_origin();
         let loading = self.current_lyrics_loading();
@@ -102,6 +104,7 @@ impl Shell {
         pane.set_clear_auto_search_action(
             &tr("Clear fetched lyrics for this track"),
             clear_auto_search_enabled,
+            !instrumental,
         );
         pane.set_offset_action(
             &tr("Lyrics offset (ms)"),
@@ -115,14 +118,23 @@ impl Shell {
         let seek: Rc<dyn Fn(u64)> = Rc::new(move |position_millis| {
             seek_shell.seek_to_lyrics_position(position_millis);
         });
+        let content = if let Some(lyrics) = lyrics.as_deref() {
+            LyricsPaneContent::Document {
+                lyrics,
+                pronunciation: pronunciation.as_deref(),
+            }
+        } else if instrumental {
+            LyricsPaneContent::Instrumental
+        } else if loading {
+            LyricsPaneContent::Loading
+        } else {
+            LyricsPaneContent::Empty(empty_status)
+        };
         pane.set_content(
-            lyrics.as_deref(),
-            pronunciation.as_deref(),
+            content,
             show_furigana,
             show_romanization,
             word_by_word_highlighting,
-            loading,
-            empty_status,
             seek,
         );
     }
@@ -356,6 +368,7 @@ impl Shell {
             let title = lyrics_result_title_markup(result);
             let subtitle = lyrics_result_subtitle_markup(result);
             let has_content = lyrics_search_result_has_content(result);
+            let can_save = lyrics_search_result_can_save(result);
             let row = adw::ActionRow::builder()
                 .title(title.as_str())
                 .subtitle(subtitle.as_str())
@@ -364,7 +377,7 @@ impl Shell {
             let button = gtk::Button::with_label(&tr("Save"));
             button.set_valign(gtk::Align::Center);
             button.add_css_class("suggested-action");
-            button.set_sensitive(has_content);
+            button.set_sensitive(can_save);
             row.add_suffix(&button);
 
             if has_content {

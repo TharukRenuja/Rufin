@@ -730,6 +730,9 @@ msgstr ""
 msgid "Installed"
 msgstr ""
 
+msgid "Instrumental"
+msgstr ""
+
 msgid "Interface"
 msgstr ""
 

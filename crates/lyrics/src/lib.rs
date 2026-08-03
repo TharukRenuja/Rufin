@@ -10,7 +10,7 @@ mod events;
 mod lyrics;
 
 pub use current::{LyricsContext, LyricsHandle, LyricsService};
-pub use events::{CurrentLyrics, LyricsEvent};
+pub use events::{CurrentLyrics, CurrentLyricsContent, LyricsEvent};
 pub use lyrics::{
     LocalLyricsInput, lyrics_from_search_result, save_current_lyrics, save_lyrics_search_result,
     search_lyrics,
@@ -309,31 +309,71 @@ impl LyricsDocument {
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub enum LyricsContent {
+    Instrumental,
+    Documents(Vec<LyricsDocument>),
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct LyricsBundle {
     pub origin: LyricsOrigin,
-    pub documents: Vec<LyricsDocument>,
+    pub content: LyricsContent,
 }
 
 impl LyricsBundle {
+    pub fn instrumental(origin: LyricsOrigin) -> Self {
+        Self {
+            origin,
+            content: LyricsContent::Instrumental,
+        }
+    }
+
+    pub fn from_documents(origin: LyricsOrigin, documents: Vec<LyricsDocument>) -> Self {
+        Self {
+            origin,
+            content: LyricsContent::Documents(documents),
+        }
+    }
+
+    pub const fn is_instrumental(&self) -> bool {
+        matches!(self.content, LyricsContent::Instrumental)
+    }
+
+    pub fn documents(&self) -> &[LyricsDocument] {
+        match &self.content {
+            LyricsContent::Instrumental => &[],
+            LyricsContent::Documents(documents) => documents,
+        }
+    }
+
+    pub fn documents_mut(&mut self) -> &mut Vec<LyricsDocument> {
+        match &mut self.content {
+            LyricsContent::Instrumental => panic!("instrumental lyrics do not contain documents"),
+            LyricsContent::Documents(documents) => documents,
+        }
+    }
+
     pub fn selected_document(&self, settings: &Settings) -> Option<&LyricsDocument> {
+        let documents = self.documents();
         if settings.prefer_translations {
             let target = normalize_language_tag(&settings.preferred_translation_language);
-            if let Some(document) = self.documents.iter().find(|document| {
+            if let Some(document) = documents.iter().find(|document| {
                 document.role == LyricsRole::Translation
                     && language_matches(document.language.as_deref(), target.as_deref())
             }) {
                 return Some(document);
             }
         }
-        self.documents
+        documents
             .iter()
             .find(|document| document.role == LyricsRole::Original)
-            .or_else(|| self.documents.first())
+            .or_else(|| documents.first())
     }
 
     pub fn pronunciation_for(&self, document: &LyricsDocument) -> Option<&LyricsDocument> {
+        let documents = self.documents();
         let matching = |language: Option<&str>| {
-            self.documents.iter().find(|candidate| {
+            documents.iter().find(|candidate| {
                 candidate.role == LyricsRole::Pronunciation
                     && match (
                         normalize_language_tag(candidate.language.as_deref().unwrap_or_default()),
@@ -347,7 +387,7 @@ impl LyricsBundle {
         matching(document.language.as_deref()).or_else(|| {
             (document.role == LyricsRole::Translation)
                 .then(|| {
-                    self.documents
+                    documents
                         .iter()
                         .find(|candidate| candidate.role == LyricsRole::Original)
                         .and_then(|original| matching(original.language.as_deref()))
@@ -358,16 +398,51 @@ impl LyricsBundle {
 
     pub fn has_preferred_translation(&self, settings: &Settings) -> bool {
         let target = normalize_language_tag(&settings.preferred_translation_language);
-        self.documents.iter().any(|document| {
+        self.documents().iter().any(|document| {
             document.role == LyricsRole::Translation
                 && language_matches(document.language.as_deref(), target.as_deref())
         })
     }
 
     pub fn has_original(&self) -> bool {
-        self.documents
+        self.documents()
             .iter()
             .any(|document| document.role == LyricsRole::Original)
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum LyricsSearchContent {
+    Instrumental,
+    Inline {
+        synced_lyrics: Option<String>,
+        plain_lyrics: Option<String>,
+    },
+    Deferred,
+    Unavailable,
+}
+
+impl LyricsSearchContent {
+    pub fn synced_lyrics(&self) -> Option<&str> {
+        match self {
+            Self::Inline { synced_lyrics, .. } => synced_lyrics.as_deref(),
+            Self::Instrumental | Self::Deferred | Self::Unavailable => None,
+        }
+    }
+
+    pub fn plain_lyrics(&self) -> Option<&str> {
+        match self {
+            Self::Inline { plain_lyrics, .. } => plain_lyrics.as_deref(),
+            Self::Instrumental | Self::Deferred | Self::Unavailable => None,
+        }
+    }
+
+    pub const fn can_preview(&self) -> bool {
+        !matches!(self, Self::Unavailable)
+    }
+
+    pub const fn can_save(&self) -> bool {
+        matches!(self, Self::Inline { .. } | Self::Deferred)
     }
 }
 
@@ -379,8 +454,7 @@ pub struct LyricsSearchResult {
     pub artist_name: String,
     pub album_name: String,
     pub duration_seconds: u32,
-    pub synced_lyrics: Option<String>,
-    pub plain_lyrics: Option<String>,
+    pub content: LyricsSearchContent,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -816,10 +890,10 @@ mod tests {
         let original = document(LyricsRole::Original, Some("ja"), "original");
         let french = document(LyricsRole::Translation, Some("fra"), "français");
         let english = document(LyricsRole::Translation, Some("eng"), "English");
-        let bundle = LyricsBundle {
-            origin: LyricsOrigin::Native,
-            documents: vec![original.clone(), french, english],
-        };
+        let bundle = LyricsBundle::from_documents(
+            LyricsOrigin::Native,
+            vec![original.clone(), french, english],
+        );
         let settings = Settings {
             prefer_translations: true,
             preferred_translation_language: "en-US".to_string(),
@@ -833,10 +907,8 @@ mod tests {
         );
 
         let unknown = document(LyricsRole::Translation, None, "unknown language");
-        let bundle = LyricsBundle {
-            origin: LyricsOrigin::Native,
-            documents: vec![original.clone(), unknown],
-        };
+        let bundle =
+            LyricsBundle::from_documents(LyricsOrigin::Native, vec![original.clone(), unknown]);
         assert_eq!(
             bundle
                 .selected_document(&settings)
@@ -844,13 +916,13 @@ mod tests {
             Some("original")
         );
 
-        let bundle = LyricsBundle {
-            origin: LyricsOrigin::Native,
-            documents: vec![
+        let bundle = LyricsBundle::from_documents(
+            LyricsOrigin::Native,
+            vec![
                 original,
                 document(LyricsRole::Translation, Some("fr"), "français"),
             ],
-        };
+        );
         assert_eq!(
             bundle
                 .selected_document(&settings)
