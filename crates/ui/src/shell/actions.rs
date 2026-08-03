@@ -411,6 +411,14 @@ fn show_shortcuts_dialog(shell: &Shell) {
         "win.toggle-fullscreen",
     ));
     section.add(adw::ShortcutsItem::from_action(
+        &tr("Close app window"),
+        "window.close",
+    ));
+    section.add(adw::ShortcutsItem::from_action(
+        &tr("Quit Rufin"),
+        "app.quit",
+    ));
+    section.add(adw::ShortcutsItem::from_action(
         &tr("Show/hide right sidebar"),
         "win.toggle-queue",
     ));

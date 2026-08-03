@@ -67,10 +67,17 @@ fn run_startup_error_application(error: String) -> ExitCode {
 }
 
 fn application() -> adw::Application {
-    adw::Application::builder()
+    let app = adw::Application::builder()
         .application_id(APP_ID)
         .flags(gio::ApplicationFlags::empty())
-        .build()
+        .build();
+    let quit = gio::SimpleAction::new("quit", None);
+    let quit_app = app.clone();
+    quit.connect_activate(move |_, _| quit_app.quit());
+    app.add_action(&quit);
+    app.set_accels_for_action("app.quit", &["<Control>q"]);
+    app.set_accels_for_action("window.close", &["<Control>w"]);
+    app
 }
 
 fn present_startup_error(app: &adw::Application, error: &str) {
