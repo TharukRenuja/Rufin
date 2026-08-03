@@ -133,10 +133,9 @@ impl Shell {
         music_folder_id: Option<MusicFolderId>,
     ) -> MountedRoute {
         let Some(detail) = detail else {
-            return MountedRoute::static_widget(self.placeholder_view(
-                msgid("Smart Playlist"),
-                "The selected smart playlist was not found.",
-            ));
+            return MountedRoute::static_widget(
+                self.placeholder_view(msgid("Smart Playlist"), msgid("This isn't available")),
+            );
         };
         let initial_summary = detail.summary.clone();
         let header = Rc::new(RefCell::new(initial_summary.clone()));
@@ -250,9 +249,7 @@ impl Shell {
         tracks_stack.set_vexpand(true);
         tracks_stack.add_named(&tracks_widget, Some("tracks"));
         tracks_stack.add_named(
-            &library_route_inset(
-                self.placeholder_view("Tracks", "No tracks match this smart playlist."),
-            ),
+            &library_route_inset(self.placeholder_view("Tracks", msgid("No matching tracks"))),
             Some("empty"),
         );
         tracks_stack.set_visible_child_name(if tracks.source_is_empty() {
@@ -267,10 +264,7 @@ impl Shell {
         route_stack.set_vexpand(true);
         route_stack.add_named(&wrapper, Some("detail"));
         route_stack.add_named(
-            &self.placeholder_view(
-                msgid("Smart Playlist"),
-                "The selected smart playlist was not found.",
-            ),
+            &self.placeholder_view(msgid("Smart Playlist"), msgid("This isn't available")),
             Some("missing"),
         );
         route_stack.set_visible_child_name("detail");
@@ -422,7 +416,7 @@ impl Shell {
         let settings = self.settings.current.borrow().clone();
         let Some(detail) = detail else {
             return MountedRoute::static_widget(
-                self.placeholder_view("Playlist", "The selected cached playlist was not found."),
+                self.placeholder_view("Playlist", msgid("This isn't available")),
             );
         };
         let header = Rc::new(RefCell::new(detail.summary.clone()));
@@ -583,7 +577,7 @@ impl Shell {
         route_stack.set_vexpand(true);
         route_stack.add_named(&wrapper, Some("content"));
         route_stack.add_named(
-            &self.placeholder_view("Playlist", "The selected cached playlist was not found."),
+            &self.placeholder_view("Playlist", msgid("This isn't available")),
             Some("missing"),
         );
         route_stack.set_visible_child_name("content");

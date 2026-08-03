@@ -85,9 +85,7 @@ impl SearchRouteProjection {
         status.set_hexpand(true);
         status.set_vexpand(true);
         status.add_named(
-            &shell.route_empty_view(msgid(
-                "Start typing to do a global search in your configured source",
-            )),
+            &shell.route_empty_view(msgid("Type to search")),
             Some("initial"),
         );
         status.add_named(&search_loading(), Some("loading"));

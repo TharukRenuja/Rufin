@@ -82,7 +82,7 @@ impl Shell {
         } else if has_current_track {
             (tr("Search lyrics"), true)
         } else {
-            (tr("No track playing"), false)
+            (tr("Nothing playing"), false)
         };
         let lyrics = self.visible_lyrics();
         let instrumental = self.visible_lyrics_are_instrumental();
@@ -339,7 +339,7 @@ impl Shell {
         );
         clear_list_box(&dialog.list);
         if results.is_empty() {
-            dialog.status.set_text(&tr("No lyrics found."));
+            dialog.status.set_text(&tr("No lyrics"));
             return;
         }
 
@@ -462,7 +462,7 @@ impl Shell {
             "applying lyric search failure"
         );
         clear_list_box(&dialog.list);
-        dialog.status.set_text(&tr("Search failed."));
+        dialog.status.set_text(&tr("Couldn't search for lyrics"));
     }
     fn schedule_lyrics_search(self: &Rc<Self>) {
         let Some(dialog) = self.lyrics.search_dialog.borrow().clone() else {

@@ -120,9 +120,6 @@ msgstr ""
 msgid "About Rufin"
 msgstr ""
 
-msgid "Accepted plays will appear here."
-msgstr ""
-
 msgid "Add Rule"
 msgstr ""
 
@@ -139,9 +136,6 @@ msgid "Add folder"
 msgstr ""
 
 msgid "Add folders to use the Local source."
-msgstr ""
-
-msgid "Add music to start a queue."
 msgstr ""
 
 msgid "Add server"
@@ -265,9 +259,6 @@ msgid "Back"
 msgstr ""
 
 msgid "By default, this uses Rufin's own cache directory."
-msgstr ""
-
-msgid "Cached entries will appear here after sync finishes"
 msgstr ""
 
 msgid "Cached"
@@ -404,6 +395,9 @@ msgid "Control notifications"
 msgstr ""
 
 msgid "Could not save diagnostic log"
+msgstr ""
+
+msgid "Couldn't search for lyrics"
 msgstr ""
 
 msgid "Create"
@@ -556,9 +550,6 @@ msgstr ""
 msgid "Enter a server address, username, and password"
 msgstr ""
 
-msgid "Enter an artist or song."
-msgstr ""
-
 msgid "Entire Library"
 msgstr ""
 
@@ -572,6 +563,9 @@ msgid "Expand sidebar"
 msgstr ""
 
 msgid "Explore"
+msgstr ""
+
+msgid "External lyric lookup is off"
 msgstr ""
 
 msgid "External lyric lookup"
@@ -799,9 +793,6 @@ msgstr ""
 msgid "ListenBrainz"
 msgstr ""
 
-msgid "Loaded in lyrics panel."
-msgstr ""
-
 msgid "Loading folders..."
 msgstr ""
 
@@ -842,6 +833,9 @@ msgid "Local"
 msgstr ""
 
 msgid "Lock metadata"
+msgstr ""
+
+msgid "Lyrics loaded"
 msgstr ""
 
 msgid "Lyrics offset (ms)"
@@ -979,9 +973,6 @@ msgstr ""
 msgid "New download rule"
 msgstr ""
 
-msgid "New downloads will appear here."
-msgstr ""
-
 msgid "Newly added"
 msgstr ""
 
@@ -1000,10 +991,13 @@ msgstr ""
 msgid "No Servers Found"
 msgstr ""
 
+msgid "No albums from this artist yet"
+msgstr ""
+
 msgid "No cached server path yet"
 msgstr ""
 
-msgid "No folder contents found."
+msgid "No favorites yet"
 msgstr ""
 
 msgid "No folder selected"
@@ -1021,22 +1015,19 @@ msgstr ""
 msgid "No local folders configured"
 msgstr ""
 
-msgid "No lyrics for the current track."
-msgstr ""
-
-msgid "No lyrics found."
-msgstr ""
-
 msgid "No lyrics"
+msgstr ""
+
+msgid "No matching tracks"
+msgstr ""
+
+msgid "No music from this artist yet"
 msgstr ""
 
 msgid "No remote sources configured"
 msgstr ""
 
-msgid "No server lyrics for the current track. External lyric lookup is off."
-msgstr ""
-
-msgid "No server lyrics for the current track. Private mode is on."
+msgid "No smart playlists yet"
 msgstr ""
 
 msgid "No source"
@@ -1045,7 +1036,7 @@ msgstr ""
 msgid "No sources configured"
 msgstr ""
 
-msgid "No track playing"
+msgid "No tracks here yet"
 msgstr ""
 
 msgid "No"
@@ -1055,6 +1046,15 @@ msgid "None"
 msgstr ""
 
 msgid "Not connected"
+msgstr ""
+
+msgid "Nothing here yet"
+msgstr ""
+
+msgid "Nothing in this folder"
+msgstr ""
+
+msgid "Nothing played yet"
 msgstr ""
 
 msgid "Nothing playing"
@@ -1475,9 +1475,6 @@ msgstr ""
 msgid "Search Lyrics"
 msgstr ""
 
-msgid "Search failed."
-msgstr ""
-
 msgid "Search lyrics"
 msgstr ""
 
@@ -1555,6 +1552,9 @@ msgstr ""
 
 #, rust-format
 msgid "Server discovery failed: {error}"
+msgstr ""
+
+msgid "Server lyrics are off in private mode"
 msgstr ""
 
 msgid "Server path"
@@ -1650,9 +1650,6 @@ msgstr ""
 msgid "Smart playlist tracks"
 msgstr ""
 
-msgid "Smart playlists will appear here after the default set is seeded."
-msgstr ""
-
 msgid "Smart playlists"
 msgstr ""
 
@@ -1677,9 +1674,6 @@ msgstr ""
 msgid "Start minimized"
 msgstr ""
 
-msgid "Start typing to do a global search in your configured source"
-msgstr ""
-
 msgid "Status display"
 msgstr ""
 
@@ -1702,6 +1696,9 @@ msgid "Techno"
 msgstr ""
 
 msgid "Text"
+msgstr ""
+
+msgid "This isn't available"
 msgstr ""
 
 msgid "This removes the folder from the Local source."

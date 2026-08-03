@@ -795,7 +795,7 @@ fn queue_panel_render_state(
         if has_filter && queue_has_entries {
             tr(r"No results ¯\_(°╭╮°)_/¯")
         } else {
-            tr("Add music to start a queue.")
+            tr("Nothing queued")
         }
     });
     QueuePanelRenderState {

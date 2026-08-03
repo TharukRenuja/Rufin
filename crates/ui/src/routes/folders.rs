@@ -275,7 +275,7 @@ impl FolderRouteProjection {
         empty.set_hexpand(true);
         empty.set_valign(gtk::Align::Center);
         empty.set_halign(gtk::Align::Center);
-        let empty_label = localized_label("No folder contents found.");
+        let empty_label = localized_label("Nothing in this folder");
         empty_label.add_css_class("muted");
         let retry = gtk::Button::with_label(&tr("Refresh"));
         retry.add_css_class("pill");
@@ -775,8 +775,8 @@ fn folder_name_column(shell: &Rc<Shell>) -> gtk::ColumnViewColumn {
             }
             FolderTableRow::Empty => {
                 let label = folder_table_label("", 28);
-                bind_label_text(&label, "No folder contents found.");
-                bind_widget_tooltip(&label, "No folder contents found.");
+                bind_label_text(&label, "Nothing in this folder");
+                bind_widget_tooltip(&label, "Nothing in this folder");
                 label.add_css_class("muted");
                 content.append(&label);
             }
@@ -973,7 +973,7 @@ impl FolderTableRow {
             Self::Track { track, .. } => {
                 format!("{} — {} — {}", track.title, track.artist, track.album)
             }
-            Self::Empty => tr("No folder contents found."),
+            Self::Empty => tr("Nothing in this folder"),
         }
     }
 }

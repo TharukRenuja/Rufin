@@ -713,7 +713,6 @@ fn add_download_queue(
         if snapshot.jobs.is_empty() {
             let row = adw::ActionRow::builder()
                 .title(tr("Nothing queued"))
-                .subtitle(tr("New downloads will appear here."))
                 .build();
             row.set_focusable(true);
             queue.add(&row);

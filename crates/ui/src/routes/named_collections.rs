@@ -70,7 +70,7 @@ impl NamedCollectionKind {
 
     fn fallback_warning(self) -> &'static str {
         match self {
-            Self::Genres => msgid("Cached entries will appear here after sync finishes"),
+            Self::Genres => msgid("Nothing here yet"),
             Self::Moods => {
                 msgid("Files need Mood/BPM tags written on them. Not supported for Jellyfin")
             }

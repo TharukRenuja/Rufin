@@ -72,7 +72,7 @@ impl Shell {
         stack.set_vexpand(true);
         stack.add_named(&grouped.widget(), Some("content"));
         stack.add_named(
-            &self.placeholder_view("Mood", "The selected cached mood was not found."),
+            &self.placeholder_view("Mood", msgid("This isn't available")),
             Some("missing"),
         );
         stack.set_visible_child_name("content");

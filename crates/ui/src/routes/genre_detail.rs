@@ -47,7 +47,7 @@ impl Shell {
     ) -> MountedRoute {
         let Some(detail) = detail else {
             return MountedRoute::static_widget(
-                self.placeholder_view("Genre", "The selected cached genre was not found."),
+                self.placeholder_view("Genre", msgid("This isn't available")),
             );
         };
         let genre = detail.summary;
@@ -89,7 +89,7 @@ impl Shell {
         stack.set_vexpand(true);
         stack.add_named(&grouped.widget(), Some("content"));
         stack.add_named(
-            &self.placeholder_view("Genre", "The selected cached genre was not found."),
+            &self.placeholder_view("Genre", msgid("This isn't available")),
             Some("missing"),
         );
         stack.set_visible_child_name("content");

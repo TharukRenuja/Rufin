@@ -134,7 +134,7 @@ pub(crate) fn submit_lyrics_search(shell: &Rc<Shell>) {
     let artist_name = dialog.artist_entry.text().trim().to_string();
     let track_name = dialog.title_entry.text().trim().to_string();
     if artist_name.is_empty() && track_name.is_empty() {
-        dialog.status.set_text(&tr("Enter an artist or song."));
+        dialog.status.set_text(&tr("Type to search"));
         return;
     }
     clear_list_box(&dialog.list);

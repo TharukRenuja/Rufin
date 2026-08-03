@@ -163,9 +163,9 @@ impl Shell {
             && !self.current_lyrics_loading()
         {
             dialog.status.set_text(&if has_lyrics {
-                tr("Loaded in lyrics panel.")
+                tr("Lyrics loaded")
             } else {
-                tr("No lyrics found.")
+                tr("No lyrics")
             });
         }
         if document_changed {
@@ -241,11 +241,11 @@ impl Shell {
     pub(crate) fn lyrics_empty_status(&self) -> String {
         let settings = self.settings.current.borrow();
         if settings.private_mode {
-            tr("No server lyrics for the current track. Private mode is on.")
+            tr("Server lyrics are off in private mode")
         } else if !settings.lyrics.external_lyrics_enabled {
-            tr("No server lyrics for the current track. External lyric lookup is off.")
+            tr("External lyric lookup is off")
         } else {
-            tr("No lyrics for the current track.")
+            tr("No lyrics")
         }
     }
 

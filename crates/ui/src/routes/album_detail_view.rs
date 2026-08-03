@@ -67,7 +67,7 @@ impl Shell {
     ) -> MountedRoute {
         let Some(detail) = detail else {
             return MountedRoute::static_widget(
-                self.placeholder_view("Album", "The selected cached album was not found."),
+                self.placeholder_view("Album", msgid("This isn't available")),
             );
         };
         let album = Arc::clone(&detail.summary.album);
@@ -288,7 +288,7 @@ impl Shell {
         route_stack.set_vexpand(true);
         route_stack.add_named(&wrapper, Some("content"));
         route_stack.add_named(
-            &self.placeholder_view("Album", "The selected cached album was not found."),
+            &self.placeholder_view("Album", msgid("This isn't available")),
             Some("missing"),
         );
         route_stack.set_visible_child_name("content");
