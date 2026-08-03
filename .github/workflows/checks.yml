@@ -92,7 +92,7 @@ jobs:
 
             for path in "${changed_paths[@]}"; do
               case "$path" in
-                LICENSE|data|data/*|*.md|.github/ISSUE_TEMPLATE/*)
+                LICENSE|data|data/*|*.md|.github/FUNDING.yml|.github/ISSUE_TEMPLATE/*)
                   continue
                   ;;
               esac
@@ -124,22 +124,22 @@ jobs:
                 .github/workflows/checks.yml)
                   add_jobs workspace cargo-deny
                   ;;
-                .github/workflows/aur-build.yml|.github/workflows/aur.yml)
+                .github/workflows/aur-build.yml)
                   add_jobs aur_bin aur_git
                   ;;
-                .github/workflows/rpm-source.yml|.github/workflows/rpm.yml|packaging/rpm/*)
+                .github/workflows/rpm-source.yml|packaging/rpm/*)
                   add_jobs rpm
                   ;;
                 .github/workflows/nix.yml|packaging/nix/*)
                   add_jobs nix
                   ;;
-                .github/workflows/flatpak-build.yml|.github/workflows/flatpak.yml|packaging/flatpak/*)
+                .github/workflows/flatpak-build.yml|packaging/flatpak/*)
                   add_jobs flatpak
                   ;;
-                .github/workflows/macos*.yml|packaging/macos/*)
+                .github/workflows/macos-build.yml|packaging/macos/*)
                   add_jobs macos
                   ;;
-                .github/workflows/windows*.yml|packaging/windows/*)
+                .github/workflows/windows-build.yml|packaging/windows/*)
                   add_jobs windows
                   ;;
                 crates/windows-updater/*)
