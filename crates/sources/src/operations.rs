@@ -1,4 +1,3 @@
-use library::{GenreId, RadioSeed, TrackId};
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -77,59 +76,8 @@ pub struct NativeLyrics {
     pub documents: Vec<NativeLyricsDocument>,
 }
 
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
-pub enum PlayedFilter {
-    #[default]
-    All,
-    Unplayed,
-    Played,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
-pub struct RandomTrackRequest {
-    pub limit: usize,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub min_year: Option<u16>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub max_year: Option<u16>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub genre_id: Option<GenreId>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub genre_name: Option<String>,
-    pub played_filter: PlayedFilter,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
-pub struct GeneratedTracksRequest {
-    pub seed: RadioSeed,
-    pub limit: usize,
-}
-
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct ImageBytes {
     pub bytes: Vec<u8>,
     pub content_type: Option<String>,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
-pub enum PlaybackReportKind {
-    Started,
-    Progress,
-    QualifiedPlay,
-    Stopped,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
-pub struct PlaybackReport {
-    pub kind: PlaybackReportKind,
-    pub track_id: TrackId,
-    pub started_at_unix_seconds: i64,
-    pub position_seconds: u32,
-    pub paused: bool,
-    pub muted: bool,
-    pub volume_percent: u8,
-    pub shuffle: bool,
-    pub repeat_one: bool,
-    pub repeat_all: bool,
-    pub failed: bool,
 }

@@ -1,8 +1,8 @@
 use std::rc::Rc;
 
-use ::library::{GenreId, GenreSummary};
+use ::library::{GenreId, GenreSummary, PlayedFilter, RandomCriteria};
 use adw::prelude::*;
-use playback::{PlayedFilter, QueuePlacement, RandomPlayRequest};
+use playback::{QueuePlacement, RandomPlayRequest};
 
 use crate::preferences::dialogs::popup::present_light_dismiss_dialog;
 use localization::tr;
@@ -235,18 +235,20 @@ fn request_from_controls(
     .copied()?;
     Some(RandomPlayRequest {
         placement,
-        limit: controls.limit.value_as_int().clamp(1, 500) as usize,
-        min_year: controls
-            .min_year_enabled
-            .is_active()
-            .then(|| controls.min_year.value_as_int().clamp(1850, 2050) as u16),
-        max_year: controls
-            .max_year_enabled
-            .is_active()
-            .then(|| controls.max_year.value_as_int().clamp(1850, 2050) as u16),
-        genre_id,
-        genre_name,
-        played_filter,
+        criteria: RandomCriteria {
+            limit: controls.limit.value_as_int().clamp(1, 500) as usize,
+            min_year: controls
+                .min_year_enabled
+                .is_active()
+                .then(|| controls.min_year.value_as_int().clamp(1850, 2050) as u16),
+            max_year: controls
+                .max_year_enabled
+                .is_active()
+                .then(|| controls.max_year.value_as_int().clamp(1850, 2050) as u16),
+            genre_id,
+            genre_name,
+            played_filter,
+        },
     })
 }
 

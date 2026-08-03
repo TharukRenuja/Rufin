@@ -679,17 +679,18 @@ async fn qualified_play_reports_the_original_start_time() {
     let source = provider(&server);
 
     source
-        .report_playback(PlaybackReport {
-            kind: PlaybackReportKind::QualifiedPlay,
+        .report_playback(SourceReportFact {
+            run: playback::RunId::new(1),
+            source_id: SourceId::new("subsonic:server:test"),
             track_id: TrackId::new("subsonic:track:song-one"),
+            phase: SourceReportPhase::QualifiedPlay,
             started_at_unix_seconds: 1_700_000_000,
-            position_seconds: 90,
+            position_millis: 90_000,
             paused: false,
             muted: false,
-            volume_percent: 100,
+            volume: 1.0,
             shuffle: false,
-            repeat_one: false,
-            repeat_all: false,
+            repeat_mode: playback::RepeatMode::Off,
             failed: false,
         })
         .await

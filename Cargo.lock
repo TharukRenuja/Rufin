@@ -3706,6 +3706,7 @@ dependencies = [
  "lofty",
  "md5",
  "notify",
+ "playback",
  "reqwest",
  "rustix",
  "serde",

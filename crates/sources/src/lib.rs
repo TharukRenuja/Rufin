@@ -22,10 +22,9 @@ pub use config::{
     SourceConfiguration, SourceSettingsInput, SourceSetupInput,
 };
 pub use operations::{
-    GeneratedTracksRequest, ImageBytes, LyricsSearch, NativeLyricAgent, NativeLyricAgentRole,
-    NativeLyricCue, NativeLyricCueLine, NativeLyricLine, NativeLyrics, NativeLyricsDocument,
-    NativeLyricsOrigin, NativeLyricsRole, PlaybackReport, PlaybackReportKind, PlayedFilter,
-    RandomTrackRequest,
+    ImageBytes, LyricsSearch, NativeLyricAgent, NativeLyricAgentRole, NativeLyricCue,
+    NativeLyricCueLine, NativeLyricLine, NativeLyrics, NativeLyricsDocument, NativeLyricsOrigin,
+    NativeLyricsRole,
 };
 pub use source::*;
 

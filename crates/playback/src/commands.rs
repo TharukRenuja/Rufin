@@ -1,10 +1,9 @@
 use std::sync::Arc;
 
 use library::{
-    GenreId, LibraryQueryError, LibraryQueryResult, RadioSeed, SourceId, Track, TrackId, TrackList,
-    TrackSelection,
+    LibraryQueryError, LibraryQueryResult, RadioSeed, RandomCriteria, SourceId, Track, TrackId,
+    TrackList, TrackSelection,
 };
-use serde::{Deserialize, Serialize};
 
 use crate::{
     AudioOutput, Batch, BatchItem, OccurrenceId, Placement, Provenance, QueuePage, QueuePageQuery,
@@ -286,23 +285,10 @@ pub struct QueueReorderRequest {
     pub after: bool,
 }
 
-#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
-pub enum PlayedFilter {
-    #[default]
-    All,
-    Unplayed,
-    Played,
-}
-
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RandomPlayRequest {
     pub placement: QueuePlacement,
-    pub limit: usize,
-    pub min_year: Option<u16>,
-    pub max_year: Option<u16>,
-    pub genre_id: Option<GenreId>,
-    pub genre_name: Option<String>,
-    pub played_filter: PlayedFilter,
+    pub criteria: RandomCriteria,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

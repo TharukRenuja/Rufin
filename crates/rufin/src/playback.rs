@@ -26,7 +26,7 @@ use playback::{
     SourceReportFact, SourceReportPhase, SourceSessionEpoch, TransportCommandPort,
 };
 use scrobbling::Scrobbler;
-use sources::{NativeSourceResult, PlaybackReport, PlaybackReportKind, Source};
+use sources::{NativeSourceResult, Source};
 use tracing::{debug, warn};
 use ui::runtime::PlaybackPublication;
 
@@ -657,22 +657,15 @@ impl<T> SourceReportMailbox<T> {
     }
 }
 
-struct SourceReportJob {
-    source: Arc<Source>,
-    report: PlaybackReport,
-}
+struct SourceReportJob(Arc<Source>, SourceReportFact);
 
 impl SourceReportMailbox<SourceReportJob> {
     async fn drain(self: Arc<Self>) {
         while let Some(pending) = self.next() {
             let run = pending.key.run;
             let phase = pending.phase;
-            if let Err(error) = pending
-                .payload
-                .source
-                .report_playback(pending.payload.report)
-                .await
-            {
+            let SourceReportJob(source, report) = pending.payload;
+            if let Err(error) = source.report_playback(report).await {
                 warn!(%error, %run, ?phase, "source playback report failed");
             }
         }
@@ -1202,31 +1195,13 @@ impl PlaybackOwner {
     fn report_source(&self, instance: u64, source: Arc<Source>, fact: SourceReportFact) {
         let run = fact.run;
         let phase = fact.phase;
-        let report = PlaybackReport {
-            kind: match phase {
-                SourceReportPhase::Started => PlaybackReportKind::Started,
-                SourceReportPhase::Progress => PlaybackReportKind::Progress,
-                SourceReportPhase::QualifiedPlay => PlaybackReportKind::QualifiedPlay,
-                SourceReportPhase::Ended => PlaybackReportKind::Stopped,
-            },
-            track_id: fact.track_id,
-            started_at_unix_seconds: fact.started_at_unix_seconds,
-            position_seconds: (fact.position_millis / 1_000).min(u64::from(u32::MAX)) as u32,
-            paused: fact.paused,
-            muted: fact.muted,
-            volume_percent: (fact.volume.clamp(0.0, 1.0) * 100.0).round() as u8,
-            shuffle: fact.shuffle,
-            repeat_one: fact.repeat_mode == RepeatMode::One,
-            repeat_all: fact.repeat_mode == RepeatMode::All,
-            failed: fact.failed,
-        };
         let pending = PendingSourceReport {
             key: SourceReportKey {
                 playback_instance: instance,
                 run,
             },
             phase,
-            payload: SourceReportJob { source, report },
+            payload: SourceReportJob(source, fact),
         };
         match self.source_reports.admit(pending) {
             Ok(true) => {
@@ -2135,12 +2110,14 @@ mod loaded_play_tests {
             playback.clone(),
             RandomPlayRequest {
                 placement: QueuePlacement::Now,
-                limit: 1,
-                min_year: None,
-                max_year: None,
-                genre_id: None,
-                genre_name: None,
-                played_filter: playback::PlayedFilter::All,
+                criteria: library::RandomCriteria {
+                    limit: 1,
+                    min_year: None,
+                    max_year: None,
+                    genre_id: None,
+                    genre_name: None,
+                    played_filter: library::PlayedFilter::All,
+                },
             },
         );
         release.recv().expect("release queue intent worker");
@@ -2218,12 +2195,14 @@ mod loaded_play_tests {
             playback.clone(),
             RandomPlayRequest {
                 placement: QueuePlacement::Now,
-                limit: 1,
-                min_year: None,
-                max_year: None,
-                genre_id: None,
-                genre_name: None,
-                played_filter: playback::PlayedFilter::All,
+                criteria: library::RandomCriteria {
+                    limit: 1,
+                    min_year: None,
+                    max_year: None,
+                    genre_id: None,
+                    genre_name: None,
+                    played_filter: library::PlayedFilter::All,
+                },
             },
         )
         .expect("random intent reserved queue work");
@@ -2298,12 +2277,14 @@ mod loaded_play_tests {
             playback.clone(),
             RandomPlayRequest {
                 placement: QueuePlacement::Now,
-                limit: 1,
-                min_year: None,
-                max_year: None,
-                genre_id: None,
-                genre_name: None,
-                played_filter: playback::PlayedFilter::All,
+                criteria: library::RandomCriteria {
+                    limit: 1,
+                    min_year: None,
+                    max_year: None,
+                    genre_id: None,
+                    genre_name: None,
+                    played_filter: library::PlayedFilter::All,
+                },
             },
         )
         .expect("random intent reserved queue work");

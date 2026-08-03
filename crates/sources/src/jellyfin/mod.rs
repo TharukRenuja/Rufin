@@ -1,11 +1,9 @@
 use crate::config::{decode_provider_payload, require_payload_version};
 use crate::policy::{raw_item_id, stable_hash};
 use crate::{
-    ConnectedSource, CredentialHostInput, GeneratedTracksRequest, ImageBytes,
-    JellyfinSettingsInput, JellyfinSetupInput, LyricsSearch, NativeLyricLine, NativeLyrics,
-    NativeLyricsDocument, NativeLyricsOrigin, NativeLyricsRole, PlaybackReport, PlaybackReportKind,
-    PlayedFilter, RandomTrackRequest, SourceConfiguration, SourceEditResult, SourceError,
-    SourceResult,
+    ConnectedSource, CredentialHostInput, ImageBytes, JellyfinSettingsInput, JellyfinSetupInput,
+    LyricsSearch, NativeLyricLine, NativeLyrics, NativeLyricsDocument, NativeLyricsOrigin,
+    NativeLyricsRole, SourceConfiguration, SourceEditResult, SourceError, SourceResult,
 };
 pub use discovery::{DiscoveredJellyfinServer, discover_jellyfin_servers};
 use item::{
@@ -15,9 +13,11 @@ use item::{
 };
 use library::{
     AlbumId, FavoriteItemId, Folder, FolderId, HomeItemId, ImageRef, MusicFolder, MusicFolderId,
-    Playlist, PlaylistEntry, PlaylistId, PlaylistSnapshot, ResolvedStream, SourceHomeSection,
-    SourceHomeSectionKind, SourceId, StreamRequest, Track, TrackId,
+    PlayedFilter, Playlist, PlaylistEntry, PlaylistId, PlaylistSnapshot, RadioSeed, RandomCriteria,
+    ResolvedStream, SourceHomeSection, SourceHomeSectionKind, SourceId, StreamRequest, Track,
+    TrackId,
 };
+use playback::{RepeatMode, SourceReportFact, SourceReportPhase};
 use reqwest::{Client, Url, header};
 use serde::Deserialize;
 use std::sync::Arc;

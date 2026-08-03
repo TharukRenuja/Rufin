@@ -1356,15 +1356,56 @@ async fn radio_falls_back_from_empty_similar_tracks_to_instant_mix() {
     let source = provider(&server, "secret-token");
 
     let tracks = source
-        .generated_tracks(GeneratedTracksRequest {
-            seed: RadioSeed::Track(TrackId::new("jellyfin:track:track-one")),
-            limit: 20,
-        })
+        .generated_tracks(
+            &RadioSeed::Track(TrackId::new("jellyfin:track:track-one")),
+            20,
+        )
         .await
         .expect("Jellyfin radio");
 
     assert_eq!(tracks.len(), 1);
     assert_eq!(tracks[0].id.as_str(), "jellyfin:track:track-two");
+}
+
+#[tokio::test]
+async fn playback_report_maps_the_canonical_fact_at_the_jellyfin_boundary() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/Sessions/Playing/Progress"))
+        .and(body_json(serde_json::json!({
+            "CanSeek": true,
+            "ItemId": "track-one",
+            "IsPaused": true,
+            "IsMuted": false,
+            "PositionTicks": 900000000,
+            "VolumeLevel": 63,
+            "PlayMethod": "DirectPlay",
+            "RepeatMode": "RepeatAll",
+            "PlaybackOrder": "Shuffle",
+            "Failed": true
+        })))
+        .respond_with(ResponseTemplate::new(204))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    provider(&server, "secret-token")
+        .report_playback(SourceReportFact {
+            run: playback::RunId::new(1),
+            source_id: SourceId::new("jellyfin:server:test:user:user-one"),
+            track_id: TrackId::new("jellyfin:track:track-one"),
+            phase: SourceReportPhase::Progress,
+            started_at_unix_seconds: 1_700_000_000,
+            position_millis: 90_999,
+            paused: true,
+            muted: false,
+            volume: 0.625,
+            shuffle: true,
+            repeat_mode: playback::RepeatMode::All,
+            failed: true,
+        })
+        .await
+        .expect("report Jellyfin playback");
 }
 
 #[tokio::test]

@@ -196,11 +196,11 @@ fn folder_contents(folders: Vec<Folder>, tracks: Vec<Track>) -> library::FolderC
 impl JellyfinSource {
     pub(crate) async fn random_tracks(
         &self,
-        request: RandomTrackRequest,
+        criteria: &RandomCriteria,
     ) -> SourceResult<Vec<Track>> {
         let mut url = endpoint(&self.base_url, "Items")?;
-        let limit = request.limit.clamp(1, 500).to_string();
-        let years = jellyfin_year_filter(request.min_year, request.max_year)?;
+        let limit = criteria.limit.clamp(1, 500).to_string();
+        let years = jellyfin_year_filter(criteria.min_year, criteria.max_year)?;
         {
             let mut query = url.query_pairs_mut();
             query
@@ -215,16 +215,16 @@ impl JellyfinSource {
             if let Some(years) = years.as_deref() {
                 query.append_pair("Years", years);
             }
-            if let Some(genre_id) = request.genre_id.as_ref() {
+            if let Some(genre_id) = criteria.genre_id.as_ref() {
                 query.append_pair("GenreIds", raw_item_id(genre_id.as_str()));
-            } else if let Some(genre_name) = request
+            } else if let Some(genre_name) = criteria
                 .genre_name
                 .as_deref()
                 .filter(|name| !name.is_empty())
             {
                 query.append_pair("Genres", genre_name);
             }
-            match request.played_filter {
+            match criteria.played_filter {
                 PlayedFilter::All => {}
                 PlayedFilter::Unplayed => {
                     query.append_pair("IsPlayed", "false");
@@ -243,18 +243,19 @@ impl JellyfinSource {
 impl JellyfinSource {
     pub(crate) async fn generated_tracks(
         &self,
-        request: GeneratedTracksRequest,
+        seed: &RadioSeed,
+        limit: usize,
     ) -> SourceResult<Vec<Track>> {
         if self.use_instant_mix {
-            return self.instant_mix_tracks(&request.seed, request.limit).await;
+            return self.instant_mix_tracks(seed, limit).await;
         }
-        if let library::RadioSeed::Track(track_id) = &request.seed {
-            let tracks = self.similar_tracks(track_id, request.limit).await?;
+        if let RadioSeed::Track(track_id) = seed {
+            let tracks = self.similar_tracks(track_id, limit).await?;
             if !tracks.is_empty() {
                 return Ok(tracks);
             }
         }
-        self.instant_mix_tracks(&request.seed, request.limit).await
+        self.instant_mix_tracks(seed, limit).await
     }
 }
 
@@ -466,12 +467,12 @@ impl JellyfinSource {
 }
 
 impl JellyfinSource {
-    pub(crate) async fn report_playback(&self, report: PlaybackReport) -> SourceResult<()> {
-        let path = match report.kind {
-            PlaybackReportKind::Started => "Sessions/Playing",
-            PlaybackReportKind::Progress => "Sessions/Playing/Progress",
-            PlaybackReportKind::QualifiedPlay => return Ok(()),
-            PlaybackReportKind::Stopped => "Sessions/Playing/Stopped",
+    pub(crate) async fn report_playback(&self, report: SourceReportFact) -> SourceResult<()> {
+        let path = match report.phase {
+            SourceReportPhase::Started => "Sessions/Playing",
+            SourceReportPhase::Progress => "Sessions/Playing/Progress",
+            SourceReportPhase::QualifiedPlay => return Ok(()),
+            SourceReportPhase::Ended => "Sessions/Playing/Stopped",
         };
         let url = endpoint(&self.base_url, path)?;
         let body = PlaybackReportDto::from_report(report);
@@ -1075,21 +1076,20 @@ pub(super) struct PlaybackReportDto {
 }
 
 impl PlaybackReportDto {
-    pub(super) fn from_report(report: PlaybackReport) -> Self {
+    pub(super) fn from_report(report: SourceReportFact) -> Self {
+        let position_seconds = (report.position_millis / 1_000).min(u64::from(u32::MAX)) as u32;
         Self {
             can_seek: true,
             item_id: raw_item_id(report.track_id.as_str()).to_string(),
             is_paused: report.paused,
             is_muted: report.muted,
-            position_ticks: i64::from(report.position_seconds) * 10_000_000,
-            volume_level: i32::from(report.volume_percent.min(100)),
+            position_ticks: i64::from(position_seconds) * 10_000_000,
+            volume_level: (report.volume.clamp(0.0, 1.0) * 100.0).round() as i32,
             play_method: "DirectPlay",
-            repeat_mode: if report.repeat_one {
-                "RepeatOne"
-            } else if report.repeat_all {
-                "RepeatAll"
-            } else {
-                "RepeatNone"
+            repeat_mode: match report.repeat_mode {
+                RepeatMode::Off => "RepeatNone",
+                RepeatMode::One => "RepeatOne",
+                RepeatMode::All => "RepeatAll",
             },
             playback_order: if report.shuffle { "Shuffle" } else { "Default" },
             failed: report.failed,

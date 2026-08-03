@@ -3202,31 +3202,32 @@ impl SourcePort for SourceOwner {
             servers: Arc::from([]),
             status: DiscoveryStatus::Searching,
         });
-        self.shared.runtime.spawn_blocking(move || {
-            let update = match sources::discover_jellyfin_servers(Duration::from_millis(1_500)) {
-                Ok(servers) if servers.is_empty() => DiscoveryUpdate {
-                    servers: Arc::from([]),
-                    status: DiscoveryStatus::Empty,
-                },
-                Ok(servers) => {
-                    let servers = servers
-                        .into_iter()
-                        .map(|server| DiscoveredServer {
-                            name: server.name,
-                            address: server.address,
-                            id: server.id,
-                        })
-                        .collect::<Vec<_>>();
-                    DiscoveryUpdate {
-                        status: DiscoveryStatus::Found(servers.len() as u64),
-                        servers: servers.into(),
+        self.shared.runtime.spawn(async move {
+            let update =
+                match sources::discover_jellyfin_servers(Duration::from_millis(1_500)).await {
+                    Ok(servers) if servers.is_empty() => DiscoveryUpdate {
+                        servers: Arc::from([]),
+                        status: DiscoveryStatus::Empty,
+                    },
+                    Ok(servers) => {
+                        let servers = servers
+                            .into_iter()
+                            .map(|server| DiscoveredServer {
+                                name: server.name,
+                                address: server.address,
+                                id: server.id,
+                            })
+                            .collect::<Vec<_>>();
+                        DiscoveryUpdate {
+                            status: DiscoveryStatus::Found(servers.len() as u64),
+                            servers: servers.into(),
+                        }
                     }
-                }
-                Err(error) => DiscoveryUpdate {
-                    servers: Arc::from([]),
-                    status: DiscoveryStatus::Failed(error.to_string()),
-                },
-            };
+                    Err(error) => DiscoveryUpdate {
+                        servers: Arc::from([]),
+                        status: DiscoveryStatus::Failed(error.to_string()),
+                    },
+                };
             let _ = events.try_send(update);
         });
     }

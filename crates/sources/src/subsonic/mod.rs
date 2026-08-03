@@ -1,19 +1,19 @@
 use crate::config::{decode_provider_payload, require_payload_version};
 use crate::policy::{raw_item_id, stable_hash, u16_from_option};
 use crate::{
-    ConnectedSource, CredentialHostInput, CredentialSettingsInput, GeneratedTracksRequest,
-    ImageBytes, LyricsSearch, NativeLyricAgent, NativeLyricAgentRole, NativeLyricCue,
-    NativeLyricCueLine, NativeLyricLine, NativeLyrics, NativeLyricsDocument, NativeLyricsOrigin,
-    NativeLyricsRole, PlaybackReport, PlaybackReportKind, PlayedFilter, RandomTrackRequest,
-    SourceConfiguration, SourceEditResult, SourceError, SourceResult,
+    ConnectedSource, CredentialHostInput, CredentialSettingsInput, ImageBytes, LyricsSearch,
+    NativeLyricAgent, NativeLyricAgentRole, NativeLyricCue, NativeLyricCueLine, NativeLyricLine,
+    NativeLyrics, NativeLyricsDocument, NativeLyricsOrigin, NativeLyricsRole, SourceConfiguration,
+    SourceEditResult, SourceError, SourceResult,
 };
 use library::{
     Album, AlbumId, AlbumRelations, Artist, ArtistCredit, ArtistId, FavoriteItemId, Folder,
     FolderId, Genre, GenreCredit, GenreId, HomeItemId, ImageRef, MoodCredit, MoodId, MusicFolder,
-    MusicFolderId, Playlist, PlaylistEntry, PlaylistId, PlaylistSnapshot, ResolvedStream,
-    SourceHomeSection, SourceHomeSectionKind, SourceId, StreamRequest, Track, TrackData, TrackId,
-    TrackRelations, normalize_release_types,
+    MusicFolderId, PlayedFilter, Playlist, PlaylistEntry, PlaylistId, PlaylistSnapshot, RadioSeed,
+    RandomCriteria, ResolvedStream, SourceHomeSection, SourceHomeSectionKind, SourceId,
+    StreamRequest, Track, TrackData, TrackId, TrackRelations, normalize_release_types,
 };
+use playback::{SourceReportFact, SourceReportPhase};
 use reqwest::{Client, Url};
 use serde::Deserialize;
 use std::sync::Arc;

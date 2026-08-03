@@ -139,26 +139,26 @@ fn folder_contents(folders: Vec<Folder>, tracks: Vec<Track>) -> library::FolderC
 impl SubsonicSource {
     pub(crate) async fn random_tracks(
         &self,
-        request: RandomTrackRequest,
+        criteria: &RandomCriteria,
     ) -> SourceResult<Vec<Track>> {
-        if request.played_filter != PlayedFilter::All {
+        if criteria.played_filter != PlayedFilter::All {
             return Err(SourceError::InvalidRequest("random played filter"));
         }
 
-        let mut extra = vec![("size", request.limit.clamp(1, 500).to_string())];
-        if let Some(min_year) = request.min_year {
+        let mut extra = vec![("size", criteria.limit.clamp(1, 500).to_string())];
+        if let Some(min_year) = criteria.min_year {
             extra.push(("fromYear", min_year.to_string()));
         }
-        if let Some(max_year) = request.max_year {
+        if let Some(max_year) = criteria.max_year {
             extra.push(("toYear", max_year.to_string()));
         }
-        if let Some(genre) = request
+        if let Some(genre) = criteria
             .genre_name
             .as_deref()
             .filter(|genre| !genre.trim().is_empty())
         {
             extra.push(("genre", genre.to_string()));
-        } else if let Some(genre_id) = request.genre_id.as_ref() {
+        } else if let Some(genre_id) = criteria.genre_id.as_ref() {
             extra.push(("genre", raw_item_id(genre_id.as_str()).to_string()));
         }
 
@@ -176,36 +176,37 @@ impl SubsonicSource {
 impl SubsonicSource {
     pub(crate) async fn generated_tracks(
         &self,
-        request: GeneratedTracksRequest,
+        seed: &RadioSeed,
+        limit: usize,
     ) -> SourceResult<Vec<Track>> {
-        match request.seed {
+        match seed {
             library::RadioSeed::Track(track_id) => {
-                self.similar_songs(raw_item_id(track_id.as_str()), request.limit)
+                self.similar_songs(raw_item_id(track_id.as_str()), limit)
                     .await
             }
             library::RadioSeed::Album(album_id) => {
-                self.similar_songs(raw_item_id(album_id.as_str()), request.limit)
+                self.similar_songs(raw_item_id(album_id.as_str()), limit)
                     .await
             }
             library::RadioSeed::Artist(artist_id) => {
-                self.similar_songs2(raw_item_id(artist_id.as_str()), request.limit)
+                self.similar_songs2(raw_item_id(artist_id.as_str()), limit)
                     .await
             }
             library::RadioSeed::Genre { id, name } => {
-                self.random_tracks(RandomTrackRequest {
-                    limit: request.limit,
+                self.random_tracks(&RandomCriteria {
+                    limit,
                     min_year: None,
                     max_year: None,
-                    genre_id: Some(id),
-                    genre_name: (!name.trim().is_empty()).then_some(name),
+                    genre_id: Some(id.clone()),
+                    genre_name: (!name.trim().is_empty()).then(|| name.clone()),
                     played_filter: PlayedFilter::All,
                 })
                 .await
             }
             library::RadioSeed::Playlist(playlist_id) => {
-                let snapshot = self.read_playlist(&playlist_id).await?;
+                let snapshot = self.read_playlist(playlist_id).await?;
                 let seed = snapshot.entries.first().ok_or(SourceError::NotFound)?;
-                self.similar_songs(raw_item_id(seed.track_id.as_str()), request.limit)
+                self.similar_songs(raw_item_id(seed.track_id.as_str()), limit)
                     .await
             }
         }
@@ -545,9 +546,9 @@ fn normalize_native_language(language: String) -> Option<String> {
 }
 
 impl SubsonicSource {
-    pub(crate) async fn report_playback(&self, report: PlaybackReport) -> SourceResult<()> {
-        match report.kind {
-            PlaybackReportKind::Started => {
+    pub(crate) async fn report_playback(&self, report: SourceReportFact) -> SourceResult<()> {
+        match report.phase {
+            SourceReportPhase::Started => {
                 self.get_unit(
                     "scrobble",
                     &[
@@ -557,7 +558,7 @@ impl SubsonicSource {
                 )
                 .await
             }
-            PlaybackReportKind::QualifiedPlay => {
+            SourceReportPhase::QualifiedPlay => {
                 let started_at_millis = u64::try_from(report.started_at_unix_seconds)
                     .ok()
                     .and_then(|seconds| seconds.checked_mul(1_000))
@@ -574,7 +575,7 @@ impl SubsonicSource {
                 )
                 .await
             }
-            PlaybackReportKind::Progress | PlaybackReportKind::Stopped => Ok(()),
+            SourceReportPhase::Progress | SourceReportPhase::Ended => Ok(()),
         }
     }
 }

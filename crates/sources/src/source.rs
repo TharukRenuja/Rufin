@@ -11,14 +11,15 @@ use library::{
     Libraries, Library, LibraryError, LocalAccessTarget, LocalArtworkRef,
     LocalComponentReplacement, MetadataDraft, MetadataEdit, MetadataError, MetadataValues,
     MusicFolderId, PlaylistAcceptance, PlaylistEdit, PlaylistId, PlaylistSnapshot,
-    PreparedSourceCandidate, ProviderFreshness, ResolvedStream, SearchRequest, SearchResults,
-    SourceHomeSection, SourceHomeSectionKind, SourceId, StreamRequest, TrackId,
+    PreparedSourceCandidate, ProviderFreshness, RadioSeed, RandomCriteria, ResolvedStream,
+    SearchRequest, SearchResults, SourceHomeSection, SourceHomeSectionKind, SourceId,
+    StreamRequest, TrackId,
 };
+use playback::SourceReportFact;
 
 use crate::{
-    GeneratedTracksRequest, ImageBytes, LyricsSearch, NativeLyrics, PlaybackReport,
-    RandomTrackRequest, SourceConfiguration, SourceError, SourceResult, SourceSettingsInput,
-    SourceSetupInput,
+    ImageBytes, LyricsSearch, NativeLyrics, SourceConfiguration, SourceError, SourceResult,
+    SourceSettingsInput, SourceSetupInput,
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -656,16 +657,16 @@ impl Source {
 
     pub async fn random_tracks(
         &self,
-        request: RandomTrackRequest,
+        criteria: &RandomCriteria,
     ) -> SourceResult<NativeSourceResult<Vec<library::Track>>> {
         match &self.implementation {
             Implementation::Local(_) => Ok(NativeSourceResult::Unavailable),
             Implementation::Jellyfin(source) => source
-                .random_tracks(request)
+                .random_tracks(criteria)
                 .await
                 .map(NativeSourceResult::Available),
             Implementation::OpenSubsonic(source) => source
-                .random_tracks(request)
+                .random_tracks(criteria)
                 .await
                 .map(NativeSourceResult::Available),
         }
@@ -673,16 +674,17 @@ impl Source {
 
     pub async fn generated_tracks(
         &self,
-        request: GeneratedTracksRequest,
+        seed: &RadioSeed,
+        limit: usize,
     ) -> SourceResult<NativeSourceResult<Vec<library::Track>>> {
         match &self.implementation {
             Implementation::Local(_) => Ok(NativeSourceResult::Unavailable),
             Implementation::Jellyfin(source) => source
-                .generated_tracks(request)
+                .generated_tracks(seed, limit)
                 .await
                 .map(NativeSourceResult::Available),
             Implementation::OpenSubsonic(source) => source
-                .generated_tracks(request)
+                .generated_tracks(seed, limit)
                 .await
                 .map(NativeSourceResult::Available),
         }
@@ -769,7 +771,7 @@ impl Source {
 
     pub async fn report_playback(
         &self,
-        report: PlaybackReport,
+        report: SourceReportFact,
     ) -> SourceResult<NativeSourceResult<()>> {
         match &self.implementation {
             Implementation::Local(_) => Ok(NativeSourceResult::Unavailable),
