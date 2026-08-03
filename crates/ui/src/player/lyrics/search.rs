@@ -3,7 +3,7 @@ use std::rc::Rc;
 
 use adw::prelude::*;
 use gtk::glib;
-use lyrics::{ExternalLyricsProvider, LyricsQuery, LyricsSearchResult};
+use lyrics::{LyricsQuery, LyricsSearchContent, LyricsSearchResult};
 use tracing::debug;
 
 use crate::format_duration;
@@ -174,15 +174,11 @@ pub(crate) fn clear_list_box(list: &gtk::ListBox) {
 }
 
 pub(crate) fn lyrics_search_result_has_content(result: &LyricsSearchResult) -> bool {
-    result.provider != ExternalLyricsProvider::Lrclib
-        || result
-            .synced_lyrics
-            .as_deref()
-            .is_some_and(|lyrics| !lyrics.trim().is_empty())
-        || result
-            .plain_lyrics
-            .as_deref()
-            .is_some_and(|lyrics| !lyrics.trim().is_empty())
+    result.content.can_preview()
+}
+
+pub(crate) fn lyrics_search_result_can_save(result: &LyricsSearchResult) -> bool {
+    result.content.can_save()
 }
 
 fn lyrics_result_title(result: &LyricsSearchResult) -> String {
@@ -210,19 +206,21 @@ pub(crate) fn lyrics_result_subtitle(result: &LyricsSearchResult) -> String {
     if !subtitle.is_empty() {
         subtitle.push_str(" - ");
     }
-    if result
-        .synced_lyrics
-        .as_deref()
+    if matches!(result.content, LyricsSearchContent::Instrumental) {
+        subtitle.push_str(&tr("Instrumental"));
+    } else if result
+        .content
+        .synced_lyrics()
         .is_some_and(|lyrics| !lyrics.trim().is_empty())
     {
         subtitle.push_str(&tr("Synced lyrics"));
     } else if result
-        .plain_lyrics
-        .as_deref()
+        .content
+        .plain_lyrics()
         .is_some_and(|lyrics| !lyrics.trim().is_empty())
     {
         subtitle.push_str(&tr("Plain lyrics"));
-    } else if result.provider != ExternalLyricsProvider::Lrclib {
+    } else if matches!(result.content, LyricsSearchContent::Deferred) {
         subtitle.push_str(&tr("Remote lyrics"));
     } else {
         subtitle.push_str(&tr("No lyrics"));
@@ -236,7 +234,7 @@ pub(crate) fn lyrics_result_subtitle_markup(result: &LyricsSearchResult) -> glib
 
 #[cfg(test)]
 mod tests {
-    use lyrics::{ExternalLyricsProvider, LyricsSearchResult};
+    use lyrics::{ExternalLyricsProvider, LyricsSearchContent, LyricsSearchResult};
 
     use super::{
         lyrics_result_subtitle, lyrics_result_subtitle_markup, lyrics_result_title_markup,
@@ -294,6 +292,17 @@ mod tests {
             lyrics_result_subtitle(&empty),
             "LRCLIB - Example Album - 1:35 - No lyrics"
         );
+
+        let instrumental = LyricsSearchResult {
+            content: LyricsSearchContent::Instrumental,
+            ..empty
+        };
+        assert!(lyrics_search_result_has_content(&instrumental));
+        assert!(!instrumental.content.can_save());
+        assert_eq!(
+            lyrics_result_subtitle(&instrumental),
+            "LRCLIB - Example Album - 1:35 - Instrumental"
+        );
     }
 
     #[test]
@@ -325,8 +334,16 @@ mod tests {
             artist_name: "Example Artist".to_string(),
             album_name: "Example Album".to_string(),
             duration_seconds: 95,
-            synced_lyrics: synced_lyrics.map(str::to_string),
-            plain_lyrics: plain_lyrics.map(str::to_string),
+            content: if synced_lyrics.is_some() || plain_lyrics.is_some() {
+                LyricsSearchContent::Inline {
+                    synced_lyrics: synced_lyrics.map(str::to_string),
+                    plain_lyrics: plain_lyrics.map(str::to_string),
+                }
+            } else if provider == ExternalLyricsProvider::Lrclib {
+                LyricsSearchContent::Unavailable
+            } else {
+                LyricsSearchContent::Deferred
+            },
         }
     }
 }

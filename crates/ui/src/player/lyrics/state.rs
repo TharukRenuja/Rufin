@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use gtk::glib;
 use localization::tr;
-use lyrics::{CurrentLyrics, LyricsDocument, LyricsOrigin};
+use lyrics::{CurrentLyrics, CurrentLyricsContent, LyricsDocument, LyricsOrigin};
 
 use crate::player::lyrics::search::LyricsSearchDialog;
 use crate::player::lyrics::settings::LyricsSettingsDialog;
@@ -47,12 +47,38 @@ impl Shell {
         let current_media = current_playback_media_id(&self.playback.player.borrow());
         match &*self.lyrics.projection.borrow() {
             CurrentLyrics::Ready {
-                media_id, document, ..
-            } if current_media.as_ref() == Some(media_id) => document.clone(),
+                media_id,
+                content: Some(CurrentLyricsContent::Document { document, .. }),
+                ..
+            } if current_media.as_ref() == Some(media_id) => Some(document.clone()),
             CurrentLyrics::Cleared
             | CurrentLyrics::Loading { .. }
             | CurrentLyrics::Ready { .. } => None,
         }
+    }
+
+    pub(crate) fn visible_lyrics_are_instrumental(&self) -> bool {
+        let current_media = current_playback_media_id(&self.playback.player.borrow());
+        matches!(
+            &*self.lyrics.projection.borrow(),
+            CurrentLyrics::Ready {
+                media_id,
+                content: Some(CurrentLyricsContent::Instrumental),
+                ..
+            } if current_media.as_ref() == Some(media_id)
+        )
+    }
+
+    fn current_lyrics_resolved(&self) -> bool {
+        let current_media = current_playback_media_id(&self.playback.player.borrow());
+        matches!(
+            &*self.lyrics.projection.borrow(),
+            CurrentLyrics::Ready {
+                media_id,
+                content: Some(_),
+                ..
+            } if current_media.as_ref() == Some(media_id)
+        )
     }
 
     pub(crate) fn visible_lyrics_have_word_timing(&self) -> bool {
@@ -74,10 +100,11 @@ impl Shell {
         let current_media = current_playback_media_id(&self.playback.player.borrow());
         match &*self.lyrics.projection.borrow() {
             CurrentLyrics::Ready {
-                media_id,
-                pronunciation,
-                ..
-            } if current_media.as_ref() == Some(media_id) => pronunciation.clone(),
+                media_id, content, ..
+            } if current_media.as_ref() == Some(media_id) => match content {
+                Some(CurrentLyricsContent::Document { pronunciation, .. }) => pronunciation.clone(),
+                Some(CurrentLyricsContent::Instrumental) | None => None,
+            },
             _ => None,
         }
     }
@@ -95,26 +122,30 @@ impl Shell {
         let document_changed = match (&*self.lyrics.projection.borrow(), &projection) {
             (
                 CurrentLyrics::Ready {
-                    document: Some(previous),
+                    content:
+                        Some(CurrentLyricsContent::Document {
+                            document: previous, ..
+                        }),
                     ..
                 },
                 CurrentLyrics::Ready {
-                    document: Some(next),
+                    content: Some(CurrentLyricsContent::Document { document: next, .. }),
                     ..
                 },
             ) => !Arc::ptr_eq(previous, next),
             (
                 _,
                 CurrentLyrics::Ready {
-                    document: Some(_), ..
+                    content: Some(CurrentLyricsContent::Document { .. }),
+                    ..
                 },
             ) => true,
             _ => false,
         };
         let (media_id, has_lyrics) = match &projection {
             CurrentLyrics::Ready {
-                media_id, document, ..
-            } => (Some(media_id.clone()), document.is_some()),
+                media_id, content, ..
+            } => (Some(media_id.clone()), content.is_some()),
             CurrentLyrics::Loading { media_id } => (Some(media_id.clone()), false),
             CurrentLyrics::Cleared => (None, false),
         };
@@ -184,7 +215,7 @@ impl Shell {
         let Some(media_id) = current_playback_media_id(&self.playback.player.borrow()) else {
             return;
         };
-        if self.visible_lyrics().is_some() || self.current_lyrics_loading() {
+        if self.current_lyrics_resolved() || self.current_lyrics_loading() {
             return;
         }
         if !self.lyrics_surface_visible() {

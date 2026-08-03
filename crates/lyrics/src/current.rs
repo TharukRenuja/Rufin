@@ -22,12 +22,12 @@ use crate::lyrics::{
     lyrics_from_native, lyrics_with_displayable_content,
 };
 use crate::{
-    CurrentLyrics, LocalLyricsInput, LyricsBundle, LyricsDocument, LyricsEvent, LyricsOrigin,
-    LyricsQuery, LyricsRole, LyricsSearchResult, Settings, lyrics_from_search_result,
-    save_current_lyrics, search_lyrics,
+    CurrentLyrics, CurrentLyricsContent, LocalLyricsInput, LyricsBundle, LyricsDocument,
+    LyricsEvent, LyricsOrigin, LyricsQuery, LyricsRole, LyricsSearchResult, Settings,
+    lyrics_from_search_result, save_current_lyrics, search_lyrics,
 };
 
-const LYRICS_CACHE_PAYLOAD_VERSION: u32 = 2;
+const LYRICS_CACHE_PAYLOAD_VERSION: u32 = 3;
 
 #[derive(Clone)]
 pub struct LyricsContext {
@@ -224,9 +224,9 @@ impl LyricsService {
                 (
                     current.context.media.id.clone(),
                     current.key.track_id.clone(),
-                    current.automatic_attempted || current.loading || current.document.is_some(),
+                    current.automatic_attempted || current.loading || current.bundle.is_some(),
                     current.loading,
-                    current.document.is_some(),
+                    current.bundle.is_some(),
                 )
             });
             let selection_changed = lyrics_selection_changed(&state.settings, &settings);
@@ -316,8 +316,7 @@ impl LyricsService {
             .current
             .as_ref()
             .filter(|current| &current.context.media.id == media_id)?;
-        if automatic
-            && (current.automatic_attempted || current.loading || current.document.is_some())
+        if automatic && (current.automatic_attempted || current.loading || current.bundle.is_some())
         {
             return None;
         }
@@ -443,7 +442,8 @@ impl LyricsService {
                 .ok()
                 .flatten();
             if let Some(document) = document {
-                if (!resolution.plan.prefers_translations() && document.has_original())
+                if document.is_instrumental()
+                    || (!resolution.plan.prefers_translations() && document.has_original())
                     || document.has_preferred_translation(&settings)
                 {
                     if self.current_request_active(request, &key, &cancelled) {
@@ -510,7 +510,8 @@ impl LyricsService {
             {
                 Ok(NativeSourceResult::Available(Some(native))) => {
                     let document = lyrics_from_native(native);
-                    if (!resolution.plan.prefers_translations() && document.has_original())
+                    if document.is_instrumental()
+                        || (!resolution.plan.prefers_translations() && document.has_original())
                         || document.has_preferred_translation(&settings)
                     {
                         if self.current_request_active(request, &key, &cancelled) {
@@ -565,7 +566,8 @@ impl LyricsService {
                 }
             });
             if let Some(document) = document {
-                let selected = (!resolution.plan.prefers_translations() && document.has_original())
+                let selected = document.is_instrumental()
+                    || (!resolution.plan.prefers_translations() && document.has_original())
                     || document.has_preferred_translation(&settings);
                 if selected {
                     if self.current_request_active(request, &key, &cancelled) {
@@ -648,7 +650,7 @@ impl LyricsService {
                     .map(Arc::new);
                 current.document = selected.cloned().map(Arc::new);
                 current.bundle = Some(bundle);
-            } else if current.document.is_none() {
+            } else if current.bundle.is_none() {
                 current.pronunciation = None;
                 current.bundle = None;
             }
@@ -997,15 +999,26 @@ impl LyricsHandle {
 }
 
 fn current_event(current: &CurrentDocument) -> LyricsEvent {
-    if current.loading && current.document.is_none() {
+    if current.loading && current.bundle.is_none() {
         LyricsEvent::Current(CurrentLyrics::Loading {
             media_id: current.context.media.id.clone(),
         })
     } else {
         LyricsEvent::Current(CurrentLyrics::Ready {
             media_id: current.context.media.id.clone(),
-            document: current.document.clone(),
-            pronunciation: current.pronunciation.clone(),
+            content: current.bundle.as_ref().and_then(|bundle| {
+                if bundle.is_instrumental() {
+                    Some(CurrentLyricsContent::Instrumental)
+                } else {
+                    current
+                        .document
+                        .clone()
+                        .map(|document| CurrentLyricsContent::Document {
+                            document,
+                            pronunciation: current.pronunciation.clone(),
+                        })
+                }
+            }),
             origin: current.bundle.as_ref().map(|bundle| bundle.origin),
         })
     }
@@ -1020,7 +1033,9 @@ fn selection_settings(plan: &LyricsPlan) -> Settings {
 }
 
 fn bundle_satisfies_plan(bundle: &LyricsBundle, plan: &LyricsPlan) -> bool {
-    if plan.prefers_translations() {
+    if bundle.is_instrumental() {
+        true
+    } else if plan.prefers_translations() {
         bundle.has_preferred_translation(&selection_settings(plan))
     } else {
         bundle.has_original()
@@ -1150,11 +1165,11 @@ mod tests {
 
     use super::{
         CachedBundle, DocumentKey, LYRICS_CACHE_PAYLOAD_VERSION, LyricsContext, LyricsEvent,
-        LyricsService, cache_input, cache_write, decode_cached_bundle,
+        LyricsService, cache_input, cache_write, current_event, decode_cached_bundle,
     };
     use crate::{
-        CurrentLyrics, ExternalLyricsProvider, LyricsBundle, LyricsDocument, LyricsLine,
-        LyricsOrigin, LyricsRole, Settings,
+        CurrentLyrics, CurrentLyricsContent, ExternalLyricsProvider, LyricsBundle, LyricsDocument,
+        LyricsLine, LyricsOrigin, LyricsRole, Settings,
     };
     use sources::SourceInputIdentity;
 
@@ -1168,16 +1183,16 @@ mod tests {
 
     #[test]
     fn lyrics_owns_and_versions_its_cached_document() {
-        let document = LyricsBundle {
-            origin: LyricsOrigin::External(ExternalLyricsProvider::Lrclib),
-            documents: vec![LyricsDocument {
+        let document = LyricsBundle::from_documents(
+            LyricsOrigin::External(ExternalLyricsProvider::Lrclib),
+            vec![LyricsDocument {
                 role: LyricsRole::Original,
                 language: None,
                 offset_millis: 0,
                 lines: vec![lyrics_line("Line", Some(1_000))],
                 agents: Vec::new(),
             }],
-        };
+        );
         let payload = serde_json::to_string(&CachedBundle {
             version: LYRICS_CACHE_PAYLOAD_VERSION,
             bundle: document.clone(),
@@ -1185,12 +1200,49 @@ mod tests {
         .expect("encode cached document");
         assert_eq!(decode_cached_bundle(&payload), Some(document.clone()));
 
+        let instrumental =
+            LyricsBundle::instrumental(LyricsOrigin::External(ExternalLyricsProvider::Lrclib));
+        let payload = serde_json::to_string(&CachedBundle {
+            version: LYRICS_CACHE_PAYLOAD_VERSION,
+            bundle: instrumental.clone(),
+        })
+        .expect("encode cached instrumental state");
+        assert_eq!(decode_cached_bundle(&payload), Some(instrumental));
+
         let incompatible = serde_json::to_string(&CachedBundle {
             version: LYRICS_CACHE_PAYLOAD_VERSION + 1,
             bundle: document,
         })
         .expect("encode incompatible cached document");
         assert_eq!(decode_cached_bundle(&incompatible), None);
+    }
+
+    #[test]
+    fn current_event_projects_instrumental_without_a_document() {
+        let fixture = fixture(Settings::default(), false);
+        fixture.service.set_current(Some(fixture.context.clone()));
+        drain_events(&fixture.events);
+        let event = {
+            let mut state = fixture
+                .service
+                .state
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            let current = state.current.as_mut().expect("current lyrics document");
+            current.bundle = Some(Arc::new(LyricsBundle::instrumental(
+                LyricsOrigin::External(ExternalLyricsProvider::Lrclib),
+            )));
+            current_event(current)
+        };
+
+        assert!(matches!(
+            event,
+            LyricsEvent::Current(CurrentLyrics::Ready {
+                content: Some(CurrentLyricsContent::Instrumental),
+                origin: Some(LyricsOrigin::External(ExternalLyricsProvider::Lrclib)),
+                ..
+            })
+        ));
     }
 
     #[test]
@@ -1233,7 +1285,7 @@ mod tests {
 
         fixture.service.set_current(Some(fixture.context.clone()));
         drain_events(&fixture.events);
-        let visible = Arc::new(external_document().documents[0].clone());
+        let visible = Arc::new(external_document().documents()[0].clone());
         {
             let mut state = fixture
                 .service
@@ -1301,7 +1353,7 @@ mod tests {
         fixture.service.set_current(Some(fixture.context.clone()));
         drain_events(&fixture.events);
         let bundle = Arc::new(external_document());
-        let visible = Arc::new(bundle.documents[0].clone());
+        let visible = Arc::new(bundle.documents()[0].clone());
         {
             let mut state = fixture
                 .service
@@ -1335,12 +1387,51 @@ mod tests {
     }
 
     #[test]
+    fn missing_translation_keeps_the_instrumental_result() {
+        let mut settings = Settings::default();
+        settings.external_lyrics_enabled = false;
+        let fixture = fixture(settings.clone(), false);
+        fixture.service.set_current(Some(fixture.context.clone()));
+        drain_events(&fixture.events);
+        {
+            let mut state = fixture
+                .service
+                .state
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            let current = state.current.as_mut().expect("current lyrics document");
+            current.bundle = Some(Arc::new(LyricsBundle::instrumental(
+                LyricsOrigin::External(ExternalLyricsProvider::Lrclib),
+            )));
+            current.automatic_attempted = true;
+        }
+
+        settings.prefer_translations = true;
+        settings.preferred_translation_language = "ru".to_string();
+        fixture.service.settings_changed(settings, false);
+        drive_current_to_completion(&fixture);
+
+        let state = fixture
+            .service
+            .state
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        assert!(
+            state
+                .current
+                .as_ref()
+                .and_then(|current| current.bundle.as_ref())
+                .is_some_and(|bundle| bundle.is_instrumental())
+        );
+    }
+
+    #[test]
     fn private_mode_keeps_the_current_external_document() {
         let fixture = fixture(Settings::default(), false);
         fixture.service.set_current(Some(fixture.context.clone()));
         drain_events(&fixture.events);
         let bundle = Arc::new(external_document());
-        let document = Arc::new(bundle.documents[0].clone());
+        let document = Arc::new(bundle.documents()[0].clone());
         {
             let mut state = fixture
                 .service
@@ -1398,7 +1489,7 @@ mod tests {
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         let current = state.current.as_ref().expect("current lyrics document");
-        assert_eq!(current.document.as_deref(), document.documents.first());
+        assert_eq!(current.document.as_deref(), document.documents().first());
         drop(state);
         assert!(
             fixture
@@ -1480,7 +1571,7 @@ mod tests {
         fixture.service.set_current(Some(fixture.context.clone()));
         drain_events(&fixture.events);
         let bundle = Arc::new(external_document());
-        let document = Arc::new(bundle.documents[0].clone());
+        let document = Arc::new(bundle.documents()[0].clone());
         let request = {
             let mut state = fixture
                 .service
@@ -1654,21 +1745,21 @@ mod tests {
     }
 
     fn external_document() -> LyricsBundle {
-        LyricsBundle {
-            origin: LyricsOrigin::External(ExternalLyricsProvider::Lrclib),
-            documents: vec![LyricsDocument {
+        LyricsBundle::from_documents(
+            LyricsOrigin::External(ExternalLyricsProvider::Lrclib),
+            vec![LyricsDocument {
                 role: LyricsRole::Original,
                 language: None,
                 offset_millis: 0,
                 lines: vec![lyrics_line("Cached line", Some(1_000))],
                 agents: Vec::new(),
             }],
-        }
+        )
     }
 
     fn translated_document(language: &str, text: &str) -> LyricsBundle {
         let mut bundle = external_document();
-        bundle.documents.push(LyricsDocument {
+        bundle.documents_mut().push(LyricsDocument {
             role: LyricsRole::Translation,
             language: Some(language.to_string()),
             offset_millis: 0,
