@@ -1,5 +1,3 @@
-use std::collections::BTreeMap;
-
 use library::{CandidateBatch, StreamQuality};
 use wiremock::matchers::{method, path, query_param};
 use wiremock::{Mock, MockServer, ResponseTemplate};
@@ -146,6 +144,18 @@ fn settings_input(
         username: "Listener".to_string(),
         password: password.to_string(),
         trust_invalid_cert,
+    }
+}
+
+#[test]
+fn similar_song_response_accepts_both_endpoint_keys() {
+    for response in [
+        r#"{"similarSongs":{"song":[]}}"#,
+        r#"{"similarSongs2":{"song":[]}}"#,
+    ] {
+        let body: SimilarSongsBody =
+            serde_json::from_str(response).expect("similar-song response shape");
+        assert!(body.similar_songs.is_some());
     }
 }
 
@@ -335,17 +345,6 @@ async fn navidrome_acquisition_uses_real_file_paths_and_richer_metadata() {
         tracks[0].relations.music_folders[0].as_str(),
         "navidrome:music-folder:7"
     );
-    assert_eq!(
-        tracks[0]
-            .image_ref
-            .as_ref()
-            .map(|image| (image.item_id.as_str(), image.tag.as_deref())),
-        Some((
-            "navidrome:cover:al-album-one_0",
-            Some("2025-04-04T12:00:00Z")
-        ))
-    );
-
     let generic: SubsonicSong = serde_json::from_value(serde_json::json!({
         "id": "track-two",
         "title": "Second",
@@ -985,7 +984,7 @@ async fn trust_only_edit_reopens_opensubsonic_from_the_saved_credential_without_
 }
 
 #[tokio::test]
-async fn complete_acquisition_pages_through_server_caps_and_uses_album_cover_identity() {
+async fn complete_acquisition_pages_through_server_caps_and_keeps_track_cover_identity() {
     let server = MockServer::start().await;
     Mock::given(method("GET"))
         .and(path("/rest/getAlbumList2.view"))
@@ -1071,19 +1070,12 @@ async fn complete_acquisition_pages_through_server_caps_and_uses_album_cover_ide
     let (batches, receiver) = async_channel::unbounded();
     let emitter = BatchEmitter::new(batches);
     let progress = |_: SourceReadProgress| {};
-    let album_images = source
-        .emit_albums(&emitter, &mut BTreeMap::new(), &progress, &|| false)
+    source
+        .emit_albums(&emitter, &progress, &|| false)
         .await
         .expect("read Albums");
     source
-        .emit_tracks(
-            &[],
-            &album_images,
-            &emitter,
-            &mut BTreeMap::new(),
-            &progress,
-            &|| false,
-        )
+        .emit_tracks(&[], &emitter, &progress, &|| false)
         .await
         .expect("read Tracks");
     drop(emitter);
@@ -1101,14 +1093,14 @@ async fn complete_acquisition_pages_through_server_caps_and_uses_album_cover_ide
             .image_ref
             .as_ref()
             .map(|image| image.item_id.as_str()),
-        Some("subsonic:cover:album-cover")
+        Some("subsonic:cover:track-alias-one")
     );
     assert_eq!(
         tracks[1]
             .image_ref
             .as_ref()
             .map(|image| image.item_id.as_str()),
-        Some("subsonic:cover:album-cover")
+        Some("subsonic:cover:track-alias-two")
     );
     assert_eq!(
         tracks[2]

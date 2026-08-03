@@ -1445,7 +1445,7 @@ impl Shared {
         let source_id = selected.source_id().clone();
         let source_session_epoch = selected.source_session_epoch;
         let home = Arc::clone(&selected.home);
-        if !self.replace_selected_runtime(selected).await {
+        if !self.replace_selected(selected) {
             return;
         }
         self.send_event(SourceEvent::HomeReplaced {

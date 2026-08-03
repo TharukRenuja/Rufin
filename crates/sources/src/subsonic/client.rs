@@ -181,15 +181,15 @@ impl SubsonicSource {
     ) -> SourceResult<Vec<Track>> {
         match seed {
             library::RadioSeed::Track(track_id) => {
-                self.similar_songs(raw_item_id(track_id.as_str()), limit)
+                self.similar_songs("getSimilarSongs", raw_item_id(track_id.as_str()), limit)
                     .await
             }
             library::RadioSeed::Album(album_id) => {
-                self.similar_songs(raw_item_id(album_id.as_str()), limit)
+                self.similar_songs("getSimilarSongs", raw_item_id(album_id.as_str()), limit)
                     .await
             }
             library::RadioSeed::Artist(artist_id) => {
-                self.similar_songs2(raw_item_id(artist_id.as_str()), limit)
+                self.similar_songs("getSimilarSongs2", raw_item_id(artist_id.as_str()), limit)
                     .await
             }
             library::RadioSeed::Genre { id, name } => {
@@ -206,8 +206,12 @@ impl SubsonicSource {
             library::RadioSeed::Playlist(playlist_id) => {
                 let snapshot = self.read_playlist(playlist_id).await?;
                 let seed = snapshot.entries.first().ok_or(SourceError::NotFound)?;
-                self.similar_songs(raw_item_id(seed.track_id.as_str()), limit)
-                    .await
+                self.similar_songs(
+                    "getSimilarSongs",
+                    raw_item_id(seed.track_id.as_str()),
+                    limit,
+                )
+                .await
             }
         }
     }
@@ -942,45 +946,24 @@ impl SubsonicSource {
 
     pub(super) async fn get_all_artists(&self) -> SourceResult<Vec<Artist>> {
         let body: ArtistsBody = self.get_json("getArtists", &[]).await?;
-        let mut artists = body
+        Ok(body
             .artists
             .index
             .into_iter()
             .flat_map(|index| index.artist)
             .map(|artist| artist_from_dto(self, artist))
-            .collect::<Vec<_>>();
-        artists.sort_by(|left, right| {
-            left.name
-                .to_lowercase()
-                .cmp(&right.name.to_lowercase())
-                .then_with(|| left.id.cmp(&right.id))
-        });
-        Ok(artists)
-    }
-
-    async fn similar_songs(&self, raw_id: &str, count: usize) -> SourceResult<Vec<Track>> {
-        let body: SimilarSongsBody = self
-            .get_json(
-                "getSimilarSongs",
-                &[
-                    ("id", raw_id.to_string()),
-                    ("count", count.clamp(1, 500).to_string()),
-                ],
-            )
-            .await?;
-        Ok(body
-            .similar_songs
-            .map(|songs| songs.song)
-            .unwrap_or_default()
-            .into_iter()
-            .map(|song| track_from_dto(self, song))
             .collect())
     }
 
-    async fn similar_songs2(&self, raw_id: &str, count: usize) -> SourceResult<Vec<Track>> {
-        let body: SimilarSongs2Body = self
+    async fn similar_songs(
+        &self,
+        method: &str,
+        raw_id: &str,
+        count: usize,
+    ) -> SourceResult<Vec<Track>> {
+        let body: SimilarSongsBody = self
             .get_json(
-                "getSimilarSongs2",
+                method,
                 &[
                     ("id", raw_id.to_string()),
                     ("count", count.clamp(1, 500).to_string()),
@@ -1160,12 +1143,7 @@ pub(super) struct RandomSongsBody {
 }
 #[derive(Clone, Debug, Default, Deserialize)]
 pub(super) struct SimilarSongsBody {
-    #[serde(default, rename = "similarSongs")]
-    pub(super) similar_songs: Option<SongsList>,
-}
-#[derive(Clone, Debug, Default, Deserialize)]
-pub(super) struct SimilarSongs2Body {
-    #[serde(default, rename = "similarSongs2")]
+    #[serde(default, rename = "similarSongs", alias = "similarSongs2")]
     pub(super) similar_songs: Option<SongsList>,
 }
 #[derive(Clone, Debug, Deserialize)]

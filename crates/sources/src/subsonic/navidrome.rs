@@ -4,7 +4,7 @@
 //! owns the password login, rotating UI token, and richer album, track, and
 //! artist records used during a Navidrome library refresh.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::HashMap;
 use std::fmt;
 
 use library::{
@@ -22,8 +22,7 @@ use crate::remote_http::{self, BodyLimit, RemoteHttpPolicy};
 use crate::source::{BatchEmitter, SourceReadProgress, SourceReadStage};
 use crate::{SourceError, SourceResult};
 
-use super::refresh::collect_genres;
-use super::{SubsonicSource, raw_item_id};
+use super::SubsonicSource;
 
 const NAVIDROME_PAGE_SIZE: usize = 1_000;
 const NAVIDROME_JSON_MAX_BYTES: usize = 16 * 1024 * 1024;
@@ -78,10 +77,7 @@ impl SubsonicSource {
         emitter: &BatchEmitter,
         progress: &(dyn Fn(SourceReadProgress) + Send + Sync),
         cancelled: &(dyn Fn() -> bool + Send + Sync),
-    ) -> SourceResult<BTreeMap<GenreId, String>> {
-        let mut relation_genres = BTreeMap::new();
-        let mut album_images = HashMap::new();
-
+    ) -> SourceResult<()> {
         self.emit_navidrome_pages::<NavidromeAlbum>(
             "album",
             SourceReadStage::Albums,
@@ -92,15 +88,6 @@ impl SubsonicSource {
                 CandidateBatch::Albums(
                     page.into_iter()
                         .map(|album| album_from_navidrome(self, album))
-                        .inspect(|album| {
-                            if let Some(image) = album.image_ref.as_ref() {
-                                album_images.insert(
-                                    raw_item_id(album.id.as_str()).to_string(),
-                                    image.clone(),
-                                );
-                            }
-                            collect_genres(&album.relations.genres, &mut relation_genres);
-                        })
                         .collect(),
                 )
             },
@@ -115,16 +102,7 @@ impl SubsonicSource {
             |page| {
                 CandidateBatch::Tracks(
                     page.into_iter()
-                        .map(|navidrome_track| {
-                            let mut track = track_from_navidrome(self, navidrome_track);
-                            if let Some(image) = track.album_id.as_ref().and_then(|album_id| {
-                                album_images.get(raw_item_id(album_id.as_str()))
-                            }) {
-                                track.image_ref = Some(image.clone());
-                            }
-                            collect_genres(&track.relations.genres, &mut relation_genres);
-                            track
-                        })
+                        .map(|track| track_from_navidrome(self, track))
                         .collect(),
                 )
             },
@@ -146,7 +124,7 @@ impl SubsonicSource {
         )
         .await?;
 
-        Ok(relation_genres)
+        Ok(())
     }
 
     async fn emit_navidrome_pages<T: DeserializeOwned>(
