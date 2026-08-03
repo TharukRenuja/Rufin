@@ -497,10 +497,7 @@ impl Shell {
         content.set_margin_start(18);
         content.set_margin_end(18);
 
-        let layout_group = adw::PreferencesGroup::builder()
-            .title(tr("Layout"))
-            .description(tr("Choose the current page layout."))
-            .build();
+        let layout_group = adw::PreferencesGroup::builder().title(tr("Layout")).build();
         let reset = gtk::Button::with_label(&tr("Reset"));
         reset.add_css_class("destructive-action");
         reset.set_valign(gtk::Align::End);

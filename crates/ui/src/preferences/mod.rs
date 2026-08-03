@@ -1004,7 +1004,7 @@ fn general_page(shell: &Rc<Shell>, dialog: &adw::Dialog) -> adw::PreferencesPage
         let confirm = adw::AlertDialog::builder()
             .heading(tr("Change Secret Storage"))
             .body(tr(
-                "Changing secret backend removes legacy config secrets and signs you out everywhere, including API secrets. App cache is not affected.",
+                "This removes legacy config secrets and signs you out everywhere, including API secrets. Your app cache stays",
             ))
             .build();
         let cancel = tr("Cancel");

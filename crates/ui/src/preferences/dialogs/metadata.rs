@@ -906,7 +906,7 @@ fn metadata_change(
     if field == MetadataField::Title {
         let value = row.text().trim().to_string();
         if value.is_empty() {
-            return Err(tr("Title cannot be empty."));
+            return Err(tr("Add a title"));
         }
         return Ok((force || value != original.title).then_some(MetadataChange::Title(value)));
     }
@@ -922,7 +922,7 @@ fn metadata_change(
                     .parse::<u16>()
                     .ok()
                     .filter(|value| *value > 0)
-                    .ok_or_else(|| tr("Enter a positive number."))?,
+                    .ok_or_else(|| tr("Use a number above zero"))?,
             )
         };
         let previous = field_value(original, field).and_then(|value| value.parse().ok());
