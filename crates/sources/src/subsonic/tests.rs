@@ -280,21 +280,16 @@ async fn navidrome_acquisition_uses_real_file_paths_and_richer_metadata() {
         .mount(&server)
         .await;
     let source = navidrome_provider(&server);
-    let mut batches = Vec::new();
-    let mut accept = |batch| {
-        batches.push(batch);
-        true
-    };
-    let mut emitter = BatchEmitter::new(&mut accept);
+    let (batches, receiver) = async_channel::unbounded();
+    let emitter = BatchEmitter::new(batches);
     let progress = |_: SourceReadProgress| {};
 
     source
-        .emit_navidrome_library(&mut emitter, &progress, &|| false)
+        .emit_navidrome_library(&emitter, &progress, &|| false)
         .await
         .expect("Navidrome library supplement");
     drop(emitter);
-    let tracks = batches
-        .into_iter()
+    let tracks = std::iter::from_fn(|| receiver.try_recv().ok())
         .find_map(|batch| match batch {
             CandidateBatch::Tracks(tracks) => Some(tracks),
             _ => None,
@@ -1073,22 +1068,18 @@ async fn complete_acquisition_pages_through_server_caps_and_uses_album_cover_ide
         .mount(&server)
         .await;
     let source = provider(&server);
-    let mut batches = Vec::new();
-    let mut accept = |batch| {
-        batches.push(batch);
-        true
-    };
-    let mut emitter = BatchEmitter::new(&mut accept);
+    let (batches, receiver) = async_channel::unbounded();
+    let emitter = BatchEmitter::new(batches);
     let progress = |_: SourceReadProgress| {};
     let album_images = source
-        .emit_albums(&mut emitter, &mut BTreeMap::new(), &progress, &|| false)
+        .emit_albums(&emitter, &mut BTreeMap::new(), &progress, &|| false)
         .await
         .expect("read Albums");
     source
         .emit_tracks(
             &[],
             &album_images,
-            &mut emitter,
+            &emitter,
             &mut BTreeMap::new(),
             &progress,
             &|| false,
@@ -1096,8 +1087,7 @@ async fn complete_acquisition_pages_through_server_caps_and_uses_album_cover_ide
         .await
         .expect("read Tracks");
     drop(emitter);
-    let tracks = batches
-        .into_iter()
+    let tracks = std::iter::from_fn(|| receiver.try_recv().ok())
         .filter_map(|batch| match batch {
             CandidateBatch::Tracks(tracks) => Some(tracks),
             _ => None,

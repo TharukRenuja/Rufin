@@ -13,7 +13,7 @@ const CHANGED_ITEM_BATCH_SIZE: usize = 100;
 impl JellyfinSource {
     pub(crate) async fn read_facts(
         &self,
-        emitter: &mut BatchEmitter<'_>,
+        emitter: &BatchEmitter,
         progress: &(dyn Fn(SourceReadProgress) + Send + Sync),
         cancelled: &(dyn Fn() -> bool + Send + Sync),
     ) -> SourceResult<(Option<library::ProviderFreshness>, HomeFacts)> {
@@ -210,7 +210,7 @@ impl JellyfinSource {
 
     async fn emit_playlists(
         &self,
-        emitter: &mut BatchEmitter<'_>,
+        emitter: &BatchEmitter,
         progress: &(dyn Fn(SourceReadProgress) + Send + Sync),
         cancelled: &(dyn Fn() -> bool + Send + Sync),
     ) -> SourceResult<()> {
@@ -469,7 +469,7 @@ fn raw_entity_id<'a>(item_id: &'a str, kind: &str) -> Option<&'a str> {
 }
 
 async fn emit_pages<F, Fut, C>(
-    emitter: &mut BatchEmitter<'_>,
+    emitter: &BatchEmitter,
     mut fetch: F,
     mut transform: C,
     progress: &(dyn Fn(SourceReadProgress) + Send + Sync),

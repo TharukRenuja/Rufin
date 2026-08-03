@@ -5,7 +5,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use library::{CandidateFinish, CandidateHeader, Libraries, Library, PreparedSourceCandidate};
-use sources::{Source, SourceInputIdentity, SourceReadProgress, SourceReadStage};
+use sources::{Source, SourceInputIdentity, SourceReadProgress};
 
 pub(super) async fn read_source(
     library: Libraries,
@@ -41,11 +41,6 @@ pub(super) async fn read_source(
         return Err("source reading was cancelled".to_string());
     }
 
-    progress(SourceReadProgress {
-        stage: SourceReadStage::Finalizing,
-        completed: facts.summary().tracks,
-        total: Some(facts.summary().tracks),
-    });
     tokio::task::spawn_blocking(move || {
         candidate
             .finish(

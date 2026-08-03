@@ -40,7 +40,7 @@ impl SubsonicSource {
 
     pub(crate) async fn read_facts(
         &self,
-        emitter: &mut BatchEmitter<'_>,
+        emitter: &BatchEmitter,
         progress: &(dyn Fn(SourceReadProgress) + Send + Sync),
         cancelled: &(dyn Fn() -> bool + Send + Sync),
     ) -> SourceResult<(Option<ProviderFreshness>, HomeFacts)> {
@@ -120,7 +120,7 @@ impl SubsonicSource {
 
     pub(super) async fn emit_albums(
         &self,
-        emitter: &mut BatchEmitter<'_>,
+        emitter: &BatchEmitter,
         relation_genres: &mut BTreeMap<GenreId, String>,
         progress: &(dyn Fn(SourceReadProgress) + Send + Sync),
         cancelled: &(dyn Fn() -> bool + Send + Sync),
@@ -175,7 +175,7 @@ impl SubsonicSource {
         &self,
         music_folders: &[MusicFolder],
         album_images: &HashMap<String, ImageRef>,
-        emitter: &mut BatchEmitter<'_>,
+        emitter: &BatchEmitter,
         relation_genres: &mut BTreeMap<GenreId, String>,
         progress: &(dyn Fn(SourceReadProgress) + Send + Sync),
         cancelled: &(dyn Fn() -> bool + Send + Sync),
@@ -283,7 +283,7 @@ impl SubsonicSource {
 
     async fn emit_playlists(
         &self,
-        emitter: &mut BatchEmitter<'_>,
+        emitter: &BatchEmitter,
         progress: &(dyn Fn(SourceReadProgress) + Send + Sync),
         cancelled: &(dyn Fn() -> bool + Send + Sync),
     ) -> SourceResult<()> {

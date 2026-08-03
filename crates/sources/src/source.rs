@@ -39,21 +39,6 @@ pub struct SourceReadProgress {
     pub total: Option<usize>,
 }
 
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub struct SourceReadSummary {
-    pub albums: usize,
-    pub tracks: usize,
-    pub artists: usize,
-    pub genres: usize,
-    pub music_folders: usize,
-    pub playlists: usize,
-    pub local_files: usize,
-    pub metadata_fallbacks: usize,
-    pub unreadable_files: usize,
-    pub invalid_cues: usize,
-    pub skipped_playlists: usize,
-}
-
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum NativeSourceResult<T> {
     Available(T),
@@ -269,12 +254,11 @@ pub struct SourceInputIdentity {
 
 /// Terminal facts from one bounded source read.
 ///
-/// Canonical batches cross the callback while the concrete source reads them.
+/// Canonical batches cross the channel while the concrete source reads them.
 /// Library owns candidate creation, persistence, comparison, and acceptance.
 pub struct SourceFacts {
     freshness: Option<ProviderFreshness>,
     home: HomeFacts,
-    summary: SourceReadSummary,
 }
 
 impl SourceFacts {
@@ -286,119 +270,38 @@ impl SourceFacts {
         &self.home
     }
 
-    pub fn summary(&self) -> SourceReadSummary {
-        self.summary
-    }
-
-    pub(crate) fn new(
-        freshness: Option<ProviderFreshness>,
-        home: HomeFacts,
-        summary: SourceReadSummary,
-    ) -> Self {
-        Self {
-            freshness,
-            home,
-            summary,
-        }
+    pub(crate) fn new(freshness: Option<ProviderFreshness>, home: HomeFacts) -> Self {
+        Self { freshness, home }
     }
 }
 
 /// Direct bounded edge from a provider response to Library's candidate.
-///
-/// `false` means the caller could not accept the batch. Rufin retains the
-/// actual downstream error and cancels the source operation; Sources does not
-/// need a Library error or handle.
-#[cfg_attr(
-    not(test),
-    allow(dead_code, reason = "provider fixtures use the direct callback sink")
-)]
-enum BatchTarget<'a> {
-    Callback(&'a mut (dyn FnMut(CandidateBatch) -> bool + Send)),
-    Channel(Sender<CandidateBatch>),
+pub(crate) struct BatchEmitter {
+    batches: Sender<CandidateBatch>,
 }
 
-pub(crate) struct BatchEmitter<'a> {
-    target: BatchTarget<'a>,
-    summary: SourceReadSummary,
-}
-
-impl<'a> BatchEmitter<'a> {
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "provider fixtures use the direct callback sink")
-    )]
-    pub(crate) fn new(accept: &'a mut (dyn FnMut(CandidateBatch) -> bool + Send)) -> Self {
-        Self {
-            target: BatchTarget::Callback(accept),
-            summary: SourceReadSummary::default(),
-        }
+impl BatchEmitter {
+    pub(crate) fn new(batches: Sender<CandidateBatch>) -> Self {
+        Self { batches }
     }
 
-    fn channel(sender: Sender<CandidateBatch>) -> Self {
-        Self {
-            target: BatchTarget::Channel(sender),
-            summary: SourceReadSummary::default(),
-        }
-    }
-
-    pub(crate) fn emit(&mut self, batch: CandidateBatch) -> SourceResult<()> {
-        if !self.record(&batch) {
-            return Ok(());
-        }
-        let accepted = match &mut self.target {
-            BatchTarget::Callback(accept) => accept(batch),
-            BatchTarget::Channel(sender) => sender.send_blocking(batch).is_ok(),
-        };
-        if !accepted {
-            return Err(SourceError::Cancelled);
-        }
-        Ok(())
-    }
-
-    pub(crate) async fn emit_async(&mut self, batch: CandidateBatch) -> SourceResult<()> {
-        if !self.record(&batch) {
-            return Ok(());
-        }
-        let accepted = match &mut self.target {
-            BatchTarget::Callback(accept) => accept(batch),
-            BatchTarget::Channel(sender) => sender.send(batch).await.is_ok(),
-        };
-        if !accepted {
-            return Err(SourceError::Cancelled);
-        }
-        Ok(())
-    }
-
-    fn record(&mut self, batch: &CandidateBatch) -> bool {
+    pub(crate) fn emit(&self, batch: CandidateBatch) -> SourceResult<()> {
         if batch.is_empty() {
-            return false;
+            return Ok(());
         }
-        match batch {
-            CandidateBatch::Albums(values) => self.summary.albums += values.len(),
-            CandidateBatch::Tracks(values) => self.summary.tracks += values.len(),
-            CandidateBatch::Artists(values) => self.summary.artists += values.len(),
-            CandidateBatch::Genres(values) => self.summary.genres += values.len(),
-            CandidateBatch::MusicFolders(values) => self.summary.music_folders += values.len(),
-            CandidateBatch::Playlists(values) => self.summary.playlists += values.len(),
-            CandidateBatch::LocalFiles(values) => self.summary.local_files += values.len(),
+        self.batches
+            .send_blocking(batch)
+            .map_err(|_| SourceError::Cancelled)
+    }
+
+    pub(crate) async fn emit_async(&self, batch: CandidateBatch) -> SourceResult<()> {
+        if batch.is_empty() {
+            return Ok(());
         }
-        true
-    }
-
-    pub(crate) fn summary(&self) -> SourceReadSummary {
-        self.summary
-    }
-
-    pub(crate) fn metadata_fallback(&mut self) {
-        self.summary.metadata_fallbacks += 1;
-    }
-
-    pub(crate) fn unreadable_file(&mut self) {
-        self.summary.unreadable_files += 1;
-    }
-
-    pub(crate) fn invalid_cue(&mut self) {
-        self.summary.invalid_cues += 1;
+        self.batches
+            .send(batch)
+            .await
+            .map_err(|_| SourceError::Cancelled)
     }
 }
 
@@ -957,7 +860,7 @@ impl Source {
         progress: Arc<dyn Fn(SourceReadProgress) + Send + Sync>,
         cancelled: Arc<AtomicBool>,
     ) -> SourceResult<SourceFacts> {
-        let (freshness, home, summary) = match &self.implementation {
+        let (freshness, home) = match &self.implementation {
             Implementation::Local(_) => {
                 let source = Arc::clone(&self);
                 let is_cancelled = move || cancelled.load(Ordering::Acquire);
@@ -965,32 +868,29 @@ impl Source {
                     let Implementation::Local(local) = &source.implementation else {
                         unreachable!("source kind changed while reading Local facts");
                     };
-                    let mut emitter = BatchEmitter::channel(batches);
-                    let result = local.read_facts(&mut emitter, &*progress, &is_cancelled);
-                    result.map(|(freshness, home)| (freshness, home, emitter.summary()))
+                    let emitter = BatchEmitter::new(batches);
+                    local.read_facts(&emitter, &*progress, &is_cancelled)
                 })
                 .await
                 .map_err(|error| SourceError::Other(error.to_string()))??;
                 completed
             }
             Implementation::Jellyfin(source) => {
-                let mut emitter = BatchEmitter::channel(batches);
+                let emitter = BatchEmitter::new(batches);
                 let is_cancelled = || cancelled.load(Ordering::Acquire);
-                let (freshness, home) = source
-                    .read_facts(&mut emitter, &*progress, &is_cancelled)
-                    .await?;
-                (freshness, home, emitter.summary())
+                source
+                    .read_facts(&emitter, &*progress, &is_cancelled)
+                    .await?
             }
             Implementation::OpenSubsonic(source) => {
-                let mut emitter = BatchEmitter::channel(batches);
+                let emitter = BatchEmitter::new(batches);
                 let is_cancelled = || cancelled.load(Ordering::Acquire);
-                let (freshness, home) = source
-                    .read_facts(&mut emitter, &*progress, &is_cancelled)
-                    .await?;
-                (freshness, home, emitter.summary())
+                source
+                    .read_facts(&emitter, &*progress, &is_cancelled)
+                    .await?
             }
         };
-        Ok(SourceFacts::new(freshness, home, summary))
+        Ok(SourceFacts::new(freshness, home))
     }
 }
 
@@ -1081,6 +981,57 @@ async fn edit_remote_playlist(
 mod input_identity_tests {
     use super::*;
     use crate::SourceCacheMatch;
+    use library::MusicFolder;
+
+    fn music_folder(name: &str) -> MusicFolder {
+        MusicFolder {
+            id: MusicFolderId::new(name),
+            name: name.to_string(),
+            image_ref: None,
+        }
+    }
+
+    #[test]
+    fn sync_batch_emitter_suppresses_empty_batches() {
+        let (batches, receiver) = async_channel::unbounded();
+        let emitter = BatchEmitter::new(batches);
+
+        emitter
+            .emit(CandidateBatch::MusicFolders(Vec::new()))
+            .expect("suppress empty batch");
+        emitter
+            .emit(CandidateBatch::MusicFolders(vec![music_folder("first")]))
+            .expect("send populated batch");
+        drop(emitter);
+
+        let emitted = std::iter::from_fn(|| receiver.try_recv().ok()).collect::<Vec<_>>();
+        assert_eq!(emitted.len(), 1);
+        assert!(matches!(
+            &emitted[0],
+            CandidateBatch::MusicFolders(folders) if folders == &[music_folder("first")]
+        ));
+    }
+
+    #[tokio::test]
+    async fn closed_batch_channel_cancels_sync_and_async_senders() {
+        let (sync_batches, sync_receiver) = async_channel::unbounded();
+        let sync_emitter = BatchEmitter::new(sync_batches);
+        drop(sync_receiver);
+        assert!(matches!(
+            sync_emitter.emit(CandidateBatch::MusicFolders(vec![music_folder("sync")])),
+            Err(SourceError::Cancelled)
+        ));
+
+        let (async_batches, async_receiver) = async_channel::unbounded();
+        let async_emitter = BatchEmitter::new(async_batches);
+        drop(async_receiver);
+        assert!(matches!(
+            async_emitter
+                .emit_async(CandidateBatch::MusicFolders(vec![music_folder("async")]))
+                .await,
+            Err(SourceError::Cancelled)
+        ));
+    }
 
     #[test]
     fn selected_item_changes_coalesce_without_losing_a_full_refresh() {

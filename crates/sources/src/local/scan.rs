@@ -75,33 +75,15 @@ struct AudioJobResult {
 
 trait FactOutput {
     fn emit(&mut self, batch: CandidateBatch) -> SourceResult<()>;
-
-    fn metadata_fallback(&mut self) {}
-
-    fn unreadable_file(&mut self) {}
-
-    fn invalid_cue(&mut self) {}
 }
 
-struct EmitterOutput<'a, 'b> {
-    emitter: &'a mut BatchEmitter<'b>,
+struct EmitterOutput<'a> {
+    emitter: &'a BatchEmitter,
 }
 
-impl FactOutput for EmitterOutput<'_, '_> {
+impl FactOutput for EmitterOutput<'_> {
     fn emit(&mut self, batch: CandidateBatch) -> SourceResult<()> {
         self.emitter.emit(batch)
-    }
-
-    fn metadata_fallback(&mut self) {
-        self.emitter.metadata_fallback();
-    }
-
-    fn unreadable_file(&mut self) {
-        self.emitter.unreadable_file();
-    }
-
-    fn invalid_cue(&mut self) {
-        self.emitter.invalid_cue();
     }
 }
 
@@ -134,7 +116,7 @@ impl FactOutput for CollectedFacts {
 
 pub(super) fn acquire_complete(
     roots: &[PathBuf],
-    emitter: &mut BatchEmitter<'_>,
+    emitter: &BatchEmitter,
     progress: &(dyn Fn(SourceReadProgress) + Send + Sync),
     cancelled: &(dyn Fn() -> bool + Send + Sync),
 ) -> SourceResult<()> {
@@ -1314,9 +1296,6 @@ fn scan_inventory(
         if file.read_state == LocalReadState::Parsed && !successful_cues.contains(&file.path) {
             file.read_state = LocalReadState::Invalid;
         }
-        if file.read_state == LocalReadState::Invalid {
-            output.invalid_cue();
-        }
     }
     emit_chunks(cues.files, CandidateBatch::LocalFiles, output)?;
 
@@ -1719,11 +1698,6 @@ fn accept_audio_result(
             if let Some(scanned) = read.scanned {
                 accept_scanned(scanned, aggregates, track_batch, output)?;
             }
-        }
-        match read.state {
-            LocalReadState::MetadataFallback => output.metadata_fallback(),
-            LocalReadState::Unreadable => output.unreadable_file(),
-            _ => {}
         }
         let mut file = inventory
             .entries

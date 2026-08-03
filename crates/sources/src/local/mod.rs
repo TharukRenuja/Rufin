@@ -154,7 +154,7 @@ impl LocalSource {
 
     pub(super) fn read_facts(
         &self,
-        emitter: &mut BatchEmitter<'_>,
+        emitter: &BatchEmitter,
         progress: &(dyn Fn(SourceReadProgress) + Send + Sync),
         cancelled: &(dyn Fn() -> bool + Send + Sync),
     ) -> SourceResult<(Option<library::ProviderFreshness>, HomeFacts)> {

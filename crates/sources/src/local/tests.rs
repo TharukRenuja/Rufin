@@ -22,7 +22,6 @@ use crate::source::{BatchEmitter, SourceReadProgress, SourceReadStage};
 struct ScanFacts {
     batches: Vec<CandidateBatch>,
     progress: Vec<SourceReadProgress>,
-    summary: crate::SourceReadSummary,
 }
 
 impl ScanFacts {
@@ -76,26 +75,20 @@ impl ScanFacts {
 }
 
 fn complete_scan(source: &LocalSource) -> ScanFacts {
-    let mut batches = Vec::new();
+    let (batches, receiver) = async_channel::unbounded();
     let progress = std::sync::Mutex::new(Vec::new());
-    let mut accept = |batch| {
-        batches.push(batch);
-        true
-    };
-    let mut emitter = BatchEmitter::new(&mut accept);
+    let emitter = BatchEmitter::new(batches);
     source
         .read_facts(
-            &mut emitter,
+            &emitter,
             &|value| progress.lock().expect("progress lock").push(value),
             &|| false,
         )
         .expect("complete Local scan");
-    let summary = emitter.summary();
     drop(emitter);
     ScanFacts {
-        batches,
+        batches: std::iter::from_fn(|| receiver.try_recv().ok()).collect(),
         progress: progress.into_inner().expect("progress lock"),
-        summary,
     }
 }
 
@@ -1003,9 +996,19 @@ fn complete_scan_streams_roots_and_isolates_metadata_fallback() {
         ["Good", "No Tags"]
     );
     assert!(tracks.iter().any(|track| track.artist == "Unknown Artist"));
-    assert_eq!(facts.summary.tracks, 2);
-    assert_eq!(facts.summary.metadata_fallbacks, 1);
-    assert_eq!(facts.summary.unreadable_files, 0);
+    let files = facts.files();
+    assert_eq!(
+        files
+            .iter()
+            .filter(|file| file.read_state == LocalReadState::MetadataFallback)
+            .count(),
+        1
+    );
+    assert!(
+        files
+            .iter()
+            .all(|file| file.read_state != LocalReadState::Unreadable)
+    );
     assert!(facts.batches.iter().all(|batch| batch.len() <= 1_024));
     assert!(facts.progress.iter().any(|progress| {
         progress.stage == SourceReadStage::Finalizing
@@ -1922,9 +1925,9 @@ fn source_input_rejects_missing_or_relative_roots_without_forgetting_saved_roots
     };
     let opened = LocalSource::from_configuration(&missing).expect("open saved Local source");
     assert_eq!(opened.roots(), [missing_root]);
-    let mut accept = |_| true;
-    let mut emitter = BatchEmitter::new(&mut accept);
-    assert!(opened.read_facts(&mut emitter, &|_| {}, &|| false).is_err());
+    let (batches, _receiver) = async_channel::unbounded();
+    let emitter = BatchEmitter::new(batches);
+    assert!(opened.read_facts(&emitter, &|_| {}, &|| false).is_err());
 }
 
 fn write_tagged_wav(

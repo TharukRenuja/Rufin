@@ -75,7 +75,7 @@ impl SubsonicSource {
 
     pub(super) async fn emit_navidrome_library(
         &self,
-        emitter: &mut BatchEmitter<'_>,
+        emitter: &BatchEmitter,
         progress: &(dyn Fn(SourceReadProgress) + Send + Sync),
         cancelled: &(dyn Fn() -> bool + Send + Sync),
     ) -> SourceResult<BTreeMap<GenreId, String>> {
@@ -153,7 +153,7 @@ impl SubsonicSource {
         &self,
         endpoint: &str,
         stage: SourceReadStage,
-        emitter: &mut BatchEmitter<'_>,
+        emitter: &BatchEmitter,
         progress: &(dyn Fn(SourceReadProgress) + Send + Sync),
         cancelled: &(dyn Fn() -> bool + Send + Sync),
         mut transform: impl FnMut(Vec<T>) -> CandidateBatch,
@@ -928,18 +928,14 @@ mod tests {
             .mount(&server)
             .await;
         let source = navidrome_source_with_token(&server, "token-a");
-        let mut batches = Vec::new();
-        let mut accept = |batch| {
-            batches.push(batch);
-            true
-        };
-        let mut emitter = BatchEmitter::new(&mut accept);
+        let (batches, receiver) = async_channel::unbounded();
+        let emitter = BatchEmitter::new(batches);
 
         source
             .emit_navidrome_pages::<NavidromeArtist>(
                 "artist",
                 SourceReadStage::Artists,
-                &mut emitter,
+                &emitter,
                 &|_| {},
                 &|| false,
                 |page| {
@@ -955,8 +951,7 @@ mod tests {
         drop(emitter);
 
         assert_eq!(
-            batches
-                .into_iter()
+            std::iter::from_fn(|| receiver.try_recv().ok())
                 .map(|batch| match batch {
                     CandidateBatch::Artists(artists) => artists.len(),
                     _ => panic!("artist batch"),
