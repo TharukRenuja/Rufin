@@ -9,11 +9,36 @@ use rusqlite::{Connection, OptionalExtension};
 use super::{StoreError, StoreResult};
 
 pub(crate) const APPLICATION_ID: i64 = 1_381_320_270;
-pub(crate) const SCHEMA_VERSION: i64 = 34;
-const RELEASED_SCHEMA_VERSION: i64 = 32;
-const PREVIOUS_SCHEMA_VERSION: i64 = 33;
+pub(crate) const SCHEMA_VERSION: i64 = 35;
+const FIRST_STORE_SCHEMA_VERSION: i64 = 32;
+const MUSIC_FOLDER_ARTWORK_SCHEMA_VERSION: i64 = 33;
+const FILESYSTEM_IDENTITY_SCHEMA_VERSION: i64 = 34;
 
-const CREATE_SCHEMA: &str = r###"-- Rufin Store schema 34.
+struct Migration {
+    from_version: i64,
+    to_version: i64,
+    run: fn(&Connection) -> StoreResult<()>,
+}
+
+const MIGRATIONS: &[Migration] = &[
+    Migration {
+        from_version: FIRST_STORE_SCHEMA_VERSION,
+        to_version: MUSIC_FOLDER_ARTWORK_SCHEMA_VERSION,
+        run: migrate_schema_32,
+    },
+    Migration {
+        from_version: MUSIC_FOLDER_ARTWORK_SCHEMA_VERSION,
+        to_version: FILESYSTEM_IDENTITY_SCHEMA_VERSION,
+        run: migrate_schema_33,
+    },
+    Migration {
+        from_version: FILESYSTEM_IDENTITY_SCHEMA_VERSION,
+        to_version: SCHEMA_VERSION,
+        run: migrate_schema_34,
+    },
+];
+
+const CREATE_SCHEMA: &str = r###"-- Rufin Store schema 35.
 --
 -- Product routes hydrate LoadedLibrary and do not query these tables for
 -- sorting or filtering.
@@ -23,7 +48,7 @@ PRAGMA foreign_keys = ON;
 BEGIN IMMEDIATE;
 
 PRAGMA application_id = 1381320270; -- "RUFN"
-PRAGMA user_version = 34;
+PRAGMA user_version = 35;
 
 -- One row is one complete or in-progress source-library candidate. The newest
 -- accepted library_id is current; there is no mutable head row.
@@ -852,10 +877,20 @@ PRAGMA user_version = 34;
 COMMIT;
 "###;
 
+fn migrate_schema_32(connection: &Connection) -> StoreResult<()> {
+    connection.execute_batch(MIGRATE_SCHEMA_32)?;
+    Ok(())
+}
+
+fn migrate_schema_33(connection: &Connection) -> StoreResult<()> {
+    connection.execute_batch(MIGRATE_SCHEMA_33)?;
+    Ok(())
+}
+
 pub(crate) fn initialize(connection: &Connection) -> StoreResult<()> {
     connection.pragma_update(None, "foreign_keys", true)?;
     let application_id = pragma_i64(connection, "application_id")?;
-    let user_version = pragma_i64(connection, "user_version")?;
+    let mut user_version = pragma_i64(connection, "user_version")?;
     let has_schema = connection
         .query_row(
             "SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name NOT LIKE 'sqlite_%' LIMIT 1",
@@ -865,25 +900,98 @@ pub(crate) fn initialize(connection: &Connection) -> StoreResult<()> {
         .optional()?
         .is_some();
 
-    match (application_id, user_version, has_schema) {
-        (0, 0, false) => connection.execute_batch(CREATE_SCHEMA)?,
-        (APPLICATION_ID, RELEASED_SCHEMA_VERSION, true) => {
-            connection.execute_batch(MIGRATE_SCHEMA_32)?;
-            connection.execute_batch(MIGRATE_SCHEMA_33)?;
+    if (application_id, user_version, has_schema) == (0, 0, false) {
+        connection.execute_batch(CREATE_SCHEMA)?;
+    } else if application_id == APPLICATION_ID && has_schema {
+        while user_version != SCHEMA_VERSION {
+            let Some(migration) = MIGRATIONS
+                .iter()
+                .find(|migration| migration.from_version == user_version)
+            else {
+                return Err(StoreError::UnsupportedSchema {
+                    application_id,
+                    user_version,
+                });
+            };
+            (migration.run)(connection)?;
+            user_version = pragma_i64(connection, "user_version")?;
+            if user_version != migration.to_version {
+                return Err(StoreError::InvalidFinalSchema(format!(
+                    "schema {} migration produced schema {user_version} instead of {}",
+                    migration.from_version, migration.to_version
+                )));
+            }
         }
-        (APPLICATION_ID, PREVIOUS_SCHEMA_VERSION, true) => {
-            connection.execute_batch(MIGRATE_SCHEMA_33)?
-        }
-        (APPLICATION_ID, SCHEMA_VERSION, true) => {}
-        (application_id, user_version, _) => {
-            return Err(StoreError::UnsupportedSchema {
-                application_id,
-                user_version,
-            });
-        }
+    } else {
+        return Err(StoreError::UnsupportedSchema {
+            application_id,
+            user_version,
+        });
     }
 
     validate(connection)
+}
+
+fn migrate_schema_34(connection: &Connection) -> StoreResult<()> {
+    let transaction = connection.unchecked_transaction()?;
+    backfill_recent_plays(&transaction)?;
+    transaction.pragma_update(None, "user_version", SCHEMA_VERSION)?;
+    transaction.commit()?;
+    Ok(())
+}
+
+fn backfill_recent_plays(connection: &Connection) -> StoreResult<()> {
+    connection.execute(
+        "INSERT OR IGNORE INTO recent_plays(
+             play_id, source_id, track_id, track_title, artist_name,
+             album_title, played_at
+         )
+         SELECT printf(
+                    'activity-last-play:%d:%s:%d:%s:%d',
+                    length(source_id), source_id,
+                    length(item_id), item_id,
+                    last_played_at
+                ),
+                source_id, item_id, display_name,
+                COALESCE(display_context, ''), NULL, last_played_at
+         FROM (
+             SELECT source_id, item_id, display_name, display_context,
+                    last_played_at,
+                    row_number() OVER (
+                        PARTITION BY source_id
+                        ORDER BY last_played_at DESC, item_id DESC
+                    ) AS position
+             FROM listening_aggregates
+             WHERE period = 'lifetime'
+               AND item_kind = 'track'
+               AND last_played_at IS NOT NULL
+         ) AS activity
+         WHERE position <= 100
+           AND NOT EXISTS (
+               SELECT 1 FROM recent_plays
+               WHERE recent_plays.source_id = activity.source_id
+                 AND recent_plays.track_id = activity.item_id
+                 AND recent_plays.played_at = activity.last_played_at
+           )",
+        [],
+    )?;
+    connection.execute(
+        "DELETE FROM recent_plays
+         WHERE play_id IN (
+             SELECT play_id
+             FROM (
+                 SELECT play_id,
+                        row_number() OVER (
+                            PARTITION BY source_id
+                            ORDER BY played_at DESC, play_id DESC
+                        ) AS position
+                 FROM recent_plays
+             )
+             WHERE position > 100
+        )",
+        [],
+    )?;
+    Ok(())
 }
 
 pub(crate) fn validate(connection: &Connection) -> StoreResult<()> {
@@ -964,6 +1072,17 @@ mod tests {
     use super::*;
 
     #[test]
+    fn migration_registry_covers_every_supported_store_version() {
+        let mut expected = FIRST_STORE_SCHEMA_VERSION;
+        for migration in MIGRATIONS {
+            assert_eq!(migration.from_version, expected);
+            assert_eq!(migration.to_version, migration.from_version + 1);
+            expected = migration.to_version;
+        }
+        assert_eq!(expected, SCHEMA_VERSION);
+    }
+
+    #[test]
     fn schema_33_filesystem_identities_are_preserved_when_the_range_checks_are_removed() {
         let connection = Connection::open_in_memory().expect("open Store");
         initialize(&connection).expect("initialize current Store");
@@ -1002,7 +1121,7 @@ mod tests {
             )
             .expect("write Local access file");
         connection
-            .pragma_update(None, "user_version", PREVIOUS_SCHEMA_VERSION)
+            .pragma_update(None, "user_version", MUSIC_FOLDER_ARTWORK_SCHEMA_VERSION)
             .expect("prepare schema 33 Store");
 
         initialize(&connection).expect("migrate schema 33 Store");
@@ -1021,6 +1140,139 @@ mod tests {
             .expect("read migrated Local access identity");
         assert_eq!(local_identity, (7, 11));
         assert_eq!(access_identity, (13, 17));
+    }
+
+    #[test]
+    fn schema_34_backfills_history_from_the_activity_used_by_most_played() {
+        let connection = Connection::open_in_memory().expect("open Store");
+        initialize(&connection).expect("initialize current Store");
+        connection
+            .execute(
+                "INSERT INTO listening_aggregates(
+                     source_id, period, item_kind, item_id, display_name,
+                     display_context, play_count, skip_count, last_played_at
+                 ) VALUES (
+                     'local:test', 'lifetime', 'track', 'track:old',
+                     'Old Track', 'Old Artist', 3, 0, 1784887200
+                 )",
+                [],
+            )
+            .expect("write migrated activity");
+        connection
+            .execute(
+                "INSERT INTO recent_plays(
+                     play_id, source_id, track_id, track_title, artist_name,
+                     album_title, played_at
+                 ) VALUES (
+                     'current-play', 'local:test', 'track:new', 'New Track',
+                     'New Artist', 'New Album', 1800000000
+                 )",
+                [],
+            )
+            .expect("write a play recorded after migration");
+        connection
+            .pragma_update(None, "user_version", FILESYSTEM_IDENTITY_SCHEMA_VERSION)
+            .expect("prepare schema 34 Store");
+
+        initialize(&connection).expect("migrate schema 34 Store");
+
+        let history = connection
+            .prepare(
+                "SELECT track_id, track_title, artist_name, played_at
+                 FROM recent_plays
+                 ORDER BY played_at",
+            )
+            .expect("prepare History read")
+            .query_map([], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, i64>(3)?,
+                ))
+            })
+            .expect("read History")
+            .collect::<Result<Vec<_>, _>>()
+            .expect("collect History");
+        assert_eq!(
+            history,
+            vec![
+                (
+                    "track:old".to_string(),
+                    "Old Track".to_string(),
+                    "Old Artist".to_string(),
+                    1_784_887_200,
+                ),
+                (
+                    "track:new".to_string(),
+                    "New Track".to_string(),
+                    "New Artist".to_string(),
+                    1_800_000_000,
+                ),
+            ]
+        );
+        assert_eq!(
+            pragma_i64(&connection, "user_version").expect("read Store version"),
+            SCHEMA_VERSION
+        );
+
+        initialize(&connection).expect("reopen migrated Store");
+        assert_eq!(
+            connection
+                .query_row("SELECT COUNT(*) FROM recent_plays", [], |row| {
+                    row.get::<_, i64>(0)
+                })
+                .expect("count History after reopening"),
+            2
+        );
+    }
+
+    #[test]
+    fn schema_34_history_backfill_keeps_the_latest_100_rows_per_source() {
+        let connection = Connection::open_in_memory().expect("open Store");
+        initialize(&connection).expect("initialize current Store");
+        for number in 0..110 {
+            connection
+                .execute(
+                    "INSERT INTO listening_aggregates(
+                         source_id, period, item_kind, item_id, display_name,
+                         display_context, play_count, skip_count, last_played_at
+                     ) VALUES (
+                         'local:test', 'lifetime', 'track', ?1, ?2,
+                         'Artist', 1, 0, ?3
+                     )",
+                    rusqlite::params![
+                        format!("track:{number}"),
+                        format!("Track {number}"),
+                        number,
+                    ],
+                )
+                .expect("write migrated activity");
+        }
+        connection
+            .pragma_update(None, "user_version", FILESYSTEM_IDENTITY_SCHEMA_VERSION)
+            .expect("prepare schema 34 Store");
+
+        initialize(&connection).expect("migrate schema 34 Store");
+
+        assert_eq!(
+            connection
+                .query_row(
+                    "SELECT COUNT(*), MIN(played_at), MAX(played_at)
+                     FROM recent_plays
+                     WHERE source_id = 'local:test'",
+                    [],
+                    |row| {
+                        Ok((
+                            row.get::<_, i64>(0)?,
+                            row.get::<_, i64>(1)?,
+                            row.get::<_, i64>(2)?,
+                        ))
+                    },
+                )
+                .expect("read bounded History"),
+            (100, 10, 109)
+        );
     }
 
     #[test]
@@ -1059,6 +1311,11 @@ mod tests {
                  PRAGMA user_version = 32;",
             )
             .expect("prepare schema 32 Store");
+
+        assert_eq!(
+            pragma_i64(&connection, "user_version").expect("read prepared Store version"),
+            FIRST_STORE_SCHEMA_VERSION
+        );
 
         initialize(&connection).expect("migrate schema 32 Store");
 

@@ -35,7 +35,6 @@ use crate::{
 
 pub(crate) mod repair;
 mod schema;
-pub(crate) mod schema30;
 
 pub use repair::StoreRepairReport;
 
