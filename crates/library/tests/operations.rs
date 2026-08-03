@@ -4,7 +4,7 @@ use library::{
     AcceptedLibraryChange, AcceptedPlay, AcceptedSkip, Album, AlbumRelations, Artist, ArtistCredit,
     CandidateBatch, CandidateChange, CandidateFinish, CandidateHeader, CueSegment,
     FavoriteAcceptance, FavoriteItemId, FolderId, Genre, GenreCredit, GenreId, HomeFacts,
-    HomeItemId, HomeSectionKind, ImageRef, Library, LoadedHomeItem, LocalArtworkRef,
+    HomeItemId, HomeSectionKind, ImageRef, Libraries, LoadedHomeItem, LocalArtworkRef,
     LocalComponentReplacement, LocalComponentSeed, LocalFile, LocalFileKind, LocalFileSeed,
     LocalReadState, MoodCredit, MoodId, MusicFolder, MusicFolderId, NativeRadioResult, NewScrobble,
     PendingScrobbleId, Playlist, PlaylistAcceptance, PlaylistEdit, PlaylistEntry, PlaylistId,
@@ -34,7 +34,7 @@ fn created_playlist_id(change: Option<AcceptedLibraryChange>) -> PlaylistId {
 #[test]
 fn accepted_library_search_matches_substrings_across_item_fields() {
     let directory = tempfile::tempdir().expect("temporary Store directory");
-    let library = Library::open(directory.path().join("library.db")).expect("open Library");
+    let library = Libraries::open(directory.path().join("library.db")).expect("open Library");
     let source_id = SourceId::new("local:server:search");
     let mut searchable_track = track();
     searchable_track.title = "Orchard Walk".to_string();
@@ -72,7 +72,7 @@ fn accepted_library_search_matches_substrings_across_item_fields() {
         .expect("accept search candidate");
 
     let apple = accepted
-        .loaded
+        .library
         .search(&SearchRequest::new("pple"))
         .expect("search accepted library");
     assert_eq!(apple.artists[0].name, "Apple Trees");
@@ -80,7 +80,7 @@ fn accepted_library_search_matches_substrings_across_item_fields() {
     assert_eq!(apple.tracks[0].title, "Orchard Walk");
 
     let combined = accepted
-        .loaded
+        .library
         .search(&SearchRequest::new("green orch"))
         .expect("search across Track fields");
     assert_eq!(combined.tracks.len(), 1);
@@ -93,47 +93,43 @@ fn accepted_library_search_matches_substrings_across_item_fields() {
     updated_track.album = "Blue Fields".to_string();
     let updated_album = album_for_track(&updated_track, 0);
     let updated_artist = artist_for_track(&updated_track);
-    library
-        .accept_source_update(
-            &accepted.loaded,
-            SourceLibraryUpdate {
-                albums: vec![updated_album],
-                tracks: vec![updated_track],
-                artists: vec![updated_artist],
-                ..SourceLibraryUpdate::default()
-            },
-        )
+    accepted
+        .library
+        .accept_source_update(SourceLibraryUpdate {
+            albums: vec![updated_album],
+            tracks: vec![updated_track],
+            artists: vec![updated_artist],
+            ..SourceLibraryUpdate::default()
+        })
         .expect("accept searchable item replacements")
         .expect("searchable item replacements changed");
 
     assert!(
         accepted
-            .loaded
+            .library
             .search(&SearchRequest::new("apple"))
             .expect("search removed terms")
             .is_empty()
     );
     let pear = accepted
-        .loaded
+        .library
         .search(&SearchRequest::new("pear"))
         .expect("search replacement terms");
     assert_eq!(pear.artists.len(), 1);
     assert_eq!(pear.albums.len(), 1);
     assert_eq!(pear.tracks.len(), 1);
 
-    library
-        .accept_source_update(
-            &accepted.loaded,
-            SourceLibraryUpdate {
-                removed_tracks: vec![library::TrackId::new("local:track:one")],
-                ..SourceLibraryUpdate::default()
-            },
-        )
+    accepted
+        .library
+        .accept_source_update(SourceLibraryUpdate {
+            removed_tracks: vec![library::TrackId::new("local:track:one")],
+            ..SourceLibraryUpdate::default()
+        })
         .expect("remove searchable Track")
         .expect("searchable Track removal changed");
     assert!(
         accepted
-            .loaded
+            .library
             .search(&SearchRequest::new("river"))
             .expect("search removed Track")
             .tracks
@@ -144,7 +140,7 @@ fn accepted_library_search_matches_substrings_across_item_fields() {
 #[test]
 fn source_artwork_uses_album_images_and_keeps_orphan_track_images() {
     let directory = tempfile::tempdir().expect("temporary Store directory");
-    let library = Library::open(directory.path().join("library.db")).expect("open Library");
+    let library = Libraries::open(directory.path().join("library.db")).expect("open Library");
     let source_id = SourceId::new("subsonic:server:artwork");
     let mut first = track();
     first.image_ref = Some(ImageRef::new("track-alias-one", None));
@@ -216,7 +212,7 @@ fn source_artwork_uses_album_images_and_keeps_orphan_track_images() {
 
     assert_eq!(
         accepted
-            .loaded
+            .library
             .source_artwork()
             .expect("project source artwork")
             .as_ref(),
@@ -229,15 +225,15 @@ fn source_artwork_uses_album_images_and_keeps_orphan_track_images() {
 }
 
 #[test]
-fn candidate_admission_reuses_the_prepared_loaded_library() {
+fn candidate_acceptance_rebases_activity_without_rebuilding_the_prepared_library() {
     let directory = tempfile::tempdir().expect("temporary Store directory");
-    let library = Library::open(directory.path().join("library.db")).expect("open Library");
+    let library = Libraries::open(directory.path().join("library.db")).expect("open Library");
     let source_id = SourceId::new("local:server:prepared");
     let first = accept_track(&library, source_id.clone(), digest(90), track(), None, 1);
     let smart_playlist_id = created_smart_playlist_id(
-        library
+        first
+            .library
             .create_smart_playlist(
-                &first.loaded,
                 "Played".to_string(),
                 SmartPlaylistDefinition {
                     match_all: vec![SmartPlaylistRule {
@@ -272,41 +268,67 @@ fn candidate_admission_reuses_the_prepared_loaded_library() {
                 home: HomeFacts::RufinDefined,
                 accepted_at: 2,
             },
-            Some(&first.loaded),
+            Some(&first.library),
         )
         .expect("prepare replacement candidate");
-    let prepared_loaded = Arc::clone(prepared.loaded());
-    let activity = library
-        .record_play(
-            &first.loaded,
-            AcceptedPlay {
-                play_id: "play:prepared-overlap".to_string(),
-                track_id: updated_track.id.clone(),
-                played_at: 1_700_000_000,
-                month: "2023-11".to_string(),
-            },
-        )
+    let prepared_loaded = Arc::clone(prepared.library());
+    let activity = first
+        .library
+        .record_play(AcceptedPlay {
+            play_id: "play:prepared-overlap".to_string(),
+            track_id: updated_track.id.clone(),
+            played_at: 1_700_000_000,
+            month: "2023-11".to_string(),
+        })
         .expect("record overlapping activity")
         .expect("new overlapping activity");
     let replacement = prepared.accept().expect("accept replacement candidate");
-    assert!(Arc::ptr_eq(&replacement.loaded, &prepared_loaded));
+    assert!(Arc::ptr_eq(&replacement.library, &prepared_loaded));
     assert_eq!(
         replacement
-            .loaded
+            .library
             .track(&updated_track.id)
             .expect("read prepared Track")
             .expect("prepared Track")
             .play_count,
-        None
+        Some(1)
     );
-    let replayed = library
-        .apply_recorded_activity(&replacement.loaded, &activity)
-        .expect("replay overlapping activity")
-        .expect("replayed activity must change the library");
-    assert!(replayed.smart_playlists.contains(&smart_playlist_id));
     assert_eq!(
         replacement
-            .loaded
+            .library
+            .history_track_list(None)
+            .expect("read rebased History")
+            .len(),
+        1
+    );
+    assert!(
+        replacement
+            .library
+            .apply_recorded_activity(&activity)
+            .expect("ignore already rebased activity")
+            .is_none()
+    );
+    assert_eq!(
+        replacement
+            .library
+            .history_track_list(None)
+            .expect("read History after duplicate publication")
+            .len(),
+        1
+    );
+    assert_eq!(
+        replacement
+            .library
+            .smart_playlist_detail(&smart_playlist_id, None)
+            .expect("read activity smart playlist")
+            .expect("activity smart playlist")
+            .tracks
+            .len(),
+        1
+    );
+    assert_eq!(
+        replacement
+            .library
             .track(&updated_track.id)
             .expect("read accepted Track")
             .expect("accepted Track")
@@ -315,10 +337,10 @@ fn candidate_admission_reuses_the_prepared_loaded_library() {
     );
     assert_eq!(
         replacement
-            .loaded
+            .library
             .track(&updated_track.id)
-            .expect("read replayed Track")
-            .expect("replayed Track")
+            .expect("read rebased Track")
+            .expect("rebased Track")
             .play_count,
         Some(1)
     );
@@ -328,7 +350,7 @@ fn candidate_admission_reuses_the_prepared_loaded_library() {
 fn remote_activity_preserves_provider_statistics_and_drives_rufin_smart_playlists() {
     let directory = tempfile::tempdir().expect("temporary Store directory");
     let path = directory.path().join("library.db");
-    let library = Library::open(&path).expect("open Library");
+    let library = Libraries::open(&path).expect("open Library");
     let source_id = SourceId::new("subsonic:server:activity");
     let mut remote_track = track();
     remote_track.id = library::TrackId::new("subsonic:track:one");
@@ -361,9 +383,9 @@ fn remote_activity_preserves_provider_statistics_and_drives_rufin_smart_playlist
         .and_then(|prepared| prepared.accept())
         .expect("accept remote candidate");
     let smart_playlist_id = created_smart_playlist_id(
-        library
+        accepted
+            .library
             .create_smart_playlist(
-                &accepted.loaded,
                 "Played in Rufin".to_string(),
                 SmartPlaylistDefinition {
                     match_all: vec![SmartPlaylistRule {
@@ -380,9 +402,9 @@ fn remote_activity_preserves_provider_statistics_and_drives_rufin_smart_playlist
             .expect("create Rufin activity smart playlist"),
     );
     let unrelated_smart_playlist_id = created_smart_playlist_id(
-        library
+        accepted
+            .library
             .create_smart_playlist(
-                &accepted.loaded,
                 "Named Track".to_string(),
                 SmartPlaylistDefinition {
                     match_all: vec![SmartPlaylistRule {
@@ -400,7 +422,7 @@ fn remote_activity_preserves_provider_statistics_and_drives_rufin_smart_playlist
     );
     assert_eq!(
         accepted
-            .loaded
+            .library
             .smart_playlist_detail(&smart_playlist_id, None)
             .expect("read initial smart playlist")
             .expect("initial smart playlist")
@@ -409,20 +431,19 @@ fn remote_activity_preserves_provider_statistics_and_drives_rufin_smart_playlist
         0
     );
 
-    let update = library
-        .record_play(
-            &accepted.loaded,
-            AcceptedPlay {
-                play_id: "remote-play:one".to_string(),
-                track_id: remote_track.id.clone(),
-                played_at: 1_700_000_000,
-                month: "2023-11".to_string(),
-            },
-        )
+    let update = accepted
+        .library
+        .record_play(AcceptedPlay {
+            play_id: "remote-play:one".to_string(),
+            track_id: remote_track.id.clone(),
+            played_at: 1_700_000_000,
+            month: "2023-11".to_string(),
+        })
         .expect("record remote play")
         .expect("new remote play");
-    let visible = library
-        .apply_recorded_activity(&accepted.loaded, &update)
+    let visible = accepted
+        .library
+        .apply_recorded_activity(&update)
         .expect("apply remote activity")
         .expect("remote activity must change the library");
     assert!(visible.tracks.is_empty());
@@ -434,7 +455,7 @@ fn remote_activity_preserves_provider_statistics_and_drives_rufin_smart_playlist
             .contains(&unrelated_smart_playlist_id)
     );
     let effective = accepted
-        .loaded
+        .library
         .track(&remote_track.id)
         .expect("read remote Track")
         .expect("remote Track");
@@ -446,7 +467,7 @@ fn remote_activity_preserves_provider_statistics_and_drives_rufin_smart_playlist
     );
     assert_eq!(
         accepted
-            .loaded
+            .library
             .smart_playlist_detail(&smart_playlist_id, None)
             .expect("read updated smart playlist")
             .expect("updated smart playlist")
@@ -456,7 +477,7 @@ fn remote_activity_preserves_provider_statistics_and_drives_rufin_smart_playlist
     );
     assert_eq!(
         accepted
-            .loaded
+            .library
             .history_track_list(None)
             .expect("read remote History")
             .len(),
@@ -465,7 +486,7 @@ fn remote_activity_preserves_provider_statistics_and_drives_rufin_smart_playlist
 
     drop(accepted);
     drop(library);
-    let reopened_library = Library::open(&path).expect("reopen Library");
+    let reopened_library = Libraries::open(&path).expect("reopen Library");
     let reopened = reopened_library
         .load_source(&source_id)
         .expect("load remote source")
@@ -499,19 +520,17 @@ fn remote_activity_preserves_provider_statistics_and_drives_rufin_smart_playlist
 #[test]
 fn removing_source_data_is_scoped_and_preserves_external_delivery_work() {
     let directory = tempfile::tempdir().expect("temporary Store directory");
-    let library = Library::open(directory.path().join("library.db")).expect("open Library");
+    let library = Libraries::open(directory.path().join("library.db")).expect("open Library");
     let removed_id = SourceId::new("local:server:removed");
     let kept_id = SourceId::new("jellyfin:server:kept");
     let removed = accept_track(&library, removed_id.clone(), digest(91), track(), None, 1);
     accept_track(&library, kept_id.clone(), digest(92), track(), None, 2);
-    library
-        .accept_favorite(
-            &removed.loaded,
-            FavoriteAcceptance::RufinOwned {
-                item: FavoriteItemId::Track(track().id.clone()),
-                favorite: true,
-            },
-        )
+    removed
+        .library
+        .accept_favorite(FavoriteAcceptance::RufinOwned {
+            item: FavoriteItemId::Track(track().id.clone()),
+            favorite: true,
+        })
         .expect("store Local favorite");
     library
         .queue_scrobbles(vec![NewScrobble {
@@ -553,7 +572,14 @@ fn removing_source_data_is_scoped_and_preserves_external_delivery_work() {
     );
 
     let rebuilt = accept_track(&library, removed_id, digest(93), track(), None, 3);
-    assert!(!rebuilt.loaded.track(&track().id).unwrap().unwrap().favorite);
+    assert!(
+        !rebuilt
+            .library
+            .track(&track().id)
+            .unwrap()
+            .unwrap()
+            .favorite
+    );
 }
 
 #[test]
@@ -565,7 +591,7 @@ fn transient_scrobble_retry_reopens_and_permanent_rejection_leaves_no_work() {
         account_id: "listener".to_string(),
         play_id: "qualified-play".to_string(),
     };
-    let library = Library::open(&path).expect("open Library");
+    let library = Libraries::open(&path).expect("open Library");
     library
         .queue_scrobbles(vec![NewScrobble {
             id: id.clone(),
@@ -581,7 +607,7 @@ fn transient_scrobble_retry_reopens_and_permanent_rejection_leaves_no_work() {
         .expect("defer transient failure");
     drop(library);
 
-    let reopened = Library::open(&path).expect("reopen Library");
+    let reopened = Libraries::open(&path).expect("reopen Library");
     assert!(
         reopened
             .due_scrobbles(ScrobbleService::LastFm, "listener", 30, 10)
@@ -600,7 +626,7 @@ fn transient_scrobble_retry_reopens_and_permanent_rejection_leaves_no_work() {
         .expect("discard permanently rejected delivery");
     drop(reopened);
     assert!(
-        Library::open(&path)
+        Libraries::open(&path)
             .expect("reopen after rejection")
             .due_scrobbles(ScrobbleService::LastFm, "listener", i64::MAX, 10)
             .expect("read work after rejection")
@@ -613,7 +639,7 @@ fn accepted_library_reopens_with_sparse_relationships_and_playlist_occurrences()
     let directory = tempfile::tempdir().expect("temporary Store directory");
     let path = directory.path().join("library.db");
     let source_id = SourceId::new("local:server:test");
-    let library = Library::open(&path).expect("open Library");
+    let library = Libraries::open(&path).expect("open Library");
 
     let mut candidate = library
         .begin_source_candidate(CandidateHeader {
@@ -660,20 +686,20 @@ fn accepted_library_reopens_with_sparse_relationships_and_playlist_occurrences()
 
     let album_id = track.album_id.as_ref().expect("Track Album ID");
     let album = commit
-        .loaded
+        .library
         .album_detail(album_id, None)
         .expect("read Album")
         .expect("derived Album");
     assert_eq!(album.tracks.len(), 1);
     let artist_id = track.primary_artist_id().expect("Track Artist ID");
     let artist = commit
-        .loaded
+        .library
         .artist_track_detail(artist_id, None)
         .expect("read Artist")
         .expect("derived Artist");
     assert_eq!(artist.tracks.len(), 1);
     let playlist = commit
-        .loaded
+        .library
         .playlist_detail(&PlaylistId::new("local:playlist:one"))
         .expect("read Playlist")
         .expect("Playlist");
@@ -685,7 +711,7 @@ fn accepted_library_reopens_with_sparse_relationships_and_playlist_occurrences()
 
     drop(commit);
     drop(library);
-    let reopened = Library::open(path)
+    let reopened = Libraries::open(path)
         .expect("reopen Library")
         .load_source(&source_id)
         .expect("load accepted source")
@@ -704,7 +730,7 @@ fn accepted_library_reopens_with_sparse_relationships_and_playlist_occurrences()
 #[test]
 fn equal_content_reuses_the_loaded_library_and_home_updates_in_place() {
     let directory = tempfile::tempdir().expect("temporary Store directory");
-    let library = Library::open(directory.path().join("library.db")).expect("open Library");
+    let library = Libraries::open(directory.path().join("library.db")).expect("open Library");
     let source_id = SourceId::new("jellyfin:server:test");
     let first = accept(
         &library,
@@ -721,10 +747,10 @@ fn equal_content_reuses_the_loaded_library_and_home_updates_in_place() {
         digest(4),
         "First",
         Some(SourceHomeSectionKind::MostPlayed),
-        Some(&first.loaded),
+        Some(&first.library),
     );
     assert_eq!(unchanged.change, CandidateChange::None);
-    assert!(Arc::ptr_eq(&unchanged.loaded, &first.loaded));
+    assert!(Arc::ptr_eq(&unchanged.library, &first.library));
 
     let home_updated = accept(
         &library,
@@ -732,11 +758,11 @@ fn equal_content_reuses_the_loaded_library_and_home_updates_in_place() {
         digest(4),
         "First",
         Some(SourceHomeSectionKind::RecentlyPlayed),
-        Some(&first.loaded),
+        Some(&first.library),
     );
     assert_eq!(home_updated.change, CandidateChange::Home);
-    assert!(Arc::ptr_eq(&home_updated.loaded, &first.loaded));
-    let home = library.home(&home_updated.loaded, None).expect("Home");
+    assert!(Arc::ptr_eq(&home_updated.library, &first.library));
+    let home = home_updated.library.home(None).expect("Home");
     let item = &home
         .section(HomeSectionKind::RecentlyPlayed)
         .expect("Recently played")
@@ -752,10 +778,58 @@ fn equal_content_reuses_the_loaded_library_and_home_updates_in_place() {
         digest(7),
         "First",
         Some(SourceHomeSectionKind::RecentlyPlayed),
-        Some(&first.loaded),
+        Some(&first.library),
     );
     assert_eq!(changed_input.change, CandidateChange::Library);
-    assert!(!Arc::ptr_eq(&changed_input.loaded, &first.loaded));
+    assert!(!Arc::ptr_eq(&changed_input.library, &first.library));
+}
+
+#[test]
+fn equal_candidate_ids_do_not_reuse_a_library_from_another_store() {
+    let directory = tempfile::tempdir().expect("temporary Store directory");
+    let left_libraries =
+        Libraries::open(directory.path().join("left.db")).expect("open left Store");
+    let right_libraries =
+        Libraries::open(directory.path().join("right.db")).expect("open right Store");
+    let source_id = SourceId::new("jellyfin:server:shared-source-id");
+    let left = accept(
+        &left_libraries,
+        source_id.clone(),
+        digest(8),
+        "Left Store",
+        None,
+        None,
+    );
+    let right = accept(
+        &right_libraries,
+        source_id.clone(),
+        digest(8),
+        "Right Store",
+        None,
+        None,
+    );
+    assert_eq!(left.library.library_id(), right.library.library_id());
+
+    let unchanged = accept(
+        &right_libraries,
+        source_id,
+        digest(8),
+        "Right Store",
+        None,
+        Some(&left.library),
+    );
+
+    assert_eq!(unchanged.change, CandidateChange::None);
+    assert!(!Arc::ptr_eq(&unchanged.library, &left.library));
+    assert_eq!(
+        unchanged
+            .library
+            .track(&track().id)
+            .expect("read right Store Track")
+            .expect("right Store Track")
+            .title,
+        "Right Store"
+    );
 }
 
 #[test]
@@ -763,7 +837,7 @@ fn provider_home_section_replaces_only_that_section_and_reopens() {
     let directory = tempfile::tempdir().expect("temporary Store directory");
     let path = directory.path().join("library.db");
     let source_id = SourceId::new("jellyfin:server:home-section");
-    let library = Library::open(&path).expect("open Library");
+    let library = Libraries::open(&path).expect("open Library");
     let accepted = accept(
         &library,
         source_id.clone(),
@@ -772,16 +846,16 @@ fn provider_home_section_replaces_only_that_section_and_reopens() {
         Some(SourceHomeSectionKind::MostPlayed),
         None,
     );
-    let current = library.home(&accepted.loaded, None).expect("initial Home");
+    let current = accepted.library.home(None).expect("initial Home");
     let most_played = Arc::clone(
         current
             .section(HomeSectionKind::MostPlayed)
             .expect("Most played"),
     );
 
-    let next = library
+    let next = accepted
+        .library
         .accept_home_section(
-            &accepted.loaded,
             None,
             &current,
             SourceHomeSection {
@@ -805,23 +879,20 @@ fn provider_home_section_replaces_only_that_section_and_reopens() {
     drop(current);
     drop(accepted);
     drop(library);
-    let reopened_library = Library::open(&path).expect("reopen Library");
+    let reopened_library = Libraries::open(&path).expect("reopen Library");
     let reopened = reopened_library
         .load_source(&source_id)
         .expect("load source")
         .expect("accepted source");
-    let reopened_home = reopened_library
-        .home(&reopened, None)
-        .expect("reopened Home");
+    let reopened_home = reopened.home(None).expect("reopened Home");
     assert!(
         reopened_home
             .section(HomeSectionKind::RecentlyPlayed)
             .is_some()
     );
 
-    let removed = reopened_library
+    let removed = reopened
         .accept_home_section(
-            &reopened,
             None,
             &reopened_home,
             SourceHomeSection {
@@ -836,14 +907,12 @@ fn provider_home_section_replaces_only_that_section_and_reopens() {
     drop(reopened_home);
     drop(reopened);
     drop(reopened_library);
-    let final_library = Library::open(path).expect("reopen Library after removal");
+    let final_library = Libraries::open(path).expect("reopen Library after removal");
     let final_loaded = final_library
         .load_source(&source_id)
         .expect("load source after removal")
         .expect("accepted source after removal");
-    let final_home = final_library
-        .home(&final_loaded, None)
-        .expect("Home after removal");
+    let final_home = final_loaded.home(None).expect("Home after removal");
     assert!(final_home.section(HomeSectionKind::MostPlayed).is_some());
     assert!(
         final_home
@@ -855,7 +924,7 @@ fn provider_home_section_replaces_only_that_section_and_reopens() {
 #[test]
 fn finished_candidate_stays_invisible_until_acceptance() {
     let directory = tempfile::tempdir().expect("temporary Store directory");
-    let library = Library::open(directory.path().join("library.db")).expect("open Library");
+    let library = Libraries::open(directory.path().join("library.db")).expect("open Library");
     let source_id = SourceId::new("jellyfin:server:prepared");
     let first = accept_track(&library, source_id.clone(), digest(41), track(), None, 1);
 
@@ -878,13 +947,13 @@ fn finished_candidate_stays_invisible_until_acceptance() {
                 home: HomeFacts::RufinDefined,
                 accepted_at: 2,
             },
-            Some(&first.loaded),
+            Some(&first.library),
         )
         .expect("finish replacement candidate");
     assert_eq!(prepared.change(), CandidateChange::Library);
     assert_eq!(
         prepared
-            .loaded()
+            .library()
             .track(&replacement.id)
             .expect("read prepared Track")
             .expect("prepared Track")
@@ -920,7 +989,7 @@ fn finished_candidate_stays_invisible_until_acceptance() {
 #[test]
 fn remote_point_updates_restore_the_complete_refresh_shortcut() {
     let directory = tempfile::tempdir().expect("temporary Store directory");
-    let library = Library::open(directory.path().join("library.db")).expect("open Library");
+    let library = Libraries::open(directory.path().join("library.db")).expect("open Library");
     let source_id = SourceId::new("jellyfin:server:point-updates");
     let input_digest = digest(5);
     let source_track = track();
@@ -933,9 +1002,9 @@ fn remote_point_updates_restore_the_complete_refresh_shortcut() {
         1,
     );
     let favorite_smart_playlist_id = created_smart_playlist_id(
-        library
+        first
+            .library
             .create_smart_playlist(
-                &first.loaded,
                 "Favorite Tracks".to_string(),
                 SmartPlaylistDefinition {
                     match_all: vec![SmartPlaylistRule {
@@ -952,9 +1021,9 @@ fn remote_point_updates_restore_the_complete_refresh_shortcut() {
             .expect("create favorite smart playlist"),
     );
     let title_smart_playlist_id = created_smart_playlist_id(
-        library
+        first
+            .library
             .create_smart_playlist(
-                &first.loaded,
                 "Tracks".to_string(),
                 SmartPlaylistDefinition {
                     match_all: vec![SmartPlaylistRule {
@@ -971,14 +1040,12 @@ fn remote_point_updates_restore_the_complete_refresh_shortcut() {
             .expect("create title smart playlist"),
     );
 
-    let favorite = library
-        .accept_favorite(
-            &first.loaded,
-            FavoriteAcceptance::SourceAcknowledged {
-                item: FavoriteItemId::Track(source_track.id.clone()),
-                favorite: true,
-            },
-        )
+    let favorite = first
+        .library
+        .accept_favorite(FavoriteAcceptance::SourceAcknowledged {
+            item: FavoriteItemId::Track(source_track.id.clone()),
+            favorite: true,
+        })
         .expect("accept remote favorite");
     assert_eq!(
         favorite.favorite,
@@ -1003,7 +1070,7 @@ fn remote_point_updates_restore_the_complete_refresh_shortcut() {
     assert!(!favorite.smart_playlists.contains(&title_smart_playlist_id));
     assert_eq!(
         first
-            .loaded
+            .library
             .smart_playlist_detail(&favorite_smart_playlist_id, None)
             .expect("read favorite smart playlist")
             .expect("favorite smart playlist")
@@ -1013,7 +1080,7 @@ fn remote_point_updates_restore_the_complete_refresh_shortcut() {
     );
     assert_eq!(
         first
-            .loaded
+            .library
             .smart_playlist_detail(&title_smart_playlist_id, None)
             .expect("read title smart playlist")
             .expect("title smart playlist")
@@ -1029,31 +1096,29 @@ fn remote_point_updates_restore_the_complete_refresh_shortcut() {
         source_id.clone(),
         input_digest,
         favorited_track.clone(),
-        Some(&first.loaded),
+        Some(&first.library),
         2,
     );
     assert_eq!(after_favorite.change, CandidateChange::None);
-    assert!(Arc::ptr_eq(&after_favorite.loaded, &first.loaded));
+    assert!(Arc::ptr_eq(&after_favorite.library, &first.library));
 
-    library
-        .accept_favorite(
-            &first.loaded,
-            FavoriteAcceptance::SourceAcknowledged {
-                item: FavoriteItemId::Track(source_track.id.clone()),
-                favorite: true,
-            },
-        )
+    first
+        .library
+        .accept_favorite(FavoriteAcceptance::SourceAcknowledged {
+            item: FavoriteItemId::Track(source_track.id.clone()),
+            favorite: true,
+        })
         .expect("accept equal remote favorite");
     let after_equal_favorite = accept_track(
         &library,
         source_id.clone(),
         input_digest,
         favorited_track,
-        Some(&first.loaded),
+        Some(&first.library),
         3,
     );
     assert_eq!(after_equal_favorite.change, CandidateChange::None);
-    assert!(Arc::ptr_eq(&after_equal_favorite.loaded, &first.loaded));
+    assert!(Arc::ptr_eq(&after_equal_favorite.library, &first.library));
 
     let initial_playlist = PlaylistSnapshot {
         playlist: Playlist {
@@ -1072,7 +1137,7 @@ fn remote_point_updates_restore_the_complete_refresh_shortcut() {
         input_digest,
         source_track.clone(),
         initial_playlist,
-        Some(&first.loaded),
+        Some(&first.library),
         4,
     );
     assert_eq!(with_playlist.change, CandidateChange::Library);
@@ -1094,11 +1159,9 @@ fn remote_point_updates_restore_the_complete_refresh_shortcut() {
             },
         ],
     };
-    let changed = library
-        .accept_playlist(
-            &with_playlist.loaded,
-            PlaylistAcceptance::SourceSnapshot(changed_playlist.clone()),
-        )
+    let changed = with_playlist
+        .library
+        .accept_playlist(PlaylistAcceptance::SourceSnapshot(changed_playlist.clone()))
         .expect("accept remote playlist readback")
         .expect("changed remote Playlist must report a change");
     assert!(changed.playlists.contains(&changed_playlist.playlist.id));
@@ -1109,17 +1172,15 @@ fn remote_point_updates_restore_the_complete_refresh_shortcut() {
         input_digest,
         source_track.clone(),
         changed_playlist.clone(),
-        Some(&with_playlist.loaded),
+        Some(&with_playlist.library),
         5,
     );
     assert_eq!(after_playlist.change, CandidateChange::None);
-    assert!(Arc::ptr_eq(&after_playlist.loaded, &with_playlist.loaded));
+    assert!(Arc::ptr_eq(&after_playlist.library, &with_playlist.library));
 
-    let equal = library
-        .accept_playlist(
-            &with_playlist.loaded,
-            PlaylistAcceptance::SourceSnapshot(changed_playlist.clone()),
-        )
+    let equal = with_playlist
+        .library
+        .accept_playlist(PlaylistAcceptance::SourceSnapshot(changed_playlist.clone()))
         .expect("accept equal remote playlist readback");
     assert!(equal.is_none());
     let after_equal_playlist = accept_track_and_playlist(
@@ -1128,13 +1189,13 @@ fn remote_point_updates_restore_the_complete_refresh_shortcut() {
         input_digest,
         source_track,
         changed_playlist,
-        Some(&with_playlist.loaded),
+        Some(&with_playlist.library),
         6,
     );
     assert_eq!(after_equal_playlist.change, CandidateChange::None);
     assert!(Arc::ptr_eq(
-        &after_equal_playlist.loaded,
-        &with_playlist.loaded
+        &after_equal_playlist.library,
+        &with_playlist.library
     ));
 }
 
@@ -1142,7 +1203,7 @@ fn remote_point_updates_restore_the_complete_refresh_shortcut() {
 fn rejected_source_playlist_occurrences_preserve_loaded_and_reopened_order() {
     let directory = tempfile::tempdir().expect("temporary Store directory");
     let path = directory.path().join("library.db");
-    let library = Library::open(&path).expect("open Library");
+    let library = Libraries::open(&path).expect("open Library");
     let source_id = SourceId::new("jellyfin:server:playlist-constraint");
     let source_track = track();
     let playlist_id = PlaylistId::new("jellyfin:playlist:constraint");
@@ -1173,32 +1234,30 @@ fn rejected_source_playlist_occurrences_preserve_loaded_and_reopened_order() {
         1,
     );
 
-    let error = library
-        .accept_playlist(
-            &accepted.loaded,
-            PlaylistAcceptance::SourceSnapshot(PlaylistSnapshot {
-                playlist: Playlist {
-                    id: playlist_id.clone(),
-                    name: "Rejected order".to_string(),
-                    image_ref: None,
+    let error = accepted
+        .library
+        .accept_playlist(PlaylistAcceptance::SourceSnapshot(PlaylistSnapshot {
+            playlist: Playlist {
+                id: playlist_id.clone(),
+                name: "Rejected order".to_string(),
+                image_ref: None,
+            },
+            entries: vec![
+                PlaylistEntry {
+                    occurrence_id: "duplicate".to_string(),
+                    track_id: source_track.id.clone(),
                 },
-                entries: vec![
-                    PlaylistEntry {
-                        occurrence_id: "duplicate".to_string(),
-                        track_id: source_track.id.clone(),
-                    },
-                    PlaylistEntry {
-                        occurrence_id: "duplicate".to_string(),
-                        track_id: source_track.id.clone(),
-                    },
-                ],
-            }),
-        )
+                PlaylistEntry {
+                    occurrence_id: "duplicate".to_string(),
+                    track_id: source_track.id.clone(),
+                },
+            ],
+        }))
         .expect_err("duplicate source occurrence must reject the transaction");
     assert!(matches!(error, library::LibraryError::Persistence(_)));
 
     let loaded_playlist = accepted
-        .loaded
+        .library
         .playlist_detail(&playlist_id)
         .expect("read loaded Playlist")
         .expect("loaded Playlist");
@@ -1212,7 +1271,7 @@ fn rejected_source_playlist_occurrences_preserve_loaded_and_reopened_order() {
 
     drop(accepted);
     drop(library);
-    let reopened = Library::open(path)
+    let reopened = Libraries::open(path)
         .expect("reopen Library")
         .load_source(&source_id)
         .expect("load source")
@@ -1234,7 +1293,7 @@ fn rejected_source_playlist_occurrences_preserve_loaded_and_reopened_order() {
 fn smart_playlist_requires_favorite_and_matches_either_artist_after_reopen() {
     let directory = tempfile::tempdir().expect("temporary Store directory");
     let path = directory.path().join("library.db");
-    let library = Library::open(&path).expect("open Library");
+    let library = Libraries::open(&path).expect("open Library");
     let source_id = SourceId::new("jellyfin:server:all-and-any");
     let make_track = |id: &str, title: &str, artist: &str, favorite: bool, number: u16| {
         let mut candidate = track();
@@ -1282,9 +1341,9 @@ fn smart_playlist_requires_favorite_and_matches_either_artist_after_reopen() {
         32,
     );
     let smart_playlist_id = created_smart_playlist_id(
-        library
+        accepted
+            .library
             .create_smart_playlist(
-                &accepted.loaded,
                 "Favorite Artists".to_string(),
                 SmartPlaylistDefinition {
                     match_all: vec![SmartPlaylistRule {
@@ -1311,7 +1370,7 @@ fn smart_playlist_requires_favorite_and_matches_either_artist_after_reopen() {
             )
             .expect("create all-and-any smart Playlist"),
     );
-    let matching_ids = |loaded: &Arc<library::LoadedLibrary>| {
+    let matching_ids = |loaded: &Arc<library::Library>| {
         loaded
             .smart_playlist_detail(&smart_playlist_id, None)
             .expect("read smart Playlist")
@@ -1324,7 +1383,7 @@ fn smart_playlist_requires_favorite_and_matches_either_artist_after_reopen() {
             .collect::<Vec<_>>()
     };
     assert_eq!(
-        matching_ids(&accepted.loaded),
+        matching_ids(&accepted.library),
         [
             "jellyfin:track:cannons-favorite",
             "jellyfin:track:night-tapes-favorite",
@@ -1333,7 +1392,7 @@ fn smart_playlist_requires_favorite_and_matches_either_artist_after_reopen() {
 
     drop(accepted);
     drop(library);
-    let reopened = Library::open(path)
+    let reopened = Libraries::open(path)
         .expect("reopen Library")
         .load_source(&source_id)
         .expect("load source")
@@ -1350,7 +1409,7 @@ fn smart_playlist_requires_favorite_and_matches_either_artist_after_reopen() {
 #[test]
 fn identical_source_update_keeps_the_complete_refresh_shortcut() {
     let directory = tempfile::tempdir().expect("temporary Store directory");
-    let library = Library::open(directory.path().join("library.db")).expect("open Library");
+    let library = Libraries::open(directory.path().join("library.db")).expect("open Library");
     let source_id = SourceId::new("jellyfin:server:equal-source-update");
     let input_digest = digest(31);
     let source_track = track();
@@ -1388,17 +1447,15 @@ fn identical_source_update_keeps_the_complete_refresh_shortcut() {
         .and_then(|prepared| prepared.accept())
         .expect("accept source candidate");
 
-    let accepted = library
-        .accept_source_update(
-            &first.loaded,
-            SourceLibraryUpdate {
-                albums: vec![source_album],
-                tracks: vec![source_track.clone()],
-                artists: vec![source_artist],
-                removed_tracks: vec![library::TrackId::new("missing-track")],
-                ..SourceLibraryUpdate::default()
-            },
-        )
+    let accepted = first
+        .library
+        .accept_source_update(SourceLibraryUpdate {
+            albums: vec![source_album],
+            tracks: vec![source_track.clone()],
+            artists: vec![source_artist],
+            removed_tracks: vec![library::TrackId::new("missing-track")],
+            ..SourceLibraryUpdate::default()
+        })
         .expect("accept identical source update");
     assert!(accepted.is_none());
 
@@ -1419,18 +1476,18 @@ fn identical_source_update_keeps_the_complete_refresh_shortcut() {
                 home: HomeFacts::RufinDefined,
                 accepted_at: 2,
             },
-            Some(&first.loaded),
+            Some(&first.library),
         )
         .expect("prepare equal source candidate");
     assert_eq!(prepared.change(), CandidateChange::None);
-    assert!(Arc::ptr_eq(prepared.loaded(), &first.loaded));
+    assert!(Arc::ptr_eq(prepared.library(), &first.library));
 }
 
 #[test]
 fn canonical_equality_ignores_batch_order_and_projection_counts() {
     let directory = tempfile::tempdir().expect("temporary Store directory");
     let path = directory.path().join("library.db");
-    let library = Library::open(&path).expect("open Library");
+    let library = Libraries::open(&path).expect("open Library");
     let source_id = SourceId::new("jellyfin:server:digest");
     let input_digest = digest(30);
 
@@ -1463,7 +1520,7 @@ fn canonical_equality_ignores_batch_order_and_projection_counts() {
         .expect("accept first candidate");
     let album_id = first_track.album_id.clone().expect("Album ID");
     let first_album = first
-        .loaded
+        .library
         .album(&album_id)
         .expect("read accepted Album")
         .expect("accepted Album");
@@ -1471,7 +1528,7 @@ fn canonical_equality_ignores_batch_order_and_projection_counts() {
     let playlist_id = PlaylistId::new("playlist:digest");
     assert_eq!(
         first
-            .loaded
+            .library
             .playlist_detail(&playlist_id)
             .expect("read accepted Playlist")
             .expect("accepted Playlist")
@@ -1500,12 +1557,12 @@ fn canonical_equality_ignores_batch_order_and_projection_counts() {
                 home: HomeFacts::RufinDefined,
                 accepted_at: 2,
             },
-            Some(&first.loaded),
+            Some(&first.library),
         )
         .and_then(|prepared| prepared.accept())
         .expect("accept reordered candidate");
     assert_eq!(second.change, CandidateChange::None);
-    assert!(Arc::ptr_eq(&second.loaded, &first.loaded));
+    assert!(Arc::ptr_eq(&second.library, &first.library));
 
     let mut reordered_relations = first_track;
     reordered_relations.relations.artists.swap(0, 1);
@@ -1526,15 +1583,15 @@ fn canonical_equality_ignores_batch_order_and_projection_counts() {
                 home: HomeFacts::RufinDefined,
                 accepted_at: 3,
             },
-            Some(&first.loaded),
+            Some(&first.library),
         )
         .and_then(|prepared| prepared.accept())
         .expect("accept relationship candidate");
     assert_eq!(changed.change, CandidateChange::Library);
-    assert!(!Arc::ptr_eq(&changed.loaded, &first.loaded));
+    assert!(!Arc::ptr_eq(&changed.library, &first.library));
 
     let changed_album = changed
-        .loaded
+        .library
         .album(&album_id)
         .expect("read changed Album")
         .expect("changed Album");
@@ -1543,7 +1600,7 @@ fn canonical_equality_ignores_batch_order_and_projection_counts() {
     drop(second);
     drop(first);
     drop(library);
-    let reopened = Library::open(path)
+    let reopened = Libraries::open(path)
         .expect("reopen Library")
         .load_source(&source_id)
         .expect("load source")
@@ -1573,7 +1630,7 @@ fn canonical_equality_ignores_batch_order_and_projection_counts() {
 #[test]
 fn failed_candidate_batch_cannot_accept_partially_persisted_rows() {
     let directory = tempfile::tempdir().expect("temporary Store directory");
-    let library = Library::open(directory.path().join("library.db")).expect("open Library");
+    let library = Libraries::open(directory.path().join("library.db")).expect("open Library");
     let source_id = SourceId::new("local:server:failed-batch");
     let mut candidate = library
         .begin_source_candidate(CandidateHeader {
@@ -1609,18 +1666,18 @@ fn failed_candidate_batch_cannot_accept_partially_persisted_rows() {
 
     let accepted = accept(&library, source_id, digest(32), "Recovered", None, None);
     assert_eq!(accepted.change, CandidateChange::Library);
-    assert_eq!(accepted.loaded.albums(None).expect("Albums").len(), 1);
+    assert_eq!(accepted.library.albums(None).expect("Albums").len(), 1);
 }
 
 #[test]
 fn local_favorite_and_playlist_transactions_reopen_without_parallel_truth() {
     let directory = tempfile::tempdir().expect("temporary Store directory");
     let path = directory.path().join("library.db");
-    let library = Library::open(&path).expect("open Library");
+    let library = Libraries::open(&path).expect("open Library");
     let source_id = SourceId::new("local:server:user-data");
     let accepted = accept(&library, source_id.clone(), digest(10), "Track", None, None);
     let track_list = accepted
-        .loaded
+        .library
         .track_list(None, library::TrackSort::Title, false)
         .expect("Tracks");
     let album_id = track_list
@@ -1630,21 +1687,20 @@ fn local_favorite_and_playlist_transactions_reopen_without_parallel_truth() {
         .album_id
         .clone()
         .expect("Album ID");
-    let mounted_home = library
-        .home(&accepted.loaded, None)
+    let mounted_home = accepted
+        .library
+        .home(None)
         .expect("mounted Home before favorite");
-    let favorite = library
-        .accept_favorite(
-            &accepted.loaded,
-            FavoriteAcceptance::RufinOwned {
-                item: FavoriteItemId::Album(album_id.clone()),
-                favorite: true,
-            },
-        )
+    let favorite = accepted
+        .library
+        .accept_favorite(FavoriteAcceptance::RufinOwned {
+            item: FavoriteItemId::Album(album_id.clone()),
+            favorite: true,
+        })
         .expect("favorite Album");
-    let next_home = library
+    let next_home = accepted
+        .library
         .home_after_favorite(
-            &accepted.loaded,
             None,
             &mounted_home,
             &FavoriteItemId::Album(album_id.clone()),
@@ -1673,7 +1729,7 @@ fn local_favorite_and_playlist_transactions_reopen_without_parallel_truth() {
     assert!(!mounted_album.album.favorite);
     assert!(next_album.album.favorite);
     let favorite_album = accepted
-        .loaded
+        .library
         .album(&album_id)
         .expect("read favorite Album")
         .expect("favorite Album");
@@ -1689,42 +1745,36 @@ fn local_favorite_and_playlist_transactions_reopen_without_parallel_truth() {
     );
     assert!(favorite_album.favorite);
     let playlist_id = created_playlist_id(
-        library
-            .accept_playlist(
-                &accepted.loaded,
-                PlaylistAcceptance::RufinOwned(PlaylistEdit::Create {
-                    name: "User list".to_string(),
-                    track_ids: vec![
-                        library::TrackId::new("local:track:one"),
-                        library::TrackId::new("local:track:one"),
-                    ],
-                }),
-            )
-            .expect("save Local Playlist"),
-    );
-    let empty_playlist_id = created_playlist_id(
-        library
-            .accept_playlist(
-                &accepted.loaded,
-                PlaylistAcceptance::RufinOwned(PlaylistEdit::Create {
-                    name: "Empty list".to_string(),
-                    track_ids: Vec::new(),
-                }),
-            )
-            .expect("save empty Local Playlist"),
-    );
-    let repeated_incoming = library
-        .prepare_playlist_add(
-            &accepted.loaded,
-            library::PlaylistTrackAdd {
-                playlist_id: empty_playlist_id,
+        accepted
+            .library
+            .accept_playlist(PlaylistAcceptance::RufinOwned(PlaylistEdit::Create {
+                name: "User list".to_string(),
                 track_ids: vec![
                     library::TrackId::new("local:track:one"),
                     library::TrackId::new("local:track:one"),
                 ],
-                skip_duplicates: true,
-            },
-        )
+            }))
+            .expect("save Local Playlist"),
+    );
+    let empty_playlist_id = created_playlist_id(
+        accepted
+            .library
+            .accept_playlist(PlaylistAcceptance::RufinOwned(PlaylistEdit::Create {
+                name: "Empty list".to_string(),
+                track_ids: Vec::new(),
+            }))
+            .expect("save empty Local Playlist"),
+    );
+    let repeated_incoming = accepted
+        .library
+        .prepare_playlist_add(library::PlaylistTrackAdd {
+            playlist_id: empty_playlist_id,
+            track_ids: vec![
+                library::TrackId::new("local:track:one"),
+                library::TrackId::new("local:track:one"),
+            ],
+            skip_duplicates: true,
+        })
         .expect("prepare repeated incoming tracks")
         .expect("tracks remain");
     assert!(matches!(
@@ -1732,15 +1782,13 @@ fn local_favorite_and_playlist_transactions_reopen_without_parallel_truth() {
         PlaylistEdit::AddTracks { track_ids, .. } if track_ids.len() == 2
     ));
     assert!(
-        library
-            .prepare_playlist_add(
-                &accepted.loaded,
-                library::PlaylistTrackAdd {
-                    playlist_id: playlist_id.clone(),
-                    track_ids: vec![library::TrackId::new("local:track:one")],
-                    skip_duplicates: true,
-                },
-            )
+        accepted
+            .library
+            .prepare_playlist_add(library::PlaylistTrackAdd {
+                playlist_id: playlist_id.clone(),
+                track_ids: vec![library::TrackId::new("local:track:one")],
+                skip_duplicates: true,
+            },)
             .expect("prepare existing track")
             .is_none()
     );
@@ -1751,13 +1799,13 @@ fn local_favorite_and_playlist_transactions_reopen_without_parallel_truth() {
         digest(10),
         "Track",
         None,
-        Some(&accepted.loaded),
+        Some(&accepted.library),
     );
     assert_eq!(unchanged.change, CandidateChange::None);
-    assert!(Arc::ptr_eq(&unchanged.loaded, &accepted.loaded));
+    assert!(Arc::ptr_eq(&unchanged.library, &accepted.library));
     assert!(
         unchanged
-            .loaded
+            .library
             .album(&album_id)
             .expect("read unchanged Album")
             .expect("unchanged Album")
@@ -1765,7 +1813,7 @@ fn local_favorite_and_playlist_transactions_reopen_without_parallel_truth() {
     );
     assert!(
         unchanged
-            .loaded
+            .library
             .playlist_detail(&playlist_id)
             .expect("read unchanged Playlist")
             .is_some()
@@ -1773,7 +1821,7 @@ fn local_favorite_and_playlist_transactions_reopen_without_parallel_truth() {
 
     drop(accepted);
     drop(library);
-    let library = Library::open(&path).expect("reopen Library");
+    let library = Libraries::open(&path).expect("reopen Library");
     let reopened = library
         .load_source(&source_id)
         .expect("load source")
@@ -1795,18 +1843,15 @@ fn local_favorite_and_playlist_transactions_reopen_without_parallel_truth() {
         2
     );
 
-    library
-        .accept_favorite(
-            &reopened,
-            FavoriteAcceptance::RufinOwned {
-                item: FavoriteItemId::Album(album_id.clone()),
-                favorite: false,
-            },
-        )
+    reopened
+        .accept_favorite(FavoriteAcceptance::RufinOwned {
+            item: FavoriteItemId::Album(album_id.clone()),
+            favorite: false,
+        })
         .expect("unfavorite Album");
     drop(reopened);
     drop(library);
-    let reopened = Library::open(path)
+    let reopened = Libraries::open(path)
         .expect("reopen after false")
         .load_source(&source_id)
         .expect("load source")
@@ -1843,12 +1888,12 @@ fn local_files_preserve_full_filesystem_identities() {
         .iter()
         .map(|file| LocalFileSeed::Path(file.path.clone()))
         .collect::<Vec<_>>();
-    let library = Library::open(&path).expect("open Library");
+    let library = Libraries::open(&path).expect("open Library");
     let accepted = accept_local_tracks(&library, source_id.clone(), Vec::new(), files.clone(), 101);
 
     assert_eq!(
         accepted
-            .loaded
+            .library
             .local_file_baseline(&seeds)
             .expect("read accepted filesystem identities")
             .files,
@@ -1859,21 +1904,19 @@ fn local_files_preserve_full_filesystem_identities() {
     replaced.mtime_ns = 2;
     replaced.device_id = Some(u64::MAX);
     replaced.inode = Some((i64::MAX as u64) + 1);
-    library
-        .accept_local_component(
-            &accepted.loaded,
-            LocalComponentReplacement {
-                observed_at: 2,
-                files: vec![replaced.clone()],
-                ..LocalComponentReplacement::default()
-            },
-        )
+    accepted
+        .library
+        .accept_local_component(LocalComponentReplacement {
+            observed_at: 2,
+            files: vec![replaced.clone()],
+            ..LocalComponentReplacement::default()
+        })
         .expect("replace a high-bit filesystem identity");
     let mut expected = files;
     expected[2] = replaced;
     assert_eq!(
         accepted
-            .loaded
+            .library
             .local_file_baseline(&seeds)
             .expect("read replaced filesystem identities")
             .files,
@@ -1882,7 +1925,7 @@ fn local_files_preserve_full_filesystem_identities() {
 
     drop(accepted);
     drop(library);
-    let reopened = Library::open(path)
+    let reopened = Libraries::open(path)
         .expect("reopen Library")
         .load_source(&source_id)
         .expect("load source")
@@ -1901,7 +1944,7 @@ fn local_component_replaces_files_relations_and_dormant_user_data_atomically() {
     let directory = tempfile::tempdir().expect("temporary Store directory");
     let path = directory.path().join("library.db");
     let source_id = SourceId::new("local:server:component");
-    let library = Library::open(&path).expect("open Library");
+    let library = Libraries::open(&path).expect("open Library");
     let original = track();
     let original_album_id = original.album_id.clone().expect("original Album ID");
     let original_artist_id = original.relations.artists[0].id.clone();
@@ -1956,28 +1999,24 @@ fn local_component_replaces_files_relations_and_dormant_user_data_atomically() {
         )
         .and_then(|prepared| prepared.accept())
         .expect("accept Local candidate");
-    library
-        .accept_favorite(
-            &accepted.loaded,
-            FavoriteAcceptance::RufinOwned {
-                item: FavoriteItemId::Track(original.id.clone()),
-                favorite: true,
-            },
-        )
+    accepted
+        .library
+        .accept_favorite(FavoriteAcceptance::RufinOwned {
+            item: FavoriteItemId::Track(original.id.clone()),
+            favorite: true,
+        })
         .expect("favorite Track");
     let playlist_id = created_playlist_id(
-        library
-            .accept_playlist(
-                &accepted.loaded,
-                PlaylistAcceptance::RufinOwned(PlaylistEdit::Create {
-                    name: "Kept list".to_string(),
-                    track_ids: vec![original.id.clone()],
-                }),
-            )
+        accepted
+            .library
+            .accept_playlist(PlaylistAcceptance::RufinOwned(PlaylistEdit::Create {
+                name: "Kept list".to_string(),
+                track_ids: vec![original.id.clone()],
+            }))
             .expect("save Local Playlist"),
     );
     let created_playlist = accepted
-        .loaded
+        .library
         .playlist_detail(&playlist_id)
         .expect("read created Playlist")
         .expect("created Playlist");
@@ -2007,40 +2046,38 @@ fn local_component_replaces_files_relations_and_dormant_user_data_atomically() {
         moods: Vec::new(),
         music_folders: Vec::new(),
     };
-    let result = library
-        .accept_local_component(
-            &accepted.loaded,
-            LocalComponentReplacement {
-                observed_at: 3,
-                files: vec![local_audio_file(
-                    "/music/New Artist/New Album/Changed.flac",
-                    "New Artist/New Album/Changed.flac",
-                )],
-                removed_paths: vec!["/music/Artist/Album/Track.flac".to_string()],
-                albums: vec![album_for_track(&changed, 0)],
-                tracks: vec![changed.clone()],
-                artists: vec![Artist {
-                    id: new_artist_id.clone(),
-                    name: "New Artist".to_string(),
-                    favorite: false,
-                    last_played: None,
-                    play_count: None,
-                    user_rating: None,
-                    musicbrainz_artist_id: None,
-                    image_ref: None,
-                    local_artwork: None,
-                }],
-                genres: vec![Genre {
-                    id: new_genre_id.clone(),
-                    name: "Jazz".to_string(),
-                    image_ref: None,
-                }],
-                removed_album_ids: vec![original_album_id.clone()],
-                removed_track_ids: Vec::new(),
-                removed_artist_ids: vec![original_artist_id.clone()],
-                removed_genre_ids: vec![original_genre_id.clone()],
-            },
-        )
+    let result = accepted
+        .library
+        .accept_local_component(LocalComponentReplacement {
+            observed_at: 3,
+            files: vec![local_audio_file(
+                "/music/New Artist/New Album/Changed.flac",
+                "New Artist/New Album/Changed.flac",
+            )],
+            removed_paths: vec!["/music/Artist/Album/Track.flac".to_string()],
+            albums: vec![album_for_track(&changed, 0)],
+            tracks: vec![changed.clone()],
+            artists: vec![Artist {
+                id: new_artist_id.clone(),
+                name: "New Artist".to_string(),
+                favorite: false,
+                last_played: None,
+                play_count: None,
+                user_rating: None,
+                musicbrainz_artist_id: None,
+                image_ref: None,
+                local_artwork: None,
+            }],
+            genres: vec![Genre {
+                id: new_genre_id.clone(),
+                name: "Jazz".to_string(),
+                image_ref: None,
+            }],
+            removed_album_ids: vec![original_album_id.clone()],
+            removed_track_ids: Vec::new(),
+            removed_artist_ids: vec![original_artist_id.clone()],
+            removed_genre_ids: vec![original_genre_id.clone()],
+        })
         .expect("accept Local component")
         .expect("changed Local component must report a change");
     assert_eq!(result.tracks.len(), 1);
@@ -2063,7 +2100,7 @@ fn local_component_replaces_files_relations_and_dormant_user_data_atomically() {
     assert!(result.playlists.contains(&playlist_id));
 
     let changed_track = accepted
-        .loaded
+        .library
         .track(&changed.id)
         .expect("read changed Track")
         .expect("changed Track");
@@ -2071,28 +2108,28 @@ fn local_component_replaces_files_relations_and_dormant_user_data_atomically() {
     assert!(changed_track.favorite);
     assert!(
         accepted
-            .loaded
+            .library
             .album(&original_album_id)
             .expect("read removed Album")
             .is_none()
     );
     assert!(
         accepted
-            .loaded
+            .library
             .artist(&original_artist_id)
             .expect("read removed Artist")
             .is_none()
     );
     assert!(
         accepted
-            .loaded
+            .library
             .genre_detail(&original_genre_id, None)
             .expect("read removed Genre")
             .is_none()
     );
     assert_eq!(
         accepted
-            .loaded
+            .library
             .playable_file(&changed.id)
             .expect("read playable file")
             .expect("playable file")
@@ -2100,7 +2137,7 @@ fn local_component_replaces_files_relations_and_dormant_user_data_atomically() {
         std::path::Path::new("/music/New Artist/New Album/Changed.flac")
     );
     let playlist = accepted
-        .loaded
+        .library
         .playlist_detail(&playlist_id)
         .expect("read Local Playlist")
         .expect("Local Playlist");
@@ -2117,7 +2154,7 @@ fn local_component_replaces_files_relations_and_dormant_user_data_atomically() {
         ["Jazz"]
     );
     let baseline = accepted
-        .loaded
+        .library
         .local_component_baseline(&[LocalComponentSeed::DirectoryTree("/music".to_string())])
         .expect("read Local inventory baseline");
     assert_eq!(
@@ -2131,7 +2168,7 @@ fn local_component_replaces_files_relations_and_dormant_user_data_atomically() {
 
     drop(accepted);
     drop(library);
-    let reopened = Library::open(path)
+    let reopened = Libraries::open(path)
         .expect("reopen Library")
         .load_source(&source_id)
         .expect("load source")
@@ -2176,7 +2213,7 @@ fn local_file_readiness_rebinds_attached_tracks_and_matches_reopen() {
     let directory = tempfile::tempdir().expect("temporary Store directory");
     let path = directory.path().join("library.db");
     let source_id = SourceId::new("local:server:readiness");
-    let library = Library::open(&path).expect("open Library");
+    let library = Libraries::open(&path).expect("open Library");
     let track = track();
     let audio_path = track.source_path.clone().expect("audio path");
     let accepted = accept_local_tracks(
@@ -2188,7 +2225,7 @@ fn local_file_readiness_rebinds_attached_tracks_and_matches_reopen() {
     );
     assert!(
         accepted
-            .loaded
+            .library
             .playable_file(&track.id)
             .expect("read initial playable file")
             .is_some()
@@ -2196,26 +2233,24 @@ fn local_file_readiness_rebinds_attached_tracks_and_matches_reopen() {
 
     let mut unreadable = local_audio_file(&audio_path, "Artist/Album/Track.flac");
     unreadable.read_state = LocalReadState::Unreadable;
-    library
-        .accept_local_component(
-            &accepted.loaded,
-            LocalComponentReplacement {
-                observed_at: 2,
-                files: vec![unreadable],
-                ..LocalComponentReplacement::default()
-            },
-        )
+    accepted
+        .library
+        .accept_local_component(LocalComponentReplacement {
+            observed_at: 2,
+            files: vec![unreadable],
+            ..LocalComponentReplacement::default()
+        })
         .expect("accept unreadable observation");
     assert!(
         accepted
-            .loaded
+            .library
             .track(&track.id)
             .expect("read retained Track")
             .is_some()
     );
     assert!(
         accepted
-            .loaded
+            .library
             .playable_file(&track.id)
             .expect("read unavailable file")
             .is_none()
@@ -2223,19 +2258,17 @@ fn local_file_readiness_rebinds_attached_tracks_and_matches_reopen() {
 
     let mut fallback = local_audio_file(&audio_path, "Artist/Album/Track.flac");
     fallback.read_state = LocalReadState::MetadataFallback;
-    library
-        .accept_local_component(
-            &accepted.loaded,
-            LocalComponentReplacement {
-                observed_at: 4,
-                files: vec![fallback],
-                ..LocalComponentReplacement::default()
-            },
-        )
+    accepted
+        .library
+        .accept_local_component(LocalComponentReplacement {
+            observed_at: 4,
+            files: vec![fallback],
+            ..LocalComponentReplacement::default()
+        })
         .expect("accept metadata fallback");
     assert!(
         accepted
-            .loaded
+            .library
             .playable_file(&track.id)
             .expect("read restored playable file")
             .is_some()
@@ -2243,7 +2276,7 @@ fn local_file_readiness_rebinds_attached_tracks_and_matches_reopen() {
 
     drop(accepted);
     drop(library);
-    let reopened = Library::open(path)
+    let reopened = Libraries::open(path)
         .expect("reopen Library")
         .load_source(&source_id)
         .expect("load source")
@@ -2261,7 +2294,7 @@ fn full_local_rescan_drops_unreadable_music_until_the_source_recovers() {
     let directory = tempfile::tempdir().expect("temporary Store directory");
     let path = directory.path().join("library.db");
     let source_id = SourceId::new("local:server:unreadable");
-    let library = Library::open(&path).expect("open Library");
+    let library = Libraries::open(&path).expect("open Library");
     let original = track();
     let album = album_for_track(&original, 1);
     let artist = Artist {
@@ -2338,7 +2371,7 @@ fn full_local_rescan_drops_unreadable_music_until_the_source_recovers() {
                 home: HomeFacts::RufinDefined,
                 accepted_at: 2,
             },
-            Some(&accepted.loaded),
+            Some(&accepted.library),
         )
         .and_then(|prepared| prepared.accept())
         .expect("accept Local rescan");
@@ -2346,35 +2379,35 @@ fn full_local_rescan_drops_unreadable_music_until_the_source_recovers() {
     assert_eq!(result.change, CandidateChange::Library);
     assert!(
         result
-            .loaded
+            .library
             .track(&original.id)
             .expect("read removed Track")
             .is_none()
     );
     assert!(
         result
-            .loaded
+            .library
             .album(&album.id)
             .expect("read removed Album")
             .is_none()
     );
     assert!(
         result
-            .loaded
+            .library
             .artist(&artist.id)
             .expect("read removed Artist")
             .is_none()
     );
     assert!(
         result
-            .loaded
+            .library
             .genre(&genre.id)
             .expect("read removed Genre")
             .is_none()
     );
     assert_eq!(
         result
-            .loaded
+            .library
             .track_list(None, TrackSort::Title, false)
             .expect("read Local Tracks")
             .len(),
@@ -2383,7 +2416,7 @@ fn full_local_rescan_drops_unreadable_music_until_the_source_recovers() {
     );
 
     drop(result);
-    let empty = Library::open(&path)
+    let empty = Libraries::open(&path)
         .expect("reopen empty Local Library")
         .load_source(&source_id)
         .expect("load Local source")
@@ -2427,7 +2460,7 @@ fn full_local_rescan_drops_unreadable_music_until_the_source_recovers() {
         .expect("accept recovered Local library");
     assert_eq!(
         recovered
-            .loaded
+            .library
             .track_list(None, TrackSort::Title, false)
             .expect("read recovered Tracks")
             .len(),
@@ -2438,7 +2471,7 @@ fn full_local_rescan_drops_unreadable_music_until_the_source_recovers() {
     drop(empty);
     drop(accepted);
     drop(library);
-    let reopened = Library::open(path)
+    let reopened = Libraries::open(path)
         .expect("reopen recovered Library")
         .load_source(&source_id)
         .expect("load recovered Local source")
@@ -2456,7 +2489,7 @@ fn local_retag_preserves_activity_and_smart_playlist_membership() {
     let directory = tempfile::tempdir().expect("temporary Store directory");
     let path = directory.path().join("library.db");
     let source_id = SourceId::new("local:server:activity-retag");
-    let library = Library::open(&path).expect("open Library");
+    let library = Libraries::open(&path).expect("open Library");
     let original = track();
     let accepted = accept_local_tracks(
         &library,
@@ -2465,56 +2498,50 @@ fn local_retag_preserves_activity_and_smart_playlist_membership() {
         Vec::new(),
         42,
     );
-    library
-        .accept_favorite(
-            &accepted.loaded,
-            FavoriteAcceptance::RufinOwned {
-                item: FavoriteItemId::Track(original.id.clone()),
-                favorite: true,
-            },
-        )
+    accepted
+        .library
+        .accept_favorite(FavoriteAcceptance::RufinOwned {
+            item: FavoriteItemId::Track(original.id.clone()),
+            favorite: true,
+        })
         .expect("favorite Local Track");
     let playlist_id = created_playlist_id(
-        library
-            .accept_playlist(
-                &accepted.loaded,
-                PlaylistAcceptance::RufinOwned(PlaylistEdit::Create {
-                    name: "Retagged Local Track".to_string(),
-                    track_ids: vec![original.id.clone()],
-                }),
-            )
+        accepted
+            .library
+            .accept_playlist(PlaylistAcceptance::RufinOwned(PlaylistEdit::Create {
+                name: "Retagged Local Track".to_string(),
+                track_ids: vec![original.id.clone()],
+            }))
             .expect("create Local playlist"),
     );
-    let play = library
-        .record_play(
-            &accepted.loaded,
-            AcceptedPlay {
-                play_id: "local-play:retag".to_string(),
-                track_id: original.id.clone(),
-                played_at: 1_700_000_100,
-                month: "2023-11".to_string(),
-            },
-        )
+    let play = accepted
+        .library
+        .record_play(AcceptedPlay {
+            play_id: "local-play:retag".to_string(),
+            track_id: original.id.clone(),
+            played_at: 1_700_000_100,
+            month: "2023-11".to_string(),
+        })
         .expect("record play")
         .expect("new play");
-    library
-        .apply_recorded_activity(&accepted.loaded, &play)
+    accepted
+        .library
+        .apply_recorded_activity(&play)
         .expect("apply play");
-    let skip = library
-        .record_skip(
-            &accepted.loaded,
-            AcceptedSkip {
-                track_id: original.id.clone(),
-            },
-        )
+    let skip = accepted
+        .library
+        .record_skip(AcceptedSkip {
+            track_id: original.id.clone(),
+        })
         .expect("record skip");
-    library
-        .apply_recorded_activity(&accepted.loaded, &skip)
+    accepted
+        .library
+        .apply_recorded_activity(&skip)
         .expect("apply skip");
     let smart_id = created_smart_playlist_id(
-        library
+        accepted
+            .library
             .create_smart_playlist(
-                &accepted.loaded,
                 "Played Local".to_string(),
                 SmartPlaylistDefinition {
                     match_all: vec![SmartPlaylistRule {
@@ -2536,19 +2563,17 @@ fn local_retag_preserves_activity_and_smart_playlist_membership() {
     retagged.play_count = None;
     retagged.skip_count = None;
     retagged.last_played = None;
-    let retag = library
-        .accept_local_component(
-            &accepted.loaded,
-            LocalComponentReplacement {
-                observed_at: 2,
-                tracks: vec![retagged.clone()],
-                ..LocalComponentReplacement::default()
-            },
-        )
+    let retag = accepted
+        .library
+        .accept_local_component(LocalComponentReplacement {
+            observed_at: 2,
+            tracks: vec![retagged.clone()],
+            ..LocalComponentReplacement::default()
+        })
         .expect("accept retag")
         .expect("retag must change the library");
     let effective = accepted
-        .loaded
+        .library
         .track(&retagged.id)
         .expect("read retagged Track")
         .expect("retagged Track");
@@ -2565,7 +2590,7 @@ fn local_retag_preserves_activity_and_smart_playlist_membership() {
     assert_eq!(effective.skip_count, Some(1));
     assert!(effective.last_played.is_some());
     let playlist = accepted
-        .loaded
+        .library
         .playlist_detail(&playlist_id)
         .expect("read Local playlist")
         .expect("Local playlist");
@@ -2582,7 +2607,7 @@ fn local_retag_preserves_activity_and_smart_playlist_membership() {
     );
     assert_eq!(
         accepted
-            .loaded
+            .library
             .smart_playlist_detail(&smart_id, None)
             .expect("read smart playlist")
             .expect("smart playlist")
@@ -2592,7 +2617,7 @@ fn local_retag_preserves_activity_and_smart_playlist_membership() {
     );
     assert_eq!(
         accepted
-            .loaded
+            .library
             .album(retagged.album_id.as_ref().expect("retagged Track Album ID"))
             .expect("read sparse Album")
             .expect("sparse Album")
@@ -2602,7 +2627,7 @@ fn local_retag_preserves_activity_and_smart_playlist_membership() {
 
     drop(accepted);
     drop(library);
-    let reopened = Library::open(path)
+    let reopened = Libraries::open(path)
         .expect("reopen Library")
         .load_source(&source_id)
         .expect("load source")
@@ -2640,7 +2665,7 @@ fn local_retag_transfers_aggregate_favorites_to_unique_replacements() {
     let directory = tempfile::tempdir().expect("temporary Store directory");
     let path = directory.path().join("library.db");
     let source_id = SourceId::new("local:server:aggregate-favorite-retag");
-    let library = Library::open(&path).expect("open Library");
+    let library = Libraries::open(&path).expect("open Library");
     let collaborator = ArtistCredit {
         id: library::ArtistId::new("local:artist:collaborator"),
         name: "Collaborator".to_string(),
@@ -2662,14 +2687,12 @@ fn local_retag_transfers_aggregate_favorites_to_unique_replacements() {
         FavoriteItemId::Album(old_album_id.clone()),
         FavoriteItemId::Artist(old_artist_id.clone()),
     ] {
-        library
-            .accept_favorite(
-                &accepted.loaded,
-                FavoriteAcceptance::RufinOwned {
-                    item,
-                    favorite: true,
-                },
-            )
+        accepted
+            .library
+            .accept_favorite(FavoriteAcceptance::RufinOwned {
+                item,
+                favorite: true,
+            })
             .expect("favorite Local aggregate");
     }
 
@@ -2686,39 +2709,37 @@ fn local_retag_transfers_aggregate_favorites_to_unique_replacements() {
     retagged.artist = "Retagged Artist".to_string();
     retagged.relations.artists = vec![new_artist.clone(), collaborator.clone()];
     retagged.relations.album_artists = vec![new_artist, collaborator];
-    library
-        .accept_local_component(
-            &accepted.loaded,
-            LocalComponentReplacement {
-                observed_at: 2,
-                albums: vec![album_for_track(&retagged, 0)],
-                tracks: vec![retagged.clone()],
-                artists: vec![artist_for_track(&retagged)],
-                removed_album_ids: vec![old_album_id.clone()],
-                removed_artist_ids: vec![old_artist_id.clone()],
-                ..LocalComponentReplacement::default()
-            },
-        )
+    accepted
+        .library
+        .accept_local_component(LocalComponentReplacement {
+            observed_at: 2,
+            albums: vec![album_for_track(&retagged, 0)],
+            tracks: vec![retagged.clone()],
+            artists: vec![artist_for_track(&retagged)],
+            removed_album_ids: vec![old_album_id.clone()],
+            removed_artist_ids: vec![old_artist_id.clone()],
+            ..LocalComponentReplacement::default()
+        })
         .expect("accept aggregate identity retag")
         .expect("aggregate identity retag must change the library");
 
     assert!(
         accepted
-            .loaded
+            .library
             .album(&old_album_id)
             .expect("read removed Album")
             .is_none()
     );
     assert!(
         accepted
-            .loaded
+            .library
             .artist(&old_artist_id)
             .expect("read removed Artist")
             .is_none()
     );
     assert!(
         accepted
-            .loaded
+            .library
             .album(&new_album_id)
             .expect("read replacement Album")
             .expect("replacement Album")
@@ -2726,7 +2747,7 @@ fn local_retag_transfers_aggregate_favorites_to_unique_replacements() {
     );
     assert!(
         accepted
-            .loaded
+            .library
             .artist(&new_artist_id)
             .expect("read replacement Artist")
             .expect("replacement Artist")
@@ -2735,7 +2756,7 @@ fn local_retag_transfers_aggregate_favorites_to_unique_replacements() {
 
     drop(accepted);
     drop(library);
-    let reopened = Library::open(&path)
+    let reopened = Libraries::open(&path)
         .expect("reopen Library")
         .load_source(&source_id)
         .expect("load source")
@@ -2786,7 +2807,7 @@ fn local_retag_transfers_favorites_to_existing_aggregates() {
     let directory = tempfile::tempdir().expect("temporary Store directory");
     let path = directory.path().join("library.db");
     let source_id = SourceId::new("local:server:existing-aggregate-retag");
-    let library = Library::open(&path).expect("open Library");
+    let library = Libraries::open(&path).expect("open Library");
     let original = track();
     let old_album_id = original.album_id.clone().expect("old Album ID");
     let old_artist_id = original.relations.artists[0].id.clone();
@@ -2817,14 +2838,12 @@ fn local_retag_transfers_favorites_to_existing_aggregates() {
         FavoriteItemId::Album(old_album_id.clone()),
         FavoriteItemId::Artist(old_artist_id.clone()),
     ] {
-        library
-            .accept_favorite(
-                &accepted.loaded,
-                FavoriteAcceptance::RufinOwned {
-                    item,
-                    favorite: true,
-                },
-            )
+        accepted
+            .library
+            .accept_favorite(FavoriteAcceptance::RufinOwned {
+                item,
+                favorite: true,
+            })
             .expect("favorite Local aggregate");
     }
 
@@ -2834,25 +2853,23 @@ fn local_retag_transfers_favorites_to_existing_aggregates() {
     retagged.album = "Existing Album".to_string();
     retagged.relations.artists = vec![existing_artist.clone()];
     retagged.relations.album_artists = vec![existing_artist];
-    library
-        .accept_local_component(
-            &accepted.loaded,
-            LocalComponentReplacement {
-                observed_at: 2,
-                albums: vec![album_for_track(&retagged, 0)],
-                tracks: vec![retagged.clone()],
-                artists: vec![artist_for_track(&retagged)],
-                removed_album_ids: vec![old_album_id.clone()],
-                removed_artist_ids: vec![old_artist_id.clone()],
-                ..LocalComponentReplacement::default()
-            },
-        )
+    accepted
+        .library
+        .accept_local_component(LocalComponentReplacement {
+            observed_at: 2,
+            albums: vec![album_for_track(&retagged, 0)],
+            tracks: vec![retagged.clone()],
+            artists: vec![artist_for_track(&retagged)],
+            removed_album_ids: vec![old_album_id.clone()],
+            removed_artist_ids: vec![old_artist_id.clone()],
+            ..LocalComponentReplacement::default()
+        })
         .expect("accept retag into existing aggregates")
         .expect("aggregate retag must change the library");
 
     assert!(
         accepted
-            .loaded
+            .library
             .album(&existing_album_id)
             .expect("read existing Album")
             .expect("existing Album")
@@ -2860,7 +2877,7 @@ fn local_retag_transfers_favorites_to_existing_aggregates() {
     );
     assert!(
         accepted
-            .loaded
+            .library
             .artist(&existing_artist_id)
             .expect("read existing Artist")
             .expect("existing Artist")
@@ -2911,7 +2928,7 @@ fn local_album_favorite_stays_dormant_when_tracks_split_between_new_and_existing
     let directory = tempfile::tempdir().expect("temporary Store directory");
     let path = directory.path().join("library.db");
     let source_id = SourceId::new("local:server:mixed-album-split");
-    let library = Library::open(&path).expect("open Library");
+    let library = Libraries::open(&path).expect("open Library");
     let first = track();
     let old_album_id = first.album_id.clone().expect("old Album ID");
     let mut second = first.clone();
@@ -2934,14 +2951,12 @@ fn local_album_favorite_stays_dormant_when_tracks_split_between_new_and_existing
         Vec::new(),
         46,
     );
-    library
-        .accept_favorite(
-            &accepted.loaded,
-            FavoriteAcceptance::RufinOwned {
-                item: FavoriteItemId::Album(old_album_id.clone()),
-                favorite: true,
-            },
-        )
+    accepted
+        .library
+        .accept_favorite(FavoriteAcceptance::RufinOwned {
+            item: FavoriteItemId::Album(old_album_id.clone()),
+            favorite: true,
+        })
         .expect("favorite original Local Album");
 
     let new_album_id = library::AlbumId::new("local:album:new");
@@ -2951,27 +2966,25 @@ fn local_album_favorite_stays_dormant_when_tracks_split_between_new_and_existing
     let mut into_existing = second;
     into_existing.album_id = Some(existing_album_id.clone());
     into_existing.album = "Existing Album".to_string();
-    library
-        .accept_local_component(
-            &accepted.loaded,
-            LocalComponentReplacement {
-                observed_at: 2,
-                albums: vec![
-                    album_for_track(&into_new, 0),
-                    album_for_track(&into_existing, 0),
-                ],
-                tracks: vec![into_new, into_existing],
-                removed_album_ids: vec![old_album_id.clone()],
-                ..LocalComponentReplacement::default()
-            },
-        )
+    accepted
+        .library
+        .accept_local_component(LocalComponentReplacement {
+            observed_at: 2,
+            albums: vec![
+                album_for_track(&into_new, 0),
+                album_for_track(&into_existing, 0),
+            ],
+            tracks: vec![into_new, into_existing],
+            removed_album_ids: vec![old_album_id.clone()],
+            ..LocalComponentReplacement::default()
+        })
         .expect("accept mixed Album split")
         .expect("mixed Album split must change the library");
 
     for album_id in [&new_album_id, &existing_album_id] {
         assert!(
             !accepted
-                .loaded
+                .library
                 .album(album_id)
                 .expect("read split Album")
                 .expect("split Album")
@@ -3001,7 +3014,7 @@ fn local_retag_keeps_split_favorites_dormant_and_merges_unique_targets() {
     let directory = tempfile::tempdir().expect("temporary Store directory");
     let path = directory.path().join("library.db");
     let source_id = SourceId::new("local:server:ambiguous-aggregate-retag");
-    let library = Library::open(&path).expect("open Library");
+    let library = Libraries::open(&path).expect("open Library");
     let first = track();
     let mut second = first.clone();
     second.id = library::TrackId::new("local:track:two");
@@ -3021,14 +3034,12 @@ fn local_retag_keeps_split_favorites_dormant_and_merges_unique_targets() {
         FavoriteItemId::Album(old_album_id.clone()),
         FavoriteItemId::Artist(old_artist_id.clone()),
     ] {
-        library
-            .accept_favorite(
-                &accepted.loaded,
-                FavoriteAcceptance::RufinOwned {
-                    item,
-                    favorite: true,
-                },
-            )
+        accepted
+            .library
+            .accept_favorite(FavoriteAcceptance::RufinOwned {
+                item,
+                favorite: true,
+            })
             .expect("favorite Local aggregate");
     }
 
@@ -3075,31 +3086,29 @@ fn local_retag_keeps_split_favorites_dormant_and_merges_unique_targets() {
         image_ref: None,
         local_artwork: None,
     };
-    library
-        .accept_local_component(
-            &accepted.loaded,
-            LocalComponentReplacement {
-                observed_at: 2,
-                albums: vec![
-                    album_for_track(&split_first, 0),
-                    album_for_track(&split_second, 0),
-                ],
-                tracks: vec![split_first.clone(), split_second.clone()],
-                artists: vec![
-                    artist_for_track(&split_first),
-                    artist_for_track(&split_second),
-                    common_artist_row,
-                ],
-                removed_album_ids: vec![old_album_id.clone()],
-                removed_artist_ids: vec![old_artist_id.clone()],
-                ..LocalComponentReplacement::default()
-            },
-        )
+    accepted
+        .library
+        .accept_local_component(LocalComponentReplacement {
+            observed_at: 2,
+            albums: vec![
+                album_for_track(&split_first, 0),
+                album_for_track(&split_second, 0),
+            ],
+            tracks: vec![split_first.clone(), split_second.clone()],
+            artists: vec![
+                artist_for_track(&split_first),
+                artist_for_track(&split_second),
+                common_artist_row,
+            ],
+            removed_album_ids: vec![old_album_id.clone()],
+            removed_artist_ids: vec![old_artist_id.clone()],
+            ..LocalComponentReplacement::default()
+        })
         .expect("accept aggregate split");
     for album_id in [&first_album_id, &second_album_id] {
         assert!(
             !accepted
-                .loaded
+                .library
                 .album(album_id)
                 .expect("read split Album")
                 .expect("split Album")
@@ -3109,7 +3118,7 @@ fn local_retag_keeps_split_favorites_dormant_and_merges_unique_targets() {
     for artist_id in [&first_artist_id, &second_artist_id] {
         assert!(
             !accepted
-                .loaded
+                .library
                 .artist(artist_id)
                 .expect("read split Artist")
                 .expect("split Artist")
@@ -3118,7 +3127,7 @@ fn local_retag_keeps_split_favorites_dormant_and_merges_unique_targets() {
     }
     assert!(
         !accepted
-            .loaded
+            .library
             .artist(&common_artist_id)
             .expect("read common split Artist")
             .expect("common split Artist")
@@ -3131,14 +3140,12 @@ fn local_retag_keeps_split_favorites_dormant_and_merges_unique_targets() {
         FavoriteItemId::Artist(first_artist_id.clone()),
         FavoriteItemId::Artist(second_artist_id.clone()),
     ] {
-        library
-            .accept_favorite(
-                &accepted.loaded,
-                FavoriteAcceptance::RufinOwned {
-                    item,
-                    favorite: true,
-                },
-            )
+        accepted
+            .library
+            .accept_favorite(FavoriteAcceptance::RufinOwned {
+                item,
+                favorite: true,
+            })
             .expect("favorite split aggregate");
     }
     let merged_album_id = library::AlbumId::new("local:album:merged");
@@ -3161,27 +3168,25 @@ fn local_retag_keeps_split_favorites_dormant_and_merges_unique_targets() {
     merged_second.relations.artists = vec![merged_artist.clone()];
     merged_second.relations.album_artists = vec![merged_artist];
     let merged_artist_row = artist_for_track(&merged_first);
-    library
-        .accept_local_component(
-            &accepted.loaded,
-            LocalComponentReplacement {
-                observed_at: 3,
-                albums: vec![album_for_track(&merged_first, 0)],
-                tracks: vec![merged_first, merged_second],
-                artists: vec![merged_artist_row],
-                removed_album_ids: vec![first_album_id.clone(), second_album_id.clone()],
-                removed_artist_ids: vec![
-                    first_artist_id.clone(),
-                    second_artist_id.clone(),
-                    common_artist_id,
-                ],
-                ..LocalComponentReplacement::default()
-            },
-        )
+    accepted
+        .library
+        .accept_local_component(LocalComponentReplacement {
+            observed_at: 3,
+            albums: vec![album_for_track(&merged_first, 0)],
+            tracks: vec![merged_first, merged_second],
+            artists: vec![merged_artist_row],
+            removed_album_ids: vec![first_album_id.clone(), second_album_id.clone()],
+            removed_artist_ids: vec![
+                first_artist_id.clone(),
+                second_artist_id.clone(),
+                common_artist_id,
+            ],
+            ..LocalComponentReplacement::default()
+        })
         .expect("accept aggregate merge");
     assert!(
         accepted
-            .loaded
+            .library
             .album(&merged_album_id)
             .expect("read merged Album")
             .expect("merged Album")
@@ -3189,7 +3194,7 @@ fn local_retag_keeps_split_favorites_dormant_and_merges_unique_targets() {
     );
     assert!(
         accepted
-            .loaded
+            .library
             .artist(&merged_artist_id)
             .expect("read merged Artist")
             .expect("merged Artist")
@@ -3259,7 +3264,7 @@ fn sparse_local_favorites_stay_dormant_without_becoming_source_rows() {
     let directory = tempfile::tempdir().expect("temporary Store directory");
     let path = directory.path().join("library.db");
     let source_id = SourceId::new("local:server:sparse-favorites");
-    let library = Library::open(&path).expect("open Library");
+    let library = Libraries::open(&path).expect("open Library");
     let track = track();
     let album_id = track.album_id.clone().expect("Album ID");
     let artist_id = track.relations.artists[0].id.clone();
@@ -3270,23 +3275,19 @@ fn sparse_local_favorites_stay_dormant_without_becoming_source_rows() {
         Vec::new(),
         43,
     );
-    library
-        .accept_favorite(
-            &accepted.loaded,
-            FavoriteAcceptance::RufinOwned {
-                item: FavoriteItemId::Album(album_id.clone()),
-                favorite: true,
-            },
-        )
+    accepted
+        .library
+        .accept_favorite(FavoriteAcceptance::RufinOwned {
+            item: FavoriteItemId::Album(album_id.clone()),
+            favorite: true,
+        })
         .expect("favorite sparse Album");
-    let artist_favorite = library
-        .accept_favorite(
-            &accepted.loaded,
-            FavoriteAcceptance::RufinOwned {
-                item: FavoriteItemId::Artist(artist_id.clone()),
-                favorite: true,
-            },
-        )
+    let artist_favorite = accepted
+        .library
+        .accept_favorite(FavoriteAcceptance::RufinOwned {
+            item: FavoriteItemId::Artist(artist_id.clone()),
+            favorite: true,
+        })
         .expect("favorite sparse Artist");
     assert!(artist_favorite.albums.is_empty());
     assert!(artist_favorite.artists.is_empty());
@@ -3303,15 +3304,12 @@ fn sparse_local_favorites_stay_dormant_without_becoming_source_rows() {
         .load_source(&source_id)
         .expect("reload source")
         .expect("source");
-    library
-        .accept_local_component(
-            &loaded,
-            LocalComponentReplacement {
-                observed_at: 2,
-                removed_track_ids: vec![track.id.clone()],
-                ..LocalComponentReplacement::default()
-            },
-        )
+    loaded
+        .accept_local_component(LocalComponentReplacement {
+            observed_at: 2,
+            removed_track_ids: vec![track.id.clone()],
+            ..LocalComponentReplacement::default()
+        })
         .expect("remove final relation");
     assert!(
         loaded
@@ -3326,15 +3324,12 @@ fn sparse_local_favorites_stay_dormant_without_becoming_source_rows() {
             .is_none()
     );
 
-    library
-        .accept_local_component(
-            &loaded,
-            LocalComponentReplacement {
-                observed_at: 3,
-                tracks: vec![track.clone()],
-                ..LocalComponentReplacement::default()
-            },
-        )
+    loaded
+        .accept_local_component(LocalComponentReplacement {
+            observed_at: 3,
+            tracks: vec![track.clone()],
+            ..LocalComponentReplacement::default()
+        })
         .expect("restore relation");
     assert!(
         loaded
@@ -3353,7 +3348,7 @@ fn sparse_local_favorites_stay_dormant_without_becoming_source_rows() {
 
     drop(loaded);
     drop(library);
-    let reopened = Library::open(path)
+    let reopened = Libraries::open(path)
         .expect("reopen Library")
         .load_source(&source_id)
         .expect("load source")
@@ -3379,7 +3374,7 @@ fn local_cue_component_and_baseline_follow_backing_file_transitions() {
     let directory = tempfile::tempdir().expect("temporary Store directory");
     let path = directory.path().join("library.db");
     let source_id = SourceId::new("local:server:cue-component");
-    let library = Library::open(&path).expect("open Library");
+    let library = Libraries::open(&path).expect("open Library");
     let raw = track();
     let audio_path = raw.source_path.clone().expect("audio path");
     let cue_path = "/music/Artist/Album/Track.cue";
@@ -3403,18 +3398,16 @@ fn local_cue_component_and_baseline_follow_backing_file_transitions() {
         44,
     );
     let playlist_id = created_playlist_id(
-        library
-            .accept_playlist(
-                &accepted.loaded,
-                PlaylistAcceptance::RufinOwned(PlaylistEdit::Create {
-                    name: "Raw occurrence".to_string(),
-                    track_ids: vec![raw.id.clone()],
-                }),
-            )
+        accepted
+            .library
+            .accept_playlist(PlaylistAcceptance::RufinOwned(PlaylistEdit::Create {
+                name: "Raw occurrence".to_string(),
+                track_ids: vec![raw.id.clone()],
+            }))
             .expect("save raw playlist occurrence"),
     );
     let raw_playlist = accepted
-        .loaded
+        .library
         .playlist_detail(&playlist_id)
         .expect("read raw Playlist")
         .expect("raw Playlist");
@@ -3438,24 +3431,22 @@ fn local_cue_component_and_baseline_follow_backing_file_transitions() {
         start_millis: 90_000,
         end_millis: 180_000,
     });
-    library
-        .accept_local_component(
-            &accepted.loaded,
-            LocalComponentReplacement {
-                observed_at: 2,
-                files: vec![
-                    local_audio_file(&audio_path, "Artist/Album/Track.flac"),
-                    local_cue_file(cue_path, vec![audio_path.clone()], LocalReadState::Parsed),
-                ],
-                tracks: vec![first.clone(), second.clone()],
-                removed_track_ids: vec![raw.id.clone()],
-                ..LocalComponentReplacement::default()
-            },
-        )
+    accepted
+        .library
+        .accept_local_component(LocalComponentReplacement {
+            observed_at: 2,
+            files: vec![
+                local_audio_file(&audio_path, "Artist/Album/Track.flac"),
+                local_cue_file(cue_path, vec![audio_path.clone()], LocalReadState::Parsed),
+            ],
+            tracks: vec![first.clone(), second.clone()],
+            removed_track_ids: vec![raw.id.clone()],
+            ..LocalComponentReplacement::default()
+        })
         .expect("accept valid CUE");
     assert!(
         accepted
-            .loaded
+            .library
             .playlist_detail(&playlist_id)
             .expect("read dormant playlist")
             .expect("dormant playlist")
@@ -3464,13 +3455,13 @@ fn local_cue_component_and_baseline_follow_backing_file_transitions() {
     );
     assert!(
         accepted
-            .loaded
+            .library
             .playable_file(&first.id)
             .expect("read first CUE playable file")
             .is_some()
     );
     let baseline = accepted
-        .loaded
+        .library
         .local_component_baseline(&[LocalComponentSeed::Path(audio_path.clone())])
         .expect("read CUE component baseline");
     assert_eq!(
@@ -3492,22 +3483,20 @@ fn local_cue_component_and_baseline_follow_backing_file_transitions() {
 
     let missing_audio_path = "/music/Artist/Album/Missing.flac";
     let missing_cue_path = "/music/Artist/Album/Missing.cue";
-    library
-        .accept_local_component(
-            &accepted.loaded,
-            LocalComponentReplacement {
-                observed_at: 3,
-                files: vec![local_cue_file(
-                    missing_cue_path,
-                    vec![missing_audio_path.to_string()],
-                    LocalReadState::Invalid,
-                )],
-                ..LocalComponentReplacement::default()
-            },
-        )
+    accepted
+        .library
+        .accept_local_component(LocalComponentReplacement {
+            observed_at: 3,
+            files: vec![local_cue_file(
+                missing_cue_path,
+                vec![missing_audio_path.to_string()],
+                LocalReadState::Invalid,
+            )],
+            ..LocalComponentReplacement::default()
+        })
         .expect("accept CUE with a missing backing file");
     let missing_baseline = accepted
-        .loaded
+        .library
         .local_component_baseline(&[LocalComponentSeed::Path(missing_audio_path.to_string())])
         .expect("read missing CUE dependency baseline");
     assert_eq!(
@@ -3521,48 +3510,44 @@ fn local_cue_component_and_baseline_follow_backing_file_transitions() {
 
     let mut unreadable = local_audio_file(&audio_path, "Artist/Album/Track.flac");
     unreadable.read_state = LocalReadState::Unreadable;
-    library
-        .accept_local_component(
-            &accepted.loaded,
-            LocalComponentReplacement {
-                observed_at: 4,
-                files: vec![unreadable],
-                ..LocalComponentReplacement::default()
-            },
-        )
+    accepted
+        .library
+        .accept_local_component(LocalComponentReplacement {
+            observed_at: 4,
+            files: vec![unreadable],
+            ..LocalComponentReplacement::default()
+        })
         .expect("accept unreadable CUE backing");
     assert!(
         accepted
-            .loaded
+            .library
             .playable_file(&first.id)
             .expect("read unavailable CUE file")
             .is_none()
     );
     assert!(
         accepted
-            .loaded
+            .library
             .playable_file(&second.id)
             .expect("read unavailable second CUE file")
             .is_none()
     );
 
-    library
-        .accept_local_component(
-            &accepted.loaded,
-            LocalComponentReplacement {
-                observed_at: 5,
-                files: vec![
-                    local_audio_file(&audio_path, "Artist/Album/Track.flac"),
-                    local_cue_file(cue_path, vec![audio_path.clone()], LocalReadState::Invalid),
-                ],
-                tracks: vec![raw.clone()],
-                removed_track_ids: vec![first.id.clone(), second.id.clone()],
-                ..LocalComponentReplacement::default()
-            },
-        )
+    accepted
+        .library
+        .accept_local_component(LocalComponentReplacement {
+            observed_at: 5,
+            files: vec![
+                local_audio_file(&audio_path, "Artist/Album/Track.flac"),
+                local_cue_file(cue_path, vec![audio_path.clone()], LocalReadState::Invalid),
+            ],
+            tracks: vec![raw.clone()],
+            removed_track_ids: vec![first.id.clone(), second.id.clone()],
+            ..LocalComponentReplacement::default()
+        })
         .expect("restore raw Track for invalid CUE");
     let playlist = accepted
-        .loaded
+        .library
         .playlist_detail(&playlist_id)
         .expect("read restored playlist")
         .expect("restored playlist");
@@ -3572,7 +3557,7 @@ fn local_cue_component_and_baseline_follow_backing_file_transitions() {
     assert_eq!(entry.track.id, raw.id);
     assert!(
         accepted
-            .loaded
+            .library
             .track(&first.id)
             .expect("read removed first segment")
             .is_none()
@@ -3580,7 +3565,7 @@ fn local_cue_component_and_baseline_follow_backing_file_transitions() {
 
     drop(accepted);
     drop(library);
-    let reopened = Library::open(path)
+    let reopened = Libraries::open(path)
         .expect("reopen Library")
         .load_source(&source_id)
         .expect("load source")
@@ -3606,7 +3591,7 @@ fn local_folders_follow_directory_facts_track_moves_and_reopen() {
     let directory = tempfile::tempdir().expect("temporary Store directory");
     let path = directory.path().join("library.db");
     let source_id = SourceId::new("local:server:folders");
-    let library = Library::open(&path).expect("open Library");
+    let library = Libraries::open(&path).expect("open Library");
 
     let mut first = track();
     first.id = library::TrackId::new("local:cue:first");
@@ -3655,7 +3640,7 @@ fn local_folders_follow_directory_facts_track_moves_and_reopen() {
     );
 
     let root = accepted
-        .loaded
+        .library
         .local_folder_contents(None)
         .expect("read Local folder root")
         .expect("Local folder root");
@@ -3679,7 +3664,7 @@ fn local_folders_follow_directory_facts_track_moves_and_reopen() {
     let other_id = test_local_folder_id("/other");
     let empty_id = test_local_folder_id("/other/Empty");
     let music = accepted
-        .loaded
+        .library
         .local_folder_contents(Some(&music_id))
         .expect("read music folder")
         .expect("music folder");
@@ -3700,7 +3685,7 @@ fn local_folders_follow_directory_facts_track_moves_and_reopen() {
         [loose.id.as_str()]
     );
     let album = accepted
-        .loaded
+        .library
         .local_folder_contents(Some(&album_id))
         .expect("read album folder")
         .expect("album folder");
@@ -3714,7 +3699,7 @@ fn local_folders_follow_directory_facts_track_moves_and_reopen() {
     );
     assert!(
         accepted
-            .loaded
+            .library
             .local_folder_contents(Some(&empty_id))
             .expect("read empty folder")
             .expect("empty folder")
@@ -3723,7 +3708,7 @@ fn local_folders_follow_directory_facts_track_moves_and_reopen() {
     );
 
     let initial_inventory = accepted
-        .loaded
+        .library
         .local_component_baseline(&[
             LocalComponentSeed::DirectoryTree("/music".to_string()),
             LocalComponentSeed::DirectoryTree("/other".to_string()),
@@ -3752,30 +3737,24 @@ fn local_folders_follow_directory_facts_track_moves_and_reopen() {
     let mut moved = loose.clone();
     moved.source_path = Some("/other/Moved/Loose.flac".to_string());
     let moved_id = test_local_folder_id("/other/Moved");
-    let moved_result = library
-        .accept_local_component(
-            &accepted.loaded,
-            LocalComponentReplacement {
-                observed_at: 2,
-                files: vec![
-                    local_directory_file("/other/Moved", "/other"),
-                    local_audio_file_in_root(
-                        "/other/Moved/Loose.flac",
-                        "/other",
-                        "Moved/Loose.flac",
-                    ),
-                ],
-                removed_paths: vec!["/music/Loose.flac".to_string()],
-                tracks: vec![moved.clone()],
-                ..LocalComponentReplacement::default()
-            },
-        )
+    let moved_result = accepted
+        .library
+        .accept_local_component(LocalComponentReplacement {
+            observed_at: 2,
+            files: vec![
+                local_directory_file("/other/Moved", "/other"),
+                local_audio_file_in_root("/other/Moved/Loose.flac", "/other", "Moved/Loose.flac"),
+            ],
+            removed_paths: vec!["/music/Loose.flac".to_string()],
+            tracks: vec![moved.clone()],
+            ..LocalComponentReplacement::default()
+        })
         .expect("move Local Track")
         .expect("moving a Local Track must report a change");
     assert!(moved_result.local_folders_changed);
     assert!(
         accepted
-            .loaded
+            .library
             .local_folder_contents(Some(&music_id))
             .expect("read old parent")
             .expect("old parent")
@@ -3784,7 +3763,7 @@ fn local_folders_follow_directory_facts_track_moves_and_reopen() {
     );
     assert_eq!(
         accepted
-            .loaded
+            .library
             .local_folder_contents(Some(&moved_id))
             .expect("read moved folder")
             .expect("moved folder")
@@ -3793,27 +3772,25 @@ fn local_folders_follow_directory_facts_track_moves_and_reopen() {
         moved.id
     );
 
-    let removed = library
-        .accept_local_component(
-            &accepted.loaded,
-            LocalComponentReplacement {
-                observed_at: 3,
-                removed_paths: vec!["/other/Empty".to_string()],
-                ..LocalComponentReplacement::default()
-            },
-        )
+    let removed = accepted
+        .library
+        .accept_local_component(LocalComponentReplacement {
+            observed_at: 3,
+            removed_paths: vec!["/other/Empty".to_string()],
+            ..LocalComponentReplacement::default()
+        })
         .expect("remove empty Local folder")
         .expect("removing a Local folder must report a change");
     assert!(removed.local_folders_changed);
     assert!(
         accepted
-            .loaded
+            .library
             .local_folder_contents(Some(&empty_id))
             .expect("read removed folder")
             .is_none()
     );
     let final_inventory = accepted
-        .loaded
+        .library
         .local_component_baseline(&[
             LocalComponentSeed::DirectoryTree("/music".to_string()),
             LocalComponentSeed::DirectoryTree("/other".to_string()),
@@ -3822,7 +3799,7 @@ fn local_folders_follow_directory_facts_track_moves_and_reopen() {
 
     drop(accepted);
     drop(library);
-    let reopened = Library::open(path)
+    let reopened = Libraries::open(path)
         .expect("reopen Library")
         .load_source(&source_id)
         .expect("load source")
@@ -3866,7 +3843,7 @@ fn local_point_updates_keep_exact_totals_and_playlist_occurrences_across_reopen(
     let directory = tempfile::tempdir().expect("temporary Store directory");
     let path = directory.path().join("library.db");
     let source_id = SourceId::new("local:server:exact-totals");
-    let library = Library::open(&path).expect("open Library");
+    let library = Libraries::open(&path).expect("open Library");
     let mood_id = MoodId::new("local:mood:focus");
 
     let mut long = track();
@@ -3897,14 +3874,12 @@ fn local_point_updates_keep_exact_totals_and_playlist_occurrences_across_reopen(
         45,
     );
     let playlist_id = created_playlist_id(
-        library
-            .accept_playlist(
-                &accepted.loaded,
-                PlaylistAcceptance::RufinOwned(PlaylistEdit::Create {
-                    name: "Repeated short Track".to_string(),
-                    track_ids: vec![long.id.clone(), short.id.clone(), short.id.clone()],
-                }),
-            )
+        accepted
+            .library
+            .accept_playlist(PlaylistAcceptance::RufinOwned(PlaylistEdit::Create {
+                name: "Repeated short Track".to_string(),
+                track_ids: vec![long.id.clone(), short.id.clone(), short.id.clone()],
+            }))
             .expect("save repeated playlist"),
     );
 
@@ -3914,19 +3889,17 @@ fn local_point_updates_keep_exact_totals_and_playlist_occurrences_across_reopen(
         id: GenreId::new("local:genre:blues"),
         name: "Blues".to_string(),
     }];
-    library
-        .accept_local_component(
-            &accepted.loaded,
-            LocalComponentReplacement {
-                observed_at: 2,
-                tracks: vec![retagged.clone()],
-                ..LocalComponentReplacement::default()
-            },
-        )
+    accepted
+        .library
+        .accept_local_component(LocalComponentReplacement {
+            observed_at: 2,
+            tracks: vec![retagged.clone()],
+            ..LocalComponentReplacement::default()
+        })
         .expect("accept exact duration replacement");
     assert_eq!(
         accepted
-            .loaded
+            .library
             .album_detail(retagged.album_id.as_ref().expect("Album ID"), None)
             .expect("read saturated Album")
             .expect("saturated Album")
@@ -3936,7 +3909,7 @@ fn local_point_updates_keep_exact_totals_and_playlist_occurrences_across_reopen(
     );
     assert_eq!(
         accepted
-            .loaded
+            .library
             .mood_detail(&mood_id, None)
             .expect("read saturated Mood")
             .expect("saturated Mood")
@@ -3945,7 +3918,7 @@ fn local_point_updates_keep_exact_totals_and_playlist_occurrences_across_reopen(
         u32::MAX
     );
     let playlist = accepted
-        .loaded
+        .library
         .playlist_detail(&playlist_id)
         .expect("read saturated playlist")
         .expect("saturated playlist");
@@ -3961,19 +3934,17 @@ fn local_point_updates_keep_exact_totals_and_playlist_occurrences_across_reopen(
         ["Blues", "Rock"]
     );
 
-    library
-        .accept_local_component(
-            &accepted.loaded,
-            LocalComponentReplacement {
-                observed_at: 3,
-                removed_track_ids: vec![long.id.clone()],
-                ..LocalComponentReplacement::default()
-            },
-        )
+    accepted
+        .library
+        .accept_local_component(LocalComponentReplacement {
+            observed_at: 3,
+            removed_track_ids: vec![long.id.clone()],
+            ..LocalComponentReplacement::default()
+        })
         .expect("remove long Track");
     assert_eq!(
         accepted
-            .loaded
+            .library
             .album_detail(retagged.album_id.as_ref().expect("Album ID"), None)
             .expect("read exact Album")
             .expect("exact Album")
@@ -3983,7 +3954,7 @@ fn local_point_updates_keep_exact_totals_and_playlist_occurrences_across_reopen(
     );
     assert_eq!(
         accepted
-            .loaded
+            .library
             .mood_detail(&mood_id, None)
             .expect("read exact Mood")
             .expect("exact Mood")
@@ -3992,7 +3963,7 @@ fn local_point_updates_keep_exact_totals_and_playlist_occurrences_across_reopen(
         9
     );
     let playlist = accepted
-        .loaded
+        .library
         .playlist_detail(&playlist_id)
         .expect("read exact playlist")
         .expect("exact playlist");
@@ -4011,7 +3982,7 @@ fn local_point_updates_keep_exact_totals_and_playlist_occurrences_across_reopen(
 
     drop(accepted);
     drop(library);
-    let reopened = Library::open(path)
+    let reopened = Libraries::open(path)
         .expect("reopen Library")
         .load_source(&source_id)
         .expect("load source")
@@ -4048,9 +4019,9 @@ fn accepted_activity_replaces_only_the_next_local_home_and_reopens() {
     let directory = tempfile::tempdir().expect("temporary Store directory");
     let path = directory.path().join("library.db");
     let source_id = SourceId::new("local:server:activity");
-    let library = Library::open(&path).expect("open Library");
+    let library = Libraries::open(&path).expect("open Library");
     let accepted = accept(&library, source_id.clone(), digest(20), "Track", None, None);
-    let mounted = library.home(&accepted.loaded, None).expect("mounted Home");
+    let mounted = accepted.library.home(None).expect("mounted Home");
     assert!(mounted.section(HomeSectionKind::MostPlayed).is_none());
 
     let play = AcceptedPlay {
@@ -4059,12 +4030,14 @@ fn accepted_activity_replaces_only_the_next_local_home_and_reopens() {
         played_at: 1_700_000_000,
         month: "2023-11".to_string(),
     };
-    let accepted_play = library
-        .record_play(&accepted.loaded, play.clone())
+    let accepted_play = accepted
+        .library
+        .record_play(play.clone())
         .expect("record accepted play")
         .expect("new accepted play");
-    let accepted_play = library
-        .apply_recorded_activity(&accepted.loaded, &accepted_play)
+    let accepted_play = accepted
+        .library
+        .apply_recorded_activity(&accepted_play)
         .expect("apply accepted play")
         .expect("accepted play must change the library");
     assert_eq!(accepted_play.tracks.len(), 1);
@@ -4076,8 +4049,9 @@ fn accepted_activity_replaces_only_the_next_local_home_and_reopens() {
             .play_count,
         Some(1)
     );
-    let next = library
-        .home_after_play(&accepted.loaded, None, &mounted, &play.track_id)
+    let next = accepted
+        .library
+        .home_after_play(None, &mounted, &play.track_id)
         .expect("prepare Home after accepted play");
     assert!(!Arc::ptr_eq(&mounted, &next));
     assert!(mounted.section(HomeSectionKind::MostPlayed).is_none());
@@ -4097,7 +4071,7 @@ fn accepted_activity_replaces_only_the_next_local_home_and_reopens() {
     );
     assert_eq!(
         accepted
-            .loaded
+            .library
             .track(&play.track_id)
             .expect("read effective Track")
             .expect("effective Track")
@@ -4105,8 +4079,9 @@ fn accepted_activity_replaces_only_the_next_local_home_and_reopens() {
         Some(1)
     );
 
-    let duplicate = library
-        .record_play(&accepted.loaded, play)
+    let duplicate = accepted
+        .library
+        .record_play(play)
         .expect("ignore duplicate play");
     assert!(duplicate.is_none());
     let after_duplicate = Arc::clone(&next);
@@ -4121,17 +4096,19 @@ fn accepted_activity_replaces_only_the_next_local_home_and_reopens() {
         played_at: 1_700_000_001,
         month: "2023-11".to_string(),
     };
-    let second_update = library
-        .record_play(&accepted.loaded, second_play)
+    let second_update = accepted
+        .library
+        .record_play(second_play)
         .expect("record second accepted play")
         .expect("second play occurrence");
-    let second_change = library
-        .apply_recorded_activity(&accepted.loaded, &second_update)
+    let second_change = accepted
+        .library
+        .apply_recorded_activity(&second_update)
         .expect("apply second accepted play")
         .expect("second accepted play must change activity");
     assert!(second_change.history_changed);
     let history = accepted
-        .loaded
+        .library
         .history_track_list(None)
         .expect("read bounded History");
     assert_eq!(history.len(), 2);
@@ -4147,7 +4124,7 @@ fn accepted_activity_replaces_only_the_next_local_home_and_reopens() {
 
     drop(accepted);
     drop(library);
-    let reopened_library = Library::open(&path).expect("reopen Library");
+    let reopened_library = Libraries::open(&path).expect("reopen Library");
     let reopened = reopened_library
         .load_source(&source_id)
         .expect("load source")
@@ -4167,9 +4144,7 @@ fn accepted_activity_replaces_only_the_next_local_home_and_reopens() {
             .len(),
         2
     );
-    let home = reopened_library
-        .home(&reopened, None)
-        .expect("reopened Home");
+    let home = reopened.home(None).expect("reopened Home");
     assert!(home.section(HomeSectionKind::MostPlayed).is_some());
     assert!(home.section(HomeSectionKind::RecentlyPlayed).is_some());
     assert!(home.section(HomeSectionKind::NewlyAdded).is_some());
@@ -4180,7 +4155,7 @@ fn source_item_replacement_survives_removal_and_reattaches_dormant_consumers() {
     let directory = tempfile::tempdir().expect("temporary Store directory");
     let path = directory.path().join("library.db");
     let source_id = SourceId::new("jellyfin:server:exact");
-    let library = Library::open(&path).expect("open Library");
+    let library = Libraries::open(&path).expect("open Library");
     let mut original = track();
     let old_mood_id = MoodId::new("mood:quiet");
     let old_folder_id = MusicFolderId::new("folder:one");
@@ -4233,12 +4208,11 @@ fn source_item_replacement_survives_removal_and_reattaches_dormant_consumers() {
         )
         .and_then(|prepared| prepared.accept())
         .expect("accept candidate");
-    let loaded = Arc::clone(&accepted.loaded);
+    let loaded = Arc::clone(&accepted.library);
     let playlist_id = PlaylistId::new("playlist:digest");
     let smart_playlist_id = created_smart_playlist_id(
-        library
+        loaded
             .create_smart_playlist(
-                &loaded,
                 "Changed tracks".to_string(),
                 SmartPlaylistDefinition {
                     match_all: vec![SmartPlaylistRule {
@@ -4262,7 +4236,7 @@ fn source_item_replacement_survives_removal_and_reattaches_dormant_consumers() {
             .tracks
             .is_empty()
     );
-    let mounted_home = library.home(&loaded, None).expect("mounted Home");
+    let mounted_home = loaded.home(None).expect("mounted Home");
     assert_eq!(
         home_track_title(&mounted_home, HomeSectionKind::RecentlyPlayed),
         Some("Track")
@@ -4298,14 +4272,11 @@ fn source_item_replacement_survives_removal_and_reattaches_dormant_consumers() {
         music_folders: vec![new_folder_id.clone()],
     };
 
-    let replacement = library
-        .accept_source_update(
-            &loaded,
-            SourceLibraryUpdate {
-                tracks: vec![changed.clone()],
-                ..SourceLibraryUpdate::default()
-            },
-        )
+    let replacement = loaded
+        .accept_source_update(SourceLibraryUpdate {
+            tracks: vec![changed.clone()],
+            ..SourceLibraryUpdate::default()
+        })
         .expect("replace Track")
         .expect("replacement Track must change the library");
     assert_eq!(replacement.tracks.len(), 1);
@@ -4468,16 +4439,16 @@ fn source_item_replacement_survives_removal_and_reattaches_dormant_consumers() {
             .is_empty()
     );
     assert!(
-        library
-            .home(&loaded, Some(&old_folder_id))
+        loaded
+            .home(Some(&old_folder_id))
             .expect("read empty old-folder Home")
             .section(HomeSectionKind::RecentlyPlayed)
             .is_none()
     );
     assert_eq!(
         home_track_title(
-            &library
-                .home(&loaded, Some(&new_folder_id))
+            &loaded
+                .home(Some(&new_folder_id))
                 .expect("read new-folder Home"),
             HomeSectionKind::RecentlyPlayed,
         ),
@@ -4530,7 +4501,7 @@ fn source_item_replacement_survives_removal_and_reattaches_dormant_consumers() {
             .path(),
         std::path::Path::new("/music/New Artist/New Album/Changed.flac")
     );
-    let next_home = library.home(&loaded, None).expect("next Home");
+    let next_home = loaded.home(None).expect("next Home");
     assert!(!Arc::ptr_eq(&mounted_home, &next_home));
     assert_eq!(
         home_track_title(&mounted_home, HomeSectionKind::RecentlyPlayed),
@@ -4544,14 +4515,11 @@ fn source_item_replacement_survives_removal_and_reattaches_dormant_consumers() {
     let previous_playlist_track = playlist_entry(&playlist.entries, 0).track;
     let mut same_duration = changed.clone();
     same_duration.comment = Some("updated source comment".to_string());
-    let same_duration_replacement = library
-        .accept_source_update(
-            &loaded,
-            SourceLibraryUpdate {
-                tracks: vec![same_duration.clone()],
-                ..SourceLibraryUpdate::default()
-            },
-        )
+    let same_duration_replacement = loaded
+        .accept_source_update(SourceLibraryUpdate {
+            tracks: vec![same_duration.clone()],
+            ..SourceLibraryUpdate::default()
+        })
         .expect("replace same-duration Track")
         .expect("same-duration Track replacement must change the library");
     assert!(same_duration_replacement.playlists.contains(&playlist_id));
@@ -4568,14 +4536,11 @@ fn source_item_replacement_survives_removal_and_reattaches_dormant_consumers() {
     );
     changed = same_duration;
 
-    let removed = library
-        .accept_source_update(
-            &loaded,
-            SourceLibraryUpdate {
-                removed_tracks: vec![changed.id.clone()],
-                ..SourceLibraryUpdate::default()
-            },
-        )
+    let removed = loaded
+        .accept_source_update(SourceLibraryUpdate {
+            removed_tracks: vec![changed.id.clone()],
+            ..SourceLibraryUpdate::default()
+        })
         .expect("remove Track")
         .expect("Track removal must change the library");
     assert!(removed.tracks[0].track.is_none());
@@ -4632,8 +4597,8 @@ fn source_item_replacement_survives_removal_and_reattaches_dormant_consumers() {
             .is_none()
     );
     assert!(
-        library
-            .home(&loaded, None)
+        loaded
+            .home(None)
             .expect("Home after removal")
             .section(HomeSectionKind::RecentlyPlayed)
             .is_none()
@@ -4642,7 +4607,7 @@ fn source_item_replacement_survives_removal_and_reattaches_dormant_consumers() {
     drop(accepted);
     drop(loaded);
     drop(library);
-    let library = Library::open(&path).expect("reopen Library");
+    let library = Libraries::open(&path).expect("reopen Library");
     let reopened = library
         .load_source(&source_id)
         .expect("load source")
@@ -4660,14 +4625,11 @@ fn source_item_replacement_survives_removal_and_reattaches_dormant_consumers() {
     assert_eq!(dormant.summary.track_count, 0);
     assert!(dormant.entries.is_empty());
 
-    library
-        .accept_source_update(
-            &reopened,
-            SourceLibraryUpdate {
-                tracks: vec![changed.clone()],
-                ..SourceLibraryUpdate::default()
-            },
-        )
+    reopened
+        .accept_source_update(SourceLibraryUpdate {
+            tracks: vec![changed.clone()],
+            ..SourceLibraryUpdate::default()
+        })
         .expect("re-add Track");
     let reattached = reopened
         .playlist_detail(&playlist_id)
@@ -4698,7 +4660,7 @@ fn source_item_replacement_survives_removal_and_reattaches_dormant_consumers() {
     );
     assert_eq!(
         home_track_title(
-            &library.home(&reopened, None).expect("Home after re-add"),
+            &reopened.home(None).expect("Home after re-add"),
             HomeSectionKind::RecentlyPlayed
         ),
         Some("Changed")
@@ -4708,7 +4670,7 @@ fn source_item_replacement_survives_removal_and_reattaches_dormant_consumers() {
 #[test]
 fn replacing_album_artwork_facts_replaces_unchanged_tracks() {
     let directory = tempfile::tempdir().expect("temporary Store directory");
-    let library = Library::open(directory.path().join("library.db")).expect("open Library");
+    let library = Libraries::open(directory.path().join("library.db")).expect("open Library");
     let source_track = track();
     let accepted = accept_track(
         &library,
@@ -4719,7 +4681,7 @@ fn replacing_album_artwork_facts_replaces_unchanged_tracks() {
         1,
     );
     let previous_artwork = accepted
-        .loaded
+        .library
         .track(&source_track.id)
         .expect("read Track")
         .expect("Track")
@@ -4729,14 +4691,12 @@ fn replacing_album_artwork_facts_replaces_unchanged_tracks() {
 
     let mut album = album_for_track(&source_track, 1);
     album.title = "Accepted Album".to_string();
-    let replacement = library
-        .accept_source_update(
-            &accepted.loaded,
-            SourceLibraryUpdate {
-                albums: vec![album],
-                ..SourceLibraryUpdate::default()
-            },
-        )
+    let replacement = accepted
+        .library
+        .accept_source_update(SourceLibraryUpdate {
+            albums: vec![album],
+            ..SourceLibraryUpdate::default()
+        })
         .expect("replace Album")
         .expect("Album replacement must change the library");
 
@@ -4765,7 +4725,7 @@ fn source_update_commits_tracks_and_playlist_readback_as_one_reopenable_value() 
     let directory = tempfile::tempdir().expect("temporary Store directory");
     let path = directory.path().join("library.db");
     let source_id = SourceId::new("jellyfin:server:exact:user:listener");
-    let library = Library::open(&path).expect("open Library");
+    let library = Libraries::open(&path).expect("open Library");
     let original = track();
     let playlist_id = PlaylistId::new("jellyfin:playlist:one");
     let original_playlist = PlaylistSnapshot {
@@ -4827,20 +4787,18 @@ fn source_update_commits_tracks_and_playlist_readback_as_one_reopenable_value() 
             },
         ],
     };
-    let update = library
-        .accept_source_update(
-            &accepted.loaded,
-            SourceLibraryUpdate {
-                tracks: vec![changed.clone(), added.clone()],
-                playlists: vec![replacement_playlist],
-                ..SourceLibraryUpdate::default()
-            },
-        )
+    let update = accepted
+        .library
+        .accept_source_update(SourceLibraryUpdate {
+            tracks: vec![changed.clone(), added.clone()],
+            playlists: vec![replacement_playlist],
+            ..SourceLibraryUpdate::default()
+        })
         .expect("accept Track and Playlist update")
         .expect("Track and Playlist update must change the library");
     assert!(update.playlists.contains(&playlist_id));
     let playlist = accepted
-        .loaded
+        .library
         .playlist_detail(&playlist_id)
         .expect("read updated Playlist")
         .expect("updated Playlist");
@@ -4855,7 +4813,7 @@ fn source_update_commits_tracks_and_playlist_readback_as_one_reopenable_value() 
 
     drop(accepted);
     drop(library);
-    let library = Library::open(&path).expect("reopen Library");
+    let library = Libraries::open(&path).expect("reopen Library");
     let reopened = library
         .load_source(&source_id)
         .expect("load source")
@@ -4875,15 +4833,12 @@ fn source_update_commits_tracks_and_playlist_readback_as_one_reopenable_value() 
         "Added"
     );
 
-    library
-        .accept_source_update(
-            &reopened,
-            SourceLibraryUpdate {
-                removed_tracks: vec![added.id.clone()],
-                removed_playlists: vec![playlist_id.clone()],
-                ..SourceLibraryUpdate::default()
-            },
-        )
+    reopened
+        .accept_source_update(SourceLibraryUpdate {
+            removed_tracks: vec![added.id.clone()],
+            removed_playlists: vec![playlist_id.clone()],
+            ..SourceLibraryUpdate::default()
+        })
         .expect("remove Track and Playlist");
     assert!(
         reopened
@@ -4900,7 +4855,7 @@ fn source_update_commits_tracks_and_playlist_readback_as_one_reopenable_value() 
 
     drop(reopened);
     drop(library);
-    let reopened = Library::open(path)
+    let reopened = Libraries::open(path)
         .expect("reopen after removal")
         .load_source(&source_id)
         .expect("load source")
@@ -4924,7 +4879,7 @@ fn album_release_results_follow_exact_identity_across_replacement_and_reopen() {
     let directory = tempfile::tempdir().expect("temporary Store directory");
     let path = directory.path().join("library.db");
     let source_id = SourceId::new("jellyfin:server:release");
-    let library = Library::open(&path).expect("open Library");
+    let library = Libraries::open(&path).expect("open Library");
     let mut track = track();
     let primary_artist_id = track.relations.album_artists[0].id.clone();
     let appearing_artist_id = library::ArtistId::new("local:artist:appearing");
@@ -4960,20 +4915,22 @@ fn album_release_results_follow_exact_identity_across_replacement_and_reopen() {
         )
         .and_then(|prepared| prepared.accept())
         .expect("accept candidate");
-    let first_lookup = library
-        .take_album_release_lookups(&accepted.loaded, 10)
+    let first_lookup = accepted
+        .library
+        .take_album_release_lookups(10)
         .expect("take release lookup")
         .pop()
         .expect("release lookup");
     assert_eq!(
-        library
-            .take_album_release_lookups(&accepted.loaded, 10)
+        accepted
+            .library
+            .take_album_release_lookups(10)
             .expect("repeat unaccepted release lookup"),
         std::slice::from_ref(&first_lookup)
     );
-    let release = library
+    let release = accepted
+        .library
         .accept_album_release_result(
-            &accepted.loaded,
             first_lookup,
             library::AlbumReleaseResult::Found {
                 release_types: vec!["album".to_string()],
@@ -4983,8 +4940,9 @@ fn album_release_results_follow_exact_identity_across_replacement_and_reopen() {
         .expect("accept found release")
         .expect("release patch");
     assert!(
-        library
-            .take_album_release_lookups(&accepted.loaded, 10)
+        accepted
+            .library
+            .take_album_release_lookups(10)
             .expect("read accepted release lookup queue")
             .is_empty()
     );
@@ -4996,7 +4954,7 @@ fn album_release_results_follow_exact_identity_across_replacement_and_reopen() {
     assert!(release.tracks.is_empty());
     assert_eq!(
         accepted
-            .loaded
+            .library
             .album(&album.id)
             .expect("read enriched Album")
             .expect("enriched Album")
@@ -5004,18 +4962,16 @@ fn album_release_results_follow_exact_identity_across_replacement_and_reopen() {
         ["album"]
     );
 
-    library
-        .accept_source_update(
-            &accepted.loaded,
-            SourceLibraryUpdate {
-                albums: vec![album.clone()],
-                ..SourceLibraryUpdate::default()
-            },
-        )
+    accepted
+        .library
+        .accept_source_update(SourceLibraryUpdate {
+            albums: vec![album.clone()],
+            ..SourceLibraryUpdate::default()
+        })
         .expect("replace same Album identity");
     assert_eq!(
         accepted
-            .loaded
+            .library
             .album(&album.id)
             .expect("read replaced Album")
             .expect("replaced Album")
@@ -5025,26 +4981,25 @@ fn album_release_results_follow_exact_identity_across_replacement_and_reopen() {
 
     let mut changed_identity = album.clone();
     changed_identity.musicbrainz_release_group_id = Some("release-group-two".to_string());
-    library
-        .accept_source_update(
-            &accepted.loaded,
-            SourceLibraryUpdate {
-                albums: vec![changed_identity.clone()],
-                ..SourceLibraryUpdate::default()
-            },
-        )
+    accepted
+        .library
+        .accept_source_update(SourceLibraryUpdate {
+            albums: vec![changed_identity.clone()],
+            ..SourceLibraryUpdate::default()
+        })
         .expect("replace changed Album identity");
     assert!(
         accepted
-            .loaded
+            .library
             .album(&album.id)
             .expect("read changed Album")
             .expect("changed Album")
             .release_types
             .is_empty()
     );
-    let changed_lookup = library
-        .take_album_release_lookups(&accepted.loaded, 10)
+    let changed_lookup = accepted
+        .library
+        .take_album_release_lookups(10)
         .expect("take changed release lookup")
         .pop()
         .expect("changed release lookup");
@@ -5053,34 +5008,30 @@ fn album_release_results_follow_exact_identity_across_replacement_and_reopen() {
         library::AlbumReleaseIdentity::ReleaseGroup("release-group-two".to_string())
     );
     assert!(
-        library
-            .accept_album_release_result(
-                &accepted.loaded,
-                changed_lookup,
-                library::AlbumReleaseResult::Missing,
-            )
+        accepted
+            .library
+            .accept_album_release_result(changed_lookup, library::AlbumReleaseResult::Missing,)
             .expect("accept missing release")
             .is_none()
     );
-    library
-        .accept_source_update(
-            &accepted.loaded,
-            SourceLibraryUpdate {
-                albums: vec![changed_identity],
-                ..SourceLibraryUpdate::default()
-            },
-        )
+    accepted
+        .library
+        .accept_source_update(SourceLibraryUpdate {
+            albums: vec![changed_identity],
+            ..SourceLibraryUpdate::default()
+        })
         .expect("replace known missing Album");
     assert!(
-        library
-            .take_album_release_lookups(&accepted.loaded, 10)
+        accepted
+            .library
+            .take_album_release_lookups(10)
             .expect("read lookup queue")
             .is_empty()
     );
 
     drop(accepted);
     drop(library);
-    let library = Library::open(path).expect("reopen Library");
+    let library = Libraries::open(path).expect("reopen Library");
     let reopened = library
         .load_source(&source_id)
         .expect("load source")
@@ -5094,8 +5045,8 @@ fn album_release_results_follow_exact_identity_across_replacement_and_reopen() {
             .is_empty()
     );
     assert!(
-        library
-            .take_album_release_lookups(&reopened, 10)
+        reopened
+            .take_album_release_lookups(10)
             .expect("read reopened lookup queue")
             .is_empty()
     );
@@ -5104,7 +5055,7 @@ fn album_release_results_follow_exact_identity_across_replacement_and_reopen() {
 #[test]
 fn artist_routes_keep_relationship_roles_and_album_level_tracks() {
     let directory = tempfile::tempdir().expect("temporary Store directory");
-    let library = Library::open(directory.path().join("library.db")).expect("open Library");
+    let library = Libraries::open(directory.path().join("library.db")).expect("open Library");
     let source_id = SourceId::new("jellyfin:server:artist-roles");
     let mut track = track();
     let guest = ArtistCredit {
@@ -5162,7 +5113,7 @@ fn artist_routes_keep_relationship_roles_and_album_level_tracks() {
 
     assert_eq!(
         accepted
-            .loaded
+            .library
             .artists(None)
             .expect("read Artists")
             .iter()
@@ -5172,7 +5123,7 @@ fn artist_routes_keep_relationship_roles_and_album_level_tracks() {
     );
     assert_eq!(
         accepted
-            .loaded
+            .library
             .album_artists(None)
             .expect("read Album Artists")
             .iter()
@@ -5182,12 +5133,12 @@ fn artist_routes_keep_relationship_roles_and_album_level_tracks() {
     );
     for artist_id in [&track_album_artist.id, &album_only_artist.id] {
         let tracks = accepted
-            .loaded
+            .library
             .artist_track_detail(artist_id, None)
             .expect("read Artist")
             .expect("linked Artist");
         let releases = accepted
-            .loaded
+            .library
             .artist_discography(artist_id, None)
             .expect("read Artist releases")
             .expect("linked Artist releases");
@@ -5196,12 +5147,12 @@ fn artist_routes_keep_relationship_roles_and_album_level_tracks() {
         assert!(releases.appears_on.is_empty());
     }
     let guest_tracks = accepted
-        .loaded
+        .library
         .artist_track_detail(&guest.id, None)
         .expect("read guest Artist")
         .expect("guest Artist");
     let guest_releases = accepted
-        .loaded
+        .library
         .artist_discography(&guest.id, None)
         .expect("read guest releases")
         .expect("guest releases");
@@ -5224,22 +5175,20 @@ fn artist_routes_keep_relationship_roles_and_album_level_tracks() {
         musicbrainz_artist_id: None,
     };
     album.relations.artists = vec![replacement_artist.clone()];
-    library
-        .accept_source_update(
-            &accepted.loaded,
-            SourceLibraryUpdate {
-                albums: vec![album],
-                ..SourceLibraryUpdate::default()
-            },
-        )
+    accepted
+        .library
+        .accept_source_update(SourceLibraryUpdate {
+            albums: vec![album],
+            ..SourceLibraryUpdate::default()
+        })
         .expect("replace Album relationship");
     let replacement_tracks = accepted
-        .loaded
+        .library
         .artist_track_detail(&replacement_artist.id, None)
         .expect("read replacement Artist")
         .expect("replacement Artist");
     let replacement_releases = accepted
-        .loaded
+        .library
         .artist_discography(&replacement_artist.id, None)
         .expect("read replacement Artist releases")
         .expect("replacement Artist releases");
@@ -5252,7 +5201,7 @@ fn artist_routes_keep_relationship_roles_and_album_level_tracks() {
 fn full_and_point_relationships_match_after_reopen() {
     let directory = tempfile::tempdir().expect("temporary Store directory");
     let path = directory.path().join("library.db");
-    let library = Library::open(&path).expect("open Library");
+    let library = Libraries::open(&path).expect("open Library");
     let full_source = SourceId::new("jellyfin:server:full-relationships");
     let point_source = SourceId::new("jellyfin:server:point-relationships");
 
@@ -5310,7 +5259,7 @@ fn full_and_point_relationships_match_after_reopen() {
         .and_then(|prepared| prepared.accept())
         .expect("accept full relationships");
     let album_genre_detail = full
-        .loaded
+        .library
         .genre_detail(&album_genre.id, None)
         .expect("read Album Genre")
         .expect("Album Genre");
@@ -5318,7 +5267,7 @@ fn full_and_point_relationships_match_after_reopen() {
     assert_eq!(album_genre_detail.summary.track_count, 2);
     assert_eq!(album_genre_detail.tracks.len(), 2);
     assert_eq!(
-        full.loaded
+        full.library
             .compose_radio(RadioComposition {
                 seed: RadioSeed::Genre {
                     id: album_genre.id.clone(),
@@ -5335,7 +5284,7 @@ fn full_and_point_relationships_match_after_reopen() {
         2
     );
     let random = full
-        .loaded
+        .library
         .compose_random(RandomComposition {
             native: Vec::new(),
             limit: 2,
@@ -5350,13 +5299,13 @@ fn full_and_point_relationships_match_after_reopen() {
         .expect("compose Album Genre random play");
     assert_eq!(random.len(), 2);
     assert!(random.iter().all(|track| {
-        full.loaded
+        full.library
             .track(&track.id)
             .expect("read canonical random Track")
             .is_some_and(|canonical| Track::ptr_eq(&canonical, track))
     }));
     let native_first = full
-        .loaded
+        .library
         .compose_radio(RadioComposition {
             seed: RadioSeed::Genre {
                 id: album_genre.id.clone(),
@@ -5395,18 +5344,16 @@ fn full_and_point_relationships_match_after_reopen() {
         )
         .and_then(|prepared| prepared.accept())
         .expect("accept empty point candidate");
-    library
-        .accept_source_update(
-            &point.loaded,
-            SourceLibraryUpdate {
-                albums: vec![album],
-                tracks: vec![first, second],
-                ..SourceLibraryUpdate::default()
-            },
-        )
+    point
+        .library
+        .accept_source_update(SourceLibraryUpdate {
+            albums: vec![album],
+            tracks: vec![first, second],
+            ..SourceLibraryUpdate::default()
+        })
         .expect("accept equivalent point relationships");
 
-    let projection = |loaded: &Arc<library::LoadedLibrary>| {
+    let projection = |loaded: &Arc<library::Library>| {
         (
             loaded
                 .albums(None)
@@ -5441,13 +5388,13 @@ fn full_and_point_relationships_match_after_reopen() {
                 .collect::<Vec<_>>(),
         )
     };
-    let expected = projection(&full.loaded);
-    assert_eq!(projection(&point.loaded), expected);
+    let expected = projection(&full.library);
+    assert_eq!(projection(&point.library), expected);
 
     drop(full);
     drop(point);
     drop(library);
-    let reopened = Library::open(path)
+    let reopened = Libraries::open(path)
         .expect("reopen Library")
         .load_source(&point_source)
         .expect("load point source")
@@ -5458,7 +5405,7 @@ fn full_and_point_relationships_match_after_reopen() {
 #[test]
 fn radio_varies_its_bounded_window_and_passes_excluded_tracks() {
     let directory = tempfile::tempdir().expect("temporary Store directory");
-    let library = Library::open(directory.path().join("library.db")).expect("open Library");
+    let library = Libraries::open(directory.path().join("library.db")).expect("open Library");
     let source_id = SourceId::new("local:server:radio-window");
     let candidate = library
         .begin_source_candidate(CandidateHeader {
@@ -5488,19 +5435,17 @@ fn radio_varies_its_bounded_window_and_passes_excluded_tracks() {
             track
         })
         .collect::<Vec<_>>();
-    library
-        .accept_source_update(
-            &accepted.loaded,
-            SourceLibraryUpdate {
-                tracks: tracks.clone(),
-                ..SourceLibraryUpdate::default()
-            },
-        )
+    accepted
+        .library
+        .accept_source_update(SourceLibraryUpdate {
+            tracks: tracks.clone(),
+            ..SourceLibraryUpdate::default()
+        })
         .expect("accept radio Tracks");
 
     let compose = |variation, excluded_track_ids| {
         accepted
-            .loaded
+            .library
             .compose_radio(RadioComposition {
                 seed: RadioSeed::Track(tracks[0].id.clone()),
                 native: NativeRadioResult::Unavailable,
@@ -5528,12 +5473,12 @@ fn radio_varies_its_bounded_window_and_passes_excluded_tracks() {
 }
 
 fn accept(
-    library: &Library,
+    library: &Libraries,
     source_id: SourceId,
     input_digest: [u8; 32],
     title: &str,
     home_kind: Option<SourceHomeSectionKind>,
-    current: Option<&Arc<library::LoadedLibrary>>,
+    current: Option<&Arc<library::Library>>,
 ) -> library::CandidateCommit {
     let mut track = track();
     track.title = title.to_string();
@@ -5569,11 +5514,11 @@ fn accept(
 }
 
 fn accept_track(
-    library: &Library,
+    library: &Libraries,
     source_id: SourceId,
     input_digest: [u8; 32],
     track: Track,
-    current: Option<&Arc<library::LoadedLibrary>>,
+    current: Option<&Arc<library::Library>>,
     accepted_at: i64,
 ) -> library::CandidateCommit {
     let mut candidate = library
@@ -5600,12 +5545,12 @@ fn accept_track(
 }
 
 fn accept_track_and_playlist(
-    library: &Library,
+    library: &Libraries,
     source_id: SourceId,
     input_digest: [u8; 32],
     track: Track,
     playlist: PlaylistSnapshot,
-    current: Option<&Arc<library::LoadedLibrary>>,
+    current: Option<&Arc<library::Library>>,
     accepted_at: i64,
 ) -> library::CandidateCommit {
     let mut candidate = library
@@ -5635,7 +5580,7 @@ fn accept_track_and_playlist(
 }
 
 fn accept_local_tracks(
-    library: &Library,
+    library: &Libraries,
     source_id: SourceId,
     tracks: Vec<Track>,
     files: Vec<LocalFile>,

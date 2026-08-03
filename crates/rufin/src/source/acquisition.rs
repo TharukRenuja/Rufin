@@ -4,14 +4,14 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use library::{CandidateFinish, CandidateHeader, Library, LoadedLibrary, PreparedSourceCandidate};
+use library::{CandidateFinish, CandidateHeader, Libraries, Library, PreparedSourceCandidate};
 use sources::{Source, SourceInputIdentity, SourceReadProgress, SourceReadStage};
 
 pub(super) async fn read_source(
-    library: Library,
+    library: Libraries,
     identity: SourceInputIdentity,
     source: Arc<Source>,
-    current: Option<Arc<LoadedLibrary>>,
+    current: Option<Arc<Library>>,
     progress: Arc<dyn Fn(SourceReadProgress) + Send + Sync>,
     cancelled: Arc<AtomicBool>,
 ) -> Result<PreparedSourceCandidate, String> {

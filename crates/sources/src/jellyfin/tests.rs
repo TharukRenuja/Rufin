@@ -537,7 +537,7 @@ async fn metadata_write_preserves_fields_required_by_jellyfin_updates() {
 }
 
 #[tokio::test]
-async fn album_metadata_write_refreshes_the_album_and_its_tracks() {
+async fn album_metadata_write_pages_until_the_reported_total() {
     let server = MockServer::start().await;
     metadata_editor(&server, METADATA_ALBUM_ID, &[]).await;
     Mock::given(method("GET"))
@@ -560,10 +560,22 @@ async fn album_metadata_write_refreshes_the_album_and_its_tracks() {
         .and(query_param("StartIndex", "0"))
         .and(query_param("Limit", "500"))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
-            "Items": [
-                { "Id": METADATA_SECOND_TRACK_ID },
-                { "Id": METADATA_TRACK_ID }
-            ],
+            "Items": [{ "Id": METADATA_SECOND_TRACK_ID }],
+            "TotalRecordCount": 2
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/Items"))
+        .and(query_param("UserId", "user-one"))
+        .and(query_param("Recursive", "true"))
+        .and(query_param("IncludeItemTypes", "Audio"))
+        .and(query_param("AlbumIds", METADATA_ALBUM_ID))
+        .and(query_param("StartIndex", "1"))
+        .and(query_param("Limit", "500"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "Items": [{ "Id": METADATA_TRACK_ID }],
             "TotalRecordCount": 2
         })))
         .expect(1)
@@ -1408,6 +1420,100 @@ async fn playlist_readback_preserves_duplicate_tracks_as_distinct_occurrences() 
     assert_eq!(snapshot.entries[0].track_id, snapshot.entries[1].track_id);
     assert_eq!(snapshot.entries[0].occurrence_id, "entry-one");
     assert_eq!(snapshot.entries[1].occurrence_id, "entry-two");
+}
+
+#[tokio::test]
+async fn playlist_readback_continues_when_the_reported_total_grows() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/Items/playlist-one"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "Id": "playlist-one",
+            "Name": "Late Set",
+            "Type": "Playlist",
+            "ChildCount": 3
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+    for (offset, total, entry_id) in [
+        (0, 2, "entry-one"),
+        (1, 3, "entry-two"),
+        (2, 3, "entry-three"),
+    ] {
+        Mock::given(method("GET"))
+            .and(path("/Playlists/playlist-one/Items"))
+            .and(query_param("StartIndex", offset.to_string()))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "TotalRecordCount": total,
+                "Items": [{
+                    "Id": format!("track-{offset}"),
+                    "Type": "Audio",
+                    "PlaylistItemId": entry_id
+                }]
+            })))
+            .expect(1)
+            .mount(&server)
+            .await;
+    }
+    let source = provider(&server, "secret-token");
+
+    let snapshot = source
+        .read_playlist(&PlaylistId::new("jellyfin:playlist:playlist-one"))
+        .await
+        .expect("Jellyfin playlist");
+
+    assert_eq!(snapshot.entries.len(), 3);
+}
+
+async fn assert_incomplete_playlist_rows_fail(items: serde_json::Value) {
+    let server = MockServer::start().await;
+    let total = items.as_array().expect("playlist rows").len();
+    Mock::given(method("GET"))
+        .and(path("/Playlists/playlist-one/Items"))
+        .and(query_param("StartIndex", "0"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "TotalRecordCount": total,
+            "Items": items
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+    let source = provider(&server, "secret-token");
+    let playlist = playlist_from_item(
+        serde_json::from_value(serde_json::json!({
+            "Id": "playlist-one",
+            "Name": "Late Set",
+            "Type": "Playlist"
+        }))
+        .expect("playlist item"),
+    );
+
+    let error = source
+        .read_playlist_snapshot(playlist)
+        .await
+        .expect_err("incomplete playlist rows must fail acquisition");
+
+    assert!(error.to_string().contains("incomplete playlist"));
+}
+
+#[tokio::test]
+async fn library_acquisition_rejects_missing_or_duplicate_playlist_occurrence_ids() {
+    assert_incomplete_playlist_rows_fail(serde_json::json!([{
+        "Id": "track-one",
+        "Type": "Audio"
+    }]))
+    .await;
+    assert_incomplete_playlist_rows_fail(serde_json::json!([{
+        "Id": "track-one",
+        "Type": "Audio",
+        "PlaylistItemId": "entry-one"
+    }, {
+        "Id": "track-two",
+        "Type": "Audio",
+        "PlaylistItemId": "entry-one"
+    }]))
+    .await;
 }
 
 #[tokio::test]

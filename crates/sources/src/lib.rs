@@ -6,6 +6,7 @@
 
 mod config;
 mod operations;
+mod policy;
 mod source;
 
 mod jellyfin;

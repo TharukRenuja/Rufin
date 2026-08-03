@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
-use library::{LoadedLibrary, SourceId, Track, TrackId};
+use library::{Library, SourceId, Track, TrackId};
 use reqwest::header::{
     ACCEPT_ENCODING, CONTENT_ENCODING, CONTENT_LENGTH, CONTENT_RANGE, DATE, ETAG, IF_RANGE,
     LAST_MODIFIED, RANGE,
@@ -763,7 +763,7 @@ fn load_download_state(
 
 pub(super) fn attach_downloaded_files(
     root: &Path,
-    loaded: &Arc<LoadedLibrary>,
+    loaded: &Arc<Library>,
 ) -> Result<Vec<DownloadPaths>, String> {
     let source_id = loaded.source_id();
     let (files, records) = load_download_state(root, source_id)?;

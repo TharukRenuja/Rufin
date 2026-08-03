@@ -7,8 +7,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use async_channel::Sender;
 use library::{
-    Library, LoadedLibrary, LyricsCacheAuthority, LyricsCacheInput, LyricsCacheKey,
-    LyricsCacheWrite, SourceId, Track, TrackId,
+    Libraries, Library, LyricsCacheAuthority, LyricsCacheInput, LyricsCacheKey, LyricsCacheWrite,
+    SourceId, Track, TrackId,
 };
 use playback::{CurrentMedia, CurrentMediaId, SourceSessionEpoch};
 use serde::{Deserialize, Serialize};
@@ -34,7 +34,7 @@ pub struct LyricsContext {
     pub media: Arc<CurrentMedia>,
     pub input: SourceInputIdentity,
     pub source: Option<Arc<Source>>,
-    pub loaded: Arc<LoadedLibrary>,
+    pub loaded: Arc<Library>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -126,7 +126,7 @@ struct CachedBundle {
 }
 
 pub struct LyricsService {
-    library: Library,
+    library: Libraries,
     runtime: tokio::runtime::Handle,
     events: Sender<LyricsEvent>,
     state: Mutex<State>,
@@ -141,7 +141,7 @@ pub struct LyricsHandle {
 
 impl LyricsService {
     pub fn new(
-        library: Library,
+        library: Libraries,
         runtime: tokio::runtime::Handle,
         settings: Settings,
         private_mode: bool,
@@ -1154,7 +1154,7 @@ mod tests {
 
     use async_channel::{Receiver, unbounded};
     use library::{
-        CandidateBatch, CandidateFinish, CandidateHeader, HomeFacts, Library, SourceId, Track,
+        CandidateBatch, CandidateFinish, CandidateHeader, HomeFacts, Libraries, SourceId, Track,
         TrackData, TrackId, TrackRelations,
     };
     use playback::{
@@ -1647,7 +1647,7 @@ mod tests {
     fn fixture(settings: Settings, private_mode: bool) -> Fixture {
         let directory = tempfile::tempdir().expect("temporary lyrics Store");
         let library =
-            Library::open(directory.path().join("library.db")).expect("open lyrics Store");
+            Libraries::open(directory.path().join("library.db")).expect("open lyrics Store");
         let source_id = SourceId::new("local:lyrics-current");
         let track = track();
         let mut candidate = library
@@ -1671,7 +1671,7 @@ mod tests {
             )
             .and_then(library::PreparedSourceCandidate::accept)
             .expect("accept lyrics source")
-            .loaded;
+            .library;
         let runtime = Builder::new_current_thread()
             .build()
             .expect("lyrics test runtime");

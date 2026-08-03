@@ -39,12 +39,13 @@ struct SmartPlaylistEditor {
 
 impl Shell {
     pub(crate) fn new_smart_playlist_dialog(self: &Rc<Self>) {
-        let missing_defaults = self
+        let Some(selected) = self.library.selected.borrow().as_ref().cloned() else {
+            return;
+        };
+        let missing_defaults = selected
             .library
-            .selected
-            .borrow()
-            .as_ref()
-            .and_then(|selected| selected.loaded.missing_builtin_smart_playlists().ok())
+            .missing_builtin_smart_playlists()
+            .ok()
             .unwrap_or_default();
         let value_suggestions = self.smart_playlist_rule_value_suggestions();
         let editor = smart_playlist_editor(None, None);
@@ -74,15 +75,15 @@ impl Shell {
             });
         }
 
-        let smart_playlists = self.products.smart_playlists.clone();
+        let source = selected.operations;
         if let Some(restore) = restore {
-            let smart_playlists = smart_playlists.clone();
+            let source = source.clone();
             let dialog = dialog.downgrade();
             restore.connect_clicked(move |_| {
                 if let Some(default_dropdown) = default_dropdown.as_ref() {
                     let selected = default_dropdown.selected() as usize;
                     if let Some(builtin) = missing_defaults.get(selected).copied() {
-                        smart_playlists.restore_builtin(builtin);
+                        source.restore_builtin_smart_playlist(builtin);
                     }
                 }
                 if let Some(dialog) = dialog.upgrade() {
@@ -96,7 +97,7 @@ impl Shell {
                 let Some((name, definition)) = editor.definition() else {
                     return;
                 };
-                smart_playlists.create(name, definition);
+                source.create_smart_playlist(name, definition);
                 if let Some(dialog) = dialog.upgrade() {
                     dialog.close();
                 }
@@ -113,7 +114,12 @@ impl Shell {
             .selected
             .borrow()
             .as_ref()
-            .and_then(|selected| selected.loaded.smart_playlist_rule_value_suggestions().ok())
+            .and_then(|selected| {
+                selected
+                    .library
+                    .smart_playlist_rule_value_suggestions()
+                    .ok()
+            })
             .unwrap_or_default();
         RuleValueSuggestions { genres, moods }
     }

@@ -160,20 +160,17 @@ fn history_playback_keeps_the_selected_repeated_occurrence() {
     for (play_id, played_at) in [("older", 1_700_000_000), ("newer", 1_700_000_100)] {
         let activity = fixture
             .library
-            .record_play(
-                &fixture.loaded,
-                AcceptedPlay {
-                    play_id: play_id.to_string(),
-                    track_id: track.id.clone(),
-                    played_at,
-                    month: "2023-11".to_string(),
-                },
-            )
+            .record_play(AcceptedPlay {
+                play_id: play_id.to_string(),
+                track_id: track.id.clone(),
+                played_at,
+                month: "2023-11".to_string(),
+            })
             .expect("record History play")
             .expect("new History play");
         fixture
             .library
-            .apply_recorded_activity(&fixture.loaded, &activity)
+            .apply_recorded_activity(&activity)
             .expect("apply History play")
             .expect("History changed");
     }
@@ -182,7 +179,7 @@ fn history_playback_keeps_the_selected_repeated_occurrence() {
         source_id,
         SourceSessionEpoch::new(1),
         fixture
-            .loaded
+            .library
             .history_track_list(None)
             .expect("History Tracks"),
         settings.clone(),
@@ -259,7 +256,7 @@ fn track_collection_model_refreshes_values_and_replaces_membership() {
         source_id.clone(),
         SourceSessionEpoch::new(1),
         fixture
-            .loaded
+            .library
             .track_list(None, TrackSort::Title, false)
             .expect("complete Track list"),
         LibraryListSettings::for_key(LibraryListKey::Tracks),
@@ -276,13 +273,10 @@ fn track_collection_model_refreshes_values_and_replaces_membership() {
     });
     let accepted = fixture
         .library
-        .accept_source_update(
-            &fixture.loaded,
-            SourceLibraryUpdate {
-                tracks: vec![changed_second.clone()],
-                ..SourceLibraryUpdate::default()
-            },
-        )
+        .accept_source_update(SourceLibraryUpdate {
+            tracks: vec![changed_second.clone()],
+            ..SourceLibraryUpdate::default()
+        })
         .expect("replace Track value")
         .expect("changed Track value");
     let before = model.test_stats();
@@ -350,7 +344,7 @@ fn favorite_track_model_inserts_and_removes_one_accepted_track() {
         source_id,
         SourceSessionEpoch::new(1),
         fixture
-            .loaded
+            .library
             .favorite_track_list(None, TrackSort::Title, false)
             .expect("favorite Track list"),
         LibraryListSettings::for_key(LibraryListKey::FavoriteTracks),
@@ -361,13 +355,10 @@ fn favorite_track_model_inserts_and_removes_one_accepted_track() {
     favorite_first.favorite = true;
     let accepted = fixture
         .library
-        .accept_source_update(
-            &fixture.loaded,
-            SourceLibraryUpdate {
-                tracks: vec![favorite_first],
-                ..SourceLibraryUpdate::default()
-            },
-        )
+        .accept_source_update(SourceLibraryUpdate {
+            tracks: vec![favorite_first],
+            ..SourceLibraryUpdate::default()
+        })
         .expect("favorite Track")
         .expect("changed favorite");
     let before_insert = model.test_stats();
@@ -390,13 +381,10 @@ fn favorite_track_model_inserts_and_removes_one_accepted_track() {
     unfavorite_second.favorite = false;
     let accepted = fixture
         .library
-        .accept_source_update(
-            &fixture.loaded,
-            SourceLibraryUpdate {
-                tracks: vec![unfavorite_second],
-                ..SourceLibraryUpdate::default()
-            },
-        )
+        .accept_source_update(SourceLibraryUpdate {
+            tracks: vec![unfavorite_second],
+            ..SourceLibraryUpdate::default()
+        })
         .expect("unfavorite Track")
         .expect("changed favorite");
     let before_remove = model.test_stats();
@@ -426,7 +414,6 @@ fn smart_playlist_member_row_refreshes_without_membership_reevaluation() {
     let created = fixture
         .library
         .create_smart_playlist(
-            &fixture.loaded,
             "Matching".to_string(),
             SmartPlaylistDefinition {
                 match_all: vec![SmartPlaylistRule {
@@ -445,7 +432,7 @@ fn smart_playlist_member_row_refreshes_without_membership_reevaluation() {
     let created = created.smart_playlists;
     let smart_playlist_id = created.first().expect("created smart Playlist ID").clone();
     let detail = fixture
-        .loaded
+        .library
         .smart_playlist_detail(&smart_playlist_id, None)
         .expect("read smart Playlist")
         .expect("smart Playlist");
@@ -458,20 +445,17 @@ fn smart_playlist_member_row_refreshes_without_membership_reevaluation() {
 
     let activity = fixture
         .library
-        .record_play(
-            &fixture.loaded,
-            AcceptedPlay {
-                play_id: "smart-row-play".to_string(),
-                track_id: track.id.clone(),
-                played_at: 1_700_000_000,
-                month: "2023-11".to_string(),
-            },
-        )
+        .record_play(AcceptedPlay {
+            play_id: "smart-row-play".to_string(),
+            track_id: track.id.clone(),
+            played_at: 1_700_000_000,
+            month: "2023-11".to_string(),
+        })
         .expect("record play")
         .expect("new play");
     let accepted = fixture
         .library
-        .apply_recorded_activity(&fixture.loaded, &activity)
+        .apply_recorded_activity(&activity)
         .expect("apply play")
         .expect("changed activity");
 
@@ -504,7 +488,7 @@ fn track_collection_exact_query_changes_drop_shifted_row_cache_entries() {
         SourceId::fake(4),
         SourceSessionEpoch::new(1),
         fixture
-            .loaded
+            .library
             .track_list(None, TrackSort::Title, false)
             .expect("complete Track list"),
         LibraryListSettings::for_key(LibraryListKey::Tracks),
@@ -516,13 +500,10 @@ fn track_collection_exact_query_changes_drop_shifted_row_cache_entries() {
     inserted.artist = "Needle".to_string();
     let accepted = fixture
         .library
-        .accept_source_update(
-            &fixture.loaded,
-            SourceLibraryUpdate {
-                tracks: vec![inserted.clone()],
-                ..SourceLibraryUpdate::default()
-            },
-        )
+        .accept_source_update(SourceLibraryUpdate {
+            tracks: vec![inserted.clone()],
+            ..SourceLibraryUpdate::default()
+        })
         .expect("insert Track into query")
         .expect("changed Track");
     assert!(model.apply_track_replacement(&accepted.tracks, |_| true));
@@ -536,13 +517,10 @@ fn track_collection_exact_query_changes_drop_shifted_row_cache_entries() {
     removed.artist = "Other".to_string();
     let accepted = fixture
         .library
-        .accept_source_update(
-            &fixture.loaded,
-            SourceLibraryUpdate {
-                tracks: vec![removed],
-                ..SourceLibraryUpdate::default()
-            },
-        )
+        .accept_source_update(SourceLibraryUpdate {
+            tracks: vec![removed],
+            ..SourceLibraryUpdate::default()
+        })
         .expect("remove Track from query")
         .expect("changed Track");
     assert!(model.apply_track_replacement(&accepted.tracks, |_| true));
@@ -665,7 +643,7 @@ fn accepted_activity_repositions_exact_track_without_a_complete_rebuild() {
                 source_id.clone(),
                 SourceSessionEpoch::new(1),
                 fixture
-                    .loaded
+                    .library
                     .track_list(None, sort, true)
                     .expect("complete Track list"),
                 settings,
@@ -675,20 +653,17 @@ fn accepted_activity_repositions_exact_track_without_a_complete_rebuild() {
     });
     let activity = fixture
         .library
-        .record_play(
-            &fixture.loaded,
-            AcceptedPlay {
-                play_id: "ui-activity-play".to_string(),
-                track_id: first.id.clone(),
-                played_at: 1_700_000_000,
-                month: "2023-11".to_string(),
-            },
-        )
+        .record_play(AcceptedPlay {
+            play_id: "ui-activity-play".to_string(),
+            track_id: first.id.clone(),
+            played_at: 1_700_000_000,
+            month: "2023-11".to_string(),
+        })
         .expect("record accepted activity")
         .expect("new accepted activity");
     let accepted = fixture
         .library
-        .apply_recorded_activity(&fixture.loaded, &activity)
+        .apply_recorded_activity(&activity)
         .expect("apply accepted activity")
         .expect("changed accepted activity");
 
@@ -719,7 +694,7 @@ fn accepted_activity_repositions_exact_track_without_a_complete_rebuild() {
             "the exact point notification translates an unchanged selection"
         );
         let expected = fixture
-            .loaded
+            .library
             .track_list(None, sort, true)
             .expect("fresh activity projection")
             .materialize()

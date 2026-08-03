@@ -827,10 +827,13 @@ pub(crate) fn present_playlist_context_menu(
         current_playback_track(&player).map(|track| track.id.clone())
     };
     surface.add_action_enabled("add-current", current_track_id.is_some(), {
-        let source = shell.products.source.clone();
+        let source = shell.selected_source_operations();
         let playlist_id = playlist.playlist.id.clone();
         move || {
             let Some(track_id) = current_track_id.clone() else {
+                return;
+            };
+            let Some(source) = source.as_ref() else {
                 return;
             };
             source.edit_playlist(PlaylistEdit::AddTracks {
@@ -840,7 +843,7 @@ pub(crate) fn present_playlist_context_menu(
         }
     });
     surface.add_action("delete", {
-        let source = shell.products.source.clone();
+        let source = shell.selected_source_operations();
         let shell = Rc::clone(shell);
         let window = shell.chrome.window.clone();
         let playlist_id = playlist.playlist.id.clone();
@@ -857,7 +860,9 @@ pub(crate) fn present_playlist_context_menu(
             let shell = Rc::clone(&shell);
             let playlist_id = playlist_id.clone();
             dialog.connect_response(None, move |_, response| {
-                if response == "delete" {
+                if response == "delete"
+                    && let Some(source) = source.as_ref()
+                {
                     source.edit_playlist(PlaylistEdit::Delete {
                         playlist_id: playlist_id.clone(),
                     });
@@ -905,7 +910,9 @@ pub(crate) fn present_smart_playlist_context_menu(
         let shell = Rc::clone(shell);
         let playlist_id = playlist.smart_playlist.id.clone();
         move || {
-            shell.products.smart_playlists.delete(playlist_id.clone());
+            if let Some(source) = shell.selected_source_operations() {
+                source.delete_smart_playlist(playlist_id.clone());
+            }
             shell.navigate(Route::SmartPlaylists);
         }
     });
@@ -997,7 +1004,6 @@ pub(crate) fn install_download_actions(
     let status = target.download_status(&selected).unwrap_or_default();
     let collection = !matches!(target, PlaybackTarget::Track(_));
     if !status.complete {
-        let source = shell.products.source.clone();
         let shell = Rc::clone(shell);
         let target = target.clone();
         surface.append_configurable_action(
@@ -1007,13 +1013,10 @@ pub(crate) fn install_download_actions(
             DOWNLOAD_ICON,
         );
         surface.add_action("download", move || {
-            if let Some(request) = target.download_request(&shell) {
-                source.download(request);
-            }
+            target.download(&shell);
         });
     }
     if status.any {
-        let source = shell.products.source.clone();
         let shell = Rc::clone(shell);
         let target = target.clone();
         surface.append_configurable_action(
@@ -1023,9 +1026,7 @@ pub(crate) fn install_download_actions(
             TRASH_ICON,
         );
         surface.add_action("remove-downloads", move || {
-            if let Some(request) = target.remove_download_request(&shell) {
-                source.remove_download(request);
-            }
+            target.remove_download(&shell);
         });
     }
 }

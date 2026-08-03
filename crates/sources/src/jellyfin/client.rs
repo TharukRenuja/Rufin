@@ -85,7 +85,7 @@ impl JellyfinSource {
         &self,
         raw_playlist_id: &str,
         fields: Option<&str>,
-    ) -> SourceResult<Option<Vec<(String, JellyfinItem)>>> {
+    ) -> SourceResult<Vec<(String, JellyfinItem)>> {
         let mut pages = PageState::default();
         let mut entry_ids = BTreeSet::new();
         let mut items = Vec::new();
@@ -106,21 +106,19 @@ impl JellyfinSource {
             }
             let response = self.get_json::<ItemQueryResult>(url).await?;
             let count = response.items.len();
-            let Ok(finished) = pages.advance(count, response.total_record_count) else {
-                return Ok(None);
-            };
+            let finished = pages.advance(count, response.total_record_count)?;
             for item in response.items {
                 let Some(entry_id) = item.playlist_item_id.as_deref().filter(|id| !id.is_empty())
                 else {
-                    return Ok(None);
+                    return Err(incomplete_playlist());
                 };
                 if !entry_ids.insert(entry_id.to_string()) {
-                    return Ok(None);
+                    return Err(incomplete_playlist());
                 }
                 items.push((entry_id.to_string(), item));
             }
             if finished {
-                return Ok(Some(items));
+                return Ok(items);
             }
         }
     }
@@ -128,32 +126,26 @@ impl JellyfinSource {
     pub(super) async fn read_playlist_entries(
         &self,
         raw_playlist_id: &str,
-    ) -> SourceResult<Option<Vec<PlaylistEntry>>> {
+    ) -> SourceResult<Vec<PlaylistEntry>> {
         Ok(self
             .read_playlist_rows(raw_playlist_id, None)
             .await?
-            .map(|items| {
-                items
-                    .into_iter()
-                    .map(|(entry_id, item)| PlaylistEntry {
-                        occurrence_id: entry_id,
-                        track_id: TrackId::new(jellyfin_id("track", &item.id)),
-                    })
-                    .collect()
-            }))
+            .into_iter()
+            .map(|(entry_id, item)| PlaylistEntry {
+                occurrence_id: entry_id,
+                track_id: TrackId::new(jellyfin_id("track", &item.id)),
+            })
+            .collect())
     }
 
     pub(super) async fn read_playlist_snapshot(
         &self,
         playlist: Playlist,
-    ) -> SourceResult<Option<PlaylistSnapshot>> {
-        let Some(entries) = self
+    ) -> SourceResult<PlaylistSnapshot> {
+        let entries = self
             .read_playlist_entries(raw_item_id(playlist.id.as_str()))
-            .await?
-        else {
-            return Ok(None);
-        };
-        Ok(Some(PlaylistSnapshot { playlist, entries }))
+            .await?;
+        Ok(PlaylistSnapshot { playlist, entries })
     }
 }
 
@@ -279,14 +271,13 @@ impl JellyfinSource {
             .append_pair("Fields", PLAYLIST_FIELDS);
         let playlist = playlist_from_item(self.get_json::<JellyfinItem>(playlist_url).await?);
 
-        let entries = self
-            .read_playlist_entries(raw_playlist_id)
-            .await?
-            .ok_or_else(|| {
-                SourceError::Other("Jellyfin returned an incomplete playlist".to_string())
-            })?;
+        let entries = self.read_playlist_entries(raw_playlist_id).await?;
         Ok(PlaylistSnapshot { playlist, entries })
     }
+}
+
+fn incomplete_playlist() -> SourceError {
+    SourceError::Other("Jellyfin returned an incomplete playlist".to_string())
 }
 
 impl JellyfinSource {
@@ -649,9 +640,6 @@ pub(super) fn auth_header(config: &JellyfinClientConfig, token: Option<&str>) ->
     }
     value
 }
-pub(super) fn raw_item_id(id: &str) -> &str {
-    id.rsplit(':').next().unwrap_or(id)
-}
 pub(super) fn jellyfin_year_filter(
     min_year: Option<u16>,
     max_year: Option<u16>,
@@ -684,11 +672,6 @@ pub(super) fn raw_track_ids(track_ids: &[TrackId]) -> Vec<String> {
 }
 pub(super) fn stable_source_id(input: &str) -> String {
     format!("{:016x}", stable_hash(input))
-}
-pub(crate) fn stable_hash(input: &str) -> u64 {
-    input.bytes().fold(0xcbf2_9ce4_8422_2325, |hash, byte| {
-        (hash ^ u64::from(byte)).wrapping_mul(0x0000_0100_0000_01b3)
-    })
 }
 pub(super) fn ticks_to_millis(ticks: Option<i64>) -> Option<u64> {
     ticks.map(|value| (value.max(0) / 10_000) as u64)

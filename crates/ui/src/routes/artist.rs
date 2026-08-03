@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use ::library::{
     AlbumSummary, Artist, ArtistDiscography, ArtistId, ArtistOverview, ArtistSummary, ArtistTracks,
-    FavoriteItemId, LoadedLibrary, MusicFolderId, RadioSeed,
+    FavoriteItemId, Library, MusicFolderId, RadioSeed,
 };
 use adw::prelude::*;
 use artwork::ArtworkBinding;
@@ -187,7 +187,7 @@ impl Shell {
         self: &Rc<Self>,
         artist_id: ArtistId,
         detail: Option<ArtistOverview>,
-        loaded: Arc<LoadedLibrary>,
+        loaded: Arc<Library>,
         music_folder_id: Option<MusicFolderId>,
     ) -> MountedRoute {
         let Some(detail) = detail else {
@@ -450,7 +450,7 @@ impl Shell {
         self: &Rc<Self>,
         artist_id: ArtistId,
         detail: Option<ArtistDiscography>,
-        loaded: Arc<LoadedLibrary>,
+        loaded: Arc<Library>,
         music_folder_id: Option<MusicFolderId>,
     ) -> MountedRoute {
         let Some(detail) = detail else {
@@ -591,7 +591,7 @@ impl Shell {
         self: &Rc<Self>,
         artist_id: ArtistId,
         detail: Option<ArtistTracks>,
-        loaded: Arc<LoadedLibrary>,
+        loaded: Arc<Library>,
         music_folder_id: Option<MusicFolderId>,
     ) -> MountedRoute {
         let Some(detail) = detail else {
@@ -1014,7 +1014,7 @@ fn set_artist_route_search(shell: &Shell, target: Option<ArtistRouteSearchTarget
 }
 
 pub(crate) fn load_artist_overview(
-    loaded: &Arc<LoadedLibrary>,
+    loaded: &Arc<Library>,
     artist_id: &ArtistId,
     music_folder_id: Option<&MusicFolderId>,
     track_settings: &LibraryListSettings,
@@ -1038,7 +1038,7 @@ pub(crate) fn load_artist_overview(
 }
 
 pub(crate) fn load_artist_discography(
-    loaded: &Arc<LoadedLibrary>,
+    loaded: &Arc<Library>,
     artist_id: &ArtistId,
     music_folder_id: Option<&MusicFolderId>,
     settings: &LibraryListSettings,
@@ -1054,7 +1054,7 @@ pub(crate) fn load_artist_discography(
 }
 
 pub(crate) fn load_artist_tracks(
-    loaded: &Arc<LoadedLibrary>,
+    loaded: &Arc<Library>,
     artist_id: &ArtistId,
     music_folder_id: Option<&MusicFolderId>,
     settings: &LibraryListSettings,

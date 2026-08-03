@@ -400,10 +400,6 @@ impl<'a> BatchEmitter<'a> {
     pub(crate) fn invalid_cue(&mut self) {
         self.summary.invalid_cues += 1;
     }
-
-    pub(crate) fn skipped_playlist(&mut self) {
-        self.summary.skipped_playlists += 1;
-    }
 }
 
 /// One opened concrete source. Its provider enum remains private.
@@ -554,9 +550,6 @@ impl Source {
         subject: &library::MetadataSubject,
         values: &MetadataValues,
     ) -> Result<Option<MetadataValues>, String> {
-        if values.title.trim().is_empty() || !self.metadata_source_search(subject) {
-            return Ok(None);
-        }
         match &self.implementation {
             Implementation::Jellyfin(source) => {
                 source.identify_metadata(subject.item(), values).await
@@ -791,11 +784,6 @@ impl Source {
                 .random_tracks(request)
                 .await
                 .map(NativeSourceResult::Available),
-            Implementation::OpenSubsonic(_)
-                if request.played_filter != crate::PlayedFilter::All =>
-            {
-                Ok(NativeSourceResult::Unavailable)
-            }
             Implementation::OpenSubsonic(source) => source
                 .random_tracks(request)
                 .await

@@ -5,22 +5,20 @@
 
 mod acquisition;
 
-use std::collections::VecDeque;
 use std::future::Future;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, RwLock, Weak};
+use std::sync::{Arc, Mutex, Weak};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use artwork::{Artwork, SourceImages};
 use async_channel::{Receiver, Sender};
 use library::{
-    AcceptedLibraryChange, CandidateChange, FavoriteAcceptance, FavoriteItemId, FolderContents,
-    HomeSectionKind, HomeSnapshot, Library, LoadedLibrary, LocalAccessTarget, MetadataDraft,
-    MetadataEdit, MetadataEditing, MetadataError, MetadataItemId, MusicFolderId,
-    PlaylistAcceptance, PlaylistEdit, PlaylistTrackAdd, PreparedSourceCandidate, RecordedActivity,
-    SmartPlaylistBuiltin, SmartPlaylistDefinition, SmartPlaylistId, SourceHomeSection, SourceId,
-    Track, TrackSort,
+    AcceptedLibraryChange, CandidateChange, FavoriteItemId, FolderContents, HomeSectionKind,
+    HomeSnapshot, Libraries, Library, LocalAccessTarget, MetadataDraft, MetadataEdit,
+    MetadataEditing, MetadataError, MetadataItemId, MusicFolderId, PlaylistEdit, PlaylistTrackAdd,
+    PreparedSourceCandidate, RecordedActivity, SmartPlaylistBuiltin, SmartPlaylistDefinition,
+    SmartPlaylistId, SourceId, Track, TrackSort,
 };
 use playback::{PlaybackProjection, SourceSessionEpoch};
 use scrobbling::Scrobbler;
@@ -36,42 +34,45 @@ use tokio::task::JoinHandle;
 use tracing::warn;
 use ui::runtime::source::{
     ConfiguredSources, CredentialInput, CredentialPreset, DiscoveredServer, DiscoveryStatus,
-    DiscoveryUpdate, DownloadRequest, EditableSource, FolderRequest, LocalAccessStatus,
-    LocalFolder, MetadataEditRequest, MetadataIdentificationRequest, MetadataRequest,
-    OpenSubsonicKind, RemoveDownloadRequest, SearchRequest, SourceLocalAccess,
-    SourceLocalAccessSummary, SourceOperation, SourcePort, SourceProgress, SourceProgressStage,
-    SourceSettingsChange, SourceSetup, SourceSummary,
+    DiscoveryUpdate, EditableSource, LocalAccessStatus, LocalFolder, OpenSubsonicKind,
+    SelectedSourcePort, SourceLocalAccess, SourceLocalAccessSummary, SourceOperation, SourcePort,
+    SourceProgress, SourceProgressStage, SourceSettingsChange, SourceSetup, SourceSummary,
 };
 use ui::runtime::{
     FavoriteFailure, HomePublication, SelectedLibrary, SelectedLibraryUpdate, SourceEvent,
 };
 
 use crate::album_release::run_selected_album_release_lookup;
-use crate::playback::PlaybackOwner;
+use crate::playback::{PlaybackOwner, PreparedPlayback};
 use crate::settings::{
     ConfiguredLocalAccess, ConfiguredSource, CredentialRef, SettingsFile, SourceSettings,
     StoredSettings, all_secret_keys, delete_provider_secret, fresh_credential_ref,
     fresh_secret_scope_id, load_provider_secret, load_scrobbling_settings, platform_secret_store,
     save_provider_secret,
 };
-use downloads::Downloads;
+use downloads::{DownloadSubject, Downloads};
 
 const SOURCE_CHECK_INTERVAL: Duration = Duration::from_secs(5 * 60);
 
 #[cfg(test)]
 mod tests;
 
+/// The current immutable facts for one selected-source session.
+///
+/// Rufin replaces this value atomically when the source executor, accepted
+/// Library, Home, or music-folder scope changes. Consumers resolve it through
+/// [`ActiveSource`] instead of retaining a second mutable mirror.
 #[derive(Clone)]
-pub(crate) struct SelectedSourceRuntime {
+pub(crate) struct SelectedSourceState {
     pub(crate) configuration: SourceConfiguration,
     pub(crate) source: Option<Arc<Source>>,
     pub(crate) source_session_epoch: SourceSessionEpoch,
-    pub(crate) loaded: Arc<LoadedLibrary>,
+    pub(crate) library: Arc<Library>,
     pub(crate) home: Arc<HomeSnapshot>,
     pub(crate) music_folder_id: Option<MusicFolderId>,
 }
 
-impl SelectedSourceRuntime {
+impl SelectedSourceState {
     pub(crate) fn source_id(&self) -> &SourceId {
         &self.configuration.source_id
     }
@@ -86,11 +87,11 @@ impl SelectedSourceRuntime {
     fn metadata_context(
         &self,
         item_id: &MetadataItemId,
-    ) -> Result<Option<MetadataContext>, library::LoadedLibraryError> {
+    ) -> Result<Option<MetadataContext>, library::LibraryQueryError> {
         let Some(source) = self.source.as_ref().cloned() else {
             return Ok(None);
         };
-        let Some(subject) = self.loaded.metadata_subject(item_id)? else {
+        let Some(subject) = self.library.metadata_subject(item_id)? else {
             return Ok(None);
         };
         Ok(Some(MetadataContext {
@@ -104,7 +105,7 @@ impl SelectedSourceRuntime {
         let Some(source) = self.source.as_ref() else {
             return false;
         };
-        self.loaded
+        self.library
             .metadata_item(item_id)
             .ok()
             .flatten()
@@ -120,7 +121,7 @@ impl SelectedSourceRuntime {
         };
         if source.needs_metadata_local_access() {
             let Some((subject, local_access)) = self
-                .loaded
+                .library
                 .metadata_subject_with_local_access(item_id, None)?
             else {
                 return Ok(None);
@@ -132,7 +133,7 @@ impl SelectedSourceRuntime {
             }));
         }
         let Some(subject) = self
-            .loaded
+            .library
             .metadata_subject(item_id)
             .map_err(|error| MetadataError::Write(error.to_string()))?
         else {
@@ -152,57 +153,69 @@ struct MetadataContext {
     local_access: Option<Vec<LocalAccessTarget>>,
 }
 
-#[derive(Clone)]
-pub(crate) struct SelectedSourceSession {
-    selected: Arc<RwLock<SelectedSourceRuntime>>,
+/// A stable selected-session identity and fence.
+///
+/// The handle owns no selected facts. Resolving consults SourceOwner's one
+/// authoritative slot, and returns `None` as soon as that session is retired.
+pub(crate) struct ActiveSource {
+    shared: Weak<Shared>,
+    source_id: SourceId,
+    source_session_epoch: SourceSessionEpoch,
+    #[cfg(test)]
+    fixed: Mutex<Option<Arc<SelectedSourceState>>>,
 }
 
-impl SelectedSourceSession {
-    pub(crate) fn new(selected: SelectedSourceRuntime) -> Self {
-        Self {
-            selected: Arc::new(RwLock::new(selected)),
-        }
+pub(crate) type WeakActiveSource = Weak<ActiveSource>;
+
+impl ActiveSource {
+    fn new(shared: &Arc<Shared>, state: &SelectedSourceState) -> Arc<Self> {
+        Arc::new(Self {
+            shared: Arc::downgrade(shared),
+            source_id: state.source_id().clone(),
+            source_session_epoch: state.source_session_epoch,
+            #[cfg(test)]
+            fixed: Mutex::new(None),
+        })
     }
 
-    pub(crate) fn snapshot(&self) -> SelectedSourceRuntime {
-        self.selected
-            .read()
+    pub(crate) fn resolve(&self) -> Option<Arc<SelectedSourceState>> {
+        #[cfg(test)]
+        if let Some(selected) = self
+            .fixed
+            .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .clone()
-    }
-
-    pub(crate) fn downgrade(&self) -> WeakSelectedSourceSession {
-        WeakSelectedSourceSession {
-            selected: Arc::downgrade(&self.selected),
+            .as_ref()
+            .cloned()
+        {
+            return Some(selected);
         }
+        self.shared
+            .upgrade()?
+            .resolve_selected(&self.source_id, self.source_session_epoch)
     }
 
-    fn replace(&self, selected: SelectedSourceRuntime) {
-        *self
-            .selected
-            .write()
-            .unwrap_or_else(|poisoned| poisoned.into_inner()) = selected;
+    pub(crate) fn downgrade(self: &Arc<Self>) -> WeakActiveSource {
+        Arc::downgrade(self)
     }
 
     #[cfg(test)]
-    pub(crate) fn replace_for_test(&self, selected: SelectedSourceRuntime) {
-        self.replace(selected);
-    }
-}
-
-#[derive(Clone)]
-pub(crate) struct WeakSelectedSourceSession {
-    selected: Weak<RwLock<SelectedSourceRuntime>>,
-}
-
-impl WeakSelectedSourceSession {
-    pub(crate) fn snapshot(&self) -> Option<SelectedSourceRuntime> {
-        self.selected.upgrade().map(|selected| {
-            selected
-                .read()
-                .unwrap_or_else(|poisoned| poisoned.into_inner())
-                .clone()
+    pub(crate) fn fixed_for_test(state: SelectedSourceState) -> Arc<Self> {
+        let source_id = state.source_id().clone();
+        let source_session_epoch = state.source_session_epoch;
+        Arc::new(Self {
+            shared: Weak::new(),
+            source_id,
+            source_session_epoch,
+            fixed: Mutex::new(Some(Arc::new(state))),
         })
+    }
+
+    #[cfg(test)]
+    pub(crate) fn replace_for_test(&self, state: SelectedSourceState) {
+        *self
+            .fixed
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(Arc::new(state));
     }
 }
 
@@ -218,128 +231,36 @@ pub(crate) struct SourceBootstrap {
     pub(crate) operation: SourceOperation,
 }
 
+#[derive(Clone)]
 pub(crate) struct SourceOwner {
     shared: Arc<Shared>,
-    messages: Sender<Message>,
-    receiver: Mutex<Option<Receiver<Message>>>,
 }
 
-#[derive(Clone)]
-pub(crate) struct SourceAcceptanceSender {
-    messages: Sender<Message>,
-}
+pub(crate) type SourceAcceptanceSender = SourceOwner;
 
 struct Shared {
     artwork: Artwork,
-    library: Library,
+    library: Libraries,
     downloads: Downloads,
     settings: SettingsFile,
     secrets: Arc<SwitchableSecretStore>,
     scrobbler: Arc<Scrobbler>,
     runtime: tokio::runtime::Handle,
     outputs: SourceOutputs,
-    selected: RwLock<Option<SelectedSourceSession>>,
+    state: Mutex<OwnerState>,
+    lane: tokio::sync::Mutex<()>,
+    acceptance_lane: tokio::sync::Mutex<()>,
+    interruptible: Mutex<Vec<Weak<AtomicBool>>>,
     playback: Mutex<Weak<PlaybackOwner>>,
     next_epoch: AtomicU64,
-    next_work: AtomicU64,
-}
-
-enum Message {
-    Request(WorkRequest),
-    SelectedLibraryRevealed,
-    AlbumReleaseSettingChanged(bool),
-    DownloadSettingsChanged,
-    Download(DownloadRequest),
-    RemoveDownload(RemoveDownloadRequest),
-    RemoveDownloadRule {
-        source_id: SourceId,
-        rule: downloads::DownloadRule,
-        delete_downloads: bool,
-    },
-    CancelDownload {
-        source_id: SourceId,
-        job_id: String,
-    },
-    ClearDownloadJob {
-        source_id: SourceId,
-        job_id: String,
-    },
-    SetDownloadsPaused(bool),
-    MoveDownload {
-        source_id: SourceId,
-        job_id: String,
-        target_job_id: String,
-        after: bool,
-    },
-    ClearDownloads(SourceId),
-    AlbumReleaseFinished(u64),
-    Activity {
-        qualifier: SourceQualifier,
-        update: RecordedActivity,
-        next_home: NextHome,
-    },
-    Progress {
-        token: u64,
-        progress: SourceReadProgress,
-    },
-    LocalAccessReady(u64),
-    WorkReady(u64),
-}
-
-enum WorkRequest {
-    Configure(SourceSetup),
-    Update(SourceSettingsChange),
-    Select(SourceId),
-    ChangeSecretStorage {
-        mode: SecretStorageMode,
-        result: Sender<Result<(), String>>,
-    },
-    AddLocalFolder(PathBuf),
-    RemoveLocalFolder(String),
-    Refresh {
-        qualifier: SourceQualifier,
-        visible: bool,
-    },
-    SaveLocalAccess {
-        input: SourceLocalAccess,
-        metadata: Option<MetadataRequest>,
-        result: Sender<Result<(), String>>,
-    },
-    ClearLocalAccess(SourceId),
-    Forget(SourceId),
-    SetMusicFolder {
-        source_id: SourceId,
-        folder_id: Option<MusicFolderId>,
-    },
-    Selected {
-        qualifier: SourceQualifier,
-        operation: PointOperation,
-    },
-    CheckSelectedSource,
+    next_token: AtomicU64,
+    started: AtomicBool,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct SourceQualifier {
     source_id: SourceId,
     epoch: SourceSessionEpoch,
-}
-
-enum PointOperation {
-    RefreshHome(HomeSectionKind),
-    Favorite {
-        item: FavoriteItemId,
-        favorite: bool,
-        previous: bool,
-    },
-    Playlist(PlaylistEdit),
-    SmartPlaylist(SmartPlaylistOperation),
-    ObservedItems(SourceLibraryChange),
-    LocalFiles(LocalFilesystemChange),
-    EditMetadata {
-        edit: MetadataEdit,
-        reply: MetadataReply,
-    },
-    CheckFreshness,
 }
 
 struct MetadataReply {
@@ -410,42 +331,6 @@ enum SmartPlaylistOperation {
     },
 }
 
-enum WorkPurpose {
-    Add,
-    Select {
-        target: SourceId,
-    },
-    Refresh {
-        qualifier: SourceQualifier,
-        visible: bool,
-    },
-    Update {
-        selected: bool,
-        progress_source: Option<SourceId>,
-    },
-    Selected {
-        qualifier: SourceQualifier,
-        automatic: bool,
-    },
-}
-
-enum PreparedWork {
-    Replacement(PreparedReplacement),
-    SelectedUpdate(PreparedSelectedUpdate),
-    Configuration {
-        configured: ConfiguredSource,
-        configuration: Option<SourceConfiguration>,
-    },
-    InactiveConnection {
-        configured: ConfiguredSource,
-        configuration: SourceConfiguration,
-        credential: Option<String>,
-        replaces_account: bool,
-    },
-    Refresh(PreparedSourceCandidate),
-    Point(PointPrepared),
-}
-
 #[derive(Clone, Copy)]
 enum ReplacementReason {
     Add,
@@ -456,68 +341,7 @@ enum ReplacementReason {
     DifferentAccount,
 }
 
-enum ReplacementLibrary {
-    Cached(Arc<LoadedLibrary>),
-    Candidate(Box<PreparedSourceCandidate>),
-}
-
-struct PreparedReplacement {
-    reason: ReplacementReason,
-    previous: Option<ConfiguredSource>,
-    configuration: SourceConfiguration,
-    source: Option<Arc<Source>>,
-    credential: Option<String>,
-    library: ReplacementLibrary,
-}
-
-struct PreparedSelectedUpdate {
-    configured: ConfiguredSource,
-    configuration: SourceConfiguration,
-    source: Arc<Source>,
-    credential: Option<String>,
-    candidate: Option<Box<PreparedSourceCandidate>>,
-}
-
-struct PreparedSameSource {
-    selected: SelectedSourceRuntime,
-    playback: Option<(Arc<PlaybackOwner>, crate::playback::PreparedTrackRefresh)>,
-}
-
-struct ActiveWork {
-    token: u64,
-    purpose: WorkPurpose,
-    activity_updates: Vec<RecordedActivity>,
-    cancelled: Arc<AtomicBool>,
-    handle: JoinHandle<Result<PreparedWork, String>>,
-}
-
-enum PointPrepared {
-    RefreshHome {
-        kind: HomeSectionKind,
-        source_section: Option<SourceHomeSection>,
-    },
-    Favorite {
-        acceptance: FavoriteAcceptance,
-        item: FavoriteItemId,
-        previous: bool,
-    },
-    FavoriteFailed {
-        item: FavoriteItemId,
-        previous: bool,
-        message: String,
-    },
-    Playlist(PlaylistAcceptance),
-    SmartPlaylist(SmartPlaylistOperation),
-    LibraryUpdate(PreparedLibraryUpdate),
-    Metadata {
-        reply: MetadataReply,
-        acceptance: Result<PreparedLibraryUpdate, MetadataError>,
-    },
-    RefreshRequired,
-    Unchanged,
-}
-
-enum PreparedLibraryUpdate {
+enum SelectedLibraryAcceptance {
     Source(library::SourceLibraryUpdate),
     Local(library::LocalComponentReplacement),
     Full(PreparedSourceCandidate),
@@ -539,9 +363,15 @@ impl Drop for ActiveObserver {
 struct ActiveLocalAccess {
     token: u64,
     qualifier: SourceQualifier,
-    input: SourceLocalAccess,
     cancelled: Arc<AtomicBool>,
-    handle: JoinHandle<Result<Vec<library::LocalAccessFile>, String>>,
+    handle: tokio::task::AbortHandle,
+}
+
+impl Drop for ActiveLocalAccess {
+    fn drop(&mut self) {
+        self.cancelled.store(true, Ordering::Release);
+        self.handle.abort();
+    }
 }
 
 struct ActiveAlbumRelease {
@@ -549,23 +379,37 @@ struct ActiveAlbumRelease {
     cancelled: Arc<AtomicBool>,
 }
 
-struct Actor {
-    shared: Arc<Shared>,
-    sender: Sender<Message>,
-    active: Option<ActiveWork>,
+struct SelectedSlot {
+    session: Arc<ActiveSource>,
+    current: Arc<SelectedSourceState>,
+}
+
+struct ActivityReplay {
+    token: u64,
+    qualifier: SourceQualifier,
+    updates: Vec<RecordedActivity>,
+}
+
+struct RefreshRequest {
+    qualifier: SourceQualifier,
+    visible: AtomicBool,
+    cancelled: Arc<AtomicBool>,
+}
+
+struct OwnerState {
+    selected: Option<SelectedSlot>,
     observer: Option<ActiveObserver>,
     local_access: Option<ActiveLocalAccess>,
-    pending: VecDeque<WorkRequest>,
-    next_freshness_check: tokio::time::Instant,
-    fallback: Option<SourceId>,
     selected_revealed: bool,
     active_album_release: Option<ActiveAlbumRelease>,
+    refresh: Option<Arc<RefreshRequest>>,
+    activity_replay: Option<ActivityReplay>,
 }
 
 impl SourceOwner {
     pub(crate) fn open_dormant(
         artwork: Artwork,
-        library: Library,
+        library: Libraries,
         downloads: Downloads,
         settings: SettingsFile,
         secrets: Arc<SwitchableSecretStore>,
@@ -581,7 +425,6 @@ impl SourceOwner {
             },
             None => SourceOperation::Idle,
         };
-        let (messages, receiver) = async_channel::unbounded();
         let shared = Arc::new(Shared {
             artwork,
             library,
@@ -591,16 +434,24 @@ impl SourceOwner {
             scrobbler,
             runtime,
             outputs,
-            selected: RwLock::new(None),
+            state: Mutex::new(OwnerState {
+                selected: None,
+                observer: None,
+                local_access: None,
+                selected_revealed: false,
+                active_album_release: None,
+                refresh: None,
+                activity_replay: None,
+            }),
+            lane: tokio::sync::Mutex::new(()),
+            acceptance_lane: tokio::sync::Mutex::new(()),
+            interruptible: Mutex::new(Vec::new()),
             playback: Mutex::new(Weak::new()),
             next_epoch: AtomicU64::new(1),
-            next_work: AtomicU64::new(1),
+            next_token: AtomicU64::new(1),
+            started: AtomicBool::new(false),
         });
-        let owner = Arc::new(Self {
-            shared,
-            messages,
-            receiver: Mutex::new(Some(receiver)),
-        });
+        let owner = Arc::new(Self { shared });
         SourceBootstrap {
             configured: configured_sources(&stored, None),
             operation,
@@ -617,346 +468,137 @@ impl SourceOwner {
     }
 
     pub(crate) fn acceptance_sender(&self) -> SourceAcceptanceSender {
-        SourceAcceptanceSender {
-            messages: self.messages.clone(),
-        }
+        self.clone()
     }
 
     pub(crate) fn start(&self) -> Result<(), String> {
-        let receiver = self
-            .receiver
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .take()
-            .ok_or_else(|| "the source owner is already running".to_string())?;
-        let actor = Actor {
-            shared: Arc::clone(&self.shared),
-            sender: self.messages.clone(),
-            active: None,
-            observer: None,
-            local_access: None,
-            pending: VecDeque::new(),
-            next_freshness_check: tokio::time::Instant::now(),
-            fallback: None,
-            selected_revealed: false,
-            active_album_release: None,
-        };
-        self.shared.runtime.spawn(actor.run(receiver));
+        if self.shared.started.swap(true, Ordering::AcqRel) {
+            return Err("the source owner is already running".to_string());
+        }
+        let periodic = self.clone();
+        self.shared.runtime.spawn(async move {
+            let mut interval = tokio::time::interval(SOURCE_CHECK_INTERVAL);
+            interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+            interval.tick().await;
+            loop {
+                interval.tick().await;
+                periodic.request_freshness_check();
+            }
+        });
         if let Some(source_id) = self.shared.settings.load().sources.selected_source_id {
-            self.send(Message::Request(WorkRequest::Select(source_id)));
+            SourcePort::select_source(self, source_id);
         }
         Ok(())
     }
 
-    pub(crate) fn selected(&self) -> Option<SelectedSourceRuntime> {
-        self.shared.selected()
-    }
-
-    fn selected_metadata_context(
-        &self,
-        source_id: &SourceId,
-        source_session_epoch: SourceSessionEpoch,
-        item_id: &MetadataItemId,
-    ) -> Option<MetadataContext> {
-        self.selected()
-            .filter(|selected| {
-                selected.source_id() == source_id
-                    && selected.source_session_epoch == source_session_epoch
-            })?
-            .metadata_context(item_id)
-            .ok()
-            .flatten()
-    }
-
     pub(crate) fn album_release_settings_changed(&self, enabled: bool) {
-        self.send(Message::AlbumReleaseSettingChanged(enabled));
+        self.spawn_serialized(false, move |mut operations, _| async move {
+            if enabled {
+                operations.start_album_release_lookup();
+            } else {
+                operations.cancel_album_release_lookup(false);
+            }
+        });
     }
 
     pub(crate) fn download_settings_changed(&self) {
-        self.send(Message::DownloadSettingsChanged);
+        self.spawn_selected(false, |operations, selected, _| async move {
+            let directory = operations
+                .shared
+                .settings
+                .load()
+                .ui
+                .download_directory(selected.source_id());
+            operations
+                .shared
+                .downloads
+                .set_directory(selected.source_id().clone(), directory);
+            operations.reconcile_downloads(&selected).await;
+        });
     }
 
-    fn send_selected(&self, operation: impl FnOnce(&SelectedSourceRuntime) -> PointOperation) {
-        let Some(selected) = self.selected() else {
+    fn spawn_serialized<F, Work>(&self, interruptible: bool, work: F)
+    where
+        F: FnOnce(SourceOwner, Arc<AtomicBool>) -> Work + Send + 'static,
+        Work: Future<Output = ()> + Send + 'static,
+    {
+        self.spawn_serialized_with_cancel(interruptible, Arc::new(AtomicBool::new(false)), work);
+    }
+
+    fn spawn_serialized_with_cancel<F, Work>(
+        &self,
+        interruptible: bool,
+        cancelled: Arc<AtomicBool>,
+        work: F,
+    ) where
+        F: FnOnce(SourceOwner, Arc<AtomicBool>) -> Work + Send + 'static,
+        Work: Future<Output = ()> + Send + 'static,
+    {
+        if interruptible {
+            self.shared.register_interruptible(&cancelled);
+        }
+        let shared = Arc::clone(&self.shared);
+        self.shared.runtime.spawn(async move {
+            let lane_owner = Arc::clone(&shared);
+            let _lane = lane_owner.lane.lock().await;
+            if cancelled.load(Ordering::Acquire) {
+                return;
+            }
+            work(
+                SourceOwner {
+                    shared: Arc::clone(&shared),
+                },
+                cancelled,
+            )
+            .await;
+        });
+    }
+
+    fn spawn_selected<F, Work>(&self, interruptible: bool, work: F)
+    where
+        F: FnOnce(SourceOwner, Arc<SelectedSourceState>, Arc<AtomicBool>) -> Work + Send + 'static,
+        Work: Future<Output = ()> + Send + 'static,
+    {
+        let Some(session) = self.shared.selected_session() else {
             return;
         };
-        self.send(Message::Request(WorkRequest::Selected {
-            qualifier: selected.qualifier(),
-            operation: operation(&selected),
-        }));
-    }
-
-    fn send(&self, message: Message) {
-        if self.messages.try_send(message).is_err() {
-            warn!("source operation lane is unavailable");
-        }
-    }
-}
-
-impl SourceAcceptanceSender {
-    pub(crate) fn publish_activity(
-        &self,
-        source_id: SourceId,
-        source_session_epoch: SourceSessionEpoch,
-        update: RecordedActivity,
-        played_track: Option<library::TrackId>,
-    ) {
-        let next_home = played_track.map_or(NextHome::ActivityKeep, NextHome::AcceptedPlay);
-        if self
-            .messages
-            .try_send(Message::Activity {
-                qualifier: SourceQualifier {
-                    source_id,
-                    epoch: source_session_epoch,
-                },
-                update,
-                next_home,
-            })
-            .is_err()
-        {
-            warn!("accepted activity publication is unavailable");
-        }
-    }
-}
-
-impl Actor {
-    async fn run(mut self, receiver: Receiver<Message>) {
-        let mut source_check = tokio::time::interval_at(
-            tokio::time::Instant::now() + SOURCE_CHECK_INTERVAL,
-            SOURCE_CHECK_INTERVAL,
-        );
-        source_check.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-        loop {
-            let message = tokio::select! {
-                message = receiver.recv() => match message {
-                    Ok(message) => message,
-                    Err(_) => break,
-                },
-                _ = source_check.tick() => {
-                    self.queue_freshness_check();
-                    self.start_next_work().await;
-                    continue;
-                }
+        self.spawn_serialized(interruptible, move |operations, cancelled| async move {
+            let Some(selected) = session.resolve() else {
+                return;
             };
-            match message {
-                Message::Request(request) => self.queue_work(request).await,
-                Message::SelectedLibraryRevealed => {
-                    self.selected_revealed = true;
-                    self.start_album_release_lookup();
-                }
-                Message::AlbumReleaseSettingChanged(enabled) => {
-                    if enabled {
-                        self.start_album_release_lookup();
-                    } else {
-                        self.cancel_album_release_lookup(false);
-                    }
-                }
-                Message::DownloadSettingsChanged => {
-                    if let Some(selected) = self.shared.selected() {
-                        let directory = self
-                            .shared
-                            .settings
-                            .load()
-                            .ui
-                            .download_directory(selected.source_id());
-                        self.shared
-                            .downloads
-                            .set_directory(selected.source_id().clone(), directory);
-                        self.reconcile_downloads(&selected).await;
-                    }
-                }
-                Message::Download(request) => self.download(request).await,
-                Message::RemoveDownload(request) => self.remove_download(request).await,
-                Message::RemoveDownloadRule {
-                    source_id,
-                    rule,
-                    delete_downloads,
-                } => self.remove_download_rule(source_id, rule, delete_downloads),
-                Message::CancelDownload { source_id, job_id } => {
-                    self.shared.downloads.cancel(source_id, job_id);
-                }
-                Message::ClearDownloadJob { source_id, job_id } => {
-                    self.shared.downloads.clear_job(source_id, job_id);
-                }
-                Message::SetDownloadsPaused(paused) => {
-                    self.shared.downloads.set_paused(paused);
-                }
-                Message::MoveDownload {
-                    source_id,
-                    job_id,
-                    target_job_id,
-                    after,
-                } => {
-                    self.shared
-                        .downloads
-                        .move_job(source_id, job_id, target_job_id, after);
-                }
-                Message::ClearDownloads(source_id) => self.clear_downloads(source_id),
-                Message::AlbumReleaseFinished(token) => {
-                    if self
-                        .active_album_release
-                        .as_ref()
-                        .is_some_and(|active| active.token == token)
-                    {
-                        self.active_album_release = None;
-                    }
-                }
-                Message::Activity {
-                    qualifier,
-                    update,
-                    next_home,
-                } => {
-                    if let Some(selected) = self
-                        .shared
-                        .selected()
-                        .filter(|selected| selected.qualifier() == qualifier)
-                    {
-                        if let Some(active) = self
-                            .active
-                            .as_mut()
-                            .filter(|active| work_accepts_activity(&active.purpose, &qualifier))
-                        {
-                            active.activity_updates.push(update.clone());
-                        }
-                        let library = self.shared.library.clone();
-                        let loaded = Arc::clone(&selected.loaded);
-                        match blocking(move || {
-                            library
-                                .apply_recorded_activity(&loaded, &update)
-                                .map_err(string_error)
-                        })
-                        .await
-                        {
-                            Ok(Some(change)) => {
-                                self.publish_change(&selected, change, next_home).await;
-                            }
-                            Ok(None) => {}
-                            Err(error) => {
-                                warn!(%error, "could not apply accepted playback activity");
-                            }
-                        }
-                    }
-                }
-                Message::Progress { token, progress } => {
-                    self.publish_progress(token, progress).await;
-                }
-                Message::LocalAccessReady(token) => {
-                    self.finish_local_access(token).await;
-                }
-                Message::WorkReady(token) => self.finish_work(token).await,
-            }
-        }
-        self.cancel_all_work().await;
-    }
-
-    async fn queue_work(&mut self, request: WorkRequest) {
-        match request {
-            WorkRequest::Refresh { qualifier, visible } => {
-                self.queue_refresh(qualifier.source_id, visible).await;
-                return;
-            }
-            WorkRequest::Selected {
-                qualifier,
-                operation,
-            } => {
-                self.queue_selected(qualifier, operation).await;
-                return;
-            }
-            WorkRequest::Configure(input) => {
-                self.shared
-                    .send_event(SourceEvent::Operation(SourceOperation::Adding {
-                        progress: initial_progress(),
-                    }))
-                    .await;
-                self.queue_transition(WorkRequest::Configure(input)).await;
-                return;
-            }
-            WorkRequest::AddLocalFolder(path) if self.local_configuration().is_none() => {
-                self.shared
-                    .send_event(SourceEvent::Operation(SourceOperation::Adding {
-                        progress: initial_progress(),
-                    }))
-                    .await;
-                self.queue_transition(WorkRequest::Configure(SourceSetup::Local {
-                    roots: vec![path],
-                }))
-                .await;
-                return;
-            }
-            WorkRequest::Select(source_id) => {
-                if self.active.is_none()
-                    && self
-                        .shared
-                        .selected()
-                        .is_some_and(|selected| selected.source_id() == &source_id)
-                {
-                    self.shared
-                        .send_event(SourceEvent::Operation(SourceOperation::Idle))
-                        .await;
-                    return;
-                }
-                self.shared
-                    .send_event(SourceEvent::Operation(SourceOperation::Switching {
-                        target: source_id.clone(),
-                        progress: initial_progress(),
-                    }))
-                    .await;
-                self.queue_transition(WorkRequest::Select(source_id)).await;
-                return;
-            }
-            request => self.pending.push_back(request),
-        }
-        self.start_next_work().await;
-    }
-
-    async fn queue_transition(&mut self, request: WorkRequest) {
-        self.pending.retain(|pending| {
-            !matches!(
-                pending,
-                WorkRequest::Configure(_) | WorkRequest::Select(_) | WorkRequest::Refresh { .. }
-            ) && !matches!(
-                pending,
-                WorkRequest::Selected {
-                    operation,
-                    ..
-                } if automatic_point(operation)
-            )
+            work(operations, selected, cancelled).await;
         });
-        let waits_for_user_operation = self.active.as_ref().is_some_and(|active| {
-            matches!(
-                active.purpose,
-                WorkPurpose::Selected {
-                    automatic: false,
-                    ..
-                }
-            )
-        });
-        if self.active.is_some() && !waits_for_user_operation {
-            self.cancel_work().await;
-        }
-        self.retire_selected_session().await;
-        let mut user_operations = VecDeque::new();
-        let mut remaining = VecDeque::new();
-        while let Some(pending) = self.pending.pop_front() {
-            if matches!(
-                &pending,
-                WorkRequest::Selected {
-                    operation,
-                    ..
-                } if !automatic_point(operation)
-            ) {
-                user_operations.push_back(pending);
-            } else {
-                remaining.push_back(pending);
-            }
-        }
-        user_operations.push_back(request);
-        user_operations.append(&mut remaining);
-        self.pending = user_operations;
-        self.start_next_work().await;
     }
 
-    async fn queue_refresh(&mut self, source_id: SourceId, visible: bool) {
+    fn spawn_transition<F, Work>(
+        &self,
+        operation: SourceOperation,
+        failure_source: Option<SourceId>,
+        add_form: bool,
+        work: F,
+    ) where
+        F: FnOnce(SourceOwner, Arc<AtomicBool>) -> Work + Send + 'static,
+        Work: Future<Output = Result<(), String>> + Send + 'static,
+    {
+        self.shared.cancel_interruptible();
+        self.shared.cancel_refresh();
+        let _ = self
+            .shared
+            .outputs
+            .events
+            .try_send(SourceEvent::Operation(operation));
+        self.spawn_serialized(true, move |mut operations, cancelled| async move {
+            if let Err(error) = work(operations.clone(), Arc::clone(&cancelled)).await
+                && !cancelled.load(Ordering::Acquire)
+            {
+                operations
+                    .fail_transition(failure_source, error, add_form)
+                    .await;
+            }
+        });
+    }
+
+    fn request_refresh(&self, source_id: SourceId, visible: bool) {
         let Some(selected) = self
             .shared
             .selected()
@@ -965,188 +607,86 @@ impl Actor {
             return;
         };
         let qualifier = selected.qualifier();
-        if let Some(active) = self.active.as_mut()
-            && let WorkPurpose::Refresh {
-                qualifier: active_qualifier,
-                visible: active_visible,
-            } = &mut active.purpose
-            && *active_qualifier == qualifier
-        {
-            if visible && !*active_visible {
-                *active_visible = true;
-                self.shared
-                    .send_event(SourceEvent::Operation(SourceOperation::Refreshing {
-                        source_id,
-                        progress: initial_progress(),
-                    }))
-                    .await;
-            }
-            return;
-        }
-        if let Some(WorkRequest::Refresh {
-            qualifier: _,
-            visible: pending_visible,
-        }) = self.pending.iter_mut().find(|request| {
-            matches!(
-                request,
-                WorkRequest::Refresh {
-                    qualifier: pending,
-                    ..
-                } if pending == &qualifier
-            )
-        }) {
-            *pending_visible |= visible;
-            return;
-        }
-        if visible {
-            self.shared
-                .send_event(SourceEvent::Operation(SourceOperation::Refreshing {
-                    source_id: source_id.clone(),
-                    progress: initial_progress(),
-                }))
-                .await;
-        }
-        self.pending
-            .push_back(WorkRequest::Refresh { qualifier, visible });
-        self.start_next_work().await;
-    }
-
-    async fn queue_selected(&mut self, qualifier: SourceQualifier, operation: PointOperation) {
-        if !self.shared.matches_selected(&qualifier) {
-            return;
-        }
-        if let Some(WorkRequest::Selected {
-            qualifier: pending_qualifier,
-            operation: pending,
-        }) = self.pending.back_mut()
-            && *pending_qualifier == qualifier
-            && merge_automatic_point(pending, &operation)
-        {
-            return;
-        }
-        self.pending.push_back(WorkRequest::Selected {
-            qualifier,
-            operation,
-        });
-        self.start_next_work().await;
-    }
-
-    async fn start_next_work(&mut self) {
-        if self.active.is_some() {
-            return;
-        }
-        while let Some(request) = self.pending.pop_front() {
-            match request {
-                WorkRequest::Configure(input) => {
-                    self.begin_add(input).await;
-                    return;
+        let request = {
+            let mut state = self
+                .shared
+                .state
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            if let Some(refresh) = state
+                .refresh
+                .as_ref()
+                .filter(|refresh| refresh.qualifier == qualifier)
+            {
+                if visible {
+                    refresh.visible.store(true, Ordering::Release);
                 }
-                WorkRequest::Select(source_id) => {
-                    self.begin_select(source_id).await;
-                    if self.active.is_some() {
-                        return;
-                    }
-                }
-                update @ (WorkRequest::Update(_)
-                | WorkRequest::AddLocalFolder(_)
-                | WorkRequest::RemoveLocalFolder(_)) => {
-                    if self.start_update(update).await {
-                        return;
-                    }
-                }
-                WorkRequest::Forget(source_id) => {
-                    self.forget_now(source_id).await;
-                }
-                WorkRequest::Refresh { qualifier, visible } => {
-                    if !self.shared.matches_selected(&qualifier) {
-                        continue;
-                    }
-                    self.start_refresh(qualifier, visible).await;
-                    if self.active.is_some() {
-                        return;
-                    }
-                }
-                WorkRequest::Selected {
+                None
+            } else {
+                let request = Arc::new(RefreshRequest {
                     qualifier,
-                    operation,
-                } => {
-                    let Some(selected) = self
-                        .shared
-                        .selected()
-                        .filter(|selected| selected.qualifier() == qualifier)
-                    else {
-                        continue;
-                    };
-                    let qualifier = selected.qualifier();
-                    let automatic = automatic_point(&operation);
-                    self.spawn_work(
-                        WorkPurpose::Selected {
-                            qualifier,
-                            automatic,
-                        },
-                        move |shared, progress, cancelled| async move {
-                            run_point(shared, selected, operation, progress, cancelled)
-                                .await
-                                .map(PreparedWork::Point)
-                        },
-                    );
-                    return;
-                }
-                WorkRequest::ChangeSecretStorage { mode, result } => {
-                    let changed = self.change_secret_storage(mode).await;
-                    let _ = result.send(changed).await;
-                }
-                WorkRequest::SaveLocalAccess {
-                    input,
-                    metadata,
-                    result,
-                } => {
-                    self.save_local_access(input, metadata, result).await;
-                }
-                WorkRequest::ClearLocalAccess(source_id) => {
-                    self.clear_local_access(source_id).await;
-                }
-                WorkRequest::SetMusicFolder {
-                    source_id,
-                    folder_id,
-                } => self.set_music_folder(source_id, folder_id).await,
-                WorkRequest::CheckSelectedSource => self.queue_freshness_check(),
-            }
-            if self.active.is_some() {
-                return;
-            }
-        }
-    }
-
-    async fn begin_add(&mut self, input: SourceSetup) {
-        self.shared.release_selected().await;
-        self.spawn_work(WorkPurpose::Add, move |shared, progress, cancelled| {
-            prepare_add(shared, input, progress, cancelled)
-        });
-    }
-
-    async fn begin_select(&mut self, target: SourceId) {
-        self.shared.release_selected().await;
-        let configured = match configured_source(&self.shared.settings.load().sources, &target) {
-            Ok(configured) => configured,
-            Err(error) => {
-                self.fail_transition(Some(target), error, false).await;
-                return;
+                    visible: AtomicBool::new(visible),
+                    cancelled: Arc::new(AtomicBool::new(false)),
+                });
+                state.refresh = Some(Arc::clone(&request));
+                Some(request)
             }
         };
-        self.spawn_work(
-            WorkPurpose::Select {
-                target: target.clone(),
-            },
-            move |shared, progress, cancelled| async move {
-                prepare_select(shared, configured, progress, cancelled)
-                    .await
-                    .map(PreparedWork::Replacement)
+        if visible {
+            let _ = self.shared.outputs.events.try_send(SourceEvent::Operation(
+                SourceOperation::Refreshing {
+                    source_id: source_id.clone(),
+                    progress: initial_progress(),
+                },
+            ));
+        }
+        let Some(request) = request else {
+            return;
+        };
+        let request_for_work = Arc::clone(&request);
+        self.spawn_serialized_with_cancel(
+            true,
+            Arc::clone(&request.cancelled),
+            move |mut operations, cancelled| async move {
+                operations.refresh(request_for_work, cancelled).await;
             },
         );
     }
 
-    async fn change_secret_storage(&mut self, mode: SecretStorageMode) -> Result<(), String> {
+    fn request_freshness_check(&self) {
+        self.spawn_selected(true, |mut operations, selected, cancelled| async move {
+            operations.check_freshness(selected, cancelled).await;
+        });
+    }
+}
+
+impl SourceOwner {
+    pub(crate) fn publish_activity(
+        &self,
+        source_id: SourceId,
+        source_session_epoch: SourceSessionEpoch,
+        update: RecordedActivity,
+        played_track: Option<library::TrackId>,
+    ) {
+        let next_home = played_track.map_or(NextHome::ActivityKeep, NextHome::AcceptedPlay);
+        let shared = Arc::clone(&self.shared);
+        self.shared.runtime.spawn(async move {
+            SourceOwner { shared }
+                .accept_activity(
+                    SourceQualifier {
+                        source_id,
+                        epoch: source_session_epoch,
+                    },
+                    update,
+                    next_home,
+                )
+                .await;
+        });
+    }
+}
+
+impl SourceOwner {
+    async fn apply_secret_storage_change(&mut self, mode: SecretStorageMode) -> Result<(), String> {
         let previous = self.shared.settings.load();
         if previous.ui.secret_storage_mode == mode {
             return Ok(());
@@ -1168,7 +708,6 @@ impl Actor {
                     progress: initial_progress(),
                 }))
                 .await;
-            self.begin_transition().await;
         }
 
         let keys = all_secret_keys(&previous);
@@ -1216,84 +755,36 @@ impl Actor {
             warn!(%error, "could not clear external scrobbling accounts");
         }
 
-        if transition_source_id.is_some() {
-            self.restore_fallback().await;
-            self.shared.publish_configured().await;
-            self.shared
-                .send_event(SourceEvent::Operation(SourceOperation::Idle))
-                .await;
+        if let Some(source_id) = transition_source_id {
+            let configured = configured_source(&changed.sources, &source_id)?;
+            let cancelled = Arc::new(AtomicBool::new(false));
+            let progress = Arc::new(|_: SourceReadProgress| {});
+            if let Err(error) = select_source(self, configured, progress, cancelled).await {
+                self.begin_transition().await;
+                self.fail_transition(Some(source_id), error.clone(), false)
+                    .await;
+                return Err(error);
+            }
         }
         Ok(())
     }
 
-    async fn start_update(&mut self, update: WorkRequest) -> bool {
-        let (source_id, input, local_roots_changed) = match update {
-            WorkRequest::Update(input) => (
-                source_settings_id(&input).clone(),
-                source_settings_input(input),
-                false,
-            ),
-            WorkRequest::AddLocalFolder(path) => {
-                let local = self
-                    .local_configuration()
-                    .expect("a first Local folder enters the source-add transition");
-                let source_id = local.configuration.source_id.clone();
-                let mut roots = match local_roots(&local.configuration) {
-                    Ok(roots) => roots,
-                    Err(error) => {
-                        self.shared.warn_nonfatal(&error);
-                        return false;
-                    }
-                };
-                if roots.contains(&path) {
-                    return false;
-                }
-                roots.push(path);
-                (
-                    source_id.clone(),
-                    SourceSettingsInput::Local { roots },
-                    true,
-                )
-            }
-            WorkRequest::RemoveLocalFolder(path) => {
-                let Some(local) = self.local_configuration() else {
-                    self.shared.warn_nonfatal("Local is not configured");
-                    return false;
-                };
-                let source_id = local.configuration.source_id.clone();
-                let mut roots = match local_roots(&local.configuration) {
-                    Ok(roots) => roots,
-                    Err(error) => {
-                        self.shared.warn_nonfatal(&error);
-                        return false;
-                    }
-                };
-                roots.retain(|root| root.to_string_lossy() != path);
-                if roots.is_empty() {
-                    self.forget_now(source_id).await;
-                    return false;
-                }
-                (
-                    source_id.clone(),
-                    SourceSettingsInput::Local { roots },
-                    true,
-                )
-            }
-            _ => unreachable!("only configured source edits enter the update path"),
-        };
+    async fn apply_source_update(
+        &mut self,
+        source_id: SourceId,
+        input: SourceSettingsInput,
+        local_roots_changed: bool,
+        cancelled: Arc<AtomicBool>,
+    ) {
         let configured = match configured_source(&self.shared.settings.load().sources, &source_id) {
             Ok(configured) => configured,
-            Err(error) => {
-                self.shared.warn_nonfatal(&error);
-                return false;
-            }
+            Err(error) => return self.shared.warn_nonfatal(&error),
         };
         let selected = self
             .shared
             .selected()
-            .is_some_and(|selected| selected.source_id() == &source_id);
-        let progress_source = (selected && local_roots_changed).then(|| source_id.clone());
-        if local_roots_changed && let Some(source_id) = &progress_source {
+            .is_some_and(|current| current.source_id() == &source_id);
+        if selected && local_roots_changed {
             self.shared
                 .send_event(SourceEvent::Operation(SourceOperation::Refreshing {
                     source_id: source_id.clone(),
@@ -1301,131 +792,312 @@ impl Actor {
                 }))
                 .await;
         }
-        self.spawn_work(
-            WorkPurpose::Update {
-                selected,
-                progress_source,
-            },
-            move |shared, progress, cancelled| {
-                prepare_update(shared, configured, input, selected, progress, cancelled)
-            },
-        );
-        true
+        let progress_source = (selected && local_roots_changed).then_some(source_id);
+        let progress = self.progress(move |progress| {
+            progress_source
+                .as_ref()
+                .map(|source_id| SourceOperation::Refreshing {
+                    source_id: source_id.clone(),
+                    progress,
+                })
+        });
+        let result: Result<(), String> = async {
+            let credential = load_credential(&self.shared, &configured).await?;
+            match Source::edit(
+                configured.configuration.clone(),
+                credential,
+                input,
+                Some(self.shared.settings.load().jellyfin_device_id),
+            )
+            .await
+            .map_err(string_error)?
+            {
+                SourceEditResult::Unchanged => {
+                    self.shared.publish_configured().await;
+                    if selected {
+                        self.start_selected_access(true).await;
+                    }
+                    Ok(())
+                }
+                SourceEditResult::ConfigurationOnly(configuration) => {
+                    let mut replacement = configured;
+                    replacement.configuration = configuration.clone();
+                    let settings = self.shared.settings.clone();
+                    blocking(move || replace_saved_source(&settings, replacement)).await?;
+                    if selected && let Some(active) = self.shared.selected() {
+                        let mut active = (*active).clone();
+                        active.configuration = configuration;
+                        self.shared.replace_selected(active);
+                        self.start_selected_access(true).await;
+                    }
+                    self.shared.publish_configured().await;
+                    Ok(())
+                }
+                SourceEditResult::SameAccount(connected) => {
+                    let (configuration, source, credential) = connected.into_parts();
+                    if !selected {
+                        return self
+                            .commit_inactive_connection(
+                                configured,
+                                configuration,
+                                credential,
+                                false,
+                            )
+                            .await;
+                    }
+                    let source = Arc::new(source);
+                    let identity = configuration.input_identity().map_err(string_error)?;
+                    let current = self
+                        .shared
+                        .selected()
+                        .filter(|current| current.source_id() == source.source_id())
+                        .ok_or_else(|| "the selected source is no longer active".to_string())?;
+                    let (candidate, updates) = if cache_input_matches(&identity, &current.library) {
+                        (None, Vec::new())
+                    } else {
+                        let replay = self.shared.begin_activity_replay(current.qualifier());
+                        let candidate = prepare_refresh_candidate(
+                            Arc::clone(&self.shared),
+                            SelectedSourceState {
+                                configuration: configuration.clone(),
+                                source: Some(Arc::clone(&source)),
+                                ..(*current).clone()
+                            },
+                            progress,
+                            Arc::clone(&cancelled),
+                        )
+                        .await;
+                        let candidate = match candidate {
+                            Ok(candidate) => candidate,
+                            Err(error) => {
+                                self.shared.clear_activity_replay(replay);
+                                return Err(error);
+                            }
+                        };
+                        if cancelled.load(Ordering::Acquire) {
+                            self.shared.clear_activity_replay(replay);
+                            return Ok(());
+                        }
+                        let acceptance_owner = Arc::clone(&self.shared);
+                        let _acceptance = acceptance_owner.acceptance_lane.lock().await;
+                        (
+                            Some(Box::new(candidate)),
+                            self.shared.take_activity_replay(replay),
+                        )
+                    };
+                    self.commit_selected_update(
+                        configured,
+                        configuration,
+                        source,
+                        credential,
+                        candidate,
+                        updates,
+                    )
+                    .await
+                }
+                SourceEditResult::DifferentAccount(connected) => {
+                    let (configuration, source, credential) = connected.into_parts();
+                    if self
+                        .shared
+                        .settings
+                        .load()
+                        .sources
+                        .configured
+                        .iter()
+                        .any(|saved| {
+                            saved.configuration.source_id == configuration.source_id
+                                && saved.configuration.source_id
+                                    != configured.configuration.source_id
+                        })
+                    {
+                        return Err("this source account is already configured".to_string());
+                    }
+                    if !selected {
+                        return self
+                            .commit_inactive_connection(configured, configuration, credential, true)
+                            .await;
+                    }
+                    let source = Arc::new(source);
+                    let identity = configuration.input_identity().map_err(string_error)?;
+                    let candidate = acquisition::read_source(
+                        self.shared.library.clone(),
+                        identity,
+                        Arc::clone(&source),
+                        None,
+                        Arc::clone(&progress),
+                        Arc::clone(&cancelled),
+                    )
+                    .await?;
+                    let candidate = prepare_candidate_artwork(
+                        &self.shared,
+                        Arc::clone(&source),
+                        candidate,
+                        progress,
+                        Arc::clone(&cancelled),
+                    )
+                    .await?;
+                    if cancelled.load(Ordering::Acquire) {
+                        return Ok(());
+                    }
+                    let library = accept_candidate(candidate).await?;
+                    self.activate_replacement(
+                        ReplacementReason::DifferentAccount,
+                        Some(configured),
+                        configuration,
+                        Some(source),
+                        credential,
+                        library,
+                    )
+                    .await
+                }
+            }
+        }
+        .await;
+        if let Err(error) = result {
+            self.selected_or_inactive_failure(selected, error).await;
+        } else if local_roots_changed {
+            self.shared
+                .send_event(SourceEvent::Operation(SourceOperation::Idle))
+                .await;
+        }
     }
 
-    fn local_configuration(&self) -> Option<ConfiguredSource> {
-        self.shared
-            .settings
-            .load()
-            .sources
-            .configured
-            .iter()
-            .find(|source| {
-                matches!(
-                    source.configuration.editable(),
-                    Ok(sources::EditableSource::Local { .. })
-                )
-            })
-            .cloned()
-    }
-
-    async fn publish_new_selected(
-        &mut self,
-        session: SelectedSourceSession,
-        playback: PlaybackProjection,
-        catch_up: bool,
-    ) {
-        self.shared.publish_selected(session, playback).await;
-        self.start_selected_access(catch_up).await;
+    async fn selected_or_inactive_failure(&mut self, selected: bool, error: String) {
+        if selected {
+            self.selected_update_failed(error).await;
+        } else {
+            self.shared.warn_nonfatal(&error);
+        }
     }
 
     async fn start_selected_access(&mut self, catch_up: bool) {
-        let Some(selected) = self.shared.selected() else {
+        let Some(session) = self.shared.selected_session() else {
+            return;
+        };
+        let Some(selected) = session.resolve() else {
             return;
         };
         self.reconcile_downloads(&selected).await;
         let qualifier = selected.qualifier();
-        if self
-            .observer
-            .as_ref()
-            .is_some_and(|observer| observer.qualifier == qualifier)
         {
-            return;
+            let state = self
+                .shared
+                .state
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            if state
+                .observer
+                .as_ref()
+                .is_some_and(|observer| observer.qualifier == qualifier)
+            {
+                return;
+            }
         }
         self.stop_observer();
         self.start_local_access_refresh(&selected).await;
-        self.next_freshness_check = tokio::time::Instant::now()
-            + if catch_up {
-                Duration::ZERO
-            } else {
-                SOURCE_CHECK_INTERVAL
-            };
-        let Some(source) = selected.source else {
+        let Some(source) = selected.source.as_ref().cloned() else {
             return;
         };
         let cancelled = Arc::new(AtomicBool::new(false));
         let item_cancelled = Arc::clone(&cancelled);
         let local_cancelled = Arc::clone(&cancelled);
         let stop_cancelled = Arc::clone(&cancelled);
-        let item_sender = self.sender.clone();
-        let local_sender = self.sender.clone();
-        let item_qualifier = qualifier.clone();
-        let local_qualifier = qualifier.clone();
+        let item_owner = SourceOwner {
+            shared: Arc::clone(&self.shared),
+        };
+        let local_owner = item_owner.clone();
+        let item_session = Arc::clone(&session);
+        let local_session = Arc::clone(&session);
+        let stop_session = Arc::clone(&session);
         let handle = self.shared.runtime.spawn(async move {
             let result = source
                 .listen_selected_changes(
                     catch_up,
                     move |change| {
-                        !item_cancelled.load(Ordering::Acquire)
-                            && item_sender
-                                .try_send(Message::Request(WorkRequest::Selected {
-                                    qualifier: item_qualifier.clone(),
-                                    operation: PointOperation::ObservedItems(change),
-                                }))
-                                .is_ok()
+                        if item_cancelled.load(Ordering::Acquire)
+                            || item_session.resolve().is_none()
+                        {
+                            return false;
+                        }
+                        let session = Arc::clone(&item_session);
+                        item_owner.spawn_serialized(
+                            true,
+                            move |mut operations, cancelled| async move {
+                                if let Some(selected) = session.resolve() {
+                                    operations
+                                        .accept_observed_change(selected, change, cancelled)
+                                        .await;
+                                }
+                            },
+                        );
+                        true
                     },
                     move |change| {
-                        !local_cancelled.load(Ordering::Acquire)
-                            && local_sender
-                                .try_send(Message::Request(WorkRequest::Selected {
-                                    qualifier: local_qualifier.clone(),
-                                    operation: PointOperation::LocalFiles(change),
-                                }))
-                                .is_ok()
+                        if local_cancelled.load(Ordering::Acquire)
+                            || local_session.resolve().is_none()
+                        {
+                            return false;
+                        }
+                        let session = Arc::clone(&local_session);
+                        local_owner.spawn_serialized(
+                            true,
+                            move |mut operations, cancelled| async move {
+                                if let Some(selected) = session.resolve() {
+                                    operations
+                                        .accept_local_change(selected, change, cancelled)
+                                        .await;
+                                }
+                            },
+                        );
+                        true
                     },
-                    move || stop_cancelled.load(Ordering::Acquire),
+                    move || {
+                        stop_cancelled.load(Ordering::Acquire) || stop_session.resolve().is_none()
+                    },
                 )
                 .await;
             if let Err(error) = result {
                 warn!(%error, "selected source change feed stopped");
             }
         });
-        self.observer = Some(ActiveObserver {
+        let observer = ActiveObserver {
             qualifier,
             cancelled,
             handle,
-        });
+        };
+        let mut state = self
+            .shared
+            .state
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if state
+            .selected
+            .as_ref()
+            .is_some_and(|slot| Arc::ptr_eq(&slot.session, &session))
+        {
+            state.observer = Some(observer);
+        }
+        drop(state);
         if catch_up {
-            self.queue_freshness_check();
+            SourceOwner {
+                shared: Arc::clone(&self.shared),
+            }
+            .request_freshness_check();
         }
     }
 
-    async fn download(&self, request: DownloadRequest) {
-        let Some(selected) = self.shared.selected().filter(|selected| {
-            selected.source_id() == &request.source_id
-                && selected.source_session_epoch == request.source_session_epoch
-        }) else {
-            return;
-        };
+    async fn download(
+        &self,
+        selected: Arc<SelectedSourceState>,
+        subject: DownloadSubject,
+        tracks: library::TrackSelection,
+    ) {
         let download_settings = self
             .shared
             .settings
             .load()
             .ui
             .download_settings(selected.source_id());
-        let DownloadRequest {
-            subject, tracks, ..
-        } = request;
         let tracks = match blocking(move || {
             tracks
                 .prepare()
@@ -1448,16 +1120,13 @@ impl Actor {
         );
     }
 
-    async fn remove_download(&self, request: RemoveDownloadRequest) {
-        let Some(selected) = self.shared.selected().filter(|selected| {
-            selected.source_id() == &request.source_id
-                && selected.source_session_epoch == request.source_session_epoch
-        }) else {
-            return;
-        };
+    async fn remove_download(
+        &self,
+        selected: Arc<SelectedSourceState>,
+        tracks: library::TrackSelection,
+    ) {
         let track_ids = match blocking(move || {
-            request
-                .tracks
+            tracks
                 .prepare()
                 .and_then(|tracks| tracks.track_ids())
                 .map(|tracks| tracks.to_vec())
@@ -1473,38 +1142,13 @@ impl Actor {
         };
         self.shared.downloads.remove(
             selected.source_id().clone(),
-            selected.loaded,
+            Arc::clone(&selected.library),
             track_ids,
             true,
         );
     }
 
-    fn clear_downloads(&self, source_id: SourceId) {
-        let loaded = self
-            .shared
-            .selected()
-            .filter(|selected| selected.source_id() == &source_id)
-            .map(|selected| selected.loaded);
-        self.shared.downloads.clear(source_id, loaded, true);
-    }
-
-    fn remove_download_rule(
-        &self,
-        source_id: SourceId,
-        rule: downloads::DownloadRule,
-        delete_downloads: bool,
-    ) {
-        let loaded = self
-            .shared
-            .selected()
-            .filter(|selected| selected.source_id() == &source_id)
-            .map(|selected| selected.loaded);
-        self.shared
-            .downloads
-            .remove_rule(source_id, loaded, rule, delete_downloads);
-    }
-
-    async fn reconcile_downloads(&self, selected: &SelectedSourceRuntime) {
+    async fn reconcile_downloads(&self, selected: &SelectedSourceState) {
         let settings = self
             .shared
             .settings
@@ -1515,7 +1159,7 @@ impl Actor {
         if rules.is_empty() {
             return;
         }
-        let loaded = Arc::clone(&selected.loaded);
+        let loaded = Arc::clone(&selected.library);
         let folder = selected.music_folder_id.clone();
         let queued = match blocking(move || {
             rules
@@ -1524,7 +1168,7 @@ impl Actor {
                     download_rule_tracks(&loaded, folder.as_ref(), rule)
                         .map(|tracks| (rule, tracks))
                 })
-                .collect::<library::LoadedLibraryResult<Vec<_>>>()
+                .collect::<library::LibraryQueryResult<Vec<_>>>()
                 .map_err(string_error)
         })
         .await
@@ -1546,10 +1190,15 @@ impl Actor {
     }
 
     fn stop_observer(&mut self) {
-        self.observer.take();
+        self.shared
+            .state
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .observer
+            .take();
     }
 
-    async fn start_local_access_refresh(&mut self, selected: &SelectedSourceRuntime) {
+    async fn start_local_access_refresh(&mut self, selected: &SelectedSourceState) {
         let Some(access) = self
             .shared
             .settings
@@ -1568,7 +1217,7 @@ impl Actor {
             server_prefix: access.server_prefix,
             local_prefix: access.local_prefix,
         };
-        let baseline = match selected.loaded.local_access_files() {
+        let baseline = match selected.library.local_access_files() {
             Ok(files) => files,
             Err(error) => {
                 self.shared.warn_nonfatal(&error.to_string());
@@ -1576,18 +1225,20 @@ impl Actor {
             }
         };
         self.cancel_local_access();
-        let token = self.shared.next_work.fetch_add(1, Ordering::AcqRel);
+        let token = self.shared.next_token.fetch_add(1, Ordering::AcqRel);
         let qualifier = selected.qualifier();
         let task_input = input.clone();
-        let task_baseline = baseline;
+        let task_qualifier = qualifier.clone();
         let cancelled = Arc::new(AtomicBool::new(false));
         let task_cancelled = Arc::clone(&cancelled);
-        let sender = self.sender.clone();
+        let owner = SourceOwner {
+            shared: Arc::clone(&self.shared),
+        };
         let handle = self.shared.runtime.spawn(async move {
-            let root = task_input.root_path;
+            let root = task_input.root_path.clone();
             let scan_cancelled = Arc::clone(&task_cancelled);
             let result = tokio::task::spawn_blocking(move || {
-                sources::read_local_access(&root, &task_baseline, &|_| {}, &|| {
+                sources::read_local_access(&root, &baseline, &|_| {}, &|| {
                     scan_cancelled.load(Ordering::Acquire)
                 })
                 .map_err(string_error)
@@ -1595,49 +1246,63 @@ impl Actor {
             .await
             .map_err(string_error)
             .and_then(|result| result);
-            let _ = sender.send(Message::LocalAccessReady(token)).await;
-            result
+            owner.spawn_serialized(false, move |mut operations, _| async move {
+                operations
+                    .finish_local_access(token, task_qualifier, task_input, result)
+                    .await;
+            });
         });
-        self.local_access = Some(ActiveLocalAccess {
+        let active = ActiveLocalAccess {
             token,
             qualifier,
-            input,
             cancelled,
-            handle,
-        });
+            handle: handle.abort_handle(),
+        };
+        self.shared
+            .state
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .local_access = Some(active);
     }
 
     fn cancel_local_access(&mut self) {
-        let Some(active) = self.local_access.take() else {
-            return;
-        };
-        active.cancelled.store(true, Ordering::Release);
-        active.handle.abort();
+        self.shared
+            .state
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .local_access
+            .take();
     }
 
-    async fn finish_local_access(&mut self, token: u64) {
-        if self
-            .local_access
-            .as_ref()
-            .is_none_or(|active| active.token != token)
-        {
+    async fn finish_local_access(
+        &mut self,
+        token: u64,
+        qualifier: SourceQualifier,
+        input: SourceLocalAccess,
+        result: Result<Vec<library::LocalAccessFile>, String>,
+    ) {
+        let present = {
+            let mut state = self
+                .shared
+                .state
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            if state
+                .local_access
+                .as_ref()
+                .is_none_or(|active| active.token != token)
+            {
+                false
+            } else {
+                state.local_access.take();
+                true
+            }
+        };
+        if !present {
             return;
         }
-        let active = self
-            .local_access
-            .take()
-            .expect("the checked Local access task is present");
-        let ActiveLocalAccess {
-            qualifier,
-            input,
-            handle,
-            ..
-        } = active;
         let outcome = async {
-            let files = handle
-                .await
-                .map_err(string_error)
-                .and_then(|result| result)?;
+            let files = result?;
             let selected = self
                 .shared
                 .selected()
@@ -1663,12 +1328,11 @@ impl Actor {
             if !still_configured {
                 return Err("the local file mapping changed before its scan finished".to_string());
             }
-            let library = self.shared.library.clone();
-            let loaded = Arc::clone(&selected.loaded);
+            let library = Arc::clone(&selected.library);
             let mapping = local_access_mapping(&input);
             blocking(move || {
                 library
-                    .replace_local_access(&loaded, mapping, files)
+                    .replace_local_access(mapping, files)
                     .map(|_| ())
                     .map_err(string_error)
             })
@@ -1687,53 +1351,6 @@ impl Actor {
         }
     }
 
-    fn queue_freshness_check(&mut self) {
-        let now = tokio::time::Instant::now();
-        if now < self.next_freshness_check {
-            return;
-        }
-        self.next_freshness_check = now + SOURCE_CHECK_INTERVAL;
-        let Some(selected) = self
-            .shared
-            .selected()
-            .filter(|selected| selected.source.is_some())
-        else {
-            return;
-        };
-        let qualifier = selected.qualifier();
-        if self.pending.iter().any(|request| {
-            matches!(
-                request,
-                WorkRequest::Selected {
-                    qualifier: pending,
-                    operation: PointOperation::CheckFreshness,
-                } if pending == &qualifier
-            )
-        }) {
-            return;
-        }
-        self.pending.push_back(WorkRequest::Selected {
-            qualifier,
-            operation: PointOperation::CheckFreshness,
-        });
-    }
-
-    async fn start_refresh(&mut self, qualifier: SourceQualifier, visible: bool) {
-        let Some(selected) = self
-            .shared
-            .selected()
-            .filter(|selected| selected.qualifier() == qualifier)
-        else {
-            return;
-        };
-        self.spawn_work(
-            WorkPurpose::Refresh { qualifier, visible },
-            move |shared, progress, cancelled| {
-                prepare_refresh(shared, selected, progress, cancelled)
-            },
-        );
-    }
-
     async fn begin_transition(&mut self) {
         self.retire_selected_session().await;
         self.shared.release_selected().await;
@@ -1741,61 +1358,58 @@ impl Actor {
 
     async fn retire_selected_session(&mut self) {
         self.cancel_album_release_lookup(true);
-        if self.fallback.is_none() {
-            self.fallback = self
+        {
+            let mut state = self
                 .shared
-                .selected()
-                .map(|selected| selected.source_id().clone());
+                .state
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            state.observer.take();
+            state.local_access.take();
+            state.activity_replay = None;
         }
         self.shared.stop_playback().await;
-        self.stop_observer();
-        self.cancel_local_access();
-        self.pending.retain(|request| match request {
-            WorkRequest::Refresh { .. } => false,
-            WorkRequest::Selected { operation, .. } if automatic_point(operation) => false,
-            _ => true,
-        });
-    }
-
-    async fn cancel_all_work(&mut self) {
-        self.cancel_album_release_lookup(true);
-        self.stop_observer();
-        self.cancel_local_access();
-        self.cancel_work().await;
     }
 
     fn start_album_release_lookup(&mut self) {
-        if !self.selected_revealed
-            || self.active_album_release.is_some()
-            || !self
-                .shared
-                .settings
-                .load()
-                .ui
-                .allows_external_metadata_lookup()
-        {
-            return;
-        }
         let Some(session) = self.shared.selected_session() else {
             return;
         };
-        let selected = session.snapshot();
-        let token = self.shared.next_work.fetch_add(1, Ordering::AcqRel);
+        let Some(selected) = session.resolve() else {
+            return;
+        };
+        let token = self.shared.next_token.fetch_add(1, Ordering::AcqRel);
         let cancelled = Arc::new(AtomicBool::new(false));
-        self.active_album_release = Some(ActiveAlbumRelease {
-            token,
-            cancelled: Arc::clone(&cancelled),
-        });
-        let library = self.shared.library.clone();
+        {
+            let mut state = self
+                .shared
+                .state
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            if !state.selected_revealed
+                || state.active_album_release.is_some()
+                || !self
+                    .shared
+                    .settings
+                    .load()
+                    .ui
+                    .allows_external_metadata_lookup()
+            {
+                return;
+            }
+            state.active_album_release = Some(ActiveAlbumRelease {
+                token,
+                cancelled: Arc::clone(&cancelled),
+            });
+        }
         let settings = self.shared.settings.clone();
         let events = self.shared.outputs.events.clone();
         let source_id = selected.source_id().clone();
         let source_session_epoch = selected.source_session_epoch;
         let selected = session.downgrade();
-        let sender = self.sender.clone();
+        let shared = Arc::clone(&self.shared);
         drop(self.shared.runtime.spawn_blocking(move || {
             run_selected_album_release_lookup(
-                library,
                 settings,
                 events,
                 source_id,
@@ -1803,224 +1417,149 @@ impl Actor {
                 selected,
                 cancelled,
             );
-            let _ = sender.try_send(Message::AlbumReleaseFinished(token));
+            let mut state = shared
+                .state
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            if state
+                .active_album_release
+                .as_ref()
+                .is_some_and(|active| active.token == token)
+            {
+                state.active_album_release = None;
+            }
         }));
     }
 
     fn cancel_album_release_lookup(&mut self, reset_reveal: bool) {
-        if let Some(active) = self.active_album_release.take() {
+        let mut state = self
+            .shared
+            .state
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if let Some(active) = state.active_album_release.take() {
             active.cancelled.store(true, Ordering::Release);
         }
         if reset_reveal {
-            self.selected_revealed = false;
+            state.selected_revealed = false;
         }
     }
 
-    async fn cancel_work(&mut self) {
-        let Some(active) = self.active.take() else {
-            return;
-        };
-        active.cancelled.store(true, Ordering::Release);
-        active.handle.abort();
-        let _ = active.handle.await;
-    }
-
-    fn spawn_work<F, Work>(&mut self, purpose: WorkPurpose, prepare: F)
+    fn progress<F>(&self, operation: F) -> Arc<dyn Fn(SourceReadProgress) + Send + Sync>
     where
-        F: FnOnce(
-                Arc<Shared>,
-                Arc<dyn Fn(SourceReadProgress) + Send + Sync>,
-                Arc<AtomicBool>,
-            ) -> Work
-            + Send
-            + 'static,
-        Work: Future<Output = Result<PreparedWork, String>> + Send + 'static,
+        F: Fn(SourceProgress) -> Option<SourceOperation> + Send + Sync + 'static,
     {
-        assert!(
-            self.active.is_none(),
-            "the selected source work lane is already occupied"
-        );
-        let token = self.shared.next_work.fetch_add(1, Ordering::AcqRel);
-        let cancelled = Arc::new(AtomicBool::new(false));
-        let task_cancelled = Arc::clone(&cancelled);
-        let shared = Arc::clone(&self.shared);
-        let sender = self.sender.clone();
-        let progress_sender = self.sender.clone();
-        let progress = Arc::new(move |progress| {
-            let _ = progress_sender.try_send(Message::Progress { token, progress });
-        });
-        let handle = self.shared.runtime.spawn(async move {
-            let result = prepare(shared, progress, task_cancelled).await;
-            let _ = sender.send(Message::WorkReady(token)).await;
-            result
-        });
-        self.active = Some(ActiveWork {
-            token,
-            purpose,
-            activity_updates: Vec::new(),
-            cancelled,
-            handle,
-        });
+        let events = self.shared.outputs.events.clone();
+        Arc::new(move |progress| {
+            if let Some(operation) = operation(source_progress(progress)) {
+                let _ = events.try_send(SourceEvent::Operation(operation));
+            }
+        })
     }
 
-    async fn publish_progress(&self, token: u64, progress: SourceReadProgress) {
-        let Some(active) = self.active.as_ref().filter(|active| active.token == token) else {
+    async fn refresh(&mut self, request: Arc<RefreshRequest>, cancelled: Arc<AtomicBool>) {
+        let Some(selected) = self
+            .shared
+            .selected()
+            .filter(|selected| selected.qualifier() == request.qualifier)
+        else {
+            self.shared.finish_refresh(&request);
             return;
         };
-        let operation = match &active.purpose {
-            WorkPurpose::Add => SourceOperation::Adding {
-                progress: source_progress(progress),
-            },
-            WorkPurpose::Select { target } => SourceOperation::Switching {
-                target: target.clone(),
-                progress: source_progress(progress),
-            },
-            WorkPurpose::Refresh {
-                qualifier,
-                visible: true,
-                ..
-            } => SourceOperation::Refreshing {
-                source_id: qualifier.source_id.clone(),
-                progress: source_progress(progress),
-            },
-            WorkPurpose::Refresh { visible: false, .. } | WorkPurpose::Selected { .. } => return,
-            WorkPurpose::Update {
-                progress_source: Some(source_id),
-                ..
-            } => SourceOperation::Refreshing {
-                source_id: source_id.clone(),
-                progress: source_progress(progress),
-            },
-            WorkPurpose::Update {
-                progress_source: None,
-                ..
-            } => return,
-        };
-        self.shared
-            .send_event(SourceEvent::Operation(operation))
-            .await;
-    }
-
-    async fn finish_work(&mut self, token: u64) {
-        let Some(active) = self.active.take().filter(|active| active.token == token) else {
+        let source_id = selected.source_id().clone();
+        let visible = Arc::clone(&request);
+        let progress = self.progress(move |progress| {
+            visible
+                .visible
+                .load(Ordering::Acquire)
+                .then(|| SourceOperation::Refreshing {
+                    source_id: source_id.clone(),
+                    progress,
+                })
+        });
+        let replay = self.shared.begin_activity_replay(selected.qualifier());
+        let prepared = prepare_refresh_candidate(
+            Arc::clone(&self.shared),
+            (*selected).clone(),
+            progress,
+            Arc::clone(&cancelled),
+        )
+        .await;
+        if cancelled.load(Ordering::Acquire) {
+            self.shared.clear_activity_replay(replay);
+            self.shared.finish_refresh(&request);
             return;
-        };
-        let purpose = active.purpose;
-        let activity_updates = active.activity_updates;
-        let result = active
-            .handle
-            .await
-            .map_err(string_error)
-            .and_then(|result| result);
-        let prepared = match result {
-            Ok(prepared) => prepared,
-            Err(error) => {
-                self.target_failed(purpose, error).await;
-                self.start_next_work().await;
-                return;
-            }
-        };
-        match (purpose, prepared) {
-            (
-                WorkPurpose::Add | WorkPurpose::Select { .. },
-                PreparedWork::Replacement(prepared),
-            ) => {
-                let add_form = matches!(prepared.reason, ReplacementReason::Add);
-                let source_id = (!add_form).then(|| prepared.configuration.source_id.clone());
-                if let Err(error) = self.commit_replacement(prepared).await {
-                    self.fail_transition(source_id, error, add_form).await;
-                }
-            }
-            (
-                WorkPurpose::Update { selected: true, .. },
-                PreparedWork::SelectedUpdate(prepared),
-            ) => {
-                match self
-                    .commit_selected_update(prepared, activity_updates)
+        }
+        let visible = request.visible.load(Ordering::Acquire);
+        let acceptance_owner = Arc::clone(&self.shared);
+        let _acceptance = acceptance_owner.acceptance_lane.lock().await;
+        let activity_updates = self.shared.take_activity_replay(replay);
+        match prepared {
+            Ok(prepared) => {
+                if let Err(error) = self
+                    .commit_refresh(Arc::clone(&selected), prepared, visible, activity_updates)
                     .await
                 {
-                    Ok(()) => {
-                        self.stop_observer();
-                        self.cancel_local_access();
-                        self.start_selected_access(true).await;
-                        self.shared
-                            .send_event(SourceEvent::Operation(SourceOperation::Idle))
-                            .await;
-                    }
-                    Err(error) => self.selected_update_failed(error).await,
+                    self.refresh_failed(&selected, visible, error).await;
                 }
             }
-            (WorkPurpose::Refresh { qualifier, visible }, PreparedWork::Refresh(prepared)) => {
-                if let Some(selected) = self
-                    .shared
-                    .selected()
-                    .filter(|selected| selected.qualifier() == qualifier)
-                {
-                    if let Err(error) = self
-                        .commit_refresh(selected.clone(), prepared, visible, activity_updates)
-                        .await
-                    {
-                        self.refresh_failed(&selected, visible, error).await;
-                    }
-                }
-            }
-            (
-                WorkPurpose::Update {
-                    selected,
-                    progress_source,
-                },
-                PreparedWork::Configuration {
-                    configured,
-                    configuration,
-                },
-            ) => {
-                self.commit_configuration(configured, selected, configuration)
-                    .await;
-                if progress_source.is_some() {
-                    self.shared
-                        .send_event(SourceEvent::Operation(SourceOperation::Idle))
-                        .await;
-                }
-            }
-            (
-                WorkPurpose::Update {
-                    selected: false, ..
-                },
-                PreparedWork::InactiveConnection {
-                    configured,
-                    configuration,
-                    credential,
-                    replaces_account,
-                },
-            ) => {
-                self.commit_inactive_connection(
-                    configured,
-                    configuration,
-                    credential,
-                    replaces_account,
-                )
-                .await;
-            }
-            (WorkPurpose::Selected { qualifier, .. }, PreparedWork::Point(prepared)) => {
-                if self.shared.matches_selected(&qualifier) {
-                    self.commit_point(qualifier, prepared, activity_updates)
-                        .await;
-                }
-            }
-            _ => unreachable!("source preparation returned the wrong operation result"),
+            Err(error) => self.refresh_failed(&selected, visible, error).await,
         }
-        self.start_next_work().await;
+        self.shared.finish_refresh(&request);
     }
 
-    async fn commit_replacement(&mut self, replacement: PreparedReplacement) -> Result<(), String> {
-        let PreparedReplacement {
-            reason,
-            previous,
-            configuration,
-            source,
-            credential,
-            library,
-        } = replacement;
+    async fn accept_activity(
+        &mut self,
+        qualifier: SourceQualifier,
+        update: RecordedActivity,
+        next_home: NextHome,
+    ) {
+        let acceptance_owner = Arc::clone(&self.shared);
+        let _acceptance = acceptance_owner.acceptance_lane.lock().await;
+        let Some(selected) = self
+            .shared
+            .selected()
+            .filter(|selected| selected.qualifier() == qualifier)
+        else {
+            return;
+        };
+        self.shared
+            .record_replay_activity(&qualifier, update.clone());
+        let library = Arc::clone(&selected.library);
+        match blocking(move || {
+            library
+                .apply_recorded_activity(&update)
+                .map_err(string_error)
+        })
+        .await
+        {
+            Ok(Some(change)) => self.publish_change(&selected, change, next_home).await,
+            Ok(None) => {}
+            Err(error) => warn!(%error, "could not apply accepted playback activity"),
+        }
+    }
+
+    async fn activate_replacement(
+        &mut self,
+        reason: ReplacementReason,
+        previous: Option<ConfiguredSource>,
+        configuration: SourceConfiguration,
+        source: Option<Arc<Source>>,
+        credential: Option<String>,
+        library: Arc<Library>,
+    ) -> Result<(), String> {
+        let replaced_source_id = if matches!(reason, ReplacementReason::DifferentAccount) {
+            Some(
+                previous
+                    .as_ref()
+                    .ok_or_else(|| "the previous source account no longer exists".to_string())?
+                    .configuration
+                    .source_id
+                    .clone(),
+            )
+        } else {
+            None
+        };
         let refresh_after_select = matches!(
             reason,
             ReplacementReason::Select {
@@ -2029,15 +1568,13 @@ impl Actor {
             }
         ) && source.is_some();
         let selected_source_id = configuration.source_id.clone();
-        let loaded = self.accept_replacement_library(library).await?;
         if matches!(reason, ReplacementReason::DifferentAccount)
             || matches!(reason, ReplacementReason::Add) && previous.is_none()
         {
-            let library = self.shared.library.clone();
-            let loaded = Arc::clone(&loaded);
+            let library = Arc::clone(&library);
             blocking(move || {
                 library
-                    .initialize_smart_playlists(&loaded)
+                    .initialize_smart_playlists()
                     .map(|_| ())
                     .map_err(string_error)
             })
@@ -2052,11 +1589,11 @@ impl Actor {
         let local_access = previous
             .as_ref()
             .and_then(|configured| configured.local_access.clone());
-        let selected = self
+        let (session, selected, prepared_playback) = self
             .prepare_runtime(
                 configuration.clone(),
                 source,
-                loaded,
+                library,
                 music_folder_id.clone(),
                 local_access.clone(),
             )
@@ -2075,20 +1612,12 @@ impl Actor {
                 .clone()
                 .or_else(|| previous_credential.clone()),
         };
-        let mut configured = ConfiguredSource {
+        let configured = ConfiguredSource {
             configuration,
             credential_ref,
-            music_folder_id,
+            music_folder_id: selected.music_folder_id.clone(),
             local_access,
         };
-        let replaced_source_id = matches!(reason, ReplacementReason::DifferentAccount).then(|| {
-            previous
-                .as_ref()
-                .expect("an account replacement has a previous source")
-                .configuration
-                .source_id
-                .clone()
-        });
         if replaced_source_id.is_some() {
             self.shared
                 .send_event(SourceEvent::Operation(SourceOperation::Switching {
@@ -2097,48 +1626,69 @@ impl Actor {
                 }))
                 .await;
         }
-        match reason {
-            ReplacementReason::Select { .. } => {}
-            ReplacementReason::Add => {}
-            ReplacementReason::DifferentAccount => self.begin_transition().await,
-        }
-        let result: Result<(), String> = async {
-            let (session, playback) = self.install_runtime(selected).await?;
-            let selected = session.snapshot();
-            configured.music_folder_id = selected.music_folder_id.clone();
-            if let Some(previous) = replaced_source_id.as_ref() {
-                self.save_selected_account_replacement(previous, configured.clone())
-                    .await?;
-            } else {
-                self.save_selected_configuration(configured.clone()).await?;
-            }
-            let catch_up = matches!(
-                reason,
-                ReplacementReason::Select {
-                    cached: true,
-                    refresh_after_select: false,
-                }
-            );
-            self.publish_new_selected(session, playback, catch_up).await;
-            self.fallback = None;
-            if let Some(previous) = replaced_source_id {
-                self.remove_replaced_source_data(previous).await;
-            }
-            if refresh_after_select {
-                self.queue_refresh(selected_source_id, true).await;
-            } else {
-                self.shared
-                    .send_event(SourceEvent::Operation(SourceOperation::Idle))
-                    .await;
-            }
-            Ok(())
-        }
-        .await;
-        if let Err(error) = result {
-            self.shared.stop_playback().await;
+        let previous_settings = self.shared.settings.load();
+        let saved = if let Some(previous) = replaced_source_id.as_ref() {
+            self.save_selected_account_replacement(previous, configured.clone())
+                .await
+        } else {
+            self.save_selected_configuration(configured.clone()).await
+        };
+        if let Err(error) = saved {
             self.delete_staged_credential(staged_credential.as_ref())
                 .await;
             return Err(error);
+        }
+        let previous_selected = self.shared.selected();
+        let playback = match self
+            .install_runtime(
+                Arc::clone(&session),
+                Arc::clone(&selected),
+                prepared_playback,
+            )
+            .await
+        {
+            Ok(playback) => playback,
+            Err(error) => {
+                let settings = self.shared.settings.clone();
+                if let Err(rollback_error) = blocking(move || {
+                    settings.update(|stored| {
+                        *stored = previous_settings;
+                        Ok(())
+                    })
+                })
+                .await
+                {
+                    warn!(%rollback_error, "could not restore source settings after a failed cutover");
+                }
+                self.delete_staged_credential(staged_credential.as_ref())
+                    .await;
+                return Err(error);
+            }
+        };
+        let catch_up = matches!(
+            reason,
+            ReplacementReason::Select {
+                cached: true,
+                refresh_after_select: false,
+            }
+        );
+        self.shared
+            .publish_selected(session, Arc::clone(&selected), playback)
+            .await;
+        drop(previous_selected);
+        self.start_selected_access(catch_up).await;
+        if let Some(previous) = replaced_source_id {
+            self.remove_replaced_source_data(previous).await;
+        }
+        if refresh_after_select {
+            SourceOwner {
+                shared: Arc::clone(&self.shared),
+            }
+            .request_refresh(selected_source_id, true);
+        } else {
+            self.shared
+                .send_event(SourceEvent::Operation(SourceOperation::Idle))
+                .await;
         }
         if previous_credential != configured.credential_ref {
             self.delete_staged_credential(previous_credential.as_ref())
@@ -2147,36 +1697,15 @@ impl Actor {
         Ok(())
     }
 
-    async fn accept_replacement_library(
-        &self,
-        library: ReplacementLibrary,
-    ) -> Result<Arc<LoadedLibrary>, String> {
-        Ok(match library {
-            ReplacementLibrary::Cached(loaded) => loaded,
-            ReplacementLibrary::Candidate(candidate) => {
-                blocking(move || {
-                    candidate
-                        .accept()
-                        .map(|commit| commit.loaded)
-                        .map_err(string_error)
-                })
-                .await?
-            }
-        })
-    }
-
     async fn commit_selected_update(
         &mut self,
-        update: PreparedSelectedUpdate,
+        configured: ConfiguredSource,
+        configuration: SourceConfiguration,
+        source: Arc<Source>,
+        credential: Option<String>,
+        candidate: Option<Box<PreparedSourceCandidate>>,
         activity_updates: Vec<RecordedActivity>,
     ) -> Result<(), String> {
-        let PreparedSelectedUpdate {
-            configured,
-            configuration,
-            source,
-            credential,
-            candidate,
-        } = update;
         let previous = self
             .shared
             .selected()
@@ -2192,48 +1721,37 @@ impl Actor {
             music_folder_id: configured.music_folder_id.clone(),
             local_access: configured.local_access.clone(),
         };
-        let result: Result<(), String> = async {
-            let prepared = match candidate {
-                Some(candidate) => {
-                    self.prepare_same_source_candidate(
-                        &previous,
-                        configuration.clone(),
-                        Some(Arc::clone(&source)),
-                        configured.music_folder_id,
-                        configured.local_access,
-                        *candidate,
-                        activity_updates,
-                    )
-                    .await?
-                }
-                None => None,
-            };
+        let result = async {
             if !self.shared.matches_selected(&previous.qualifier()) {
                 return Err(
                     "the selected source changed while its settings were prepared".to_string(),
                 );
             }
-            self.save_selected_configuration(replacement.clone())
+            if let Some(candidate) = candidate {
+                self.accept_same_session_candidate(
+                    &previous,
+                    configuration,
+                    Some(source),
+                    configured.music_folder_id,
+                    configured.local_access,
+                    *candidate,
+                    activity_updates,
+                    Some(replacement.clone()),
+                )
                 .await?;
-            match prepared {
-                Some(prepared) => {
-                    let publishes_configuration = prepared.playback.is_some();
-                    self.publish_same_source_candidate(prepared).await?;
-                    if !publishes_configuration {
-                        self.shared.publish_configured().await;
-                    }
+                self.shared.publish_configured().await;
+            } else {
+                self.save_selected_configuration(replacement.clone())
+                    .await?;
+                let mut selected = (*previous).clone();
+                selected.configuration = configuration;
+                selected.source = Some(source);
+                if !self.shared.replace_selected_runtime(selected).await {
+                    return Err(
+                        "the selected source changed while its settings were saved".to_string()
+                    );
                 }
-                None => {
-                    let mut selected = previous.clone();
-                    selected.configuration = configuration;
-                    selected.source = Some(source);
-                    if !self.shared.replace_selected_runtime(&selected).await {
-                        return Err(
-                            "the selected source changed while its settings were saved".to_string()
-                        );
-                    }
-                    self.shared.publish_configured().await;
-                }
+                self.shared.publish_configured().await;
             }
             Ok(())
         }
@@ -2252,7 +1770,7 @@ impl Actor {
 
     async fn commit_refresh(
         &mut self,
-        previous: SelectedSourceRuntime,
+        previous: Arc<SelectedSourceState>,
         prepared: PreparedSourceCandidate,
         visible: bool,
         activity_updates: Vec<RecordedActivity>,
@@ -2271,8 +1789,8 @@ impl Actor {
         let requested_folder = configured.and_then(|configured| configured.music_folder_id.clone());
         let local_access =
             configured.and_then(|configured| configured.local_access.as_ref().cloned());
-        let Some(prepared) = self
-            .prepare_same_source_candidate(
+        let accepted = self
+            .accept_same_session_candidate(
                 &previous,
                 previous.configuration.clone(),
                 previous.source.clone(),
@@ -2280,66 +1798,62 @@ impl Actor {
                 local_access,
                 prepared,
                 activity_updates,
+                None,
             )
-            .await?
-        else {
-            if visible && self.shared.matches_selected(&previous.qualifier()) {
-                self.shared
-                    .send_event(SourceEvent::Operation(SourceOperation::Idle))
-                    .await;
+            .await?;
+        if let Some(selected) = accepted {
+            if selected.music_folder_id != requested_folder {
+                let settings = self.shared.settings.clone();
+                let source_id = previous.source_id().clone();
+                let folder = selected.music_folder_id.clone();
+                if let Err(error) =
+                    blocking(move || save_music_folder(&settings, &source_id, folder)).await
+                {
+                    warn!(%error, source_id = %previous.source_id(), "could not save the normalized music folder");
+                }
             }
-            return Ok(());
-        };
-        if prepared.selected.music_folder_id != requested_folder {
-            let settings = self.shared.settings.clone();
-            let source_id = previous.source_id().clone();
-            let folder_for_settings = prepared.selected.music_folder_id.clone();
-            if let Err(error) =
-                blocking(move || save_music_folder(&settings, &source_id, folder_for_settings))
-                    .await
-            {
-                warn!(
-                    %error,
-                    source_id = %previous.source_id(),
-                    "could not save the normalized music folder"
-                );
-            }
+            self.start_local_access_refresh(&selected).await;
         }
-        if !self.shared.matches_selected(&prepared.selected.qualifier()) {
-            return Err(
-                "the selected source changed before the refreshed library was accepted".to_string(),
-            );
+        if visible {
+            self.shared
+                .send_event(SourceEvent::Operation(SourceOperation::Idle))
+                .await;
         }
-        let selected = self.publish_same_source_candidate(prepared).await?;
-        self.start_local_access_refresh(&selected).await;
-        self.shared
-            .send_event(SourceEvent::Operation(SourceOperation::Idle))
-            .await;
         Ok(())
     }
 
-    async fn prepare_same_source_candidate(
-        &self,
-        previous: &SelectedSourceRuntime,
+    async fn accept_same_session_candidate(
+        &mut self,
+        previous: &SelectedSourceState,
         configuration: SourceConfiguration,
         source: Option<Arc<Source>>,
         requested_folder: Option<MusicFolderId>,
         local_access: Option<ConfiguredLocalAccess>,
         candidate: PreparedSourceCandidate,
         activity_updates: Vec<RecordedActivity>,
-    ) -> Result<Option<PreparedSameSource>, String> {
+        save_before_publish: Option<ConfiguredSource>,
+    ) -> Result<Option<SelectedSourceState>, String> {
         let change = candidate.change();
         if change == CandidateChange::None {
-            blocking(move || candidate.accept().map_err(string_error)).await?;
+            let commit = blocking(move || candidate.accept().map_err(string_error)).await?;
+            if let Some(configured) = save_before_publish {
+                self.save_selected_configuration(configured).await?;
+                let mut selected = previous.clone();
+                selected.configuration = configuration;
+                selected.source = source;
+                selected.library = commit.library;
+                self.shared.replace_selected_runtime(selected.clone()).await;
+                self.shared.publish_configured().await;
+                return Ok(Some(selected));
+            }
             return Ok(None);
         }
-        let folder = normalize_music_folder(candidate.loaded(), requested_folder)?;
+        let folder = normalize_music_folder(candidate.library(), requested_folder)?;
         if let Some(access) = local_access {
-            let library = self.shared.library.clone();
-            let loaded = Arc::clone(candidate.loaded());
+            let library = Arc::clone(candidate.library());
             blocking(move || {
                 library
-                    .configure_local_access(&loaded, configured_local_access_mapping(&access))
+                    .configure_local_access(configured_local_access_mapping(&access))
                     .map(|_| ())
                     .map_err(string_error)
             })
@@ -2347,74 +1861,50 @@ impl Actor {
         }
         let playback = if change == CandidateChange::Library {
             let playback = self.shared.playback()?;
-            let prepared = playback.prepare_track_refresh(previous.source_session_epoch)?;
-            Some((playback, prepared))
+            let refresh = playback.prepare_track_refresh(previous.source_session_epoch)?;
+            Some((playback, refresh))
         } else {
             None
         };
         let commit = blocking(move || candidate.accept().map_err(string_error)).await?;
         if change == CandidateChange::Library {
-            replay_activity_updates(
-                self.shared.library.clone(),
-                Arc::clone(&commit.loaded),
-                activity_updates,
-            )
-            .await?;
+            replay_activity_updates(Arc::clone(&commit.library), activity_updates).await?;
         }
-        let library = self.shared.library.clone();
-        let loaded = Arc::clone(&commit.loaded);
+        let library = Arc::clone(&commit.library);
         let home_folder = folder.clone();
-        let home = blocking(move || {
-            library
-                .home(&loaded, home_folder.as_ref())
-                .map_err(string_error)
-        })
-        .await?;
-        Ok(Some(PreparedSameSource {
-            selected: SelectedSourceRuntime {
-                configuration,
-                source,
-                source_session_epoch: previous.source_session_epoch,
-                loaded: commit.loaded,
-                home,
-                music_folder_id: folder,
-            },
-            playback,
-        }))
-    }
-
-    async fn publish_same_source_candidate(
-        &mut self,
-        prepared: PreparedSameSource,
-    ) -> Result<SelectedSourceRuntime, String> {
-        let PreparedSameSource { selected, playback } = prepared;
-        match playback {
-            None => {
-                self.shared.publish_home_replacement(selected.clone()).await;
+        let home =
+            blocking(move || library.home(home_folder.as_ref()).map_err(string_error)).await?;
+        let selected = SelectedSourceState {
+            configuration,
+            source,
+            source_session_epoch: previous.source_session_epoch,
+            library: commit.library,
+            home,
+            music_folder_id: folder,
+        };
+        if let Some(configured) = save_before_publish {
+            self.save_selected_configuration(configured).await?;
+        }
+        if let Some((playback, refresh)) = playback {
+            self.cancel_album_release_lookup(false);
+            self.shared
+                .publish_library_replacement(selected.clone())
+                .await;
+            let library = Arc::clone(&selected.library);
+            if let Err(error) =
+                blocking(move || playback.apply_track_refresh(refresh, &library)).await
+            {
+                warn!(%error, "could not update Playback after accepting refreshed source facts");
             }
-            Some((playback, prepared)) => {
-                self.cancel_album_release_lookup(false);
-                self.shared.publish_library_replacement(&selected).await;
-                let loaded = Arc::clone(&selected.loaded);
-                match blocking(move || playback.apply_track_refresh(prepared, &loaded)).await {
-                    Ok(projection) => {
-                        self.shared
-                            .publish_selected_playback(&selected, projection)
-                            .await;
-                    }
-                    Err(error) => {
-                        warn!(%error, "could not update Playback after accepting refreshed source facts");
-                        self.shared.warn_nonfatal(&error);
-                    }
-                }
-                self.start_album_release_lookup();
-            }
+            self.start_album_release_lookup();
+        } else {
+            self.shared.publish_home_replacement(selected.clone()).await;
         }
         self.reconcile_downloads(&selected).await;
-        Ok(selected)
+        Ok(Some(selected))
     }
 
-    async fn refresh_failed(&self, selected: &SelectedSourceRuntime, visible: bool, error: String) {
+    async fn refresh_failed(&self, selected: &SelectedSourceState, visible: bool, error: String) {
         if visible {
             self.shared
                 .send_event(SourceEvent::Operation(SourceOperation::Failed {
@@ -2428,53 +1918,55 @@ impl Actor {
         }
     }
 
-    async fn commit_configuration(
-        &mut self,
-        mut configured: ConfiguredSource,
-        selected: bool,
-        configuration: Option<SourceConfiguration>,
-    ) {
-        let result = if let Some(configuration) = configuration {
-            configured.configuration = configuration.clone();
-            let result = self.save_configuration(configured).await;
-            if result.is_ok()
-                && selected
-                && let Some(mut active) = self.shared.selected()
-            {
-                active.configuration = configuration;
-                self.shared.replace_selected(active);
-            }
-            result
-        } else {
-            Ok(())
-        };
-        match result {
-            Ok(()) => self.shared.publish_configured().await,
-            Err(error) => self.shared.warn_nonfatal(&error),
-        }
-        if selected {
-            self.start_selected_access(true).await;
-        }
-    }
-
     async fn commit_inactive_connection(
         &self,
         configured: ConfiguredSource,
         configuration: SourceConfiguration,
         credential: Option<String>,
         replaces_account: bool,
-    ) {
-        let result = if replaces_account {
-            self.replace_inactive_account(configured, configuration, credential)
-                .await
-        } else {
-            self.save_inactive_connected(configured, configuration, credential)
-                .await
+    ) -> Result<(), String> {
+        let previous_source_id = configured.configuration.source_id.clone();
+        let previous_credential = configured.credential_ref.clone();
+        let staged_credential = self.stage_credential(credential).await?;
+        let replacement = ConfiguredSource {
+            configuration,
+            credential_ref: if replaces_account {
+                staged_credential.clone()
+            } else {
+                staged_credential
+                    .clone()
+                    .or_else(|| previous_credential.clone())
+            },
+            music_folder_id: (!replaces_account)
+                .then_some(configured.music_folder_id)
+                .flatten(),
+            local_access: configured.local_access,
         };
-        match result {
-            Ok(()) => self.shared.publish_configured().await,
-            Err(error) => self.shared.warn_nonfatal(&error),
+        let replacement_credential = replacement.credential_ref.clone();
+        let settings = self.shared.settings.clone();
+        let saved = if replaces_account {
+            let previous = previous_source_id.clone();
+            blocking(move || {
+                replace_source_account(&settings, &previous, replacement.clone(), false)
+            })
+            .await
+        } else {
+            blocking(move || replace_saved_source(&settings, replacement.clone())).await
+        };
+        if let Err(error) = saved {
+            self.delete_staged_credential(staged_credential.as_ref())
+                .await;
+            return Err(error);
         }
+        if replaces_account {
+            self.remove_replaced_source_data(previous_source_id).await;
+        }
+        if previous_credential != replacement_credential {
+            self.delete_staged_credential(previous_credential.as_ref())
+                .await;
+        }
+        self.shared.publish_configured().await;
+        Ok(())
     }
 
     async fn selected_update_failed(&mut self, error: String) {
@@ -2485,213 +1977,290 @@ impl Actor {
         self.start_selected_access(true).await;
     }
 
-    async fn commit_point(
+    async fn accept_selected_library_acceptance(
         &mut self,
-        qualifier: SourceQualifier,
-        prepared: PointPrepared,
-        activity_updates: Vec<RecordedActivity>,
-    ) {
-        let Some(selected) = self
-            .shared
-            .selected()
-            .filter(|selected| selected.qualifier() == qualifier)
-        else {
-            return;
-        };
-        match prepared {
-            PointPrepared::RefreshHome {
-                kind,
-                source_section,
-            } => {
-                let library = self.shared.library.clone();
-                let loaded = Arc::clone(&selected.loaded);
-                let folder = selected.music_folder_id.clone();
-                let current = Arc::clone(&selected.home);
-                match blocking(move || {
-                    match source_section {
-                        Some(section) => {
-                            library.accept_home_section(&loaded, folder.as_ref(), &current, section)
-                        }
-                        None => library.refresh_rufin_home_section(
-                            &loaded,
-                            folder.as_ref(),
-                            &current,
-                            kind,
-                        ),
-                    }
-                    .map_err(string_error)
-                })
-                .await
-                {
-                    Ok(home) => {
-                        if let Some(mut active) = self
-                            .shared
-                            .selected()
-                            .filter(|active| active.qualifier() == qualifier)
-                        {
-                            active.home = Arc::clone(&home);
-                            self.shared.replace_selected(active);
-                        }
-                        self.shared
-                            .send_event(SourceEvent::Home(HomePublication {
-                                source_id: qualifier.source_id,
-                                source_session_epoch: qualifier.epoch,
-                                kind,
-                                home,
-                            }))
-                            .await;
-                    }
-                    Err(error) => self.shared.warn_nonfatal(&error),
-                }
-            }
-            PointPrepared::Favorite {
-                acceptance,
-                item,
-                previous,
-            } => {
-                let library = self.shared.library.clone();
-                let loaded = Arc::clone(&selected.loaded);
-                match blocking(move || {
-                    library
-                        .accept_favorite(&loaded, acceptance)
-                        .map_err(string_error)
-                })
-                .await
-                {
-                    Ok(accepted) => {
-                        self.publish_change(&selected, accepted, NextHome::Favorite(item))
-                            .await;
-                    }
-                    Err(error) => {
-                        self.shared
-                            .send_event(SourceEvent::FavoriteFailure(FavoriteFailure {
-                                source_id: qualifier.source_id,
-                                source_session_epoch: qualifier.epoch,
-                                item_id: item,
-                                authoritative_favorite: previous,
-                                message: error,
-                            }))
-                            .await;
-                    }
-                }
-            }
-            PointPrepared::FavoriteFailed {
-                item,
-                previous,
-                message,
-            } => {
-                self.shared
-                    .send_event(SourceEvent::FavoriteFailure(FavoriteFailure {
-                        source_id: qualifier.source_id,
-                        source_session_epoch: qualifier.epoch,
-                        item_id: item,
-                        authoritative_favorite: previous,
-                        message,
-                    }))
-                    .await;
-            }
-            PointPrepared::Playlist(acceptance) => {
-                let library = self.shared.library.clone();
-                let loaded = Arc::clone(&selected.loaded);
-                match blocking(move || {
-                    library
-                        .accept_playlist(&loaded, acceptance)
-                        .map_err(string_error)
-                })
-                .await
-                {
-                    Ok(Some(change)) => {
-                        self.publish_change(&selected, change, NextHome::Keep).await
-                    }
-                    Ok(None) => {}
-                    Err(error) => self.shared.warn_nonfatal(&error),
-                }
-            }
-            PointPrepared::SmartPlaylist(operation) => {
-                let library = self.shared.library.clone();
-                let loaded = Arc::clone(&selected.loaded);
-                match blocking(move || match operation {
-                    SmartPlaylistOperation::Create { name, definition } => library
-                        .create_smart_playlist(&loaded, name, definition)
-                        .map_err(string_error),
-                    SmartPlaylistOperation::Update {
-                        id,
-                        name,
-                        definition,
-                    } => library
-                        .update_smart_playlist(&loaded, id, name, definition)
-                        .map_err(string_error),
-                    SmartPlaylistOperation::Delete(id) => library
-                        .delete_smart_playlist(&loaded, &id)
-                        .map_err(string_error),
-                    SmartPlaylistOperation::Restore(builtin) => library
-                        .restore_builtin_smart_playlist(&loaded, builtin)
-                        .map_err(string_error),
-                    SmartPlaylistOperation::Move {
-                        dragged,
-                        target,
-                        after,
-                    } => library
-                        .move_smart_playlist_relative(&loaded, dragged, target, after)
-                        .map_err(string_error),
-                })
-                .await
-                {
-                    Ok(Some(change)) => {
-                        self.publish_change(&selected, change, NextHome::Keep).await
-                    }
-                    Ok(None) => {}
-                    Err(error) => self.shared.warn_nonfatal(&error),
-                }
-            }
-            PointPrepared::LibraryUpdate(update) => {
-                if let Err(error) = self
-                    .accept_prepared_library_update(selected, update, activity_updates)
-                    .await
-                {
-                    warn!(%error, "could not accept a selected library update");
-                }
-            }
-            PointPrepared::Metadata { reply, acceptance } => {
-                let accepted = match acceptance {
-                    Err(error) => Err(error),
-                    Ok(update) => self
-                        .accept_prepared_library_update(selected, update, activity_updates)
-                        .await
-                        .map_err(MetadataError::SavedRefreshFailed),
-                };
-                reply.finish(accepted);
-            }
-            PointPrepared::RefreshRequired => {
-                self.queue_refresh(qualifier.source_id, false).await;
-            }
-            PointPrepared::Unchanged => {}
-        }
-    }
-
-    async fn accept_prepared_library_update(
-        &mut self,
-        selected: SelectedSourceRuntime,
-        update: PreparedLibraryUpdate,
+        selected: Arc<SelectedSourceState>,
+        acceptance: SelectedLibraryAcceptance,
         activity_updates: Vec<RecordedActivity>,
     ) -> Result<(), String> {
-        match update {
-            PreparedLibraryUpdate::Source(update) => {
+        match acceptance {
+            SelectedLibraryAcceptance::Source(update) => {
                 self.accept_source_update(&selected, update).await
             }
-            PreparedLibraryUpdate::Local(replacement) => {
+            SelectedLibraryAcceptance::Local(replacement) => {
                 self.accept_local_component(&selected, replacement).await
             }
-            PreparedLibraryUpdate::Full(candidate) => {
+            SelectedLibraryAcceptance::Full(candidate) => {
                 self.commit_refresh(selected, candidate, false, activity_updates)
                     .await
             }
         }
     }
 
+    async fn refresh_home(&mut self, selected: Arc<SelectedSourceState>, kind: HomeSectionKind) {
+        let source_section = match selected.source.as_ref() {
+            Some(source) => match source.home_section(kind).await.map_err(string_error) {
+                Ok(NativeSourceResult::Available(section)) => Some(section),
+                Ok(NativeSourceResult::Unavailable) => None,
+                Err(error) => {
+                    self.shared.warn_nonfatal(&error);
+                    return;
+                }
+            },
+            None => None,
+        };
+        if !self.shared.matches_selected(&selected.qualifier()) {
+            return;
+        }
+        let library = Arc::clone(&selected.library);
+        let folder = selected.music_folder_id.clone();
+        let current = Arc::clone(&selected.home);
+        let home = blocking(move || {
+            match source_section {
+                Some(section) => library.accept_home_section(folder.as_ref(), &current, section),
+                None => library.refresh_rufin_home_section(folder.as_ref(), &current, kind),
+            }
+            .map_err(string_error)
+        })
+        .await;
+        match home {
+            Ok(home) => {
+                let mut replacement = (*selected).clone();
+                replacement.home = Arc::clone(&home);
+                if self.shared.replace_selected(replacement) {
+                    self.shared
+                        .send_event(SourceEvent::Home(HomePublication {
+                            source_id: selected.source_id().clone(),
+                            source_session_epoch: selected.source_session_epoch,
+                            kind,
+                            home,
+                        }))
+                        .await;
+                }
+            }
+            Err(error) => self.shared.warn_nonfatal(&error),
+        }
+    }
+
+    async fn set_favorite(
+        &mut self,
+        selected: Arc<SelectedSourceState>,
+        item: FavoriteItemId,
+        favorite: bool,
+        previous: bool,
+    ) {
+        let result = match selected.source.as_ref() {
+            Some(source) => source
+                .set_favorite(item.clone(), favorite)
+                .await
+                .map_err(string_error),
+            None => Err(source_access_unavailable()),
+        };
+        let acceptance = match result {
+            Ok(acceptance) => acceptance,
+            Err(message) => {
+                self.shared
+                    .send_event(SourceEvent::FavoriteFailure(FavoriteFailure {
+                        source_id: selected.source_id().clone(),
+                        source_session_epoch: selected.source_session_epoch,
+                        item_id: item,
+                        authoritative_favorite: previous,
+                        message,
+                    }))
+                    .await;
+                return;
+            }
+        };
+        if !self.shared.matches_selected(&selected.qualifier()) {
+            return;
+        }
+        let library = Arc::clone(&selected.library);
+        match blocking(move || library.accept_favorite(acceptance).map_err(string_error)).await {
+            Ok(change) => {
+                self.publish_change(&selected, change, NextHome::Favorite(item))
+                    .await;
+            }
+            Err(message) => {
+                self.shared
+                    .send_event(SourceEvent::FavoriteFailure(FavoriteFailure {
+                        source_id: selected.source_id().clone(),
+                        source_session_epoch: selected.source_session_epoch,
+                        item_id: item,
+                        authoritative_favorite: previous,
+                        message,
+                    }))
+                    .await;
+            }
+        }
+    }
+
+    async fn edit_playlist(&mut self, selected: Arc<SelectedSourceState>, edit: PlaylistEdit) {
+        let acceptance = match selected.source.as_ref() {
+            Some(source) => source.edit_playlist(edit).await.map_err(string_error),
+            None => Err(source_access_unavailable()),
+        };
+        let acceptance = match acceptance {
+            Ok(acceptance) => acceptance,
+            Err(error) => {
+                self.shared.warn_nonfatal(&error);
+                return;
+            }
+        };
+        if !self.shared.matches_selected(&selected.qualifier()) {
+            return;
+        }
+        let library = Arc::clone(&selected.library);
+        match blocking(move || library.accept_playlist(acceptance).map_err(string_error)).await {
+            Ok(Some(change)) => self.publish_change(&selected, change, NextHome::Keep).await,
+            Ok(None) => {}
+            Err(error) => self.shared.warn_nonfatal(&error),
+        }
+    }
+
+    async fn smart_playlist(
+        &mut self,
+        selected: Arc<SelectedSourceState>,
+        operation: SmartPlaylistOperation,
+    ) {
+        let library = Arc::clone(&selected.library);
+        let change = blocking(move || match operation {
+            SmartPlaylistOperation::Create { name, definition } => library
+                .create_smart_playlist(name, definition)
+                .map_err(string_error),
+            SmartPlaylistOperation::Update {
+                id,
+                name,
+                definition,
+            } => library
+                .update_smart_playlist(id, name, definition)
+                .map_err(string_error),
+            SmartPlaylistOperation::Delete(id) => {
+                library.delete_smart_playlist(&id).map_err(string_error)
+            }
+            SmartPlaylistOperation::Restore(builtin) => library
+                .restore_builtin_smart_playlist(builtin)
+                .map_err(string_error),
+            SmartPlaylistOperation::Move {
+                dragged,
+                target,
+                after,
+            } => library
+                .move_smart_playlist_relative(dragged, target, after)
+                .map_err(string_error),
+        })
+        .await;
+        match change {
+            Ok(Some(change)) => self.publish_change(&selected, change, NextHome::Keep).await,
+            Ok(None) => {}
+            Err(error) => self.shared.warn_nonfatal(&error),
+        }
+    }
+
+    async fn accept_observed_change(
+        &mut self,
+        selected: Arc<SelectedSourceState>,
+        change: SourceLibraryChange,
+        _cancelled: Arc<AtomicBool>,
+    ) {
+        let Some(source) = selected.source.as_ref() else {
+            return;
+        };
+        match prepare_source_change(source, &selected.library, change).await {
+            Ok(SourceLibraryChangeRead::Exact(update)) => {
+                if let Err(error) = self.accept_source_update(&selected, update).await {
+                    warn!(%error, "could not accept a selected source update");
+                }
+            }
+            Ok(SourceLibraryChangeRead::Full) => SourceOwner {
+                shared: Arc::clone(&self.shared),
+            }
+            .request_refresh(selected.source_id().clone(), false),
+            Ok(SourceLibraryChangeRead::Ignored) => {}
+            Err(error) => warn!(%error, "background selected source update failed"),
+        }
+    }
+
+    async fn accept_local_change(
+        &mut self,
+        selected: Arc<SelectedSourceState>,
+        change: LocalFilesystemChange,
+        cancelled: Arc<AtomicBool>,
+    ) {
+        let Some(source) = selected.source.as_ref().cloned() else {
+            return;
+        };
+        match prepare_local_change(source, Arc::clone(&selected.library), change, cancelled).await {
+            Ok(Some(replacement)) => {
+                if let Err(error) = self.accept_local_component(&selected, replacement).await {
+                    warn!(%error, "could not accept a selected Local update");
+                }
+            }
+            Ok(None) => {}
+            Err(error) => warn!(%error, "background selected Local update failed"),
+        }
+    }
+
+    async fn check_freshness(
+        &mut self,
+        selected: Arc<SelectedSourceState>,
+        _cancelled: Arc<AtomicBool>,
+    ) {
+        let Some(source) = selected.source.as_ref() else {
+            return;
+        };
+        let freshness = match selected.library.provider_freshness().map_err(string_error) {
+            Ok(freshness) => freshness,
+            Err(error) => {
+                warn!(%error, "could not check selected source freshness");
+                return;
+            }
+        };
+        match source.check_freshness(freshness.as_ref()).await {
+            Ok(SourceFreshness::Changed(_)) => SourceOwner {
+                shared: Arc::clone(&self.shared),
+            }
+            .request_refresh(selected.source_id().clone(), false),
+            Ok(
+                SourceFreshness::Unavailable | SourceFreshness::Unchanged | SourceFreshness::Busy,
+            ) => {}
+            Err(error) => warn!(%error, "could not check selected source freshness"),
+        }
+    }
+
+    async fn edit_metadata(
+        &mut self,
+        selected: Arc<SelectedSourceState>,
+        edit: MetadataEdit,
+        cancelled: Arc<AtomicBool>,
+        mut reply: MetadataReply,
+    ) {
+        let progress = self.progress(|_| None);
+        let replay = self.shared.begin_activity_replay(selected.qualifier());
+        let acceptance = prepare_metadata_acceptance(
+            Arc::clone(&self.shared),
+            (*selected).clone(),
+            edit,
+            progress,
+            cancelled,
+            &mut reply,
+        )
+        .await;
+        let acceptance_owner = Arc::clone(&self.shared);
+        let _acceptance = acceptance_owner.acceptance_lane.lock().await;
+        let activity_updates = self.shared.take_activity_replay(replay);
+        let accepted = match acceptance {
+            Err(error) => Err(error),
+            Ok(acceptance) => self
+                .accept_selected_library_acceptance(selected, acceptance, activity_updates)
+                .await
+                .map_err(MetadataError::SavedRefreshFailed),
+        };
+        reply.finish(accepted);
+    }
+
     async fn accept_source_update(
         &mut self,
-        selected: &SelectedSourceRuntime,
+        selected: &SelectedSourceState,
         update: library::SourceLibraryUpdate,
     ) -> Result<(), String> {
         let next_home = if update.albums.is_empty()
@@ -2702,14 +2271,9 @@ impl Actor {
         } else {
             NextHome::SourceFacts
         };
-        let library = self.shared.library.clone();
-        let loaded = Arc::clone(&selected.loaded);
-        let change = blocking(move || {
-            library
-                .accept_source_update(&loaded, update)
-                .map_err(string_error)
-        })
-        .await?;
+        let library = Arc::clone(&selected.library);
+        let change =
+            blocking(move || library.accept_source_update(update).map_err(string_error)).await?;
         if let Some(change) = change {
             self.publish_change(selected, change, next_home).await;
         }
@@ -2718,14 +2282,13 @@ impl Actor {
 
     async fn accept_local_component(
         &mut self,
-        selected: &SelectedSourceRuntime,
+        selected: &SelectedSourceState,
         replacement: library::LocalComponentReplacement,
     ) -> Result<(), String> {
-        let library = self.shared.library.clone();
-        let loaded = Arc::clone(&selected.loaded);
+        let library = Arc::clone(&selected.library);
         let change = blocking(move || {
             library
-                .accept_local_component(&loaded, replacement)
+                .accept_local_component(replacement)
                 .map_err(string_error)
         })
         .await?;
@@ -2738,7 +2301,7 @@ impl Actor {
 
     async fn publish_change(
         &mut self,
-        selected: &SelectedSourceRuntime,
+        selected: &SelectedSourceState,
         change: AcceptedLibraryChange,
         next_home: NextHome,
     ) {
@@ -2761,7 +2324,7 @@ impl Actor {
         if !removed_downloads.is_empty() {
             self.shared.downloads.remove(
                 selected.source_id().clone(),
-                Arc::clone(&selected.loaded),
+                Arc::clone(&selected.library),
                 removed_downloads,
                 false,
             );
@@ -2776,7 +2339,7 @@ impl Actor {
             .filter_map(|replacement| replacement.track.clone())
             .collect::<Vec<_>>();
         if !tracks.is_empty() {
-            let projection = match self.shared.playback() {
+            let refreshed = match self.shared.playback() {
                 Ok(playback) => {
                     let source_id = selected.source_id().clone();
                     let epoch = selected.source_session_epoch;
@@ -2785,12 +2348,8 @@ impl Actor {
                 }
                 Err(error) => Err(error),
             };
-            match projection {
-                Ok(projection) => {
-                    self.shared
-                        .publish_selected_playback(selected, projection)
-                        .await;
-                }
+            match refreshed {
+                Ok(()) => {}
                 Err(error) => {
                     self.shared.warn_nonfatal(&error);
                 }
@@ -2799,13 +2358,12 @@ impl Actor {
         let home = match next_home {
             NextHome::Keep | NextHome::ActivityKeep => None,
             NextHome::Favorite(favorite) => {
-                let library = self.shared.library.clone();
-                let loaded = Arc::clone(&selected.loaded);
+                let library = Arc::clone(&selected.library);
                 let current = Arc::clone(&selected.home);
                 let folder = selected.music_folder_id.clone();
                 match blocking(move || {
                     library
-                        .home_after_favorite(&loaded, folder.as_ref(), &current, &favorite)
+                        .home_after_favorite(folder.as_ref(), &current, &favorite)
                         .map_err(string_error)
                 })
                 .await
@@ -2818,13 +2376,12 @@ impl Actor {
                 }
             }
             NextHome::AcceptedPlay(track_id) => {
-                let library = self.shared.library.clone();
-                let loaded = Arc::clone(&selected.loaded);
+                let library = Arc::clone(&selected.library);
                 let current = Arc::clone(&selected.home);
                 let folder = selected.music_folder_id.clone();
                 match blocking(move || {
                     library
-                        .home_after_play(&loaded, folder.as_ref(), &current, &track_id)
+                        .home_after_play(folder.as_ref(), &current, &track_id)
                         .map_err(string_error)
                 })
                 .await
@@ -2837,12 +2394,9 @@ impl Actor {
                 }
             }
             NextHome::SourceFacts => {
-                let library = self.shared.library.clone();
-                let loaded = Arc::clone(&selected.loaded);
+                let library = Arc::clone(&selected.library);
                 let folder = selected.music_folder_id.clone();
-                match blocking(move || library.home(&loaded, folder.as_ref()).map_err(string_error))
-                    .await
-                {
+                match blocking(move || library.home(folder.as_ref()).map_err(string_error)).await {
                     Ok(home) => Some(home),
                     Err(error) => {
                         warn!(%error, source_id = %selected.source_id(), "could not prepare the next Home snapshot");
@@ -2852,15 +2406,16 @@ impl Actor {
             }
         };
         if let Some(home) = &home {
-            let Some(mut active) = self
+            let Some(active) = self
                 .shared
                 .selected()
                 .filter(|active| active.qualifier() == selected.qualifier())
             else {
                 return;
             };
-            active.home = Arc::clone(&home);
-            self.shared.replace_selected(active);
+            let mut replacement = (*active).clone();
+            replacement.home = Arc::clone(&home);
+            self.shared.replace_selected(replacement);
         }
         self.shared
             .send_event(SourceEvent::LibraryUpdate(SelectedLibraryUpdate {
@@ -2878,63 +2433,12 @@ impl Actor {
         }
     }
 
-    async fn target_failed(&mut self, purpose: WorkPurpose, error: String) {
-        match purpose {
-            WorkPurpose::Add => self.fail_transition(None, error, true).await,
-            WorkPurpose::Select { target } => {
-                let returns_to_onboarding = self.fallback.is_none()
-                    && self.shared.selected().is_none()
-                    && self
-                        .shared
-                        .settings
-                        .load()
-                        .sources
-                        .selected_source_id
-                        .is_none();
-                if returns_to_onboarding {
-                    self.shared.publish_configured().await;
-                }
-                self.fail_transition(Some(target), error, returns_to_onboarding)
-                    .await;
-            }
-            WorkPurpose::Refresh { qualifier, visible } => {
-                if visible {
-                    self.shared
-                        .send_event(SourceEvent::Operation(SourceOperation::Failed {
-                            source_id: Some(qualifier.source_id),
-                            message: error,
-                            add_form: false,
-                        }))
-                        .await;
-                } else {
-                    warn!(%error, "background source refresh failed");
-                }
-            }
-            WorkPurpose::Update { selected, .. } => {
-                if selected {
-                    self.selected_update_failed(error).await;
-                } else {
-                    self.shared.warn_nonfatal(&error);
-                }
-            }
-            WorkPurpose::Selected {
-                automatic: true, ..
-            } => {
-                warn!(%error, "background selected source update failed");
-            }
-            WorkPurpose::Selected {
-                automatic: false, ..
-            } => self.shared.warn_nonfatal(&error),
-        }
-    }
-
     async fn fail_transition(
         &mut self,
         source_id: Option<SourceId>,
         message: String,
         add_form: bool,
     ) {
-        self.restore_fallback().await;
         self.shared
             .send_event(SourceEvent::Operation(SourceOperation::Failed {
                 source_id,
@@ -2944,189 +2448,11 @@ impl Actor {
             .await;
     }
 
-    async fn restore_fallback(&mut self) {
-        let Some(source_id) = self.fallback.take() else {
-            return;
-        };
-        let configured = match configured_source(&self.shared.settings.load().sources, &source_id) {
-            Ok(configured) => configured,
-            Err(error) => {
-                warn!(%error, %source_id, "could not restore the previous configured source");
-                return;
-            }
-        };
-        let cancelled = Arc::new(AtomicBool::new(false));
-        let progress = Arc::new(|_: SourceReadProgress| {});
-        let ready =
-            match prepare_select(Arc::clone(&self.shared), configured, progress, cancelled).await {
-                Ok(ready) => ready,
-                Err(error) => {
-                    warn!(%error, %source_id, "could not restore the previous source");
-                    return;
-                }
-            };
-        let PreparedReplacement {
-            reason: ReplacementReason::Select { .. },
-            previous: Some(configured),
-            configuration,
-            source,
-            library,
-            ..
-        } = ready
-        else {
-            unreachable!("source restoration prepares a selection")
-        };
-        let requested_music_folder_id = configured.music_folder_id.clone();
-        let loaded = match self.accept_replacement_library(library).await {
-            Ok(loaded) => loaded,
-            Err(error) => {
-                warn!(%error, %source_id, "could not prepare the previous source");
-                return;
-            }
-        };
-        let selected = match self
-            .prepare_runtime(
-                configuration,
-                source,
-                loaded,
-                configured.music_folder_id,
-                configured.local_access,
-            )
-            .await
-        {
-            Ok(selected) => selected,
-            Err(error) => {
-                warn!(%error, %source_id, "could not prepare the previous source");
-                return;
-            }
-        };
-        match self.install_runtime(selected).await {
-            Ok((session, playback)) => {
-                let selected = session.snapshot();
-                if selected.music_folder_id != requested_music_folder_id {
-                    let settings = self.shared.settings.clone();
-                    let selected_source_id = selected.source_id().clone();
-                    let folder_id = selected.music_folder_id.clone();
-                    if let Err(error) = blocking(move || {
-                        save_music_folder(&settings, &selected_source_id, folder_id)
-                    })
-                    .await
-                    {
-                        warn!(
-                            %error,
-                            %source_id,
-                            "could not save the normalized music folder"
-                        );
-                    }
-                }
-                self.publish_new_selected(session, playback, true).await;
-            }
-            Err(error) => {
-                warn!(%error, %source_id, "could not restore the previous Playback session");
-            }
-        }
-    }
-
-    async fn save_local_access(
+    async fn apply_local_access(
         &mut self,
         input: SourceLocalAccess,
-        metadata: Option<MetadataRequest>,
         completion: Sender<Result<(), String>>,
     ) {
-        if let Some(request) = metadata {
-            if request.source_id != input.source_id {
-                let _ = completion
-                    .send(Err(
-                        "the local file mapping belongs to a different source".to_string()
-                    ))
-                    .await;
-                return;
-            }
-            let Some(selected) = self.shared.selected().filter(|selected| {
-                selected.source_id() == &request.source_id
-                    && selected.source_session_epoch == request.source_session_epoch
-            }) else {
-                let _ = completion
-                    .send(Err(
-                        "the metadata item belongs to an inactive source session".to_string(),
-                    ))
-                    .await;
-                return;
-            };
-            let mapping = local_access_mapping(&input);
-            let context = match selected
-                .loaded
-                .metadata_subject_with_local_access(&request.item_id, Some(&mapping))
-            {
-                Ok(Some((subject, local_access))) => MetadataContext {
-                    source: match selected.source.as_ref().cloned() {
-                        Some(source) => source,
-                        None => {
-                            let _ = completion
-                                .send(Err("the selected source is unavailable".to_string()))
-                                .await;
-                            return;
-                        }
-                    },
-                    subject,
-                    local_access: Some(local_access),
-                },
-                Ok(None) => {
-                    let _ = completion
-                        .send(Err("the metadata item is no longer available".to_string()))
-                        .await;
-                    return;
-                }
-                Err(error) => {
-                    let _ = completion.send(Err(error.to_string())).await;
-                    return;
-                }
-            };
-            if let Err(error) = context
-                .source
-                .read_metadata(context.subject, context.local_access)
-                .await
-            {
-                let _ = completion.send(Err(error.to_string())).await;
-                return;
-            }
-            let previous_access = self
-                .shared
-                .settings
-                .load()
-                .sources
-                .configured
-                .iter()
-                .find(|configured| configured.configuration.source_id == input.source_id)
-                .and_then(|configured| configured.local_access.clone());
-            self.cancel_local_access();
-            let library = self.shared.library.clone();
-            let loaded = Arc::clone(&selected.loaded);
-            let settings = self.shared.settings.clone();
-            let saved = input.clone();
-            if let Err(error) = blocking(move || {
-                accept_metadata_local_access_mapping(
-                    &library,
-                    &loaded,
-                    mapping,
-                    previous_access,
-                    || save_local_access_setting(&settings, &saved),
-                )
-            })
-            .await
-            {
-                let _ = completion.send(Err(error)).await;
-                return;
-            }
-            if let Err(error) = self.shared.playback().and_then(|playback| {
-                playback.stream_inputs_changed(selected.source_id(), selected.source_session_epoch)
-            }) {
-                warn!(%error, "could not update prepared playback after Local access changed");
-            }
-            let _ = completion.send(Ok(())).await;
-            self.shared.publish_configured().await;
-            return;
-        }
         let settings = self.shared.settings.clone();
         let saved = input.clone();
         if let Err(error) = blocking(move || save_local_access_setting(&settings, &saved)).await {
@@ -3139,12 +2465,11 @@ impl Actor {
             .selected()
             .filter(|selected| selected.source_id() == &input.source_id);
         if let Some(selected) = selected {
-            let library = self.shared.library.clone();
-            let loaded = Arc::clone(&selected.loaded);
+            let library = Arc::clone(&selected.library);
             let mapping = local_access_mapping(&input);
             if let Err(error) = blocking(move || {
                 library
-                    .configure_local_access(&loaded, mapping)
+                    .configure_local_access(mapping)
                     .map(|_| ())
                     .map_err(string_error)
             })
@@ -3163,12 +2488,108 @@ impl Actor {
         }
     }
 
-    async fn clear_local_access(&mut self, source_id: SourceId) {
-        if self
+    async fn save_metadata_local_access(
+        &mut self,
+        selected: Arc<SelectedSourceState>,
+        input: SourceLocalAccess,
+        item_id: MetadataItemId,
+        completion: Sender<Result<(), String>>,
+    ) {
+        if selected.source_id() != &input.source_id {
+            let _ = completion
+                .send(Err(
+                    "the local file mapping belongs to a different source".to_string()
+                ))
+                .await;
+            return;
+        }
+        let mapping = local_access_mapping(&input);
+        let context = match selected
+            .library
+            .metadata_subject_with_local_access(&item_id, Some(&mapping))
+        {
+            Ok(Some((subject, local_access))) => MetadataContext {
+                source: match selected.source.as_ref().cloned() {
+                    Some(source) => source,
+                    None => {
+                        let _ = completion
+                            .send(Err("the selected source is unavailable".to_string()))
+                            .await;
+                        return;
+                    }
+                },
+                subject,
+                local_access: Some(local_access),
+            },
+            Ok(None) => {
+                let _ = completion
+                    .send(Err("the metadata item is no longer available".to_string()))
+                    .await;
+                return;
+            }
+            Err(error) => {
+                let _ = completion.send(Err(error.to_string())).await;
+                return;
+            }
+        };
+        if let Err(error) = context
+            .source
+            .read_metadata(context.subject, context.local_access)
+            .await
+        {
+            let _ = completion.send(Err(error.to_string())).await;
+            return;
+        }
+        if !self.shared.matches_selected(&selected.qualifier()) {
+            let _ = completion
+                .send(Err(
+                    "the metadata item belongs to an inactive source session".to_string(),
+                ))
+                .await;
+            return;
+        }
+        let previous_access = self
+            .shared
+            .settings
+            .load()
+            .sources
+            .configured
+            .iter()
+            .find(|configured| configured.configuration.source_id == input.source_id)
+            .and_then(|configured| configured.local_access.clone());
+        self.cancel_local_access();
+        let library = Arc::clone(&selected.library);
+        let settings = self.shared.settings.clone();
+        let saved = input.clone();
+        if let Err(error) = blocking(move || {
+            accept_metadata_local_access_mapping(&library, mapping, previous_access, || {
+                save_local_access_setting(&settings, &saved)
+            })
+        })
+        .await
+        {
+            let _ = completion.send(Err(error)).await;
+            return;
+        }
+        if let Err(error) = self.shared.playback().and_then(|playback| {
+            playback.stream_inputs_changed(selected.source_id(), selected.source_session_epoch)
+        }) {
+            warn!(%error, "could not update prepared playback after Local access changed");
+        }
+        let _ = completion.send(Ok(())).await;
+        self.shared.publish_configured().await;
+    }
+
+    async fn remove_local_access(&mut self, source_id: SourceId) {
+        let cancels_scan = self
+            .shared
+            .state
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
             .local_access
             .as_ref()
-            .is_some_and(|active| active.qualifier.source_id == source_id)
-        {
+            .is_some_and(|active| active.qualifier.source_id == source_id);
+        if cancels_scan {
             self.cancel_local_access();
         }
         let settings = self.shared.settings.clone();
@@ -3192,19 +2613,19 @@ impl Actor {
                     .shared
                     .selected()
                     .filter(|selected| selected.source_id() == &source_id);
-                let library = self.shared.library.clone();
                 let store_result = if let Some(selected) = selected.as_ref() {
-                    let loaded = Arc::clone(&selected.loaded);
+                    let library = Arc::clone(&selected.library);
                     blocking(move || {
                         library
-                            .clear_local_access(&loaded)
+                            .clear_local_access()
                             .map(|_| ())
                             .map_err(string_error)
                     })
                     .await
                 } else {
+                    let libraries = self.shared.library.clone();
                     blocking(move || {
-                        library
+                        libraries
                             .discard_local_access(source_id.clone())
                             .map_err(string_error)
                     })
@@ -3278,13 +2699,24 @@ impl Actor {
             }
             return;
         }
-        self.fallback = None;
         self.remove_replaced_source_data(source_id.clone()).await;
         if let Some(reference) = removed.and_then(|source| source.credential_ref) {
             self.delete_staged_credential(Some(&reference)).await;
         }
         if let Some(replacement) = replacement {
-            self.pending.push_front(WorkRequest::Select(replacement));
+            let configured =
+                match configured_source(&self.shared.settings.load().sources, &replacement) {
+                    Ok(configured) => configured,
+                    Err(error) => {
+                        self.shared.warn_nonfatal(&error);
+                        return;
+                    }
+                };
+            let cancelled = Arc::new(AtomicBool::new(false));
+            let progress = self.progress(|_| None);
+            if let Err(error) = select_source(self, configured, progress, cancelled).await {
+                self.shared.warn_nonfatal(&error);
+            }
             return;
         }
         self.shared.publish_configured().await;
@@ -3293,30 +2725,23 @@ impl Actor {
             .await;
     }
 
-    async fn set_music_folder(&mut self, source_id: SourceId, folder_id: Option<MusicFolderId>) {
-        let Some(mut selected) = self
-            .shared
-            .selected()
-            .filter(|selected| selected.source_id() == &source_id)
-        else {
-            return;
-        };
-        let folder_id = match normalize_music_folder(&selected.loaded, folder_id) {
+    async fn set_music_folder(
+        &mut self,
+        selected: Arc<SelectedSourceState>,
+        folder_id: Option<MusicFolderId>,
+    ) {
+        let source_id = selected.source_id().clone();
+        let folder_id = match normalize_music_folder(&selected.library, folder_id) {
             Ok(folder) => folder,
             Err(error) => {
                 self.shared.warn_nonfatal(&error);
                 return;
             }
         };
-        let library = self.shared.library.clone();
-        let loaded = Arc::clone(&selected.loaded);
+        let library = Arc::clone(&selected.library);
         let home_folder = folder_id.clone();
-        selected.home = match blocking(move || {
-            library
-                .home(&loaded, home_folder.as_ref())
-                .map_err(string_error)
-        })
-        .await
+        let home = match blocking(move || library.home(home_folder.as_ref()).map_err(string_error))
+            .await
         {
             Ok(home) => home,
             Err(error) => {
@@ -3335,9 +2760,13 @@ impl Actor {
             self.shared.warn_nonfatal(&error);
             return;
         }
-        selected.music_folder_id = folder_id;
-        self.shared.publish_library_replacement(&selected).await;
-        self.reconcile_downloads(&selected).await;
+        let mut replacement = (*selected).clone();
+        replacement.home = home;
+        replacement.music_folder_id = folder_id;
+        self.shared.publish_library_replacement(replacement).await;
+        if let Some(selected) = self.shared.selected() {
+            self.reconcile_downloads(&selected).await;
+        }
     }
 
     async fn stage_credential(
@@ -3396,84 +2825,15 @@ impl Actor {
         blocking(move || replace_source_account(&settings, &previous, configured, true)).await
     }
 
-    async fn save_configuration(&self, configured: ConfiguredSource) -> Result<(), String> {
-        let settings = self.shared.settings.clone();
-        blocking(move || replace_saved_source(&settings, configured)).await
-    }
-
-    async fn save_inactive_connected(
-        &self,
-        configured: ConfiguredSource,
-        configuration: SourceConfiguration,
-        credential: Option<String>,
-    ) -> Result<(), String> {
-        let credential_ref = self.stage_credential(credential).await?;
-        let replacement = ConfiguredSource {
-            configuration,
-            credential_ref: credential_ref
-                .clone()
-                .or_else(|| configured.credential_ref.clone()),
-            music_folder_id: configured.music_folder_id,
-            local_access: configured.local_access,
-        };
-        if let Err(error) = self.save_configuration(replacement.clone()).await {
-            self.delete_staged_credential(credential_ref.as_ref()).await;
-            return Err(error);
-        }
-        if configured.credential_ref != replacement.credential_ref {
-            self.delete_staged_credential(configured.credential_ref.as_ref())
-                .await;
-        }
-        Ok(())
-    }
-
-    async fn replace_inactive_account(
-        &self,
-        configured: ConfiguredSource,
-        configuration: SourceConfiguration,
-        credential: Option<String>,
-    ) -> Result<(), String> {
-        let previous_source_id = configured.configuration.source_id.clone();
-        let credential_ref = self.stage_credential(credential).await?;
-        let replacement = ConfiguredSource {
-            configuration,
-            credential_ref: credential_ref.clone(),
-            music_folder_id: None,
-            local_access: configured.local_access,
-        };
-        let settings = self.shared.settings.clone();
-        let previous_for_settings = previous_source_id.clone();
-        let replacement_for_settings = replacement.clone();
-        if let Err(error) = blocking(move || {
-            replace_source_account(
-                &settings,
-                &previous_for_settings,
-                replacement_for_settings,
-                false,
-            )
-        })
-        .await
-        {
-            self.delete_staged_credential(credential_ref.as_ref()).await;
-            return Err(error);
-        }
-        self.remove_replaced_source_data(previous_source_id).await;
-        if configured.credential_ref != replacement.credential_ref {
-            self.delete_staged_credential(configured.credential_ref.as_ref())
-                .await;
-        }
-        Ok(())
-    }
-
     async fn remove_replaced_source_data(&self, source_id: SourceId) {
-        let loaded = self
+        let library = self
             .shared
             .selected()
             .filter(|selected| selected.source_id() == &source_id)
-            .map(|selected| selected.loaded);
+            .map(|selected| Arc::clone(&selected.library));
         self.shared
             .downloads
-            .clear(source_id.clone(), loaded, false);
+            .clear(source_id.clone(), library, false);
         let library = self.shared.library.clone();
         let source_for_store = source_id.clone();
         if let Err(error) = blocking(move || {
@@ -3494,76 +2854,98 @@ impl Actor {
         &self,
         configuration: SourceConfiguration,
         source: Option<Arc<Source>>,
-        loaded: Arc<LoadedLibrary>,
+        library: Arc<Library>,
         music_folder_id: Option<MusicFolderId>,
         local_access: Option<ConfiguredLocalAccess>,
-    ) -> Result<SelectedSourceRuntime, String> {
-        let music_folder_id = normalize_music_folder(&loaded, music_folder_id)?;
+    ) -> Result<
+        (
+            Arc<ActiveSource>,
+            Arc<SelectedSourceState>,
+            PreparedPlayback,
+        ),
+        String,
+    > {
+        let music_folder_id = normalize_music_folder(&library, music_folder_id)?;
         if let Some(access) = local_access {
-            let library = self.shared.library.clone();
-            let loaded_for_access = Arc::clone(&loaded);
+            let library_for_access = Arc::clone(&library);
             blocking(move || {
-                library
-                    .configure_local_access(
-                        &loaded_for_access,
-                        configured_local_access_mapping(&access),
-                    )
+                library_for_access
+                    .configure_local_access(configured_local_access_mapping(&access))
                     .map(|_| ())
                     .map_err(string_error)
             })
             .await?;
         }
-        let library = self.shared.library.clone();
-        let loaded_for_home = Arc::clone(&loaded);
+        let library_for_home = Arc::clone(&library);
         let folder_for_home = music_folder_id.clone();
         let home = blocking(move || {
-            library
-                .home(&loaded_for_home, folder_for_home.as_ref())
+            library_for_home
+                .home(folder_for_home.as_ref())
                 .map_err(string_error)
         })
         .await?;
-        Ok(SelectedSourceRuntime {
+        let selected = Arc::new(SelectedSourceState {
             configuration,
             source,
             source_session_epoch: SourceSessionEpoch::new(
                 self.shared.next_epoch.fetch_add(1, Ordering::AcqRel),
             ),
-            loaded,
+            library,
             home,
             music_folder_id,
-        })
+        });
+        let session = ActiveSource::new(&self.shared, &selected);
+        let playback = self.shared.playback()?;
+        let playback_session = Arc::clone(&session);
+        let playback_selected = Arc::clone(&selected);
+        let prepared =
+            blocking(move || playback.prepare_selected(playback_session, playback_selected))
+                .await?;
+        let directory = self
+            .shared
+            .settings
+            .load()
+            .ui
+            .download_directory(selected.source_id());
+        self.shared
+            .downloads
+            .attach(selected.source.clone(), &selected.library, directory)
+            .await?;
+        Ok((session, selected, prepared))
     }
 
     async fn install_runtime(
-        &self,
-        selected: SelectedSourceRuntime,
-    ) -> Result<(SelectedSourceSession, PlaybackProjection), String> {
-        let session = SelectedSourceSession::new(selected);
+        &mut self,
+        session: Arc<ActiveSource>,
+        selected: Arc<SelectedSourceState>,
+        prepared: PreparedPlayback,
+    ) -> Result<PlaybackProjection, String> {
+        self.cancel_album_release_lookup(true);
+        {
+            let mut state = self
+                .shared
+                .state
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            state.observer.take();
+            state.local_access.take();
+            state.activity_replay = None;
+        }
         let playback = self.shared.playback()?;
-        let session_for_playback = session.clone();
-        let projection = blocking(move || playback.install_selected(session_for_playback)).await?;
-        Ok((session, projection))
-    }
-}
-
-fn work_accepts_activity(purpose: &WorkPurpose, qualifier: &SourceQualifier) -> bool {
-    match purpose {
-        WorkPurpose::Refresh {
-            qualifier: target, ..
-        } => target == qualifier,
-        WorkPurpose::Selected {
-            qualifier: target, ..
-        } => target == qualifier,
-        WorkPurpose::Update { selected, .. } => *selected,
-        WorkPurpose::Add | WorkPurpose::Select { .. } => false,
+        let playback_for_stop = Arc::clone(&playback);
+        let cutover = blocking(move || playback_for_stop.stop_for_source_switch()).await?;
+        self.shared.release_selected().await;
+        self.shared
+            .install_selected_slot(Arc::clone(&session), Arc::clone(&selected));
+        Ok(playback.install_prepared(prepared, cutover))
     }
 }
 
 fn download_rule_tracks(
-    loaded: &Arc<LoadedLibrary>,
+    loaded: &Arc<Library>,
     music_folder_id: Option<&MusicFolderId>,
     rule: downloads::DownloadRule,
-) -> library::LoadedLibraryResult<Vec<Track>> {
+) -> library::LibraryQueryResult<Vec<Track>> {
     match rule {
         downloads::DownloadRule::EntireLibrary => loaded
             .track_list(music_folder_id, TrackSort::Title, false)?
@@ -3599,35 +2981,181 @@ fn should_reconcile_downloads(
 }
 
 impl Shared {
-    fn selected_session(&self) -> Option<SelectedSourceSession> {
-        self.selected
-            .read()
+    fn selected_session(&self) -> Option<Arc<ActiveSource>> {
+        self.state
+            .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .clone()
-    }
-
-    fn selected(&self) -> Option<SelectedSourceRuntime> {
-        self.selected_session().map(|session| session.snapshot())
-    }
-
-    fn replace_selected(&self, selected: SelectedSourceRuntime) -> bool {
-        let session = self
             .selected
-            .read()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
             .as_ref()
-            .filter(|session| session.snapshot().qualifier() == selected.qualifier())
-            .cloned();
-        let Some(session) = session else {
+            .map(|slot| Arc::clone(&slot.session))
+    }
+
+    fn selected(&self) -> Option<Arc<SelectedSourceState>> {
+        self.state
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .selected
+            .as_ref()
+            .map(|slot| Arc::clone(&slot.current))
+    }
+
+    fn resolve_selected(
+        &self,
+        source_id: &SourceId,
+        epoch: SourceSessionEpoch,
+    ) -> Option<Arc<SelectedSourceState>> {
+        self.state
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .selected
+            .as_ref()
+            .filter(|slot| {
+                slot.current.source_id() == source_id && slot.current.source_session_epoch == epoch
+            })
+            .map(|slot| Arc::clone(&slot.current))
+    }
+
+    fn replace_selected(&self, selected: SelectedSourceState) -> bool {
+        let qualifier = selected.qualifier();
+        let mut state = self
+            .state
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let Some(slot) = state
+            .selected
+            .as_mut()
+            .filter(|slot| slot.current.qualifier() == qualifier)
+        else {
             return false;
         };
-        session.replace(selected);
+        slot.current = Arc::new(selected);
         true
+    }
+
+    fn install_selected_slot(
+        &self,
+        session: Arc<ActiveSource>,
+        selected: Arc<SelectedSourceState>,
+    ) {
+        self.state
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .selected = Some(SelectedSlot {
+            session,
+            current: selected,
+        });
     }
 
     fn matches_selected(&self, qualifier: &SourceQualifier) -> bool {
         self.selected()
             .is_some_and(|selected| selected.qualifier() == *qualifier)
+    }
+
+    fn register_interruptible(&self, cancelled: &Arc<AtomicBool>) {
+        let mut active = self
+            .interruptible
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        active.retain(|cancelled| cancelled.strong_count() > 0);
+        active.push(Arc::downgrade(cancelled));
+    }
+
+    fn cancel_interruptible(&self) {
+        for cancelled in self
+            .interruptible
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .drain(..)
+            .filter_map(|cancelled| cancelled.upgrade())
+        {
+            cancelled.store(true, Ordering::Release);
+        }
+    }
+
+    fn cancel_refresh(&self) {
+        if let Some(refresh) = self
+            .state
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .refresh
+            .take()
+        {
+            refresh.cancelled.store(true, Ordering::Release);
+        }
+    }
+
+    fn finish_refresh(&self, request: &Arc<RefreshRequest>) {
+        let mut state = self
+            .state
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if state
+            .refresh
+            .as_ref()
+            .is_some_and(|active| Arc::ptr_eq(active, request))
+        {
+            state.refresh = None;
+        }
+    }
+
+    fn begin_activity_replay(&self, qualifier: SourceQualifier) -> u64 {
+        let token = self.next_token.fetch_add(1, Ordering::AcqRel);
+        self.state
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .activity_replay = Some(ActivityReplay {
+            token,
+            qualifier,
+            updates: Vec::new(),
+        });
+        token
+    }
+
+    fn record_replay_activity(&self, qualifier: &SourceQualifier, update: RecordedActivity) {
+        let mut state = self
+            .state
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if let Some(replay) = state
+            .activity_replay
+            .as_mut()
+            .filter(|replay| &replay.qualifier == qualifier)
+        {
+            replay.updates.push(update);
+        }
+    }
+
+    fn take_activity_replay(&self, token: u64) -> Vec<RecordedActivity> {
+        let mut state = self
+            .state
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if state
+            .activity_replay
+            .as_ref()
+            .is_some_and(|replay| replay.token == token)
+        {
+            return state
+                .activity_replay
+                .take()
+                .map(|replay| replay.updates)
+                .unwrap_or_default();
+        }
+        Vec::new()
+    }
+
+    fn clear_activity_replay(&self, token: u64) {
+        let mut state = self
+            .state
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if state
+            .activity_replay
+            .as_ref()
+            .is_some_and(|replay| replay.token == token)
+        {
+            state.activity_replay = None;
+        }
     }
 
     fn playback(&self) -> Result<Arc<PlaybackOwner>, String> {
@@ -3638,31 +3166,36 @@ impl Shared {
             .ok_or_else(|| "Playback is not attached to the selected source owner".to_string())
     }
 
-    async fn publish_selected(&self, session: SelectedSourceSession, playback: PlaybackProjection) {
-        let selected = session.snapshot();
-        *self
-            .selected
-            .write()
-            .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(session);
-        self.attach_selected_downloads(&selected).await;
+    async fn publish_selected(
+        &self,
+        session: Arc<ActiveSource>,
+        selected: Arc<SelectedSourceState>,
+        playback: PlaybackProjection,
+    ) {
         if let Ok(playback_owner) = self.playback() {
             playback_owner.publish_selected_products(&playback);
         }
         let stored = self.settings.load();
-        let selected = ui_selected(selected);
+        let selected = ui_selected(selected, session);
         self.send_event(SourceEvent::Selected {
             configured: configured_sources(&stored, Some(&selected)),
             selected,
-            playback,
+            playback: Box::new(playback),
         })
         .await;
     }
 
-    async fn publish_library_replacement(&self, selected: &SelectedSourceRuntime) {
+    async fn publish_library_replacement(&self, selected: SelectedSourceState) {
         if !self.replace_selected_runtime(selected).await {
             return;
         }
-        let selected = ui_selected(selected.clone());
+        let Some(session) = self.selected_session() else {
+            return;
+        };
+        let Some(selected) = session.resolve() else {
+            return;
+        };
+        let selected = ui_selected(selected, session);
         self.send_event(SourceEvent::LibraryReplaced {
             configured: configured_sources(&self.settings.load(), Some(&selected)),
             selected,
@@ -3670,27 +3203,32 @@ impl Shared {
         .await;
     }
 
-    async fn publish_home_replacement(&self, selected: SelectedSourceRuntime) {
-        if !self.replace_selected_runtime(&selected).await {
+    async fn publish_home_replacement(&self, selected: SelectedSourceState) {
+        let source_id = selected.source_id().clone();
+        let source_session_epoch = selected.source_session_epoch;
+        let home = Arc::clone(&selected.home);
+        if !self.replace_selected_runtime(selected).await {
             return;
         }
         self.send_event(SourceEvent::HomeReplaced {
-            source_id: selected.source_id().clone(),
-            source_session_epoch: selected.source_session_epoch,
-            home: selected.home,
+            source_id,
+            source_session_epoch,
+            home,
         })
         .await;
     }
 
-    async fn replace_selected_runtime(&self, selected: &SelectedSourceRuntime) -> bool {
-        if !self.replace_selected(selected.clone()) {
+    async fn replace_selected_runtime(&self, selected: SelectedSourceState) -> bool {
+        if !self.replace_selected(selected) {
             return false;
         }
-        self.attach_selected_downloads(selected).await;
+        if let Some(selected) = self.selected() {
+            self.attach_selected_downloads(&selected).await;
+        }
         true
     }
 
-    async fn attach_selected_downloads(&self, selected: &SelectedSourceRuntime) {
+    async fn attach_selected_downloads(&self, selected: &SelectedSourceState) {
         let directory = self
             .settings
             .load()
@@ -3698,31 +3236,18 @@ impl Shared {
             .download_directory(selected.source_id());
         if let Err(error) = self
             .downloads
-            .attach(selected.source.clone(), &selected.loaded, directory)
+            .attach(selected.source.clone(), &selected.library, directory)
             .await
         {
             self.warn_nonfatal(&error);
         }
     }
 
-    async fn publish_selected_playback(
-        &self,
-        selected: &SelectedSourceRuntime,
-        projection: PlaybackProjection,
-    ) {
-        if let Ok(playback_owner) = self.playback() {
-            playback_owner.publish_selected_products(&projection);
-        }
-        self.send_event(SourceEvent::Playback {
-            source_id: selected.source_id().clone(),
-            source_session_epoch: selected.source_session_epoch,
-            projection,
-        })
-        .await;
-    }
-
     async fn publish_configured(&self) {
-        let selected = self.selected().map(ui_selected);
+        let selected = self.selected_session().and_then(|session| {
+            let selected = session.resolve()?;
+            Some(ui_selected(selected, session))
+        });
         self.send_event(SourceEvent::Configured(configured_sources(
             &self.settings.load(),
             selected.as_ref(),
@@ -3753,10 +3278,14 @@ impl Shared {
         {
             let _ = acknowledgement.recv().await;
         }
-        self.selected
-            .write()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .take();
+        let mut state = self
+            .state
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        state.selected = None;
+        state.observer = None;
+        state.local_access = None;
+        state.activity_replay = None;
     }
 
     fn warn_nonfatal(&self, error: &str) {
@@ -3770,12 +3299,13 @@ impl Shared {
     }
 }
 
-async fn prepare_add(
-    shared: Arc<Shared>,
+async fn add_source(
+    owner: &mut SourceOwner,
     input: SourceSetup,
     progress: Arc<dyn Fn(SourceReadProgress) + Send + Sync>,
     cancelled: Arc<AtomicBool>,
-) -> Result<PreparedWork, String> {
+) -> Result<(), String> {
+    let shared = Arc::clone(&owner.shared);
     let setup = source_setup_input(input, &shared.settings.load().jellyfin_device_id);
     let connected = Source::connect(setup).await.map_err(string_error)?;
     if cancelled.load(Ordering::Acquire) {
@@ -3793,9 +3323,17 @@ async fn prepare_add(
         Arc::clone(&cancelled),
     )
     .await?;
-    let prepared =
-        prepare_candidate_artwork(&shared, Arc::clone(&source), prepared, progress, cancelled)
-            .await?;
+    let prepared = prepare_candidate_artwork(
+        &shared,
+        Arc::clone(&source),
+        prepared,
+        progress,
+        Arc::clone(&cancelled),
+    )
+    .await?;
+    if cancelled.load(Ordering::Acquire) {
+        return Err("source connection was cancelled".to_string());
+    }
     let previous = shared
         .settings
         .load()
@@ -3804,22 +3342,29 @@ async fn prepare_add(
         .iter()
         .find(|configured| configured.configuration.source_id == configuration.source_id)
         .cloned();
-    Ok(PreparedWork::Replacement(PreparedReplacement {
-        reason: ReplacementReason::Add,
-        previous,
-        configuration,
-        source: Some(source),
-        credential,
-        library: ReplacementLibrary::Candidate(Box::new(prepared)),
-    }))
+    let library = accept_candidate(prepared).await?;
+    if cancelled.load(Ordering::Acquire) {
+        return Err("source selection was cancelled".to_string());
+    }
+    owner
+        .activate_replacement(
+            ReplacementReason::Add,
+            previous,
+            configuration,
+            Some(source),
+            credential,
+            library,
+        )
+        .await
 }
 
-async fn prepare_select(
-    shared: Arc<Shared>,
+async fn select_source(
+    owner: &mut SourceOwner,
     configured: ConfiguredSource,
     progress: Arc<dyn Fn(SourceReadProgress) + Send + Sync>,
     cancelled: Arc<AtomicBool>,
-) -> Result<PreparedReplacement, String> {
+) -> Result<(), String> {
+    let shared = Arc::clone(&owner.shared);
     let configuration = configured.configuration.clone();
     let identity = configuration.input_identity().map_err(string_error)?;
     let library = shared.library.clone();
@@ -3863,11 +3408,7 @@ async fn prepare_select(
         Err(error) => return Err(error),
     };
     let (library, cached, refresh_after_select) = if let Some((loaded, cache_match)) = cached {
-        (
-            ReplacementLibrary::Cached(loaded),
-            true,
-            cache_match == SourceCacheMatch::ReaderUpgrade,
-        )
+        (loaded, true, cache_match == SourceCacheMatch::ReaderUpgrade)
     } else {
         let source = source.as_ref().ok_or_else(source_access_unavailable)?;
         let prepared = acquisition::read_source(
@@ -3879,48 +3420,50 @@ async fn prepare_select(
             Arc::clone(&cancelled),
         )
         .await?;
-        (
-            ReplacementLibrary::Candidate(Box::new(
-                prepare_candidate_artwork(
-                    &shared,
-                    Arc::clone(source),
-                    prepared,
-                    progress,
-                    cancelled,
-                )
-                .await?,
-            )),
-            false,
-            false,
+        let candidate = prepare_candidate_artwork(
+            &shared,
+            Arc::clone(source),
+            prepared,
+            progress,
+            Arc::clone(&cancelled),
         )
+        .await?;
+        if cancelled.load(Ordering::Acquire) {
+            return Err("source selection was cancelled".to_string());
+        }
+        (accept_candidate(candidate).await?, false, false)
     };
-    Ok(PreparedReplacement {
-        reason: ReplacementReason::Select {
-            cached,
-            refresh_after_select,
-        },
-        previous: Some(configured),
-        configuration,
-        source,
-        credential: None,
-        library,
-    })
+    if cancelled.load(Ordering::Acquire) {
+        return Err("source selection was cancelled".to_string());
+    }
+    owner
+        .activate_replacement(
+            ReplacementReason::Select {
+                cached,
+                refresh_after_select,
+            },
+            Some(configured),
+            configuration,
+            source,
+            None,
+            library,
+        )
+        .await
 }
 
-async fn prepare_refresh(
-    shared: Arc<Shared>,
-    selected: SelectedSourceRuntime,
-    progress: Arc<dyn Fn(SourceReadProgress) + Send + Sync>,
-    cancelled: Arc<AtomicBool>,
-) -> Result<PreparedWork, String> {
-    prepare_refresh_candidate(shared, selected, progress, cancelled)
-        .await
-        .map(PreparedWork::Refresh)
+async fn accept_candidate(candidate: PreparedSourceCandidate) -> Result<Arc<Library>, String> {
+    blocking(move || {
+        candidate
+            .accept()
+            .map(|commit| commit.library)
+            .map_err(string_error)
+    })
+    .await
 }
 
 async fn prepare_refresh_candidate(
     shared: Arc<Shared>,
-    selected: SelectedSourceRuntime,
+    selected: SelectedSourceState,
     progress: Arc<dyn Fn(SourceReadProgress) + Send + Sync>,
     cancelled: Arc<AtomicBool>,
 ) -> Result<PreparedSourceCandidate, String> {
@@ -3937,7 +3480,7 @@ async fn prepare_refresh_candidate(
         shared.library.clone(),
         identity,
         Arc::clone(&source),
-        Some(Arc::clone(&selected.loaded)),
+        Some(Arc::clone(&selected.library)),
         Arc::clone(&progress),
         Arc::clone(&cancelled),
     )
@@ -3945,135 +3488,6 @@ async fn prepare_refresh_candidate(
     let prepared =
         prepare_candidate_artwork(&shared, source, prepared, progress, cancelled).await?;
     Ok(prepared)
-}
-
-async fn prepare_update(
-    shared: Arc<Shared>,
-    configured: ConfiguredSource,
-    input: SourceSettingsInput,
-    selected: bool,
-    progress: Arc<dyn Fn(SourceReadProgress) + Send + Sync>,
-    cancelled: Arc<AtomicBool>,
-) -> Result<PreparedWork, String> {
-    let credential = load_credential(&shared, &configured).await?;
-    let result = Source::edit(
-        configured.configuration.clone(),
-        credential,
-        input,
-        Some(shared.settings.load().jellyfin_device_id),
-    )
-    .await
-    .map_err(string_error)?;
-    match result {
-        SourceEditResult::Unchanged => Ok(PreparedWork::Configuration {
-            configured,
-            configuration: None,
-        }),
-        SourceEditResult::ConfigurationOnly(configuration) => Ok(PreparedWork::Configuration {
-            configured,
-            configuration: Some(configuration),
-        }),
-        SourceEditResult::SameAccount(connected) => {
-            let (configuration, source, credential) = connected.into_parts();
-            if !selected {
-                return Ok(PreparedWork::InactiveConnection {
-                    configured,
-                    configuration,
-                    credential,
-                    replaces_account: false,
-                });
-            }
-            let identity = configuration.input_identity().map_err(string_error)?;
-            let source = Arc::new(source);
-            let candidate = {
-                let current = shared
-                    .selected()
-                    .filter(|current| current.source_id() == source.source_id())
-                    .ok_or_else(|| "the selected source is no longer active".to_string())?;
-                if cache_input_matches(&identity, &current.loaded) {
-                    None
-                } else {
-                    let prepared = acquisition::read_source(
-                        shared.library.clone(),
-                        identity,
-                        Arc::clone(&source),
-                        Some(current.loaded),
-                        Arc::clone(&progress),
-                        Arc::clone(&cancelled),
-                    )
-                    .await?;
-                    Some(Box::new(
-                        prepare_candidate_artwork(
-                            &shared,
-                            Arc::clone(&source),
-                            prepared,
-                            progress,
-                            cancelled,
-                        )
-                        .await?,
-                    ))
-                }
-            };
-            Ok(PreparedWork::SelectedUpdate(PreparedSelectedUpdate {
-                configured,
-                configuration,
-                source,
-                credential,
-                candidate,
-            }))
-        }
-        SourceEditResult::DifferentAccount(connected) => {
-            let (configuration, source, credential) = connected.into_parts();
-            if shared
-                .settings
-                .load()
-                .sources
-                .configured
-                .iter()
-                .any(|saved| {
-                    saved.configuration.source_id == configuration.source_id
-                        && saved.configuration.source_id != configured.configuration.source_id
-                })
-            {
-                return Err("this source account is already configured".to_string());
-            }
-            if !selected {
-                return Ok(PreparedWork::InactiveConnection {
-                    configured,
-                    configuration,
-                    credential,
-                    replaces_account: true,
-                });
-            }
-            let identity = configuration.input_identity().map_err(string_error)?;
-            let source = Arc::new(source);
-            let prepared = acquisition::read_source(
-                shared.library.clone(),
-                identity,
-                Arc::clone(&source),
-                None,
-                Arc::clone(&progress),
-                Arc::clone(&cancelled),
-            )
-            .await?;
-            let prepared = prepare_candidate_artwork(
-                &shared,
-                Arc::clone(&source),
-                prepared,
-                progress,
-                cancelled,
-            )
-            .await?;
-            Ok(PreparedWork::Replacement(PreparedReplacement {
-                reason: ReplacementReason::DifferentAccount,
-                previous: Some(configured),
-                configuration,
-                source: Some(source),
-                credential,
-                library: ReplacementLibrary::Candidate(Box::new(prepared)),
-            }))
-        }
-    }
 }
 
 async fn prepare_candidate_artwork(
@@ -4091,7 +3505,7 @@ async fn prepare_candidate_artwork(
         if cancelled.load(Ordering::Acquire) {
             return Err("source artwork preparation was cancelled".to_string());
         }
-        let source_artwork = prepared.loaded().source_artwork().map_err(string_error)?;
+        let source_artwork = prepared.library().source_artwork().map_err(string_error)?;
         let total = source_artwork.len();
         progress(SourceReadProgress {
             stage: SourceReadStage::Artwork,
@@ -4127,117 +3541,9 @@ async fn prepare_candidate_artwork(
     .await
 }
 
-async fn run_point(
-    shared: Arc<Shared>,
-    selected: SelectedSourceRuntime,
-    operation: PointOperation,
-    progress: Arc<dyn Fn(SourceReadProgress) + Send + Sync>,
-    cancelled: Arc<AtomicBool>,
-) -> Result<PointPrepared, String> {
-    match operation {
-        PointOperation::RefreshHome(kind) => {
-            let source_section = match selected.source.as_ref() {
-                Some(source) => match source.home_section(kind).await.map_err(string_error)? {
-                    NativeSourceResult::Available(section) => Some(section),
-                    NativeSourceResult::Unavailable => None,
-                },
-                None => None,
-            };
-            Ok(PointPrepared::RefreshHome {
-                kind,
-                source_section,
-            })
-        }
-        PointOperation::Favorite {
-            item,
-            favorite,
-            previous,
-        } => match selected.source.as_ref() {
-            Some(source) => match source.set_favorite(item.clone(), favorite).await {
-                Ok(acceptance) => Ok(PointPrepared::Favorite {
-                    acceptance,
-                    item,
-                    previous,
-                }),
-                Err(error) => Ok(PointPrepared::FavoriteFailed {
-                    item,
-                    previous,
-                    message: error.to_string(),
-                }),
-            },
-            None => Ok(PointPrepared::FavoriteFailed {
-                item,
-                previous,
-                message: source_access_unavailable(),
-            }),
-        },
-        PointOperation::Playlist(edit) => selected
-            .source
-            .as_ref()
-            .ok_or_else(source_access_unavailable)?
-            .edit_playlist(edit)
-            .await
-            .map(PointPrepared::Playlist)
-            .map_err(string_error),
-        PointOperation::SmartPlaylist(operation) => Ok(PointPrepared::SmartPlaylist(operation)),
-        PointOperation::ObservedItems(change) => {
-            let source = selected
-                .source
-                .as_ref()
-                .ok_or_else(source_access_unavailable)?;
-            match prepare_source_change(source, &selected.loaded, change).await? {
-                SourceLibraryChangeRead::Exact(update) => Ok(PointPrepared::LibraryUpdate(
-                    PreparedLibraryUpdate::Source(update),
-                )),
-                SourceLibraryChangeRead::Full => Ok(PointPrepared::RefreshRequired),
-                SourceLibraryChangeRead::Ignored => Ok(PointPrepared::Unchanged),
-            }
-        }
-        PointOperation::LocalFiles(change) => {
-            let source = selected
-                .source
-                .as_ref()
-                .cloned()
-                .ok_or_else(source_access_unavailable)?;
-            let loaded = Arc::clone(&selected.loaded);
-            prepare_local_change(source, loaded, change, cancelled)
-                .await
-                .map(|replacement| {
-                    replacement.map_or(PointPrepared::Unchanged, |replacement| {
-                        PointPrepared::LibraryUpdate(PreparedLibraryUpdate::Local(replacement))
-                    })
-                })
-        }
-        PointOperation::EditMetadata { edit, mut reply } => {
-            let acceptance = prepare_metadata_acceptance(
-                shared, selected, edit, progress, cancelled, &mut reply,
-            )
-            .await;
-            Ok(PointPrepared::Metadata { reply, acceptance })
-        }
-        PointOperation::CheckFreshness => {
-            let source = selected
-                .source
-                .as_ref()
-                .ok_or_else(source_access_unavailable)?;
-            let freshness = selected.loaded.provider_freshness().map_err(string_error)?;
-            match source
-                .check_freshness(freshness.as_ref())
-                .await
-                .map_err(string_error)?
-            {
-                SourceFreshness::Changed(_) => Ok(PointPrepared::RefreshRequired),
-                SourceFreshness::Unavailable
-                | SourceFreshness::Unchanged
-                | SourceFreshness::Busy => Ok(PointPrepared::Unchanged),
-            }
-        }
-    }
-}
-
 async fn prepare_source_change(
     source: &Source,
-    loaded: &LoadedLibrary,
+    loaded: &Library,
     change: SourceLibraryChange,
 ) -> Result<SourceLibraryChangeRead, String> {
     let contains = |item: &SourceLibraryItemId| selected_contains(loaded, item);
@@ -4249,7 +3555,7 @@ async fn prepare_source_change(
 
 async fn prepare_local_change(
     source: Arc<Source>,
-    loaded: Arc<LoadedLibrary>,
+    loaded: Arc<Library>,
     change: LocalFilesystemChange,
     cancelled: Arc<AtomicBool>,
 ) -> Result<Option<library::LocalComponentReplacement>, String> {
@@ -4281,12 +3587,12 @@ async fn prepare_local_change(
 
 async fn prepare_metadata_acceptance(
     shared: Arc<Shared>,
-    selected: SelectedSourceRuntime,
+    selected: SelectedSourceState,
     edit: MetadataEdit,
     progress: Arc<dyn Fn(SourceReadProgress) + Send + Sync>,
     cancelled: Arc<AtomicBool>,
     reply: &mut MetadataReply,
-) -> Result<PreparedLibraryUpdate, MetadataError> {
+) -> Result<SelectedLibraryAcceptance, MetadataError> {
     let context = selected.metadata_access_context(&edit.item_id)?;
     let Some(context) = context else {
         return Err(MetadataError::Unavailable);
@@ -4299,9 +3605,9 @@ async fn prepare_metadata_acceptance(
     reply.mark_write_started();
     match source.write_metadata(subject, edit, local_access).await? {
         MetadataRefresh::Source(change) => {
-            match prepare_source_change(&source, &selected.loaded, change).await {
+            match prepare_source_change(&source, &selected.library, change).await {
                 Ok(SourceLibraryChangeRead::Exact(update)) => {
-                    Ok(PreparedLibraryUpdate::Source(update))
+                    Ok(SelectedLibraryAcceptance::Source(update))
                 }
                 Ok(SourceLibraryChangeRead::Ignored) => Err(MetadataError::SavedRefreshFailed(
                     "the source did not return the written item".to_string(),
@@ -4309,29 +3615,29 @@ async fn prepare_metadata_acceptance(
                 Ok(SourceLibraryChangeRead::Full) => {
                     prepare_refresh_candidate(shared, selected, progress, cancelled)
                         .await
-                        .map(PreparedLibraryUpdate::Full)
+                        .map(SelectedLibraryAcceptance::Full)
                         .map_err(MetadataError::SavedRefreshFailed)
                 }
                 Err(error) => Err(MetadataError::SavedRefreshFailed(error.to_string())),
             }
         }
         MetadataRefresh::Local(change) => {
-            let loaded = Arc::clone(&selected.loaded);
+            let library = Arc::clone(&selected.library);
             let source = Arc::clone(&source);
-            prepare_local_change(source, loaded, change, cancelled)
+            prepare_local_change(source, library, change, cancelled)
                 .await
                 .and_then(|replacement| {
                     replacement.ok_or_else(|| {
                         "the written files were not accepted by the Local source".to_string()
                     })
                 })
-                .map(PreparedLibraryUpdate::Local)
+                .map(SelectedLibraryAcceptance::Local)
                 .map_err(MetadataError::SavedRefreshFailed)
         }
     }
 }
 
-fn selected_contains(loaded: &LoadedLibrary, item: &SourceLibraryItemId) -> bool {
+fn selected_contains(loaded: &Library, item: &SourceLibraryItemId) -> bool {
     match item {
         SourceLibraryItemId::Album(id) => loaded.album(id).ok().flatten().is_some(),
         SourceLibraryItemId::Track(id) => loaded.track(id).ok().flatten().is_some(),
@@ -4339,30 +3645,6 @@ fn selected_contains(loaded: &LoadedLibrary, item: &SourceLibraryItemId) -> bool
         SourceLibraryItemId::Genre(id) => loaded.genre(id).ok().flatten().is_some(),
         SourceLibraryItemId::Playlist(id) => loaded.contains_playlist(id).unwrap_or(false),
         SourceLibraryItemId::MusicFolder(id) => loaded.contains_music_folder(id).unwrap_or(false),
-    }
-}
-
-fn automatic_point(operation: &PointOperation) -> bool {
-    matches!(
-        operation,
-        PointOperation::ObservedItems(_)
-            | PointOperation::LocalFiles(_)
-            | PointOperation::CheckFreshness
-    )
-}
-
-fn merge_automatic_point(current: &mut PointOperation, incoming: &PointOperation) -> bool {
-    match (current, incoming) {
-        (PointOperation::ObservedItems(current), PointOperation::ObservedItems(incoming)) => {
-            current.merge(incoming.clone());
-            true
-        }
-        (PointOperation::LocalFiles(current), PointOperation::LocalFiles(incoming)) => {
-            current.merge(incoming.clone());
-            true
-        }
-        (PointOperation::CheckFreshness, PointOperation::CheckFreshness) => true,
-        _ => false,
     }
 }
 
@@ -4386,8 +3668,7 @@ async fn blocking<T: Send + 'static>(
 }
 
 async fn replay_activity_updates(
-    library: Library,
-    loaded: Arc<LoadedLibrary>,
+    library: Arc<Library>,
     updates: Vec<RecordedActivity>,
 ) -> Result<(), String> {
     if updates.is_empty() {
@@ -4396,7 +3677,7 @@ async fn replay_activity_updates(
     blocking(move || {
         for update in updates {
             library
-                .apply_recorded_activity(&loaded, &update)
+                .apply_recorded_activity(&update)
                 .map_err(string_error)?;
         }
         Ok(())
@@ -4453,118 +3734,258 @@ impl SourcePort for SourceOwner {
     }
 
     fn configure_source(&self, input: SourceSetup) {
-        self.send(Message::Request(WorkRequest::Configure(input)));
+        self.spawn_transition(
+            SourceOperation::Adding {
+                progress: initial_progress(),
+            },
+            None,
+            true,
+            move |mut operations, cancelled| async move {
+                let progress =
+                    operations.progress(|progress| Some(SourceOperation::Adding { progress }));
+                add_source(&mut operations, input, progress, cancelled).await
+            },
+        );
     }
 
     fn update_source(&self, input: SourceSettingsChange) {
-        self.send(Message::Request(WorkRequest::Update(input)));
+        let source_id = source_settings_id(&input).clone();
+        let input = source_settings_input(input);
+        self.spawn_serialized(true, move |mut operations, cancelled| async move {
+            operations
+                .apply_source_update(source_id, input, false, cancelled)
+                .await;
+        });
     }
 
     fn select_source(&self, source_id: SourceId) {
-        self.send(Message::Request(WorkRequest::Select(source_id)));
+        if self
+            .shared
+            .selected()
+            .is_some_and(|selected| selected.source_id() == &source_id)
+        {
+            let _ = self
+                .shared
+                .outputs
+                .events
+                .try_send(SourceEvent::Operation(SourceOperation::Idle));
+            return;
+        }
+        let target = source_id.clone();
+        self.spawn_transition(
+            SourceOperation::Switching {
+                target: source_id.clone(),
+                progress: initial_progress(),
+            },
+            Some(source_id.clone()),
+            false,
+            move |mut operations, cancelled| async move {
+                let configured =
+                    configured_source(&operations.shared.settings.load().sources, &source_id)?;
+                let progress_target = target.clone();
+                let progress = operations.progress(move |progress| {
+                    Some(SourceOperation::Switching {
+                        target: progress_target.clone(),
+                        progress,
+                    })
+                });
+                select_source(&mut operations, configured, progress, cancelled).await
+            },
+        );
     }
 
     fn change_secret_storage(&self, mode: SecretStorageMode) -> Receiver<Result<(), String>> {
         let (result, receiver) = async_channel::bounded(1);
-        if self
-            .messages
-            .try_send(Message::Request(WorkRequest::ChangeSecretStorage {
-                mode,
-                result: result.clone(),
-            }))
-            .is_err()
-        {
-            let _ = result.try_send(Err("source operation lane is unavailable".to_string()));
-        }
+        self.shared.cancel_interruptible();
+        self.spawn_serialized(false, move |mut operations, _| async move {
+            let changed = operations.apply_secret_storage_change(mode).await;
+            let _ = result.send(changed).await;
+        });
         receiver
     }
 
     fn add_local_folder(&self, path: PathBuf) {
-        self.send(Message::Request(WorkRequest::AddLocalFolder(path)));
+        let local = self
+            .shared
+            .settings
+            .load()
+            .sources
+            .configured
+            .iter()
+            .find(|source| {
+                matches!(
+                    source.configuration.editable(),
+                    Ok(sources::EditableSource::Local { .. })
+                )
+            })
+            .cloned();
+        let Some(local) = local else {
+            self.configure_source(SourceSetup::Local { roots: vec![path] });
+            return;
+        };
+        let mut roots = match local_roots(&local.configuration) {
+            Ok(roots) => roots,
+            Err(error) => {
+                self.shared.warn_nonfatal(&error);
+                return;
+            }
+        };
+        if roots.contains(&path) {
+            return;
+        }
+        roots.push(path);
+        let source_id = local.configuration.source_id;
+        self.spawn_serialized(true, move |mut operations, cancelled| async move {
+            operations
+                .apply_source_update(
+                    source_id,
+                    SourceSettingsInput::Local { roots },
+                    true,
+                    cancelled,
+                )
+                .await;
+        });
     }
 
     fn remove_local_folder(&self, path: String) {
-        self.send(Message::Request(WorkRequest::RemoveLocalFolder(path)));
+        let local = self
+            .shared
+            .settings
+            .load()
+            .sources
+            .configured
+            .iter()
+            .find(|source| {
+                matches!(
+                    source.configuration.editable(),
+                    Ok(sources::EditableSource::Local { .. })
+                )
+            })
+            .cloned();
+        let Some(local) = local else {
+            self.shared.warn_nonfatal("Local is not configured");
+            return;
+        };
+        let mut roots = match local_roots(&local.configuration) {
+            Ok(roots) => roots,
+            Err(error) => {
+                self.shared.warn_nonfatal(&error);
+                return;
+            }
+        };
+        roots.retain(|root| root.to_string_lossy() != path);
+        let source_id = local.configuration.source_id;
+        if roots.is_empty() {
+            self.forget_source(source_id);
+            return;
+        }
+        self.spawn_serialized(true, move |mut operations, cancelled| async move {
+            operations
+                .apply_source_update(
+                    source_id,
+                    SourceSettingsInput::Local { roots },
+                    true,
+                    cancelled,
+                )
+                .await;
+        });
     }
 
     fn refresh_source(&self, source_id: SourceId) {
-        let Some(qualifier) = self
-            .selected()
-            .filter(|selected| selected.source_id() == &source_id)
-            .map(|selected| selected.qualifier())
-        else {
-            return;
-        };
-        self.send(Message::Request(WorkRequest::Refresh {
-            qualifier,
-            visible: true,
-        }));
+        self.request_refresh(source_id, true);
     }
 
     fn check_for_source_changes(&self) {
-        self.send(Message::Request(WorkRequest::CheckSelectedSource));
+        self.request_freshness_check();
     }
 
-    fn selected_library_revealed(&self) {
-        self.send(Message::SelectedLibraryRevealed);
-    }
-
-    fn refresh_home(&self, kind: HomeSectionKind) {
-        self.send_selected(|_| PointOperation::RefreshHome(kind));
-    }
-
-    fn save_local_access(
-        &self,
-        input: SourceLocalAccess,
-        metadata: Option<MetadataRequest>,
-    ) -> Receiver<Result<(), String>> {
+    fn save_local_access(&self, input: SourceLocalAccess) -> Receiver<Result<(), String>> {
         let (result, receiver) = async_channel::bounded(1);
-        if self
-            .messages
-            .try_send(Message::Request(WorkRequest::SaveLocalAccess {
-                input,
-                metadata,
-                result: result.clone(),
-            }))
-            .is_err()
-        {
-            let _ = result.try_send(Err("source operation lane is unavailable".to_string()));
-        }
+        self.spawn_serialized(false, move |mut operations, _| async move {
+            operations.apply_local_access(input, result).await;
+        });
         receiver
     }
 
     fn clear_local_access(&self, source_id: SourceId) {
-        self.send(Message::Request(WorkRequest::ClearLocalAccess(source_id)));
+        self.spawn_serialized(false, move |mut operations, _| async move {
+            operations.remove_local_access(source_id).await;
+        });
     }
 
     fn forget_source(&self, source_id: SourceId) {
-        self.send(Message::Request(WorkRequest::Forget(source_id)));
+        self.shared.cancel_interruptible();
+        self.spawn_serialized(false, move |mut operations, _| async move {
+            operations.forget_now(source_id).await;
+        });
+    }
+}
+
+impl ActiveSource {
+    fn owner(&self) -> Option<SourceOwner> {
+        Some(SourceOwner {
+            shared: self.shared.upgrade()?,
+        })
     }
 
-    fn set_music_folder(&self, source_id: SourceId, folder_id: Option<MusicFolderId>) {
-        self.send(Message::Request(WorkRequest::SetMusicFolder {
-            source_id,
-            folder_id,
-        }));
+    fn spawn_selected<F, Work>(&self, interruptible: bool, work: F)
+    where
+        F: FnOnce(SourceOwner, Arc<SelectedSourceState>, Arc<AtomicBool>) -> Work + Send + 'static,
+        Work: Future<Output = ()> + Send + 'static,
+    {
+        let Some(owner) = self.owner() else {
+            return;
+        };
+        let source_id = self.source_id.clone();
+        let epoch = self.source_session_epoch;
+        owner.spawn_serialized(interruptible, move |operations, cancelled| async move {
+            let Some(selected) = operations.shared.resolve_selected(&source_id, epoch) else {
+                return;
+            };
+            work(operations, selected, cancelled).await;
+        });
+    }
+}
+
+impl SelectedSourcePort for ActiveSource {
+    fn selected_library_revealed(&self) {
+        self.spawn_selected(false, |mut operations, _, _| async move {
+            operations
+                .shared
+                .state
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .selected_revealed = true;
+            operations.start_album_release_lookup();
+        });
+    }
+
+    fn refresh_home(&self, kind: HomeSectionKind) {
+        self.spawn_selected(false, move |mut operations, selected, _| async move {
+            operations.refresh_home(selected, kind).await;
+        });
+    }
+
+    fn set_music_folder(&self, folder_id: Option<MusicFolderId>) {
+        self.spawn_selected(false, move |mut operations, selected, _| async move {
+            operations.set_music_folder(selected, folder_id).await;
+        });
     }
 
     fn set_favorite(&self, item: FavoriteItemId, favorite: bool) {
-        self.send_selected(|selected| PointOperation::Favorite {
-            previous: favorite_value(&selected.loaded, &item).unwrap_or(!favorite),
-            item,
-            favorite,
+        self.spawn_selected(false, move |mut operations, selected, _| async move {
+            let previous = favorite_value(&selected.library, &item).unwrap_or(!favorite);
+            operations
+                .set_favorite(selected, item, favorite, previous)
+                .await;
         });
     }
 
     fn add_playlist_tracks(&self, request: PlaylistTrackAdd) -> usize {
-        let Some(selected) = self.selected() else {
+        let Some(selected) = self.resolve() else {
             return 0;
         };
-        let edit = match self
-            .shared
-            .library
-            .prepare_playlist_add(&selected.loaded, request)
-        {
+        let edit = match selected.library.prepare_playlist_add(request) {
             Ok(Some(edit)) => edit,
             Ok(None) => return 0,
             Err(error) => {
@@ -4576,240 +3997,290 @@ impl SourcePort for SourceOwner {
             PlaylistEdit::AddTracks { track_ids, .. } => track_ids.len(),
             _ => 0,
         };
-        self.send(Message::Request(WorkRequest::Selected {
-            qualifier: selected.qualifier(),
-            operation: PointOperation::Playlist(edit),
-        }));
+        self.edit_playlist(edit);
         count
     }
 
     fn edit_playlist(&self, edit: PlaylistEdit) {
-        self.send_selected(|_| PointOperation::Playlist(edit));
+        self.spawn_selected(false, move |mut operations, selected, _| async move {
+            operations.edit_playlist(selected, edit).await;
+        });
     }
 
-    fn download(&self, request: DownloadRequest) {
-        self.send(Message::Download(request));
+    fn download(&self, subject: DownloadSubject, tracks: library::TrackSelection) {
+        self.spawn_selected(false, move |operations, selected, _| async move {
+            operations.download(selected, subject, tracks).await;
+        });
     }
 
-    fn remove_download(&self, request: RemoveDownloadRequest) {
-        self.send(Message::RemoveDownload(request));
+    fn remove_download(&self, tracks: library::TrackSelection) {
+        self.spawn_selected(false, move |operations, selected, _| async move {
+            operations.remove_download(selected, tracks).await;
+        });
     }
 
-    fn remove_download_rule(
+    fn folder(
         &self,
-        source_id: SourceId,
-        rule: downloads::DownloadRule,
-        delete_downloads: bool,
-    ) {
-        self.send(Message::RemoveDownloadRule {
-            source_id,
-            rule,
-            delete_downloads,
-        });
+        folder_id: Option<library::FolderId>,
+        music_folder_id: Option<MusicFolderId>,
+    ) -> Receiver<Result<FolderContents, String>> {
+        let (result, receiver) = async_channel::bounded(1);
+        let selected = self.resolve();
+        let runtime = self.shared.upgrade().map(|shared| shared.runtime.clone());
+        if let (Some(selected), Some(runtime)) = (selected, runtime) {
+            runtime.spawn(async move {
+                let provider = match selected.source.as_ref() {
+                    Some(source) => Some(
+                        source
+                            .folder(folder_id.as_ref(), music_folder_id.as_ref())
+                            .await,
+                    ),
+                    None => None,
+                };
+                let value = route_folder_result(
+                    Arc::clone(&selected.library),
+                    folder_id.as_ref(),
+                    music_folder_id.as_ref(),
+                    provider,
+                );
+                let _ = result.send(value).await;
+            });
+        }
+        receiver
     }
 
-    fn cancel_download(&self, source_id: SourceId, job_id: String) {
-        self.send(Message::CancelDownload { source_id, job_id });
-    }
-
-    fn clear_download_job(&self, source_id: SourceId, job_id: String) {
-        self.send(Message::ClearDownloadJob { source_id, job_id });
-    }
-
-    fn set_downloads_paused(&self, paused: bool) {
-        self.send(Message::SetDownloadsPaused(paused));
-    }
-
-    fn move_download(
+    fn search(
         &self,
-        source_id: SourceId,
-        job_id: String,
-        target_job_id: String,
-        after: bool,
-    ) {
-        self.send(Message::MoveDownload {
-            source_id,
-            job_id,
-            target_job_id,
-            after,
-        });
-    }
-
-    fn clear_downloads(&self, source_id: SourceId) {
-        self.send(Message::ClearDownloads(source_id));
-    }
-
-    fn folder(&self, request: FolderRequest) -> Receiver<Result<FolderContents, String>> {
+        request: library::SearchRequest,
+    ) -> Receiver<Result<library::SearchResults, String>> {
         let (result, receiver) = async_channel::bounded(1);
-        let selected = self.selected().filter(|selected| {
-            selected.source_id() == &request.source_id
-                && selected.source_session_epoch == request.source_session_epoch
-        });
-        let selected = selected.map(|selected| (selected.source, Arc::clone(&selected.loaded)));
-        self.shared.runtime.spawn(async move {
-            let value = match selected {
-                Some((Some(source), loaded)) => {
-                    match source
-                        .folder(request.folder_id.as_ref(), request.music_folder_id.as_ref())
-                        .await
-                    {
-                        Ok(NativeSourceResult::Available(contents)) => {
-                            reconcile_folder_contents(&loaded, contents)
+        let selected = self.resolve();
+        let runtime = self.shared.upgrade().map(|shared| shared.runtime.clone());
+        if let (Some(selected), Some(runtime)) = (selected, runtime) {
+            runtime.spawn(async move {
+                let provider = match selected.source.as_ref() {
+                    Some(source) => Some(source.search(&request).await),
+                    None => None,
+                };
+                let value =
+                    route_search_result(Arc::clone(&selected.library), request, provider).await;
+                let _ = result.send(value).await;
+            });
+        }
+        receiver
+    }
+
+    fn metadata_editing_available(&self, item_id: &MetadataItemId) -> bool {
+        self.resolve()
+            .is_some_and(|selected| selected.metadata_editing_available(item_id))
+    }
+
+    fn metadata(&self, item_id: MetadataItemId) -> Receiver<Result<MetadataDraft, MetadataError>> {
+        let (result, receiver) = async_channel::bounded(1);
+        let selected = self.resolve();
+        let shared = self.shared.upgrade();
+        if let (Some(selected), Some(shared)) = (selected, shared) {
+            let runtime = shared.runtime.clone();
+            runtime.spawn(async move {
+                let qualifier = selected.qualifier();
+                let value = fence_selected_completion(
+                    &shared,
+                    &qualifier,
+                    async {
+                        match selected.metadata_access_context(&item_id) {
+                            Ok(Some(context)) => {
+                                context
+                                    .source
+                                    .read_metadata(context.subject, context.local_access)
+                                    .await
+                            }
+                            Ok(None) => Err(MetadataError::Unavailable),
+                            Err(error) => Err(error),
                         }
-                        Ok(NativeSourceResult::Unavailable) => {
-                            cached_folder_contents(loaded, request.folder_id.as_ref())
-                        }
-                        Err(error) => Err(error.to_string()),
-                    }
-                }
-                Some((None, loaded)) => cached_folder_contents(loaded, request.folder_id.as_ref()),
-                None => Err("the folder belongs to an inactive source session".to_string()),
-            };
-            let _ = result.send(value).await;
-        });
+                    },
+                    Err(MetadataError::Unavailable),
+                )
+                .await;
+                let _ = result.send(value).await;
+            });
+        }
         receiver
     }
 
-    fn search(&self, request: SearchRequest) -> Receiver<Result<library::SearchResults, String>> {
-        let (result, receiver) = async_channel::bounded(1);
-        let selected = self.selected().filter(|selected| {
-            selected.source_id() == &request.source_id
-                && selected.source_session_epoch == request.source_session_epoch
-        });
-        let selected = selected.map(|selected| (selected.source, Arc::clone(&selected.loaded)));
-        self.shared.runtime.spawn(async move {
-            let search = request.search;
-            let value = match selected {
-                Some((Some(source), loaded)) => match source.search(&search).await {
-                    Ok(NativeSourceResult::Available(results)) => {
-                        reconcile_search_results(&loaded, results)
-                    }
-                    Ok(NativeSourceResult::Unavailable) => cached_search(loaded, search).await,
-                    Err(error) => Err(error.to_string()),
-                },
-                Some((None, loaded)) => cached_search(loaded, search).await,
-                None => Err("the search belongs to an inactive source session".to_string()),
-            };
-            let _ = result.send(value).await;
-        });
-        receiver
-    }
-
-    fn metadata_editing_available(&self, request: MetadataRequest) -> bool {
-        self.selected()
-            .filter(|selected| {
-                selected.source_id() == &request.source_id
-                    && selected.source_session_epoch == request.source_session_epoch
-            })
-            .is_some_and(|selected| selected.metadata_editing_available(&request.item_id))
-    }
-
-    fn metadata(&self, request: MetadataRequest) -> Receiver<Result<MetadataDraft, MetadataError>> {
-        let (result, receiver) = async_channel::bounded(1);
-        let selected = self.selected().filter(|selected| {
-            selected.source_id() == &request.source_id
-                && selected.source_session_epoch == request.source_session_epoch
-        });
-        self.shared.runtime.spawn(async move {
-            let value = match selected {
-                Some(selected) => match selected.metadata_access_context(&request.item_id) {
-                    Ok(Some(context)) => {
-                        context
-                            .source
-                            .read_metadata(context.subject, context.local_access)
-                            .await
-                    }
-                    Ok(None) => Err(MetadataError::Unavailable),
-                    Err(error) => Err(error),
-                },
-                None => Err(MetadataError::Unavailable),
-            };
-            let _ = result.send(value).await;
-        });
-        receiver
-    }
-
-    fn edit_metadata(&self, request: MetadataEditRequest) -> Receiver<Result<(), MetadataError>> {
+    fn edit_metadata(&self, edit: MetadataEdit) -> Receiver<Result<(), MetadataError>> {
         let (result, receiver) = async_channel::bounded(1);
         let reply = MetadataReply::new(result);
-        if request.edit.changes.is_empty() {
+        if edit.changes.is_empty() {
             reply.finish(Ok(()));
             return receiver;
         }
-        let selected = self.selected().filter(|selected| {
-            selected.source_id() == &request.source_id
-                && selected.source_session_epoch == request.source_session_epoch
-        });
-        let Some(selected) = selected else {
-            return receiver;
-        };
-        let operation = PointOperation::EditMetadata {
-            edit: request.edit,
-            reply,
-        };
-        let _ = self
-            .messages
-            .try_send(Message::Request(WorkRequest::Selected {
-                qualifier: selected.qualifier(),
-                operation,
-            }));
+        self.spawn_selected(
+            false,
+            move |mut operations, selected, cancelled| async move {
+                operations
+                    .edit_metadata(selected, edit, cancelled, reply)
+                    .await;
+            },
+        );
         receiver
     }
 
     fn identify_metadata(
         &self,
-        request: MetadataIdentificationRequest,
+        item_id: MetadataItemId,
+        editing: MetadataEditing,
+        values: library::MetadataValues,
     ) -> Receiver<Result<Option<library::MetadataValues>, String>> {
         let (result, receiver) = async_channel::bounded(1);
         let external_lookup_allowed = self
             .shared
-            .settings
-            .load()
-            .ui
-            .allows_external_metadata_lookup();
-        let context = self.selected_metadata_context(
-            &request.source_id,
-            request.source_session_epoch,
-            &request.item_id,
-        );
-        let Some(context) = context else {
-            return receiver;
+            .upgrade()
+            .is_some_and(|shared| shared.settings.load().ui.allows_external_metadata_lookup());
+        let context = self
+            .resolve()
+            .and_then(|selected| selected.metadata_context(&item_id).ok().flatten());
+        let shared = self.shared.upgrade();
+        let qualifier = SourceQualifier {
+            source_id: self.source_id.clone(),
+            epoch: self.source_session_epoch,
         };
-        self.shared.runtime.spawn(async move {
-            let direct_applicable = external_lookup_allowed
-                && request
-                    .item_id
-                    .has_exact_musicbrainz_identity(&request.values);
-            let source_search_applicable = context.source.metadata_source_search(&context.subject)
-                && !request.values.title.trim().is_empty();
-            let value = if !direct_applicable && !source_search_applicable {
-                Ok(None)
-            } else {
-                identify_metadata_with_fallback(
-                    context.source,
-                    context.subject,
-                    request,
-                    direct_applicable,
-                    source_search_applicable,
+        if let (Some(context), Some(shared)) = (context, shared) {
+            let runtime = shared.runtime.clone();
+            runtime.spawn(async move {
+                let value = fence_selected_completion(
+                    &shared,
+                    &qualifier,
+                    async {
+                        let direct_applicable = external_lookup_allowed
+                            && item_id.has_exact_musicbrainz_identity(&values);
+                        let source_search_applicable =
+                            context.source.metadata_source_search(&context.subject)
+                                && !values.title.trim().is_empty();
+                        if !direct_applicable && !source_search_applicable {
+                            Ok(None)
+                        } else {
+                            identify_metadata_with_fallback(
+                                context.source,
+                                context.subject,
+                                item_id,
+                                editing,
+                                values,
+                                direct_applicable,
+                                source_search_applicable,
+                            )
+                            .await
+                        }
+                    },
+                    Ok(None),
                 )
-                .await
-            };
-            let _ = result.send(value).await;
+                .await;
+                let _ = result.send(value).await;
+            });
+        }
+        receiver
+    }
+
+    fn save_metadata_local_access(
+        &self,
+        input: SourceLocalAccess,
+        item_id: MetadataItemId,
+    ) -> Receiver<Result<(), String>> {
+        let (result, receiver) = async_channel::bounded(1);
+        self.spawn_selected(false, move |mut operations, selected, _| async move {
+            operations
+                .save_metadata_local_access(selected, input, item_id, result)
+                .await;
         });
         receiver
+    }
+
+    fn create_smart_playlist(&self, name: String, definition: SmartPlaylistDefinition) {
+        self.spawn_selected(false, move |mut operations, selected, _| async move {
+            operations
+                .smart_playlist(
+                    selected,
+                    SmartPlaylistOperation::Create { name, definition },
+                )
+                .await;
+        });
+    }
+
+    fn update_smart_playlist(
+        &self,
+        id: SmartPlaylistId,
+        name: String,
+        definition: SmartPlaylistDefinition,
+    ) {
+        self.spawn_selected(false, move |mut operations, selected, _| async move {
+            operations
+                .smart_playlist(
+                    selected,
+                    SmartPlaylistOperation::Update {
+                        id,
+                        name,
+                        definition,
+                    },
+                )
+                .await;
+        });
+    }
+
+    fn delete_smart_playlist(&self, id: SmartPlaylistId) {
+        self.spawn_selected(false, move |mut operations, selected, _| async move {
+            operations
+                .smart_playlist(selected, SmartPlaylistOperation::Delete(id))
+                .await;
+        });
+    }
+
+    fn restore_builtin_smart_playlist(&self, builtin: SmartPlaylistBuiltin) {
+        self.spawn_selected(false, move |mut operations, selected, _| async move {
+            operations
+                .smart_playlist(selected, SmartPlaylistOperation::Restore(builtin))
+                .await;
+        });
+    }
+
+    fn move_smart_playlist(&self, dragged: SmartPlaylistId, target: SmartPlaylistId, after: bool) {
+        self.spawn_selected(false, move |mut operations, selected, _| async move {
+            operations
+                .smart_playlist(
+                    selected,
+                    SmartPlaylistOperation::Move {
+                        dragged,
+                        target,
+                        after,
+                    },
+                )
+                .await;
+        });
+    }
+}
+
+async fn fence_selected_completion<T>(
+    shared: &Shared,
+    qualifier: &SourceQualifier,
+    completion: impl Future<Output = T>,
+    retired: T,
+) -> T {
+    let value = completion.await;
+    if shared.matches_selected(qualifier) {
+        value
+    } else {
+        retired
     }
 }
 
 async fn identify_metadata_with_fallback(
     source: Arc<Source>,
     subject: library::MetadataSubject,
-    request: MetadataIdentificationRequest,
+    item_id: MetadataItemId,
+    editing: MetadataEditing,
+    current: library::MetadataValues,
     direct_applicable: bool,
     source_search_applicable: bool,
 ) -> Result<Option<library::MetadataValues>, String> {
-    let editing = request.editing;
-    let current = request.values;
-    let direct_item_id = request.item_id;
+    let direct_item_id = item_id;
     let direct_values = current.clone();
     let direct = async move {
         blocking(move || metadata_lookup::identify_metadata(&direct_item_id, &direct_values)).await
@@ -4868,18 +4339,82 @@ where
     }
 }
 
-fn cached_folder_contents(
-    loaded: Arc<LoadedLibrary>,
+fn route_folder_result(
+    loaded: Arc<Library>,
     folder_id: Option<&library::FolderId>,
+    music_folder_id: Option<&MusicFolderId>,
+    provider: Option<sources::SourceResult<NativeSourceResult<FolderContents>>>,
 ) -> Result<FolderContents, String> {
-    loaded
+    match provider {
+        Some(Ok(NativeSourceResult::Available(contents))) => {
+            reconcile_folder_contents(&loaded, contents)
+        }
+        Some(Ok(NativeSourceResult::Unavailable)) | None => {
+            cached_folder_contents(loaded, folder_id, music_folder_id)
+        }
+        Some(Err(error)) if source_error_allows_cache(&error) => {
+            cached_folder_contents(loaded, folder_id, music_folder_id)
+        }
+        Some(Err(error)) => Err(error.to_string()),
+    }
+}
+
+async fn route_search_result(
+    loaded: Arc<Library>,
+    request: library::SearchRequest,
+    provider: Option<sources::SourceResult<NativeSourceResult<library::SearchResults>>>,
+) -> Result<library::SearchResults, String> {
+    match provider {
+        Some(Ok(NativeSourceResult::Available(results))) => {
+            reconcile_search_results(&loaded, results)
+        }
+        Some(Ok(NativeSourceResult::Unavailable)) | None => cached_search(loaded, request).await,
+        Some(Err(error)) if source_error_allows_cache(&error) => {
+            cached_search(loaded, request).await
+        }
+        Some(Err(error)) => Err(error.to_string()),
+    }
+}
+
+fn cached_folder_contents(
+    loaded: Arc<Library>,
+    folder_id: Option<&library::FolderId>,
+    music_folder_id: Option<&MusicFolderId>,
+) -> Result<FolderContents, String> {
+    let local = loaded
         .local_folder_contents(folder_id)
-        .map(|contents| contents.unwrap_or_default())
-        .map_err(string_error)
+        .map_err(string_error)?;
+    if folder_id.is_some() && local.is_some() {
+        return Ok(local.unwrap_or_default());
+    }
+    if let Some(local) = local
+        && (!local.folders.is_empty() || !local.tracks.is_empty())
+    {
+        return Ok(local);
+    }
+    let tracks = loaded
+        .track_list(music_folder_id, TrackSort::Title, false)
+        .and_then(|tracks| tracks.materialize_owned())
+        .map_err(string_error)?;
+    Ok(FolderContents {
+        folders: Arc::from([]),
+        tracks: tracks.into(),
+    })
+}
+
+fn source_error_allows_cache(error: &sources::SourceError) -> bool {
+    matches!(
+        error,
+        sources::SourceError::Network(_)
+            | sources::SourceError::Server {
+                status: 500..=599,
+                ..
+            }
+    )
 }
 
 fn reconcile_folder_contents(
-    loaded: &LoadedLibrary,
+    loaded: &Library,
     mut contents: FolderContents,
 ) -> Result<FolderContents, String> {
     contents.tracks = contents
@@ -4893,7 +4428,7 @@ fn reconcile_folder_contents(
 }
 
 fn reconcile_search_results(
-    loaded: &LoadedLibrary,
+    loaded: &Library,
     mut results: library::SearchResults,
 ) -> Result<library::SearchResults, String> {
     for artist in &mut results.artists {
@@ -4912,7 +4447,7 @@ fn reconcile_search_results(
     Ok(results)
 }
 
-fn accepted_track_or(loaded: &LoadedLibrary, track: Track) -> Result<Track, String> {
+fn accepted_track_or(loaded: &Library, track: Track) -> Result<Track, String> {
     loaded
         .track(&track.id)
         .map(|accepted| accepted.unwrap_or(track))
@@ -4920,52 +4455,14 @@ fn accepted_track_or(loaded: &LoadedLibrary, track: Track) -> Result<Track, Stri
 }
 
 async fn cached_search(
-    loaded: Arc<LoadedLibrary>,
+    loaded: Arc<Library>,
     request: library::SearchRequest,
 ) -> Result<library::SearchResults, String> {
     blocking(move || loaded.search(&request).map_err(string_error)).await
 }
 
-impl ui::runtime::SmartPlaylistPort for SourceOwner {
-    fn create(&self, name: String, definition: SmartPlaylistDefinition) {
-        self.send_selected(|_| {
-            PointOperation::SmartPlaylist(SmartPlaylistOperation::Create { name, definition })
-        });
-    }
-
-    fn update(&self, id: SmartPlaylistId, name: String, definition: SmartPlaylistDefinition) {
-        self.send_selected(|_| {
-            PointOperation::SmartPlaylist(SmartPlaylistOperation::Update {
-                id,
-                name,
-                definition,
-            })
-        });
-    }
-
-    fn delete(&self, id: SmartPlaylistId) {
-        self.send_selected(|_| PointOperation::SmartPlaylist(SmartPlaylistOperation::Delete(id)));
-    }
-
-    fn restore_builtin(&self, builtin: SmartPlaylistBuiltin) {
-        self.send_selected(|_| {
-            PointOperation::SmartPlaylist(SmartPlaylistOperation::Restore(builtin))
-        });
-    }
-
-    fn move_relative(&self, dragged: SmartPlaylistId, target: SmartPlaylistId, after: bool) {
-        self.send_selected(|_| {
-            PointOperation::SmartPlaylist(SmartPlaylistOperation::Move {
-                dragged,
-                target,
-                after,
-            })
-        });
-    }
-}
-
 fn normalize_music_folder(
-    loaded: &LoadedLibrary,
+    loaded: &Library,
     folder_id: Option<MusicFolderId>,
 ) -> Result<Option<MusicFolderId>, String> {
     let Some(folder_id) = folder_id else {
@@ -4977,11 +4474,11 @@ fn normalize_music_folder(
         .map_err(string_error)
 }
 
-fn cache_input_matches(identity: &SourceInputIdentity, loaded: &LoadedLibrary) -> bool {
+fn cache_input_matches(identity: &SourceInputIdentity, loaded: &Library) -> bool {
     loaded_input_identity(loaded) == *identity
 }
 
-fn loaded_input_identity(loaded: &LoadedLibrary) -> SourceInputIdentity {
+fn loaded_input_identity(loaded: &Library) -> SourceInputIdentity {
     SourceInputIdentity {
         source_id: loaded.source_id().clone(),
         version: loaded.input_version(),
@@ -5038,7 +4535,7 @@ fn replace_source_account(
             .configured
             .iter_mut()
             .find(|saved| &saved.configuration.source_id == previous)
-            .expect("the source actor owns configured account replacement");
+            .ok_or_else(|| "the configured source no longer exists".to_string())?;
         *saved = configured;
         if select {
             stored.sources.selected_source_id = Some(replacement_id);
@@ -5086,20 +4583,18 @@ fn save_local_access_setting(
 
 fn accept_metadata_local_access_mapping(
     library: &Library,
-    loaded: &Arc<LoadedLibrary>,
     mapping: library::LocalAccessMapping,
     previous_access: Option<ConfiguredLocalAccess>,
     save: impl FnOnce() -> Result<(), String>,
 ) -> Result<(), String> {
     library
-        .accept_local_access_mapping(loaded, mapping)
+        .accept_local_access_mapping(mapping)
         .map_err(string_error)?;
     let Err(error) = save() else {
         return Ok(());
     };
     let rollback = library
         .configure_local_access_mapping(
-            loaded,
             previous_access
                 .as_ref()
                 .map(configured_local_access_mapping),
@@ -5180,7 +4675,7 @@ fn configured_sources(
                 });
             let (album_count, track_count) = selected
                 .filter(|selected| selected.source_id == configured.configuration.source_id)
-                .and_then(|selected| selected.loaded.counts().ok())
+                .and_then(|selected| selected.library.counts().ok())
                 .map(|counts| (counts.albums, counts.tracks))
                 .unwrap_or_default();
             let status = access
@@ -5188,7 +4683,7 @@ fn configured_sources(
                 .and_then(|_| {
                     selected
                         .filter(|selected| selected.source_id == configured.configuration.source_id)
-                        .and_then(|selected| selected.loaded.local_access_status().ok())
+                        .and_then(|selected| selected.library.local_access_status().ok())
                 })
                 .map(ui_local_access_status)
                 .unwrap_or_default();
@@ -5201,7 +4696,7 @@ fn configured_sources(
                     .and_then(|selected| {
                         let wanted = selected.music_folder_id.as_ref()?;
                         selected
-                            .loaded
+                            .library
                             .music_folders()
                             .ok()?
                             .iter()
@@ -5223,7 +4718,10 @@ fn configured_sources(
     }
 }
 
-fn ui_selected(selected: SelectedSourceRuntime) -> SelectedLibrary {
+fn ui_selected(
+    selected: Arc<SelectedSourceState>,
+    operations: Arc<ActiveSource>,
+) -> SelectedLibrary {
     let playlist_tracks_can_repeat = selected.configuration.playlist_tracks_can_repeat();
     let artwork = selected.source.as_ref().map_or_else(
         || artwork::SourceImages::cache_only(selected.source_id().clone()),
@@ -5232,11 +4730,12 @@ fn ui_selected(selected: SelectedSourceRuntime) -> SelectedLibrary {
     SelectedLibrary {
         source_id: selected.source_id().clone(),
         source_session_epoch: selected.source_session_epoch,
-        music_folder_id: selected.music_folder_id,
+        music_folder_id: selected.music_folder_id.clone(),
         playlist_tracks_can_repeat,
         artwork,
-        loaded: selected.loaded,
-        home: selected.home,
+        library: Arc::clone(&selected.library),
+        home: Arc::clone(&selected.home),
+        operations,
     }
 }
 
@@ -5369,7 +4868,7 @@ fn initial_progress() -> SourceProgress {
     }
 }
 
-fn favorite_value(loaded: &LoadedLibrary, item: &FavoriteItemId) -> Option<bool> {
+fn favorite_value(loaded: &Library, item: &FavoriteItemId) -> Option<bool> {
     match item {
         FavoriteItemId::Track(id) => loaded.track(id).ok().flatten().map(|track| track.favorite),
         FavoriteItemId::Album(id) => loaded.album(id).ok().flatten().map(|album| album.favorite),

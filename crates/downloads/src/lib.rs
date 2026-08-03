@@ -9,7 +9,7 @@ use std::task::Poll;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use async_channel::{Receiver, Sender};
-use library::{LoadedLibrary, SourceId, Track, TrackId};
+use library::{Library, SourceId, Track, TrackId};
 use serde::{Deserialize, Serialize};
 use sources::{NativeSourceResult, Source, SourceError};
 use tracing::warn;
@@ -34,7 +34,7 @@ enum Command {
     Attach {
         source_id: SourceId,
         source: Option<Weak<Source>>,
-        loaded: Weak<LoadedLibrary>,
+        loaded: Weak<Library>,
         directory: Option<PathBuf>,
         response: Sender<Result<(), String>>,
     },
@@ -52,13 +52,13 @@ enum Command {
     },
     Remove {
         source_id: SourceId,
-        loaded: Weak<LoadedLibrary>,
+        loaded: Weak<Library>,
         track_ids: Vec<TrackId>,
         notify: bool,
     },
     RemoveRule {
         source_id: SourceId,
-        loaded: Option<Weak<LoadedLibrary>>,
+        loaded: Option<Weak<Library>>,
         rule: DownloadRule,
         delete_downloads: bool,
     },
@@ -83,7 +83,7 @@ enum Command {
     },
     Clear {
         source_id: SourceId,
-        loaded: Option<Weak<LoadedLibrary>>,
+        loaded: Option<Weak<Library>>,
         notify: bool,
     },
 }
@@ -91,7 +91,7 @@ enum Command {
 #[derive(Clone)]
 struct AttachedSource {
     source: Option<Weak<Source>>,
-    loaded: Weak<LoadedLibrary>,
+    loaded: Weak<Library>,
     directory: Option<PathBuf>,
 }
 
@@ -326,7 +326,7 @@ impl Downloads {
     pub async fn attach(
         &self,
         source: Option<Arc<Source>>,
-        loaded: &Arc<LoadedLibrary>,
+        loaded: &Arc<Library>,
         directory: Option<PathBuf>,
     ) -> Result<(), String> {
         let (response, result) = async_channel::bounded(1);
@@ -379,7 +379,7 @@ impl Downloads {
     pub fn remove(
         &self,
         source_id: SourceId,
-        loaded: Arc<LoadedLibrary>,
+        loaded: Arc<Library>,
         track_ids: Vec<TrackId>,
         notify: bool,
     ) {
@@ -394,7 +394,7 @@ impl Downloads {
     pub fn remove_rule(
         &self,
         source_id: SourceId,
-        loaded: Option<Arc<LoadedLibrary>>,
+        loaded: Option<Arc<Library>>,
         rule: DownloadRule,
         delete_downloads: bool,
     ) {
@@ -440,7 +440,7 @@ impl Downloads {
         });
     }
 
-    pub fn clear(&self, source_id: SourceId, loaded: Option<Arc<LoadedLibrary>>, notify: bool) {
+    pub fn clear(&self, source_id: SourceId, loaded: Option<Arc<Library>>, notify: bool) {
         self.send(Command::Clear {
             source_id,
             loaded: loaded.as_ref().map(Arc::downgrade),
@@ -664,7 +664,7 @@ impl Actor {
         &mut self,
         source_id: SourceId,
         source: Option<Weak<Source>>,
-        loaded: Weak<LoadedLibrary>,
+        loaded: Weak<Library>,
         directory: Option<PathBuf>,
     ) -> Result<(), String> {
         let Some(live) = loaded.upgrade() else {
@@ -1421,7 +1421,7 @@ impl Actor {
     async fn force_remove(
         &mut self,
         source_id: &SourceId,
-        loaded: &Weak<LoadedLibrary>,
+        loaded: &Weak<Library>,
         track_ids: Vec<TrackId>,
         notify: bool,
     ) {
@@ -1449,7 +1449,7 @@ impl Actor {
     async fn delete_downloads(
         &self,
         source_id: &SourceId,
-        loaded: Option<&Weak<LoadedLibrary>>,
+        loaded: Option<&Weak<Library>>,
         track_ids: impl IntoIterator<Item = TrackId>,
     ) -> (usize, usize) {
         let mut removed = 0usize;
@@ -1489,7 +1489,7 @@ impl Actor {
     async fn remove_rule(
         &mut self,
         source_id: &SourceId,
-        loaded: Option<&Weak<LoadedLibrary>>,
+        loaded: Option<&Weak<Library>>,
         rule: DownloadRule,
         delete_downloads: bool,
     ) {
@@ -1577,7 +1577,7 @@ impl Actor {
     async fn release_owner(
         &self,
         source_id: &SourceId,
-        loaded: Option<&Weak<LoadedLibrary>>,
+        loaded: Option<&Weak<Library>>,
         subject: &DownloadSubject,
         track_ids: Option<&HashSet<TrackId>>,
         retain: bool,
@@ -1641,12 +1641,7 @@ impl Actor {
         }
     }
 
-    async fn clear(
-        &mut self,
-        source_id: &SourceId,
-        loaded: Option<&Weak<LoadedLibrary>>,
-        notify: bool,
-    ) {
+    async fn clear(&mut self, source_id: &SourceId, loaded: Option<&Weak<Library>>, notify: bool) {
         let staging_directory = self
             .attached
             .get(source_id)
@@ -1827,7 +1822,7 @@ fn reorder_jobs(
 mod tests {
     use super::*;
     use library::{
-        CandidateBatch, CandidateFinish, CandidateHeader, HomeFacts, Library, TrackData,
+        CandidateBatch, CandidateFinish, CandidateHeader, HomeFacts, Libraries, TrackData,
         TrackRelations,
     };
     use proptest::prelude::*;
@@ -1852,7 +1847,7 @@ mod tests {
         root: &Path,
         source_id: SourceId,
         track_id: TrackId,
-    ) -> (Arc<LoadedLibrary>, Track) {
+    ) -> (Arc<Library>, Track) {
         let (loaded, mut tracks) = accepted_tracks(root, source_id, vec![track_id]);
         (loaded, tracks.remove(0))
     }
@@ -1861,8 +1856,8 @@ mod tests {
         root: &Path,
         source_id: SourceId,
         track_ids: Vec<TrackId>,
-    ) -> (Arc<LoadedLibrary>, Vec<Track>) {
-        let library = Library::open(root.join("library.db")).expect("open test Library");
+    ) -> (Arc<Library>, Vec<Track>) {
+        let library = Libraries::open(root.join("library.db")).expect("open test Library");
         let tracks = track_ids
             .into_iter()
             .enumerate()
@@ -1919,7 +1914,7 @@ mod tests {
             )
             .and_then(library::PreparedSourceCandidate::accept)
             .expect("accept source")
-            .loaded;
+            .library;
         (loaded, tracks)
     }
 
@@ -2131,7 +2126,7 @@ mod tests {
         )
         .expect("download record");
         let library =
-            Library::open(directory.path().join("library.db")).expect("open test Library");
+            Libraries::open(directory.path().join("library.db")).expect("open test Library");
         let loaded = library
             .begin_source_candidate(CandidateHeader {
                 source_id,
@@ -2149,7 +2144,7 @@ mod tests {
             )
             .and_then(|prepared| prepared.accept())
             .expect("accept empty source")
-            .loaded;
+            .library;
 
         for stale in attach_downloaded_files(directory.path(), &loaded).expect("attach downloads") {
             remove_download_files(&stale)
@@ -2343,7 +2338,7 @@ mod tests {
         drop(loaded);
         assert!(
             loaded_weak.upgrade().is_none(),
-            "Downloads must not retain an inactive LoadedLibrary"
+            "Downloads must not retain an inactive Library"
         );
     }
 

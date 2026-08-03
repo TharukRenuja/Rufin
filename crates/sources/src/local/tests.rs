@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
 use library::{
-    CandidateBatch, CandidateFinish, CandidateHeader, HomeFacts, Library, LocalFile,
+    CandidateBatch, CandidateFinish, CandidateHeader, HomeFacts, Libraries, LocalFile,
     LocalReadState, SourceId, Track, TrackSort,
 };
 use lofty::config::WriteOptions;
@@ -101,7 +101,7 @@ fn complete_scan(source: &LocalSource) -> ScanFacts {
 
 fn exact_replacement(
     source: &LocalSource,
-    loaded: &library::LoadedLibrary,
+    loaded: &library::Library,
     path: PathBuf,
     observed_at: i64,
 ) -> library::LocalComponentReplacement {
@@ -313,7 +313,7 @@ fn mapped_metadata_reads_only_the_exact_projected_file() {
     };
 
     let store = tempfile::tempdir().expect("mapped metadata Store");
-    let library = Library::open(store.path().join("library.db")).expect("open Library");
+    let library = Libraries::open(store.path().join("library.db")).expect("open Library");
     let mut candidate = library
         .begin_source_candidate(CandidateHeader {
             source_id: SourceId::new("navidrome:server:mapped"),
@@ -341,7 +341,7 @@ fn mapped_metadata_reads_only_the_exact_projected_file() {
         local_prefix: None,
     };
     let (subject, targets) = accepted
-        .loaded
+        .library
         .metadata_subject_with_local_access(
             &library::MetadataItemId::Track(library::TrackId::new("navidrome:track:mapped")),
             Some(&mapping),
@@ -354,14 +354,14 @@ fn mapped_metadata_reads_only_the_exact_projected_file() {
     assert_eq!(draft.values.title, "Track");
     assert!(
         accepted
-            .loaded
+            .library
             .local_access_files()
             .expect("read Local access facts")
             .is_empty(),
         "an exact mapped read must not need a whole-folder scan"
     );
     let (missing, targets) = accepted
-        .loaded
+        .library
         .metadata_subject_with_local_access(
             &library::MetadataItemId::Track(library::TrackId::new("navidrome:track:missing")),
             Some(&mapping),
@@ -411,7 +411,7 @@ fn aggregate_metadata_read_requires_every_backing_track() {
     let mut facts = complete_scan(&source);
     let album_id = facts.albums().into_iter().next().expect("scanned Album").id;
     let store = tempfile::tempdir().expect("Store directory");
-    let library = Library::open(store.path().join("library.db")).expect("open Library");
+    let library = Libraries::open(store.path().join("library.db")).expect("open Library");
     let mut candidate = library
         .begin_source_candidate(CandidateHeader {
             source_id: SourceId::new(LOCAL_LIBRARY_SOURCE_ID),
@@ -434,13 +434,13 @@ fn aggregate_metadata_read_requires_every_backing_track() {
         .and_then(library::PreparedSourceCandidate::accept)
         .expect("accept Local library");
     let album = accepted
-        .loaded
+        .library
         .album(&album_id)
         .expect("read accepted Album")
         .expect("accepted Album");
     let subject = library::MetadataSubject::aggregate(
         library::MetadataItem::Album((*album).clone()),
-        accepted.loaded.album_track_selection(&album_id, None),
+        accepted.library.album_track_selection(&album_id, None),
     );
     assert!(source.metadata_entry_available(subject.item()));
     source
@@ -478,13 +478,13 @@ fn aggregate_metadata_read_requires_every_backing_track() {
         .and_then(library::PreparedSourceCandidate::accept)
         .expect("accept unsupported Local library");
     let album = unsupported
-        .loaded
+        .library
         .album(&album_id)
         .expect("read unsupported Album")
         .expect("unsupported Album");
     let subject = library::MetadataSubject::aggregate(
         library::MetadataItem::Album((*album).clone()),
-        unsupported.loaded.album_track_selection(&album_id, None),
+        unsupported.library.album_track_selection(&album_id, None),
     );
     assert!(source.metadata_entry_available(subject.item()));
     assert!(matches!(
@@ -1022,7 +1022,7 @@ fn unchanged_rescan_returns_no_component_plan() {
         LocalSource::from_roots(vec![root.path().to_path_buf()]).expect("open Local source");
     let facts = complete_scan(&source);
     let store = tempfile::tempdir().expect("Store directory");
-    let library = Library::open(store.path().join("library.db")).expect("open Library");
+    let library = Libraries::open(store.path().join("library.db")).expect("open Library");
     let source_id = SourceId::new(LOCAL_LIBRARY_SOURCE_ID);
     let mut candidate = library
         .begin_source_candidate(CandidateHeader {
@@ -1050,7 +1050,7 @@ fn unchanged_rescan_returns_no_component_plan() {
         .check(crate::LocalFilesystemChange::Rescan, &|| false)
         .expect("inspect Local source");
     let accepted_files = accepted
-        .loaded
+        .library
         .local_file_baseline(check.file_seeds())
         .expect("read Local file baseline");
     let track_progress = Mutex::new(Vec::new());
@@ -1099,7 +1099,7 @@ fn unchanged_file_identity_keeps_an_accepted_unreadable_file() {
     }
 
     let store = tempfile::tempdir().expect("Store directory");
-    let library = Library::open(store.path().join("library.db")).expect("open Library");
+    let library = Libraries::open(store.path().join("library.db")).expect("open Library");
     let mut candidate = library
         .begin_source_candidate(CandidateHeader {
             source_id: SourceId::new(LOCAL_LIBRARY_SOURCE_ID),
@@ -1129,7 +1129,7 @@ fn unchanged_file_identity_keeps_an_accepted_unreadable_file() {
         )
         .expect("check recovered file");
     let accepted_files = accepted
-        .loaded
+        .library
         .local_file_baseline(check.file_seeds())
         .expect("read recovered file baseline");
     assert_eq!(accepted_files.files.len(), 1);
@@ -1154,7 +1154,7 @@ fn exact_reread_failure_keeps_the_accepted_path_backed_track() {
     let source = LocalSource::from_roots(vec![root_path]).expect("open Local source");
     let facts = complete_scan(&source);
     let store = tempfile::tempdir().expect("Store directory");
-    let library = Library::open(store.path().join("library.db")).expect("open Library");
+    let library = Libraries::open(store.path().join("library.db")).expect("open Library");
     let mut candidate = library
         .begin_source_candidate(CandidateHeader {
             source_id: SourceId::new(LOCAL_LIBRARY_SOURCE_ID),
@@ -1177,7 +1177,7 @@ fn exact_reread_failure_keeps_the_accepted_path_backed_track() {
         .and_then(library::PreparedSourceCandidate::accept)
         .expect("accept Local library");
     let track_id = accepted
-        .loaded
+        .library
         .track_list(None, TrackSort::Title, false)
         .expect("read accepted Tracks")
         .materialize()
@@ -1196,7 +1196,7 @@ fn exact_reread_failure_keeps_the_accepted_path_backed_track() {
         .expect("check changed file");
     fs::remove_file(&path).expect("make the checked file temporarily unreadable");
     let accepted_files = accepted
-        .loaded
+        .library
         .local_file_baseline(check.file_seeds())
         .expect("read changed file baseline");
     let change = source
@@ -1204,7 +1204,7 @@ fn exact_reread_failure_keeps_the_accepted_path_backed_track() {
         .expect("confirm changed file")
         .expect("changed Local file");
     let baseline = accepted
-        .loaded
+        .library
         .local_component_baseline(change.component_seeds())
         .expect("read changed component");
     let replacement = source
@@ -1215,12 +1215,13 @@ fn exact_reread_failure_keeps_the_accepted_path_backed_track() {
     assert!(replacement.files.iter().any(|file| {
         file.path == path.to_string_lossy() && file.read_state == LocalReadState::Unreadable
     }));
-    library
-        .accept_local_component(&accepted.loaded, replacement)
+    accepted
+        .library
+        .accept_local_component(replacement)
         .expect("accept unreadable observation");
     assert!(
         accepted
-            .loaded
+            .library
             .track(&track_id)
             .expect("read retained Track")
             .is_some()
@@ -1241,7 +1242,7 @@ fn exact_file_change_does_not_parse_or_replace_flat_folder_siblings() {
     let source = LocalSource::from_roots(vec![root_path]).expect("open Local source");
     let facts = complete_scan(&source);
     let store = tempfile::tempdir().expect("Store directory");
-    let library = Library::open(store.path().join("library.db")).expect("open Library");
+    let library = Libraries::open(store.path().join("library.db")).expect("open Library");
     let mut candidate = library
         .begin_source_candidate(CandidateHeader {
             source_id: SourceId::new(LOCAL_LIBRARY_SOURCE_ID),
@@ -1271,7 +1272,7 @@ fn exact_file_change_does_not_parse_or_replace_flat_folder_siblings() {
         )
         .expect("check unchanged file");
     let unchanged_files = accepted
-        .loaded
+        .library
         .local_file_baseline(unchanged.file_seeds())
         .expect("read unchanged file baseline");
     let unchanged_progress = Mutex::new(Vec::new());
@@ -1308,7 +1309,7 @@ fn exact_file_change_does_not_parse_or_replace_flat_folder_siblings() {
         )
         .expect("check changed file");
     let accepted_files = accepted
-        .loaded
+        .library
         .local_file_baseline(check.file_seeds())
         .expect("read changed file baseline");
     let changed_progress = Mutex::new(Vec::new());
@@ -1329,7 +1330,7 @@ fn exact_file_change_does_not_parse_or_replace_flat_folder_siblings() {
         .expect("confirm changed file")
         .expect("changed Local file");
     let baseline = accepted
-        .loaded
+        .library
         .local_component_baseline(change.component_seeds())
         .expect("read changed component");
     let replacement = source
@@ -1345,8 +1346,9 @@ fn exact_file_change_does_not_parse_or_replace_flat_folder_siblings() {
             .max(),
         Some(1)
     );
-    library
-        .accept_local_component(&accepted.loaded, replacement)
+    accepted
+        .library
+        .accept_local_component(replacement)
         .expect("accept exact changed file");
 
     write_silent_wav(&paths[65], 2).expect("edit a second WAV");
@@ -1354,7 +1356,7 @@ fn exact_file_change_does_not_parse_or_replace_flat_folder_siblings() {
         .check(crate::LocalFilesystemChange::Rescan, &|| false)
         .expect("rescan changed library");
     let accepted_files = accepted
-        .loaded
+        .library
         .local_file_baseline(check.file_seeds())
         .expect("read rescan file baseline");
     let rescan_progress = Mutex::new(Vec::new());
@@ -1375,7 +1377,7 @@ fn exact_file_change_does_not_parse_or_replace_flat_folder_siblings() {
         .expect("confirm changed rescan")
         .expect("changed rescan");
     let baseline = accepted
-        .loaded
+        .library
         .local_component_baseline(change.component_seeds())
         .expect("read rescan component");
     let replacement = source
@@ -1462,7 +1464,7 @@ FILE "album.wav" WAVE
     );
 
     let store = tempfile::tempdir().expect("Store directory");
-    let library = Library::open(store.path().join("library.db")).expect("open Library");
+    let library = Libraries::open(store.path().join("library.db")).expect("open Library");
     let mut candidate = library
         .begin_source_candidate(CandidateHeader {
             source_id: SourceId::new(LOCAL_LIBRARY_SOURCE_ID),
@@ -1486,7 +1488,7 @@ FILE "album.wav" WAVE
         .expect("accept Local CUE library");
 
     write_silent_wav(&audio, 10).expect("change CUE backing audio");
-    let replacement = exact_replacement(&source, &accepted.loaded, audio.clone(), 2);
+    let replacement = exact_replacement(&source, &accepted.library, audio.clone(), 2);
     assert_eq!(replacement.tracks.len(), 2);
     assert_eq!(
         replacement.albums[0]
@@ -1502,29 +1504,32 @@ FILE "album.wav" WAVE
             .iter()
             .any(|track| track.title == "Second" && track.duration_seconds == 6)
     );
-    library
-        .accept_local_component(&accepted.loaded, replacement)
+    accepted
+        .library
+        .accept_local_component(replacement)
         .expect("accept changed CUE backing");
 
     fs::remove_file(&cue).expect("remove CUE");
-    let replacement = exact_replacement(&source, &accepted.loaded, cue.clone(), 3);
+    let replacement = exact_replacement(&source, &accepted.library, cue.clone(), 3);
     assert_eq!(replacement.tracks.len(), 1);
     assert_eq!(replacement.removed_track_ids.len(), 2);
     assert!(replacement.tracks[0].cue.is_none());
-    library
-        .accept_local_component(&accepted.loaded, replacement)
+    accepted
+        .library
+        .accept_local_component(replacement)
         .expect("accept removed CUE");
 
     fs::write(&cue, cue_text).expect("restore CUE");
-    let replacement = exact_replacement(&source, &accepted.loaded, cue, 4);
+    let replacement = exact_replacement(&source, &accepted.library, cue, 4);
     assert_eq!(replacement.tracks.len(), 2);
     assert_eq!(replacement.removed_track_ids.len(), 1);
     assert!(replacement.tracks.iter().all(|track| track.cue.is_some()));
-    library
-        .accept_local_component(&accepted.loaded, replacement)
+    accepted
+        .library
+        .accept_local_component(replacement)
         .expect("accept restored CUE");
     let final_tracks = accepted
-        .loaded
+        .library
         .track_list(None, library::TrackSort::Title, false)
         .expect("read final CUE Tracks")
         .materialize()
@@ -1585,7 +1590,7 @@ fn arbitrary_part_directories_share_one_album_and_parent_cover() {
 
     let store = tempfile::tempdir().expect("Store directory");
     let store_path = store.path().join("library.db");
-    let library = Library::open(&store_path).expect("open Library");
+    let library = Libraries::open(&store_path).expect("open Library");
     let source_id = SourceId::new(LOCAL_LIBRARY_SOURCE_ID);
     let mut candidate = library
         .begin_source_candidate(CandidateHeader {
@@ -1617,7 +1622,7 @@ fn arbitrary_part_directories_share_one_album_and_parent_cover() {
         )
         .expect("check retagged Track");
     let accepted_files = accepted
-        .loaded
+        .library
         .local_file_baseline(check.file_seeds())
         .expect("read retagged file baseline");
     let change = source
@@ -1625,7 +1630,7 @@ fn arbitrary_part_directories_share_one_album_and_parent_cover() {
         .expect("confirm retagged Track")
         .expect("retagged Local Track");
     let baseline = accepted
-        .loaded
+        .library
         .local_component_baseline(change.component_seeds())
         .expect("read shared Album component");
     assert_eq!(baseline.tracks.len(), 2);
@@ -1641,11 +1646,12 @@ fn arbitrary_part_directories_share_one_album_and_parent_cover() {
             .path(),
         cover.to_string_lossy().as_ref()
     );
-    library
-        .accept_local_component(&accepted.loaded, replacement)
+    accepted
+        .library
+        .accept_local_component(replacement)
         .expect("accept retagged Track");
     let detail = accepted
-        .loaded
+        .library
         .album_detail(&album_id, None)
         .expect("read shared Album")
         .expect("shared Album");
@@ -1659,7 +1665,7 @@ fn arbitrary_part_directories_share_one_album_and_parent_cover() {
     assert!(detail_tracks.iter().any(|track| track.title == "Two"));
 
     fs::remove_dir_all(&second_part).expect("remove second part directory");
-    let replacement = exact_replacement(&source, &accepted.loaded, second_part.clone(), 3);
+    let replacement = exact_replacement(&source, &accepted.library, second_part.clone(), 3);
     assert_eq!(replacement.removed_track_ids.len(), 1);
     assert_eq!(
         replacement.albums[0]
@@ -1669,11 +1675,12 @@ fn arbitrary_part_directories_share_one_album_and_parent_cover() {
             .path(),
         cover.to_string_lossy().as_ref()
     );
-    library
-        .accept_local_component(&accepted.loaded, replacement)
+    accepted
+        .library
+        .accept_local_component(replacement)
         .expect("accept removed part directory");
     let detail = accepted
-        .loaded
+        .library
         .album_detail(&album_id, None)
         .expect("read Album after directory removal")
         .expect("Album after directory removal");
@@ -1681,7 +1688,7 @@ fn arbitrary_part_directories_share_one_album_and_parent_cover() {
 
     fs::create_dir(&second_part).expect("restore second part directory");
     write_tagged_wav(&second, "Two", "Artist", "Album", 2).expect("restore second Track");
-    let replacement = exact_replacement(&source, &accepted.loaded, second_part, 4);
+    let replacement = exact_replacement(&source, &accepted.library, second_part, 4);
     assert_eq!(replacement.tracks.len(), 1);
     assert_eq!(
         replacement.albums[0]
@@ -1691,21 +1698,23 @@ fn arbitrary_part_directories_share_one_album_and_parent_cover() {
             .path(),
         cover.to_string_lossy().as_ref()
     );
-    library
-        .accept_local_component(&accepted.loaded, replacement)
+    accepted
+        .library
+        .accept_local_component(replacement)
         .expect("accept restored part directory");
 
     fs::remove_file(&cover).expect("remove parent cover");
-    let replacement = exact_replacement(&source, &accepted.loaded, cover.clone(), 5);
+    let replacement = exact_replacement(&source, &accepted.library, cover.clone(), 5);
     assert!(replacement.tracks.is_empty());
     assert_eq!(replacement.albums.len(), 1);
     assert!(replacement.albums[0].local_artwork.is_none());
-    library
-        .accept_local_component(&accepted.loaded, replacement)
+    accepted
+        .library
+        .accept_local_component(replacement)
         .expect("accept removed parent cover");
 
     fs::write(&cover, [5_u8, 6, 7, 8]).expect("restore parent cover");
-    let replacement = exact_replacement(&source, &accepted.loaded, cover.clone(), 6);
+    let replacement = exact_replacement(&source, &accepted.library, cover.clone(), 6);
     assert!(replacement.tracks.is_empty());
     assert_eq!(
         replacement.albums[0]
@@ -1715,13 +1724,14 @@ fn arbitrary_part_directories_share_one_album_and_parent_cover() {
             .path(),
         cover.to_string_lossy().as_ref()
     );
-    library
-        .accept_local_component(&accepted.loaded, replacement)
+    accepted
+        .library
+        .accept_local_component(replacement)
         .expect("accept restored parent cover");
 
     drop(accepted);
     drop(library);
-    let reopened_library = Library::open(store_path).expect("reopen Library");
+    let reopened_library = Libraries::open(store_path).expect("reopen Library");
     let reopened = reopened_library
         .load_source(&source_id)
         .expect("load Local source")
@@ -1747,8 +1757,8 @@ fn arbitrary_part_directories_share_one_album_and_parent_cover() {
             .path(),
         cover.to_string_lossy().as_ref()
     );
-    reopened_library
-        .accept_local_component(&reopened, replacement)
+    reopened
+        .accept_local_component(replacement)
         .expect("accept Track edit after reopen");
     let detail = reopened
         .album_detail(&album_id, None)
@@ -1778,7 +1788,7 @@ fn new_cross_directory_album_uses_an_existing_parent_cover() {
     let source = LocalSource::from_roots(vec![root_path]).expect("open Local source");
     let facts = complete_scan(&source);
     let store = tempfile::tempdir().expect("Store directory");
-    let library = Library::open(store.path().join("library.db")).expect("open Library");
+    let library = Libraries::open(store.path().join("library.db")).expect("open Library");
     let mut candidate = library
         .begin_source_candidate(CandidateHeader {
             source_id: SourceId::new(LOCAL_LIBRARY_SOURCE_ID),
@@ -1812,7 +1822,7 @@ fn new_cross_directory_album_uses_an_existing_parent_cover() {
         )
         .expect("check new Album");
     let accepted_files = accepted
-        .loaded
+        .library
         .local_file_baseline(check.file_seeds())
         .expect("read new Album file baseline");
     let change = source
@@ -1820,7 +1830,7 @@ fn new_cross_directory_album_uses_an_existing_parent_cover() {
         .expect("confirm new Album")
         .expect("new Local Album");
     let baseline = accepted
-        .loaded
+        .library
         .local_component_baseline(change.component_seeds())
         .expect("read new Album component");
     let replacement = source
@@ -1861,7 +1871,7 @@ fn artist_directory_image_does_not_become_album_art_after_an_exact_edit() {
     }));
 
     let store = tempfile::tempdir().expect("Store directory");
-    let library = Library::open(store.path().join("library.db")).expect("open Library");
+    let library = Libraries::open(store.path().join("library.db")).expect("open Library");
     let mut candidate = library
         .begin_source_candidate(CandidateHeader {
             source_id: SourceId::new(LOCAL_LIBRARY_SOURCE_ID),
@@ -1886,7 +1896,7 @@ fn artist_directory_image_does_not_become_album_art_after_an_exact_edit() {
 
     write_tagged_wav(&first, "One Retagged", "Artist", "First Album", 1)
         .expect("retag first Track");
-    let replacement = exact_replacement(&source, &accepted.loaded, first, 2);
+    let replacement = exact_replacement(&source, &accepted.library, first, 2);
 
     assert_eq!(replacement.albums.len(), 1);
     assert!(replacement.albums[0].local_artwork.is_none());

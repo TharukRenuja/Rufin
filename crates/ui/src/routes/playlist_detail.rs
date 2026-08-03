@@ -5,8 +5,8 @@ use std::{
 };
 
 use ::library::{
-    LoadedLibrary, MusicFolderId, PlaylistDetail, PlaylistEdit, PlaylistId, PlaylistSummary,
-    RadioSeed, SmartPlaylistDetail, SmartPlaylistId, SmartPlaylistSummary,
+    Library, MusicFolderId, PlaylistDetail, PlaylistEdit, PlaylistId, PlaylistSummary, RadioSeed,
+    SmartPlaylistDetail, SmartPlaylistId, SmartPlaylistSummary,
 };
 use adw::prelude::*;
 use artwork::ArtworkBinding;
@@ -129,7 +129,7 @@ impl Shell {
         self: &Rc<Self>,
         smart_playlist_id: SmartPlaylistId,
         detail: Option<Arc<SmartPlaylistDetail>>,
-        loaded: Arc<LoadedLibrary>,
+        loaded: Arc<Library>,
         music_folder_id: Option<MusicFolderId>,
     ) -> MountedRoute {
         let Some(detail) = detail else {
@@ -208,7 +208,9 @@ impl Shell {
         let delete_header = Rc::clone(&header);
         delete.connect_clicked(move |_| {
             let playlist_id = delete_header.borrow().smart_playlist.id.clone();
-            delete_shell.products.smart_playlists.delete(playlist_id);
+            if let Some(source) = delete_shell.selected_source_operations() {
+                source.delete_smart_playlist(playlist_id);
+            }
             delete_shell.navigate(Route::SmartPlaylists);
         });
         actions.append(&delete);
@@ -411,7 +413,7 @@ impl Shell {
         playlist_id: PlaylistId,
         detail: Option<PlaylistDetail>,
         initial_positions: Vec<u32>,
-        loaded: Arc<LoadedLibrary>,
+        loaded: Arc<Library>,
     ) -> MountedRoute {
         let settings = self.settings.current.borrow().clone();
         let Some(detail) = detail else {
@@ -497,19 +499,18 @@ impl Shell {
                 .and_then(|player| player.transport.current.as_ref())
                 .map(|entry| entry.track.id.clone());
             if let Some(track_id) = track_id {
-                shell
-                    .products
-                    .source
-                    .edit_playlist(PlaylistEdit::AddTracks {
+                if let Some(source) = shell.selected_source_operations() {
+                    source.edit_playlist(PlaylistEdit::AddTracks {
                         playlist_id: add_id.clone(),
                         track_ids: vec![track_id],
                     });
+                }
             }
         });
         actions.append(&add_current);
 
         let delete = detail_delete_button("Delete");
-        let source = self.products.source.clone();
+        let source = self.selected_source_operations();
         let window = self.chrome.window.clone();
         let delete_shell = Rc::clone(self);
         let delete_header = Rc::clone(&header);
@@ -529,7 +530,9 @@ impl Shell {
             let shell = Rc::clone(&delete_shell);
             let playlist_id = delete_id.clone();
             dialog.connect_response(None, move |_, response| {
-                if response == "delete" {
+                if response == "delete"
+                    && let Some(source) = source.as_ref()
+                {
                     source.edit_playlist(PlaylistEdit::Delete {
                         playlist_id: playlist_id.clone(),
                     });
@@ -748,7 +751,7 @@ fn playlist_artwork(playlist: &PlaylistSummary, prefer_server: bool) -> Vec<Artw
 }
 
 pub(crate) fn load_smart_playlist_detail(
-    loaded: &Arc<LoadedLibrary>,
+    loaded: &Arc<Library>,
     smart_playlist_id: &SmartPlaylistId,
     music_folder_id: Option<&MusicFolderId>,
 ) -> Result<Option<Arc<SmartPlaylistDetail>>, String> {
@@ -758,7 +761,7 @@ pub(crate) fn load_smart_playlist_detail(
 }
 
 pub(crate) fn load_playlist_detail(
-    loaded: &Arc<LoadedLibrary>,
+    loaded: &Arc<Library>,
     playlist_id: &PlaylistId,
 ) -> Result<Option<PlaylistDetail>, String> {
     loaded

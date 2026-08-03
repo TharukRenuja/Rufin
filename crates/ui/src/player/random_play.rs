@@ -35,7 +35,7 @@ pub(super) fn present_random_play_dialog(shell: &Rc<Shell>) {
         return;
     };
     let genres = selected
-        .loaded
+        .library
         .genres(selected.music_folder_id.as_ref())
         .unwrap_or_default();
     let played_filters = [

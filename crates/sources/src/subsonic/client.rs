@@ -844,9 +844,6 @@ pub(super) fn redacted_subsonic_url(url: &Url) -> String {
     redact_subsonic_query(&mut redacted);
     redacted.to_string()
 }
-pub(super) fn raw_item_id(id: &str) -> &str {
-    id.rsplit(':').next().unwrap_or(id)
-}
 pub(super) fn raw_id_string(id: &SubsonicId) -> String {
     id.0.clone()
 }
@@ -893,16 +890,8 @@ pub(super) fn stable_source_id(source_id: &str, base_url: &str, username: &str) 
         stable_hash(&format!("{source_id}:{base_url}:{username}"))
     )
 }
-pub(super) fn stable_hash(input: &str) -> u64 {
-    input.bytes().fold(0xcbf2_9ce4_8422_2325, |hash, byte| {
-        (hash ^ u64::from(byte)).wrapping_mul(0x0000_0100_0000_01b3)
-    })
-}
 pub(super) fn color_seed(id: &str) -> u32 {
     (stable_hash(id) & 0xffff_ffff) as u32
-}
-pub(super) fn u16_from_option(value: Option<i32>) -> u16 {
-    value.unwrap_or_default().clamp(0, i32::from(u16::MAX)) as u16
 }
 pub(super) fn favorite(value: &Option<serde_json::Value>) -> bool {
     value.as_ref().is_some_and(|value| match value {

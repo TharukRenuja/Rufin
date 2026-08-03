@@ -1668,7 +1668,7 @@ fn read_audio(worker: &mut tags::Worker, inventory: &Inventory, path: &Path) -> 
 fn file_revision(file: &LocalFile) -> String {
     format!(
         "file:{:016x}",
-        tags::stable_hash(&format!(
+        crate::policy::stable_hash(&format!(
             "{}:{}:{}:{}:{}",
             file.path,
             file.size_bytes.unwrap_or_default(),
@@ -1922,7 +1922,7 @@ impl Aggregates {
                         play_count: None,
                         user_rating: None,
                         favorite: false,
-                        color_seed: tags::stable_hash(album_id.as_str()) as u32,
+                        color_seed: crate::policy::stable_hash(album_id.as_str()) as u32,
                         image_ref: None,
                         local_artwork: track
                             .local_artwork

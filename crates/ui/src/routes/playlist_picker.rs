@@ -3,7 +3,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use ::library::{
-    LoadedLibraryResult, MusicFolderId, PlaylistEdit, PlaylistSummary, PlaylistTrackAdd, SourceId,
+    LibraryQueryResult, MusicFolderId, PlaylistEdit, PlaylistSummary, PlaylistTrackAdd, SourceId,
     TrackId, TrackSelection,
 };
 use adw::prelude::*;
@@ -17,7 +17,7 @@ use crate::downloads::{OperationFeedback, OperationFeedbackKind};
 use crate::format_duration_units;
 use crate::interactions::{ContextMenuSurface, close_context_surface, context_menu_scroll_page};
 use crate::preferences::dialogs::popup::present_light_dismiss_dialog;
-use crate::runtime::SelectedLibrary;
+use crate::runtime::{SelectedLibrary, SelectedSourceHandle};
 use crate::shell::Shell;
 use crate::shell::cover::THUMB_COVER_SIZE;
 use crate::shell::cover::presentation::stable_seed;
@@ -56,6 +56,7 @@ struct PlaylistSourceIdentity {
     source_session_epoch: SourceSessionEpoch,
     music_folder_id: Option<MusicFolderId>,
     loaded_instance: usize,
+    operations: SelectedSourceHandle,
 }
 
 impl PlaylistSourceIdentity {
@@ -64,7 +65,8 @@ impl PlaylistSourceIdentity {
             source_id: selected.source_id.clone(),
             source_session_epoch: selected.source_session_epoch,
             music_folder_id: selected.music_folder_id.clone(),
-            loaded_instance: Arc::as_ptr(&selected.loaded) as usize,
+            loaded_instance: Arc::as_ptr(&selected.library) as usize,
+            operations: selected.operations.clone(),
         }
     }
 
@@ -78,7 +80,7 @@ impl PlaylistSourceIdentity {
                 selected.source_id == self.source_id
                     && selected.source_session_epoch == self.source_session_epoch
                     && selected.music_folder_id == self.music_folder_id
-                    && Arc::as_ptr(&selected.loaded) as usize == self.loaded_instance
+                    && Arc::as_ptr(&selected.library) as usize == self.loaded_instance
             })
     }
 }
@@ -225,7 +227,7 @@ fn context_playlist_picker(
         sync_playlist_picker_filter(&create, &rows_for_search, &add_button, can_create, &query);
     });
 
-    let source = shell.products.source.clone();
+    let source = source_identity.operations.clone();
     let shell_for_create = Rc::downgrade(shell);
     let source_identity_for_create = source_identity.clone();
     let track_ids_for_create = Arc::clone(&track_ids);
@@ -252,7 +254,7 @@ fn context_playlist_picker(
     });
 
     let rows_for_add = Rc::clone(&rows);
-    let source = shell.products.source.clone();
+    let source = source_identity.operations.clone();
     let shell_for_add = Rc::downgrade(shell);
     let source_identity_for_add = source_identity.clone();
     let feedback_subject = subject.clone();
@@ -490,7 +492,7 @@ pub(crate) fn install_context_menu_picker_action(
                 let shell = Rc::clone(&shell);
                 glib::spawn_future_local(async move {
                     let result =
-                        gio::spawn_blocking(move || -> LoadedLibraryResult<Arc<[TrackId]>> {
+                        gio::spawn_blocking(move || -> LibraryQueryResult<Arc<[TrackId]>> {
                             tracks.prepare()?.track_ids()
                         })
                         .await;
@@ -523,7 +525,7 @@ fn context_menu_playlists(shell: &Rc<Shell>) -> Vec<PlaylistSummary> {
         return Vec::new();
     };
     selected
-        .loaded
+        .library
         .playlists()
         .map(|playlists| playlists.to_vec())
         .unwrap_or_default()

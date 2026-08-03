@@ -5,11 +5,10 @@
 //! tombstones, and observation histories are deliberately absent.
 
 use std::collections::HashSet;
-use std::sync::Arc;
 
 use crate::{
-    AcceptedLibraryChange, Library, LibraryError, LibraryResult, LoadedLibrary, LoadedLibraryError,
-    Playlist, PlaylistEntry, PlaylistId, PlaylistSnapshot, SourceLibraryUpdate, TrackId,
+    AcceptedLibraryChange, Library, LibraryError, LibraryQueryError, LibraryResult, Playlist,
+    PlaylistEntry, PlaylistId, PlaylistSnapshot, SourceLibraryUpdate, TrackId,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -62,11 +61,10 @@ impl Library {
     /// occurrences rather than collapsing them into a set.
     pub fn prepare_playlist_add(
         &self,
-        loaded: &Arc<LoadedLibrary>,
         request: PlaylistTrackAdd,
     ) -> LibraryResult<Option<PlaylistEdit>> {
-        require_tracks(loaded, &request.track_ids)?;
-        let playlist = loaded
+        require_tracks(self, &request.track_ids)?;
+        let playlist = self
             .playlist(&request.playlist_id)?
             .ok_or_else(|| missing_playlist(&request.playlist_id))?;
         let track_ids = if request.skip_duplicates {
@@ -94,36 +92,32 @@ impl Library {
 
     pub fn accept_playlist(
         &self,
-        loaded: &Arc<LoadedLibrary>,
         acceptance: PlaylistAcceptance,
     ) -> LibraryResult<Option<AcceptedLibraryChange>> {
         match acceptance {
-            PlaylistAcceptance::SourceSnapshot(snapshot) => self.accept_source_update(
-                loaded,
-                SourceLibraryUpdate {
+            PlaylistAcceptance::SourceSnapshot(snapshot) => {
+                self.accept_source_update(SourceLibraryUpdate {
                     playlists: vec![snapshot],
                     ..SourceLibraryUpdate::default()
-                },
-            ),
-            PlaylistAcceptance::SourceDeleted(playlist_id) => self.accept_source_update(
-                loaded,
-                SourceLibraryUpdate {
+                })
+            }
+            PlaylistAcceptance::SourceDeleted(playlist_id) => {
+                self.accept_source_update(SourceLibraryUpdate {
                     removed_playlists: vec![playlist_id],
                     ..SourceLibraryUpdate::default()
-                },
-            ),
-            PlaylistAcceptance::RufinOwned(edit) => self.accept_local_playlist(loaded, edit),
+                })
+            }
+            PlaylistAcceptance::RufinOwned(edit) => self.accept_local_playlist(edit),
         }
     }
 
     fn accept_local_playlist(
         &self,
-        loaded: &Arc<LoadedLibrary>,
         edit: PlaylistEdit,
     ) -> LibraryResult<Option<AcceptedLibraryChange>> {
         let result = match edit {
             PlaylistEdit::Create { name, track_ids } => {
-                require_tracks(loaded, &track_ids)?;
+                require_tracks(self, &track_ids)?;
                 let playlist_id = PlaylistId::new(format!("rufin:playlist:{}", random_hex()?));
                 let entries = entries_for_tracks(&playlist_id, &track_ids)?;
                 let snapshot = PlaylistSnapshot {
@@ -134,48 +128,48 @@ impl Library {
                     },
                     entries,
                 };
-                self.replace_local_playlist_snapshot(loaded, snapshot)?
+                self.replace_local_playlist_snapshot(snapshot)?
             }
             PlaylistEdit::Rename { playlist_id, name } => {
-                let mut snapshot = local_playlist(loaded, &playlist_id)?;
+                let mut snapshot = local_playlist(self, &playlist_id)?;
                 snapshot.playlist.name = name.trim().to_string();
-                self.replace_local_playlist_snapshot(loaded, snapshot)?
+                self.replace_local_playlist_snapshot(snapshot)?
             }
             PlaylistEdit::Delete { playlist_id } => {
-                require_playlist(loaded, &playlist_id)?;
+                require_playlist(self, &playlist_id)?;
                 self.store
-                    .remove_local_playlist(loaded.source_id().clone(), playlist_id.clone())?;
-                loaded.remove_playlist(&playlist_id)?;
+                    .remove_local_playlist(self.source_id().clone(), playlist_id.clone())?;
+                self.remove_playlist(&playlist_id)?;
                 playlist_id
             }
             PlaylistEdit::AddTracks {
                 playlist_id,
                 track_ids,
             } => {
-                require_tracks(loaded, &track_ids)?;
-                let mut snapshot = local_playlist(loaded, &playlist_id)?;
+                require_tracks(self, &track_ids)?;
+                let mut snapshot = local_playlist(self, &playlist_id)?;
                 snapshot
                     .entries
                     .extend(entries_for_tracks(&playlist_id, &track_ids)?);
-                self.replace_local_playlist_snapshot(loaded, snapshot)?
+                self.replace_local_playlist_snapshot(snapshot)?
             }
             PlaylistEdit::RemoveEntries {
                 playlist_id,
                 occurrence_ids,
             } => {
-                let mut snapshot = local_playlist(loaded, &playlist_id)?;
+                let mut snapshot = local_playlist(self, &playlist_id)?;
                 let removed = occurrence_ids.into_iter().collect::<HashSet<_>>();
                 snapshot
                     .entries
                     .retain(|entry| !removed.contains(&entry.occurrence_id));
-                self.replace_local_playlist_snapshot(loaded, snapshot)?
+                self.replace_local_playlist_snapshot(snapshot)?
             }
             PlaylistEdit::MoveEntry {
                 playlist_id,
                 occurrence_id,
                 new_index,
             } => {
-                let mut snapshot = local_playlist(loaded, &playlist_id)?;
+                let mut snapshot = local_playlist(self, &playlist_id)?;
                 if let Some(old_index) = snapshot
                     .entries
                     .iter()
@@ -185,7 +179,7 @@ impl Library {
                     let new_index = new_index.min(snapshot.entries.len());
                     snapshot.entries.insert(new_index, entry);
                 }
-                self.replace_local_playlist_snapshot(loaded, snapshot)?
+                self.replace_local_playlist_snapshot(snapshot)?
             }
         };
         Ok(Some(AcceptedLibraryChange {
@@ -196,22 +190,18 @@ impl Library {
 
     fn replace_local_playlist_snapshot(
         &self,
-        loaded: &Arc<LoadedLibrary>,
         snapshot: PlaylistSnapshot,
     ) -> LibraryResult<PlaylistId> {
         let playlist_id = snapshot.playlist.id.clone();
         self.store
-            .replace_local_playlist(loaded.source_id().clone(), snapshot.clone())?;
-        loaded.replace_playlist(snapshot)?;
+            .replace_local_playlist(self.source_id().clone(), snapshot.clone())?;
+        self.replace_playlist(snapshot)?;
         Ok(playlist_id)
     }
 }
 
-fn local_playlist(
-    loaded: &Arc<LoadedLibrary>,
-    playlist_id: &PlaylistId,
-) -> LibraryResult<PlaylistSnapshot> {
-    let current = loaded
+fn local_playlist(library: &Library, playlist_id: &PlaylistId) -> LibraryResult<PlaylistSnapshot> {
+    let current = library
         .playlist(playlist_id)?
         .ok_or_else(|| missing_playlist(playlist_id))?;
     Ok(PlaylistSnapshot {
@@ -220,24 +210,24 @@ fn local_playlist(
     })
 }
 
-fn require_playlist(loaded: &Arc<LoadedLibrary>, playlist_id: &PlaylistId) -> LibraryResult<()> {
-    loaded
+fn require_playlist(library: &Library, playlist_id: &PlaylistId) -> LibraryResult<()> {
+    library
         .playlist(playlist_id)?
         .ok_or_else(|| missing_playlist(playlist_id))
         .map(|_| ())
 }
 
 fn missing_playlist(playlist_id: &PlaylistId) -> LibraryError {
-    LibraryError::Loaded(LoadedLibraryError::MissingItem {
+    LibraryError::Query(LibraryQueryError::MissingItem {
         kind: "playlist",
         id: playlist_id.to_string(),
     })
 }
 
-fn require_tracks(loaded: &Arc<LoadedLibrary>, track_ids: &[TrackId]) -> LibraryResult<()> {
+fn require_tracks(library: &Library, track_ids: &[TrackId]) -> LibraryResult<()> {
     for track_id in track_ids {
-        if loaded.track(track_id)?.is_none() {
-            return Err(LibraryError::Loaded(LoadedLibraryError::MissingItem {
+        if library.track(track_id)?.is_none() {
+            return Err(LibraryError::Query(LibraryQueryError::MissingItem {
                 kind: "track",
                 id: track_id.to_string(),
             }));

@@ -7,11 +7,12 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use async_channel::Receiver;
-use downloads::{DownloadRule, DownloadSubject};
+use downloads::DownloadSubject;
 use library::{
     FavoriteItemId, FolderContents, FolderId, HomeSectionKind, MetadataDraft, MetadataEdit,
     MetadataError, MetadataItemId, MetadataValues, MusicFolderId, PlaylistEdit, PlaylistTrackAdd,
-    SearchRequest as LibrarySearchRequest, SearchResults, SourceId, TrackSelection,
+    SearchRequest as LibrarySearchRequest, SearchResults, SmartPlaylistBuiltin,
+    SmartPlaylistDefinition, SmartPlaylistId, SourceId, TrackSelection,
 };
 use secrets::SecretStorageMode;
 
@@ -201,59 +202,6 @@ pub struct DiscoveryUpdate {
     pub status: DiscoveryStatus,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct FolderRequest {
-    pub source_id: SourceId,
-    pub source_session_epoch: playback::SourceSessionEpoch,
-    pub folder_id: Option<FolderId>,
-    pub music_folder_id: Option<MusicFolderId>,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct SearchRequest {
-    pub source_id: SourceId,
-    pub source_session_epoch: playback::SourceSessionEpoch,
-    pub search: LibrarySearchRequest,
-}
-
-#[derive(Clone, Debug)]
-pub struct MetadataRequest {
-    pub source_id: SourceId,
-    pub source_session_epoch: playback::SourceSessionEpoch,
-    pub item_id: MetadataItemId,
-}
-
-#[derive(Clone, Debug)]
-pub struct MetadataEditRequest {
-    pub source_id: SourceId,
-    pub source_session_epoch: playback::SourceSessionEpoch,
-    pub edit: MetadataEdit,
-}
-
-#[derive(Clone, Debug)]
-pub struct MetadataIdentificationRequest {
-    pub source_id: SourceId,
-    pub source_session_epoch: playback::SourceSessionEpoch,
-    pub item_id: MetadataItemId,
-    pub editing: library::MetadataEditing,
-    pub values: MetadataValues,
-}
-
-#[derive(Clone, Debug)]
-pub struct DownloadRequest {
-    pub source_id: SourceId,
-    pub source_session_epoch: playback::SourceSessionEpoch,
-    pub subject: DownloadSubject,
-    pub tracks: TrackSelection,
-}
-
-#[derive(Clone, Debug)]
-pub struct RemoveDownloadRequest {
-    pub source_id: SourceId,
-    pub source_session_epoch: playback::SourceSessionEpoch,
-    pub tracks: TrackSelection,
-}
-
 pub trait SourcePort: Send + Sync {
     fn configured_source(&self, source_id: &SourceId) -> Result<Option<EditableSource>, String>;
     fn discover_servers(&self);
@@ -265,45 +213,58 @@ pub trait SourcePort: Send + Sync {
     fn remove_local_folder(&self, path: String);
     fn refresh_source(&self, source_id: SourceId);
     fn check_for_source_changes(&self);
-    fn selected_library_revealed(&self);
-    fn refresh_home(&self, kind: HomeSectionKind);
-    fn save_local_access(
-        &self,
-        input: SourceLocalAccess,
-        metadata: Option<MetadataRequest>,
-    ) -> Receiver<Result<(), String>>;
+    fn save_local_access(&self, input: SourceLocalAccess) -> Receiver<Result<(), String>>;
     fn clear_local_access(&self, source_id: SourceId);
     fn forget_source(&self, source_id: SourceId);
-    fn set_music_folder(&self, source_id: SourceId, folder_id: Option<MusicFolderId>);
+}
+
+/// Commands whose validity is owned by one selected source session.
+///
+/// Rufin embeds this handle in the corresponding [`SelectedLibrary`](super::SelectedLibrary), so
+/// callers cannot pair an operation with a different source ID or session.
+pub trait SelectedSourcePort: Send + Sync {
+    fn selected_library_revealed(&self);
+    fn refresh_home(&self, kind: HomeSectionKind);
+    fn set_music_folder(&self, folder_id: Option<MusicFolderId>);
     fn set_favorite(&self, item: FavoriteItemId, favorite: bool);
     fn add_playlist_tracks(&self, request: PlaylistTrackAdd) -> usize;
     fn edit_playlist(&self, edit: PlaylistEdit);
-    fn download(&self, request: DownloadRequest);
-    fn remove_download(&self, request: RemoveDownloadRequest);
-    fn remove_download_rule(&self, source_id: SourceId, rule: DownloadRule, delete_downloads: bool);
-    fn cancel_download(&self, source_id: SourceId, job_id: String);
-    fn clear_download_job(&self, source_id: SourceId, job_id: String);
-    fn set_downloads_paused(&self, paused: bool);
-    fn move_download(
+    fn download(&self, subject: DownloadSubject, tracks: TrackSelection);
+    fn remove_download(&self, tracks: TrackSelection);
+    fn folder(
         &self,
-        source_id: SourceId,
-        job_id: String,
-        target_job_id: String,
-        after: bool,
-    );
-    fn clear_downloads(&self, source_id: SourceId);
-    fn folder(&self, request: FolderRequest) -> Receiver<Result<FolderContents, String>>;
-    fn search(&self, request: SearchRequest) -> Receiver<Result<SearchResults, String>>;
-    fn metadata_editing_available(&self, request: MetadataRequest) -> bool;
-    fn metadata(&self, request: MetadataRequest) -> Receiver<Result<MetadataDraft, MetadataError>>;
-    fn edit_metadata(&self, request: MetadataEditRequest) -> Receiver<Result<(), MetadataError>>;
+        folder_id: Option<FolderId>,
+        music_folder_id: Option<MusicFolderId>,
+    ) -> Receiver<Result<FolderContents, String>>;
+    fn search(&self, request: LibrarySearchRequest) -> Receiver<Result<SearchResults, String>>;
+    fn metadata_editing_available(&self, item_id: &MetadataItemId) -> bool;
+    fn metadata(&self, item_id: MetadataItemId) -> Receiver<Result<MetadataDraft, MetadataError>>;
+    fn edit_metadata(&self, edit: MetadataEdit) -> Receiver<Result<(), MetadataError>>;
     fn identify_metadata(
         &self,
-        request: MetadataIdentificationRequest,
+        item_id: MetadataItemId,
+        editing: library::MetadataEditing,
+        values: MetadataValues,
     ) -> Receiver<Result<Option<MetadataValues>, String>>;
+    fn save_metadata_local_access(
+        &self,
+        input: SourceLocalAccess,
+        item_id: MetadataItemId,
+    ) -> Receiver<Result<(), String>>;
+    fn create_smart_playlist(&self, name: String, definition: SmartPlaylistDefinition);
+    fn update_smart_playlist(
+        &self,
+        id: SmartPlaylistId,
+        name: String,
+        definition: SmartPlaylistDefinition,
+    );
+    fn delete_smart_playlist(&self, id: SmartPlaylistId);
+    fn restore_builtin_smart_playlist(&self, builtin: SmartPlaylistBuiltin);
+    fn move_smart_playlist(&self, dragged: SmartPlaylistId, target: SmartPlaylistId, after: bool);
 }
 
 pub type SourceHandle = Arc<dyn SourcePort>;
+pub type SelectedSourceHandle = Arc<dyn SelectedSourcePort>;
 
 #[cfg(test)]
 mod tests {

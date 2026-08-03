@@ -1,5 +1,5 @@
 use library::{
-    ArtistCredit, LoadedLibrary, PlaybackCheckpoint, PlaybackFallbackTrack, PlaybackOccurrence,
+    ArtistCredit, Library, PlaybackCheckpoint, PlaybackFallbackTrack, PlaybackOccurrence,
     PlaybackOccurrenceId, PlaybackProvenance, PlaybackQueueSnapshot, PlaybackState, Track,
     TrackData, TrackId, TrackRelations,
 };
@@ -16,7 +16,7 @@ pub enum CheckpointError {
     Sequence(#[from] SequenceError),
     #[error("playback checkpoint has no fallback for Track {0}")]
     MissingFallback(TrackId),
-    #[error("playback checkpoint could not read the loaded library: {0}")]
+    #[error("playback checkpoint could not read the Library: {0}")]
     Loaded(String),
 }
 
@@ -70,7 +70,7 @@ pub fn build_checkpoint(sequence: &Sequence) -> PlaybackCheckpoint {
 
 pub fn restore_checkpoint(
     checkpoint: &PlaybackCheckpoint,
-    loaded: Option<&LoadedLibrary>,
+    loaded: Option<&Library>,
     repeat_mode: RepeatMode,
     shuffle_enabled: bool,
     shuffle_seed: u64,

@@ -1,6 +1,6 @@
 use std::fs;
 
-use library::{Library, LibraryError, PlaybackLoad, ScrobbleService, SourceId};
+use library::{Libraries, LibraryError, PlaybackLoad, ScrobbleService, SourceId};
 use rusqlite::Connection;
 
 #[test]
@@ -11,7 +11,7 @@ fn missing_source_table_repairs_without_touching_configuration_or_durable_rows()
     let settings = br#"{"sources":{"configured":[{"source_id":"local"}]},"private_mode":true}"#;
     fs::write(&settings_path, settings).expect("write external Settings");
 
-    drop(Library::open(&store_path).expect("create final Store"));
+    drop(Libraries::open(&store_path).expect("create final Store"));
     let connection = Connection::open(&store_path).expect("open final Store for fixture");
     connection
         .busy_timeout(std::time::Duration::from_secs(5))
@@ -36,12 +36,12 @@ fn missing_source_table_repairs_without_touching_configuration_or_durable_rows()
     drop(connection);
 
     assert!(matches!(
-        Library::open(&store_path),
+        Libraries::open(&store_path),
         Err(LibraryError::InvalidStore(_))
     ));
 
     let (library, repair) =
-        Library::open_with_repair(&store_path).expect("repair identified final Store");
+        Libraries::open_with_repair(&store_path).expect("repair identified final Store");
     let report = repair.expect("repair report");
     assert_eq!(report.recovered_rows, 9);
     assert_eq!(
@@ -179,7 +179,7 @@ fn schema_30_store_is_preserved_and_replaced_without_blocking_startup() {
     drop(old_store);
     let before = fs::read(&store_path).expect("read old Rufin Store");
 
-    let (library, repair) = Library::open_with_repair(&store_path)
+    let (library, repair) = Libraries::open_with_repair(&store_path)
         .expect("replace old Rufin Store without blocking startup");
     let repair = repair.expect("old Store replacement report");
     assert_eq!(
@@ -210,7 +210,7 @@ fn unsupported_and_unidentifiable_stores_are_preserved_and_rebuilt() {
     drop(unknown);
     let unknown_before = fs::read(&unknown_path).expect("read unknown Store");
 
-    let (unknown_library, unknown_repair) = Library::open_with_repair(&unknown_path)
+    let (unknown_library, unknown_repair) = Libraries::open_with_repair(&unknown_path)
         .expect("replace unsupported Store with a current Store");
     let unknown_repair = unknown_repair.expect("unsupported Store recovery report");
     assert_eq!(
@@ -228,7 +228,7 @@ fn unsupported_and_unidentifiable_stores_are_preserved_and_rebuilt() {
     let malformed_path = directory.path().join("malformed.sqlite");
     let malformed = b"this is not a SQLite database";
     fs::write(&malformed_path, malformed).expect("write malformed Store");
-    let (malformed_library, malformed_repair) = Library::open_with_repair(&malformed_path)
+    let (malformed_library, malformed_repair) = Libraries::open_with_repair(&malformed_path)
         .expect("replace malformed Store with a current Store");
     let malformed_repair = malformed_repair.expect("malformed Store recovery report");
     assert_eq!(

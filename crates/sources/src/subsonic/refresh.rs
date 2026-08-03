@@ -441,7 +441,7 @@ fn freshness(status: ScanStatus) -> ProviderFreshness {
     }
 }
 
-fn collect_genres(genres: &[GenreCredit], target: &mut BTreeMap<GenreId, String>) {
+pub(super) fn collect_genres(genres: &[GenreCredit], target: &mut BTreeMap<GenreId, String>) {
     for genre in genres {
         target
             .entry(genre.id.clone())

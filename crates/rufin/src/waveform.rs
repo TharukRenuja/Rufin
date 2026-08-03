@@ -10,7 +10,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use async_channel::Sender;
-use library::{LoadedLibrary, SourceId, TrackId};
+use library::{Library, SourceId, TrackId};
 use playback::{CurrentMedia, CurrentMediaId, SourceSessionEpoch, StreamRequest};
 use playback_gstreamer::generate_waveform_peaks_cancellable;
 use serde::{Deserialize, Serialize};
@@ -95,7 +95,7 @@ pub(crate) struct WaveformOwner {
 #[derive(Clone)]
 pub(crate) struct WaveformMedia {
     pub(crate) media: Arc<CurrentMedia>,
-    pub(crate) loaded: Arc<LoadedLibrary>,
+    pub(crate) loaded: Arc<Library>,
     pub(crate) source: Option<Arc<Source>>,
     pub(crate) request: StreamRequest,
 }

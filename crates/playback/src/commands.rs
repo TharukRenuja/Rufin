@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
 use library::{
-    GenreId, LoadedLibraryError, LoadedLibraryResult, RadioSeed, SourceId, Track, TrackId,
-    TrackList, TrackSelection,
+    GenreId, LibraryQueryError, LibraryQueryResult, RadioSeed, SourceId, Track, TrackId, TrackList,
+    TrackSelection,
 };
 use serde::{Deserialize, Serialize};
 
@@ -38,7 +38,7 @@ pub enum QueueOrigin {
 
 /// One already-loaded ordered music selection.
 ///
-/// Routes pass either an existing shallow loaded-Library order or a small
+/// Routes pass either an existing shallow Library order or a small
 /// already-materialized selection. Rufin prepares the compact order away from
 /// GTK, asks Playback for exact context activation, and materializes complete
 /// Track values only when activation misses.
@@ -55,7 +55,7 @@ enum SelectionAnchor {
 }
 
 impl LoadedTrackSelection {
-    fn anchor(&self, position: usize) -> LoadedLibraryResult<SelectionAnchor> {
+    fn anchor(&self, position: usize) -> LibraryQueryResult<SelectionAnchor> {
         match self {
             Self::Shallow(selection) => match selection.prepared() {
                 Some(tracks) => Ok(tracks
@@ -73,21 +73,21 @@ impl LoadedTrackSelection {
         }
     }
 
-    fn prepare(self) -> LoadedLibraryResult<Self> {
+    fn prepare(self) -> LibraryQueryResult<Self> {
         match self {
             Self::Shallow(selection) => Ok(Self::Shallow(selection.prepare()?.into())),
             Self::Materialized(tracks) => Ok(Self::Materialized(tracks)),
         }
     }
 
-    fn materialize_owned(self) -> LoadedLibraryResult<Vec<Track>> {
+    fn materialize_owned(self) -> LibraryQueryResult<Vec<Track>> {
         match self {
             Self::Shallow(selection) => selection.prepare()?.materialize_owned(),
             Self::Materialized(tracks) => Ok(tracks.iter().cloned().collect()),
         }
     }
 
-    pub fn materialize(&self) -> LoadedLibraryResult<Arc<[Track]>> {
+    pub fn materialize(&self) -> LibraryQueryResult<Arc<[Track]>> {
         match self {
             Self::Shallow(selection) => selection.clone().prepare()?.materialize(),
             Self::Materialized(tracks) => Ok(Arc::clone(tracks)),
@@ -210,11 +210,11 @@ impl LoadedPlayRequest {
         })
     }
 
-    /// Prepares only the compact loaded-Library slot order.
+    /// Prepares only the compact Library slot order.
     ///
     /// Rufin runs this on its loaded-Play executor before asking Playback for
     /// exact context activation. Complete Track handles remain unmaterialized.
-    pub fn prepare(mut self) -> LoadedLibraryResult<Option<Self>> {
+    pub fn prepare(mut self) -> LibraryQueryResult<Option<Self>> {
         self.tracks = self.tracks.prepare()?;
         let anchor_track_id = match self.tracks.anchor(self.anchor_index)? {
             SelectionAnchor::Present(track_id) => track_id,
@@ -228,7 +228,7 @@ impl LoadedPlayRequest {
             .as_ref()
             .is_some_and(|expected| expected != &anchor_track_id)
         {
-            return Err(LoadedLibraryError::StaleTrackSelection);
+            return Err(LibraryQueryError::StaleTrackSelection);
         }
         self.anchor_track_id = Some(anchor_track_id);
         Ok(Some(self))
@@ -238,7 +238,7 @@ impl LoadedPlayRequest {
         self.placement.into()
     }
 
-    pub fn materialize_batch(self, shuffle_seed: u64) -> LoadedLibraryResult<(Batch, Placement)> {
+    pub fn materialize_batch(self, shuffle_seed: u64) -> LibraryQueryResult<(Batch, Placement)> {
         let placement = match self.placement {
             QueuePlacement::Now => Placement::Replace {
                 anchor_index: self.anchor_index,
@@ -249,12 +249,12 @@ impl LoadedPlayRequest {
         let tracks = self.tracks.materialize_owned()?;
         let anchor_track_id = self
             .anchor_track_id
-            .ok_or(LoadedLibraryError::StaleTrackSelection)?;
+            .ok_or(LibraryQueryError::StaleTrackSelection)?;
         if tracks
             .get(self.anchor_index)
             .is_none_or(|track| track.id != anchor_track_id)
         {
-            return Err(LoadedLibraryError::StaleTrackSelection);
+            return Err(LibraryQueryError::StaleTrackSelection);
         }
         let origin = self.origin;
         let items = tracks

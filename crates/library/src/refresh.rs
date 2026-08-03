@@ -8,9 +8,9 @@ use std::sync::Arc;
 
 use crate::loaded::ItemReplacement;
 use crate::{
-    Album, AlbumId, Artist, ArtistId, Genre, GenreId, HomeFacts, Library, LibraryError,
-    LibraryResult, LoadedLibrary, LocalFile, MoodId, MusicFolder, PlaylistId, PlaylistSnapshot,
-    SmartPlaylistId, SourceId, Track, TrackId,
+    Album, AlbumId, Artist, ArtistId, Genre, GenreId, HomeFacts, Libraries, Library, LibraryError,
+    LibraryResult, LocalFile, MoodId, MusicFolder, PlaylistId, PlaylistSnapshot, SmartPlaylistId,
+    SourceId, Track, TrackId,
 };
 
 pub const STORE_ROW_BATCH_LIMIT: usize = 500;
@@ -68,7 +68,7 @@ pub struct CandidateFinish {
 #[derive(Clone, Debug)]
 pub struct CandidateCommit {
     pub change: CandidateChange,
-    pub loaded: Arc<LoadedLibrary>,
+    pub library: Arc<Library>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -81,15 +81,15 @@ pub enum CandidateChange {
 /// A complete candidate whose canonical facts can be inspected and prepared
 /// without making them durable or visible.
 ///
-/// Rufin prepares artwork and current-media replacements from `loaded`, then
+/// Rufin prepares artwork and current-media replacements from `library`, then
 /// consumes this value with [`accept`](Self::accept). Dropping it keeps the
 /// previously accepted source library and schedules the invisible rows for
 /// bounded cleanup.
 pub struct PreparedSourceCandidate {
-    library: Library,
+    libraries: Libraries,
     candidate_library_id: i64,
     prepared: Option<crate::store::PreparedStoreCandidate>,
-    loaded: Arc<LoadedLibrary>,
+    library: Arc<Library>,
     finished: bool,
 }
 
@@ -137,7 +137,7 @@ pub struct AcceptedLibraryChange {
 }
 
 pub struct SourceCandidate {
-    library: Library,
+    libraries: Libraries,
     source_id: SourceId,
     library_id: i64,
     write_failed: bool,
@@ -147,7 +147,6 @@ pub struct SourceCandidate {
 impl Library {
     pub fn accept_source_update(
         &self,
-        loaded: &Arc<LoadedLibrary>,
         update: SourceLibraryUpdate,
     ) -> LibraryResult<Option<AcceptedLibraryChange>> {
         if update.albums.is_empty()
@@ -174,38 +173,33 @@ impl Library {
             removed_tracks,
             ..ItemReplacement::default()
         };
-        loaded.keep_changed_source_update(
-            &mut replacement,
-            &mut playlists,
-            &mut removed_playlists,
-        )?;
+        self.keep_changed_source_update(&mut replacement, &mut playlists, &mut removed_playlists)?;
         if replacement.is_empty() && playlists.is_empty() && removed_playlists.is_empty() {
             return Ok(None);
         }
         let stored = self.store.replace_source_update(
-            loaded.source_id().clone(),
-            loaded.library_id(),
+            self.source_id().clone(),
+            self.library_id(),
             replacement,
             playlists,
             removed_playlists,
         )?;
-        loaded
-            .replace_source_update(
-                stored.replacement,
-                stored.unresolved_album_releases,
-                stored.playlists,
-                stored.removed_playlists,
-            )
-            .map(Some)
-            .map_err(LibraryError::from)
+        self.replace_source_update(
+            stored.replacement,
+            stored.unresolved_album_releases,
+            stored.playlists,
+            stored.removed_playlists,
+        )
+        .map(Some)
+        .map_err(LibraryError::from)
     }
 }
 
 impl SourceCandidate {
-    pub(crate) fn new(library: Library, header: CandidateHeader, library_id: i64) -> Self {
+    pub(crate) fn new(libraries: Libraries, header: CandidateHeader, library_id: i64) -> Self {
         let source_id = header.source_id;
         Self {
-            library,
+            libraries,
             source_id,
             library_id,
             finished: false,
@@ -224,11 +218,11 @@ impl SourceCandidate {
         if batch.is_empty() {
             return Ok(());
         }
-        match self.library.write_candidate(self.library_id, batch) {
+        match self.libraries.write_candidate(self.library_id, batch) {
             Ok(()) => Ok(()),
             Err(error) => {
                 self.write_failed = true;
-                self.library.schedule_candidate_cleanup(self.library_id);
+                self.libraries.schedule_candidate_cleanup(self.library_id);
                 Err(error)
             }
         }
@@ -237,26 +231,32 @@ impl SourceCandidate {
     pub fn finish(
         mut self,
         finish: CandidateFinish,
-        current: Option<&Arc<LoadedLibrary>>,
+        current: Option<&Arc<Library>>,
     ) -> LibraryResult<PreparedSourceCandidate> {
         if self.write_failed {
             return Err(LibraryError::CandidateWriteFailed);
         }
         let preparation = self
-            .library
+            .libraries
             .store
             .prepare_candidate(self.library_id, finish)?;
-        let loaded = if let Some(input) = preparation.input {
-            LoadedLibrary::build(input)?
-        } else if let Some(loaded) = current
-            .filter(|loaded| Some(loaded.library_id()) == preparation.prepared.current_library_id())
-        {
-            Arc::clone(loaded)
+        let library = if let Some(input) = preparation.input {
+            Library::build(
+                input,
+                self.libraries.store.clone(),
+                Arc::clone(&self.libraries.home_sessions),
+            )?
+        } else if let Some(library) = current.filter(|library| {
+            library.source_id() == &self.source_id
+                && library.store.same_lane(&self.libraries.store)
+                && Some(library.library_id()) == preparation.prepared.current_library_id()
+        }) {
+            Arc::clone(library)
         } else {
-            self.library
+            self.libraries
                 .load_source(&self.source_id)?
-                .filter(|loaded| {
-                    Some(loaded.library_id()) == preparation.prepared.current_library_id()
+                .filter(|library| {
+                    Some(library.library_id()) == preparation.prepared.current_library_id()
                 })
                 .ok_or_else(|| {
                     LibraryError::Persistence(
@@ -266,10 +266,10 @@ impl SourceCandidate {
         };
         self.finished = true;
         Ok(PreparedSourceCandidate {
-            library: self.library.clone(),
+            libraries: self.libraries.clone(),
             candidate_library_id: self.library_id,
             prepared: Some(preparation.prepared),
-            loaded,
+            library,
             finished: false,
         })
     }
@@ -278,7 +278,7 @@ impl SourceCandidate {
 impl Drop for SourceCandidate {
     fn drop(&mut self) {
         if !self.finished {
-            self.library.schedule_candidate_cleanup(self.library_id);
+            self.libraries.schedule_candidate_cleanup(self.library_id);
         }
     }
 }
@@ -291,8 +291,8 @@ impl PreparedSourceCandidate {
         prepared.change()
     }
 
-    pub fn loaded(&self) -> &Arc<LoadedLibrary> {
-        &self.loaded
+    pub fn library(&self) -> &Arc<Library> {
+        &self.library
     }
 
     pub fn accept(mut self) -> LibraryResult<CandidateCommit> {
@@ -300,30 +300,34 @@ impl PreparedSourceCandidate {
             LibraryError::Persistence("the source candidate was already consumed".to_string())
         })?;
         let change = prepared.change();
-        let commit = self.library.store.accept_candidate(prepared)?;
+        let commit = self.libraries.store.accept_candidate(prepared)?;
         // Store acceptance is now durable. A later in-process publication
         // error must not make Drop delete the accepted source library.
         self.finished = true;
-        let loaded = match change {
+        let library = match change {
             CandidateChange::None => {
-                self.loaded.replace_provider_freshness(commit.freshness)?;
-                Arc::clone(&self.loaded)
+                self.library.replace_provider_freshness(commit.freshness)?;
+                Arc::clone(&self.library)
             }
             CandidateChange::Home => {
-                self.library.replace_home_facts(&self.loaded, commit.home)?;
-                self.loaded.replace_provider_freshness(commit.freshness)?;
-                Arc::clone(&self.loaded)
+                self.library.replace_home_facts(commit.home)?;
+                self.library.replace_provider_freshness(commit.freshness)?;
+                Arc::clone(&self.library)
             }
-            CandidateChange::Library => Arc::clone(&self.loaded),
+            CandidateChange::Library => {
+                self.library
+                    .replace_activity_snapshot(commit.activity, commit.recent_plays)?;
+                Arc::clone(&self.library)
+            }
         };
-        Ok(CandidateCommit { change, loaded })
+        Ok(CandidateCommit { change, library })
     }
 }
 
 impl Drop for PreparedSourceCandidate {
     fn drop(&mut self) {
         if !self.finished {
-            self.library
+            self.libraries
                 .schedule_candidate_cleanup(self.candidate_library_id);
         }
     }

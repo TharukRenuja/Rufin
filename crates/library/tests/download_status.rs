@@ -1,14 +1,14 @@
 use library::{
     Album, AlbumId, AlbumRelations, Artist, ArtistCredit, ArtistId, CandidateBatch,
-    CandidateFinish, CandidateHeader, Genre, GenreCredit, GenreId, HomeFacts, Library, MoodCredit,
-    MoodId, MusicFolder, MusicFolderId, Playlist, PlaylistEntry, PlaylistId, PlaylistSnapshot,
-    SmartPlaylistBuiltin, SourceId, Track, TrackData, TrackId, TrackRelations,
+    CandidateFinish, CandidateHeader, Genre, GenreCredit, GenreId, HomeFacts, Libraries,
+    MoodCredit, MoodId, MusicFolder, MusicFolderId, Playlist, PlaylistEntry, PlaylistId,
+    PlaylistSnapshot, SmartPlaylistBuiltin, SourceId, Track, TrackData, TrackId, TrackRelations,
 };
 
 #[test]
 fn collection_download_status_distinguishes_any_from_all_tracks() {
     let directory = tempfile::tempdir().expect("temporary Library");
-    let library = Library::open(directory.path().join("library.db")).expect("open Library");
+    let library = Libraries::open(directory.path().join("library.db")).expect("open Library");
     let source_id = SourceId::new("subsonic:download-status");
     let album_id = AlbumId::fake(1);
     let artist_id = ArtistId::fake(1);
@@ -82,9 +82,9 @@ fn collection_download_status_distinguishes_any_from_all_tracks() {
         )
         .and_then(library::PreparedSourceCandidate::accept)
         .expect("accept source")
-        .loaded;
-    library
-        .initialize_smart_playlists(&loaded)
+        .library;
+    loaded
+        .initialize_smart_playlists()
         .expect("initialize smart playlists");
     let smart_playlist_id = loaded
         .smart_playlists(Some(&folder_id))
@@ -180,7 +180,7 @@ fn collection_download_status_distinguishes_any_from_all_tracks() {
 
 #[allow(clippy::too_many_arguments)]
 fn all_collection_statuses(
-    loaded: &std::sync::Arc<library::LoadedLibrary>,
+    loaded: &std::sync::Arc<library::Library>,
     album_id: &AlbumId,
     artist_id: &ArtistId,
     genre_id: &GenreId,

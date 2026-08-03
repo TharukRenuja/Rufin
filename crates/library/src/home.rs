@@ -14,7 +14,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     AlbumId, AlbumSummary, FavoriteItemId, GenreSummary, Library, LibraryError, LibraryResult,
-    LoadedLibrary, MusicFolderId, SourceId, Track, TrackId,
+    MusicFolderId, SourceId, Track, TrackId,
     browse::{album_in_scope, album_summary, genre_summary, track_in_scope},
     msgid,
 };
@@ -318,34 +318,28 @@ impl HomeSessions {
 }
 
 impl Library {
-    pub(crate) fn prepare_home(&self, loaded: &Arc<LoadedLibrary>) -> LibraryResult<()> {
-        self.home_sessions.state_for(loaded.source_id())?;
+    pub(crate) fn prepare_home(&self) -> LibraryResult<()> {
+        self.home_sessions.state_for(self.source_id())?;
         Ok(())
     }
 
-    pub(crate) fn replace_home_facts(
-        &self,
-        loaded: &Arc<LoadedLibrary>,
-        facts: HomeFacts,
-    ) -> LibraryResult<()> {
-        let mut state = loaded.write_state()?;
+    pub(crate) fn replace_home_facts(&self, facts: HomeFacts) -> LibraryResult<()> {
+        let mut state = self.write_state()?;
         state.home_facts = facts;
         Ok(())
     }
 
     pub fn home(
         &self,
-        loaded: &Arc<LoadedLibrary>,
         music_folder_id: Option<&MusicFolderId>,
     ) -> LibraryResult<Arc<HomeSnapshot>> {
-        let session = self.home_sessions.state_for(loaded.source_id())?;
-        self.compose_home(loaded, music_folder_id, session.explore_variation)
+        let session = self.home_sessions.state_for(self.source_id())?;
+        self.compose_home(music_folder_id, session.explore_variation)
     }
 
     /// Updates one favorited item in the snapshot prepared for the next visit.
     pub fn home_after_favorite(
         &self,
-        loaded: &Arc<LoadedLibrary>,
         music_folder_id: Option<&MusicFolderId>,
         current: &Arc<HomeSnapshot>,
         favorite: &FavoriteItemId,
@@ -353,7 +347,7 @@ impl Library {
         if matches!(favorite, FavoriteItemId::Artist(_)) {
             return Ok(Arc::clone(current));
         }
-        let state = loaded.read_state()?;
+        let state = self.read_state()?;
         let track_id = match favorite {
             FavoriteItemId::Track(id) => Some(id),
             FavoriteItemId::Album(_) | FavoriteItemId::Artist(_) => None,
@@ -438,12 +432,11 @@ impl Library {
     /// number of items already shown on Home.
     pub fn home_after_play(
         &self,
-        loaded: &Arc<LoadedLibrary>,
         music_folder_id: Option<&MusicFolderId>,
         current: &Arc<HomeSnapshot>,
         track_id: &TrackId,
     ) -> LibraryResult<Arc<HomeSnapshot>> {
-        let state = loaded.read_state()?;
+        let state = self.read_state()?;
         if !state.home_facts.is_rufin_defined() {
             return Ok(Arc::clone(current));
         }
@@ -516,17 +509,16 @@ impl Library {
 
     fn compose_home(
         &self,
-        loaded: &Arc<LoadedLibrary>,
         music_folder_id: Option<&MusicFolderId>,
         explore_variation: u64,
     ) -> LibraryResult<Arc<HomeSnapshot>> {
-        let state = loaded.read_state()?;
+        let state = self.read_state()?;
         let (album_ids, track_ids) = home_candidates(&state, music_folder_id);
-        let showcase =
-            self.home_sessions
-                .showcase_for(loaded.source_id(), &album_ids, &track_ids)?;
+        let showcase = self
+            .home_sessions
+            .showcase_for(self.source_id(), &album_ids, &track_ids)?;
         Ok(Arc::new(compose_home(
-            loaded.source_id(),
+            self.source_id(),
             &state,
             self.home_sessions.seed,
             explore_variation,
@@ -538,17 +530,16 @@ impl Library {
     /// Rebuilds one Rufin-defined section without changing the mounted Home.
     pub fn refresh_rufin_home_section(
         &self,
-        loaded: &Arc<LoadedLibrary>,
         music_folder_id: Option<&MusicFolderId>,
         current: &Arc<HomeSnapshot>,
         kind: HomeSectionKind,
     ) -> LibraryResult<Arc<HomeSnapshot>> {
         let session = if kind == HomeSectionKind::Explore {
-            self.home_sessions.advance_explore(loaded.source_id())?
+            self.home_sessions.advance_explore(self.source_id())?
         } else {
-            self.home_sessions.state_for(loaded.source_id())?
+            self.home_sessions.state_for(self.source_id())?
         };
-        let state = loaded.read_state()?;
+        let state = self.read_state()?;
         if kind != HomeSectionKind::Explore && !state.home_facts.is_rufin_defined() {
             return Err(LibraryError::Persistence(format!(
                 "{} is supplied by this source",
@@ -557,7 +548,7 @@ impl Library {
         }
         let section = if kind == HomeSectionKind::Explore {
             compose_explore(
-                loaded.source_id(),
+                self.source_id(),
                 &state,
                 self.home_sessions.seed,
                 session.explore_variation,
@@ -576,14 +567,13 @@ impl Library {
     /// unrelated section handles, showcase, and genres remain unchanged.
     pub fn accept_home_section(
         &self,
-        loaded: &Arc<LoadedLibrary>,
         music_folder_id: Option<&MusicFolderId>,
         current: &Arc<HomeSnapshot>,
         section: SourceHomeSection,
     ) -> LibraryResult<Arc<HomeSnapshot>> {
         let kind = HomeSectionKind::from(section.kind);
         let (home, next_section) = {
-            let state = loaded.read_state()?;
+            let state = self.read_state()?;
             let HomeFacts::Source { sections } = &state.home_facts else {
                 return Err(LibraryError::Persistence(format!(
                     "{} is provided by Rufin for this source",
@@ -605,13 +595,10 @@ impl Library {
             next.sort_by_key(|section| home_section_position(section.kind.into()));
             (HomeFacts::Source { sections: next }, next_section)
         };
-        self.store.replace_home(
-            loaded.source_id().clone(),
-            loaded.library_id(),
-            home.clone(),
-        )?;
+        self.store
+            .replace_home(self.source_id().clone(), self.library_id(), home.clone())?;
         {
-            let mut state = loaded.write_state()?;
+            let mut state = self.write_state()?;
             state.home_facts = home;
         }
         Ok(Arc::new(current.replacing_section(kind, next_section)))

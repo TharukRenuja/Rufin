@@ -7,7 +7,7 @@
 //! the queue or current-media state.
 
 use std::collections::VecDeque;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{self, SyncSender};
 use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
@@ -15,7 +15,7 @@ use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use async_channel::Sender as EventSender;
 use library::{
-    AcceptedPlay, AcceptedSkip, Library, LoadedLibrary, PlayableFile, PlaybackLoad,
+    AcceptedPlay, AcceptedSkip, Libraries, Library, PlayableFile, PlaybackLoad,
     PlaybackOccurrenceId, PlaybackProgressUpdate, PlaybackStateUpdate, SourceId, Track, TrackId,
 };
 use playback::{
@@ -27,12 +27,12 @@ use playback::{
 use scrobbling::Scrobbler;
 use sources::{NativeSourceResult, PlaybackReport, PlaybackReportKind, Source, StreamDescriptor};
 use tracing::{debug, warn};
-use ui::runtime::SourceEvent;
+use ui::runtime::PlaybackPublication;
 
 use crate::settings::SettingsFile;
 use crate::source::{
-    SelectedSourceRuntime, SelectedSourceSession, SourceAcceptanceSender,
-    WeakSelectedSourceSession, source_access_unavailable,
+    ActiveSource, SelectedSourceState, SourceAcceptanceSender, WeakActiveSource,
+    source_access_unavailable,
 };
 use crate::waveform::{WaveformMedia, WaveformOwner};
 use lyrics::{LyricsContext, LyricsService};
@@ -44,16 +44,16 @@ struct ActivePlayback {
     instance: u64,
     source_id: SourceId,
     source_session_epoch: SourceSessionEpoch,
-    selected: SelectedSourceSession,
+    selected: Arc<ActiveSource>,
     playback: Playback,
 }
 
 impl ActivePlayback {
-    fn selected(&self) -> SelectedSourceRuntime {
-        self.selected.snapshot()
+    fn selected(&self) -> Option<Arc<SelectedSourceState>> {
+        self.selected.resolve()
     }
 
-    fn weak_selected(&self) -> WeakSelectedSourceSession {
+    fn weak_selected(&self) -> WeakActiveSource {
         self.selected.downgrade()
     }
 }
@@ -65,7 +65,7 @@ enum QueueIntentWork {
     },
     Radio {
         source_session_epoch: SourceSessionEpoch,
-        selected: WeakSelectedSourceSession,
+        selected: WeakActiveSource,
         playback: Playback,
         request: RadioPlayRequest,
         #[cfg(test)]
@@ -73,7 +73,7 @@ enum QueueIntentWork {
     },
     Random {
         source_session_epoch: SourceSessionEpoch,
-        selected: WeakSelectedSourceSession,
+        selected: WeakActiveSource,
         playback: Playback,
         request: RandomPlayRequest,
         #[cfg(test)]
@@ -198,7 +198,7 @@ impl QueueIntentWorker {
     fn submit_radio(
         &self,
         source_session_epoch: SourceSessionEpoch,
-        selected: WeakSelectedSourceSession,
+        selected: WeakActiveSource,
         playback: Playback,
         request: RadioPlayRequest,
     ) {
@@ -221,7 +221,7 @@ impl QueueIntentWorker {
     fn submit_random(
         &self,
         source_session_epoch: SourceSessionEpoch,
-        selected: WeakSelectedSourceSession,
+        selected: WeakActiveSource,
         playback: Playback,
         request: RandomPlayRequest,
     ) {
@@ -270,7 +270,7 @@ impl QueueIntentWorker {
     fn submit_random_observed(
         &self,
         source_session_epoch: SourceSessionEpoch,
-        selected: WeakSelectedSourceSession,
+        selected: WeakActiveSource,
         playback: Playback,
         request: RandomPlayRequest,
     ) -> mpsc::Receiver<Option<tokio::task::JoinHandle<()>>> {
@@ -349,6 +349,31 @@ pub(crate) struct PreparedTrackRefresh {
     track_ids: Vec<TrackId>,
 }
 
+/// A target Playback session whose fallible construction finished before a
+/// selected-source cutover.
+///
+/// Dropping an unused preparation shuts its workers down. Installation only
+/// publishes the already-started session after the previous one has stopped.
+pub(crate) struct PreparedPlayback {
+    active: Option<ActivePlayback>,
+    projection: Option<PlaybackProjection>,
+    activated: Arc<AtomicBool>,
+}
+
+impl Drop for PreparedPlayback {
+    fn drop(&mut self) {
+        if let Some(active) = self.active.take()
+            && let Err(error) = active.playback.shutdown()
+        {
+            warn!(%error, "could not discard prepared Playback");
+        }
+    }
+}
+
+/// Proof that the previous Playback session and its persistence work have
+/// finished before a prepared target is installed.
+pub(crate) struct PlaybackCutover;
+
 // This FIFO is only an executor boundary around blocking Library and Settings
 // calls. It preserves Playback's order without interpreting or merging state.
 const PERSISTENCE_CAPACITY: usize = 64;
@@ -358,7 +383,7 @@ enum PersistenceWork {
     State(PlaybackStateUpdate),
     Progress(PlaybackProgressUpdate),
     Activity {
-        loaded: Arc<LoadedLibrary>,
+        loaded: Arc<Library>,
         source_id: SourceId,
         source_session_epoch: SourceSessionEpoch,
         outcome: playback::ListeningOutcome,
@@ -373,7 +398,7 @@ enum PersistenceWork {
 }
 
 struct PersistenceTarget {
-    library: Library,
+    library: Libraries,
     settings: SettingsFile,
     acceptance: SourceAcceptanceSender,
     scrobbler: Arc<Scrobbler>,
@@ -425,7 +450,7 @@ impl PersistenceTarget {
 
     fn apply_activity(
         &self,
-        loaded: Arc<LoadedLibrary>,
+        loaded: Arc<Library>,
         source_id: SourceId,
         source_session_epoch: SourceSessionEpoch,
         outcome: playback::ListeningOutcome,
@@ -433,15 +458,12 @@ impl PersistenceTarget {
         if outcome.qualified_plays > 0
             && let Some(played_at) = outcome.last_played_at_unix_seconds
         {
-            match self.library.record_play(
-                &loaded,
-                AcceptedPlay {
-                    play_id: outcome.play_id.clone(),
-                    track_id: outcome.track_id.clone(),
-                    played_at,
-                    month: outcome.local_period.clone(),
-                },
-            ) {
+            match loaded.record_play(AcceptedPlay {
+                play_id: outcome.play_id.clone(),
+                track_id: outcome.track_id.clone(),
+                played_at,
+                month: outcome.local_period.clone(),
+            }) {
                 Ok(Some(update)) => self.acceptance.publish_activity(
                     source_id.clone(),
                     source_session_epoch,
@@ -453,12 +475,9 @@ impl PersistenceTarget {
             }
         }
         if outcome.skips > 0 {
-            match self.library.record_skip(
-                &loaded,
-                AcceptedSkip {
-                    track_id: outcome.track_id,
-                },
-            ) {
+            match loaded.record_skip(AcceptedSkip {
+                track_id: outcome.track_id,
+            }) {
                 Ok(update) => {
                     self.acceptance
                         .publish_activity(source_id, source_session_epoch, update, None)
@@ -661,10 +680,10 @@ impl SourceReportMailbox<SourceReportJob> {
 }
 
 pub(crate) struct PlaybackOwner {
-    library: Library,
+    library: Libraries,
     settings: SettingsFile,
     runtime: tokio::runtime::Handle,
-    source_events: EventSender<SourceEvent>,
+    events: EventSender<PlaybackPublication>,
     waveform: Arc<WaveformOwner>,
     lyrics: Arc<LyricsService>,
     discord: Arc<desktop_integration::Discord>,
@@ -681,10 +700,10 @@ pub(crate) struct PlaybackOwner {
 
 impl PlaybackOwner {
     pub(crate) fn new<StartBackend>(
-        library: Library,
+        library: Libraries,
         settings: SettingsFile,
         runtime: tokio::runtime::Handle,
-        source_events: EventSender<SourceEvent>,
+        events: EventSender<PlaybackPublication>,
         acceptance: SourceAcceptanceSender,
         waveform: Arc<WaveformOwner>,
         lyrics: Arc<LyricsService>,
@@ -707,7 +726,7 @@ impl PlaybackOwner {
             library,
             settings,
             runtime,
-            source_events,
+            events,
             waveform,
             lyrics,
             discord,
@@ -724,14 +743,11 @@ impl PlaybackOwner {
         owner
     }
 
-    pub(crate) fn install_selected(
+    pub(crate) fn prepare_selected(
         self: &Arc<Self>,
-        session: SelectedSourceSession,
-    ) -> Result<PlaybackProjection, String> {
-        if self.active().is_some() {
-            return Err("the previous Playback session is still active".to_string());
-        }
-        let selected = session.snapshot();
+        session: Arc<ActiveSource>,
+        selected: Arc<SelectedSourceState>,
+    ) -> Result<PreparedPlayback, String> {
         let stored = self.settings.load();
         let sequence = match self
             .library
@@ -746,7 +762,7 @@ impl PlaybackOwner {
             }
             PlaybackLoad::Ready(checkpoint) => playback::restore_checkpoint(
                 &checkpoint,
-                Some(&selected.loaded),
+                Some(&selected.library),
                 stored.ui.repeat_mode,
                 stored.ui.shuffle_enabled,
                 random_u64(),
@@ -759,6 +775,8 @@ impl PlaybackOwner {
         let owner = Arc::downgrade(self);
         let clock_owner = Arc::downgrade(self);
         let output_session = session.clone();
+        let activated = Arc::new(AtomicBool::new(false));
+        let output_activated = Arc::clone(&activated);
         let (playback, projection) = Playback::start(
             sequence,
             source_session_epoch,
@@ -775,7 +793,9 @@ impl PlaybackOwner {
             {
                 let source_id = source_id.clone();
                 move |update| {
-                    if let Some(owner) = owner.upgrade() {
+                    if output_activated.load(Ordering::Acquire)
+                        && let Some(owner) = owner.upgrade()
+                    {
                         owner.consume_update(
                             instance,
                             source_id.clone(),
@@ -788,21 +808,49 @@ impl PlaybackOwner {
             },
         )
         .map_err(string_error)?;
-        *self
-            .active
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(ActivePlayback {
-            instance,
-            source_id,
-            source_session_epoch,
-            selected: session,
-            playback,
-        });
-        self.queue_intents.select(source_session_epoch);
-        Ok(projection)
+        Ok(PreparedPlayback {
+            active: Some(ActivePlayback {
+                instance,
+                source_id,
+                source_session_epoch,
+                selected: session,
+                playback,
+            }),
+            projection: Some(projection),
+            activated,
+        })
     }
 
-    pub(crate) fn stop_for_source_switch(&self) -> Result<(), String> {
+    pub(crate) fn install_prepared(
+        &self,
+        mut prepared: PreparedPlayback,
+        _cutover: PlaybackCutover,
+    ) -> PlaybackProjection {
+        let active = prepared
+            .active
+            .take()
+            .expect("a prepared Playback retains its session until installation");
+        let projection = prepared
+            .projection
+            .take()
+            .expect("a prepared Playback retains its projection until installation");
+        let source_session_epoch = active.source_session_epoch;
+        let mut current = self
+            .active
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        assert!(
+            current.is_none(),
+            "the previous Playback session must stop before target installation"
+        );
+        *current = Some(active);
+        drop(current);
+        prepared.activated.store(true, Ordering::Release);
+        self.queue_intents.select(source_session_epoch);
+        projection
+    }
+
+    pub(crate) fn stop_for_source_switch(&self) -> Result<PlaybackCutover, String> {
         let active = self
             .active
             .lock()
@@ -815,7 +863,7 @@ impl PlaybackOwner {
             .map(|active| active.playback.shutdown().map_err(string_error))
             .transpose();
         self.persistence.drain();
-        shutdown.map(|_| ())
+        shutdown.map(|_| PlaybackCutover)
     }
 
     pub(crate) fn refresh_accepted_tracks(
@@ -823,17 +871,19 @@ impl PlaybackOwner {
         source_id: &SourceId,
         source_session_epoch: SourceSessionEpoch,
         tracks: Vec<Track>,
-    ) -> Result<PlaybackProjection, String> {
+    ) -> Result<(), String> {
         let Some(active) = self.active() else {
             return Err("Playback is not active".to_string());
         };
         if &active.source_id != source_id || active.source_session_epoch != source_session_epoch {
             return Err("the accepted Tracks belong to another Playback session".to_string());
         }
-        active
+        let projection = active
             .playback
             .refresh_tracks(source_session_epoch, tracks)
-            .map_err(string_error)
+            .map_err(string_error)?;
+        self.publish_projection(active.source_id, active.source_session_epoch, projection);
+        Ok(())
     }
 
     pub(crate) fn prepare_track_refresh(
@@ -859,8 +909,8 @@ impl PlaybackOwner {
     pub(crate) fn apply_track_refresh(
         &self,
         prepared: PreparedTrackRefresh,
-        loaded: &Arc<LoadedLibrary>,
-    ) -> Result<PlaybackProjection, String> {
+        loaded: &Arc<Library>,
+    ) -> Result<(), String> {
         let PreparedTrackRefresh { active, track_ids } = prepared;
         if !self.is_active(
             active.instance,
@@ -883,7 +933,8 @@ impl PlaybackOwner {
                 .queue_page(QueuePageQuery::current())
                 .map_err(string_error)?,
         );
-        Ok(projection)
+        self.publish_projection(active.source_id, active.source_session_epoch, projection);
+        Ok(())
     }
 
     pub(crate) fn waveform_setting_changed(&self, waveform_enabled: bool) {
@@ -932,7 +983,7 @@ impl PlaybackOwner {
         instance: u64,
         source_id: SourceId,
         source_session_epoch: SourceSessionEpoch,
-        selected: &SelectedSourceSession,
+        selected: &Arc<ActiveSource>,
         update: PlaybackUpdate,
     ) {
         let current_media_changed = update.current_media_changed;
@@ -955,7 +1006,7 @@ impl PlaybackOwner {
                     matches!(notice, playback::PlaybackNotice::PositionDiscontinuity(_))
                 }),
             );
-            let _ = self.source_events.try_send(SourceEvent::Playback {
+            let _ = self.events.try_send(PlaybackPublication {
                 source_id,
                 source_session_epoch,
                 projection,
@@ -968,7 +1019,7 @@ impl PlaybackOwner {
         instance: u64,
         source_id: &SourceId,
         source_session_epoch: SourceSessionEpoch,
-        selected: &SelectedSourceSession,
+        selected: &Arc<ActiveSource>,
         effect: SessionEffect,
     ) {
         match effect {
@@ -1033,7 +1084,10 @@ impl PlaybackOwner {
                 self.record_activity(selected, source_id, source_session_epoch, outcome);
             }
             SessionEffect::SourceReport(report) => {
-                if let Some(source) = selected.snapshot().source {
+                if let Some(source) = selected
+                    .resolve()
+                    .and_then(|selected| selected.source.clone())
+                {
                     self.report_source(instance, source, report);
                 }
             }
@@ -1075,9 +1129,11 @@ impl PlaybackOwner {
         let Some(active) = active else {
             return;
         };
-        let selected = active.selected();
-        let loaded = selected.loaded;
-        let source = selected.source;
+        let Some(selected) = active.selected() else {
+            return;
+        };
+        let loaded = Arc::clone(&selected.library);
+        let source = selected.source.clone();
         let track_id = request.track_id.clone();
         let source_format = loaded
             .track(&track_id)
@@ -1122,17 +1178,19 @@ impl PlaybackOwner {
 
     fn record_activity(
         &self,
-        selected: &SelectedSourceSession,
+        selected: &Arc<ActiveSource>,
         source_id: &SourceId,
         source_session_epoch: SourceSessionEpoch,
         outcome: playback::ListeningOutcome,
     ) {
-        let selected = selected.snapshot();
-        if selected.loaded.source_id() != source_id || &outcome.source_id != source_id {
+        let Some(selected) = selected.resolve() else {
+            return;
+        };
+        if selected.library.source_id() != source_id || &outcome.source_id != source_id {
             return;
         }
         self.persistence.enqueue(PersistenceWork::Activity {
-            loaded: selected.loaded,
+            loaded: Arc::clone(&selected.library),
             source_id: source_id.clone(),
             source_session_epoch,
             outcome,
@@ -1246,7 +1304,10 @@ impl PlaybackOwner {
             self.lyrics.set_current(None);
             return;
         };
-        let selected = active.selected();
+        let Some(selected) = active.selected() else {
+            self.lyrics.set_current(None);
+            return;
+        };
         let input = match selected.configuration.input_identity() {
             Ok(input) => input,
             Err(error) => {
@@ -1258,28 +1319,42 @@ impl PlaybackOwner {
         self.lyrics.set_current(Some(LyricsContext {
             media,
             input,
-            source: selected.source,
-            loaded: selected.loaded,
+            source: selected.source.clone(),
+            loaded: Arc::clone(&selected.library),
         }));
     }
 
     fn waveform_media(&self, media: Arc<playback::CurrentMedia>) -> Option<WaveformMedia> {
         let active = self.active_for_media(&media)?;
-        let selected = active.selected();
+        let selected = active.selected()?;
         Some(WaveformMedia {
             request: playback::StreamRequest::new(
                 media.track.id.clone(),
                 self.settings.playback_stream_quality(),
             ),
             media,
-            loaded: selected.loaded,
-            source: selected.source,
+            loaded: Arc::clone(&selected.library),
+            source: selected.source.clone(),
         })
     }
 
     pub(crate) fn publish_selected_products(&self, projection: &PlaybackProjection) {
         self.publish_current_media(projection.view.transport.current.clone());
         self.observe_discord(Some(projection), false);
+    }
+
+    fn publish_projection(
+        &self,
+        source_id: SourceId,
+        source_session_epoch: SourceSessionEpoch,
+        projection: PlaybackProjection,
+    ) {
+        self.publish_selected_products(&projection);
+        let _ = self.events.try_send(PlaybackPublication {
+            source_id,
+            source_session_epoch,
+            projection,
+        });
     }
 
     pub(crate) fn update_discord_settings(&self) {
@@ -1525,7 +1600,7 @@ impl TransportCommandPort for PlaybackOwner {
 }
 
 pub(crate) async fn prepare_stream(
-    loaded: Option<Arc<library::LoadedLibrary>>,
+    loaded: Option<Arc<library::Library>>,
     source: Option<Arc<Source>>,
     request: playback::StreamRequest,
 ) -> Result<playback::PreparedStream, String> {
@@ -1817,13 +1892,13 @@ mod loaded_play_tests {
     fn loaded_play_fixture() -> (
         tempfile::TempDir,
         SourceId,
-        Arc<LoadedLibrary>,
+        Arc<Library>,
         LoadedPlayRequest,
         Playback,
     ) {
         let directory = tempfile::tempdir().expect("temporary loaded Play Store");
         let library =
-            Library::open(directory.path().join("library.db")).expect("open loaded Play Store");
+            Libraries::open(directory.path().join("library.db")).expect("open loaded Play Store");
         let source_id = SourceId::fake(1);
         let mut candidate = library
             .begin_source_candidate(CandidateHeader {
@@ -1873,7 +1948,7 @@ mod loaded_play_tests {
             )
             .and_then(|prepared| prepared.accept())
             .expect("accept loaded Play candidate")
-            .loaded;
+            .library;
         let request = LoadedPlayRequest::context(
             source_id.clone(),
             SourceSessionEpoch::new(1),
@@ -1906,24 +1981,21 @@ mod loaded_play_tests {
 
     fn selected_runtime(
         configuration: SourceConfiguration,
-        loaded: Arc<LoadedLibrary>,
-    ) -> SelectedSourceRuntime {
-        SelectedSourceRuntime {
+        loaded: Arc<Library>,
+    ) -> SelectedSourceState {
+        SelectedSourceState {
             configuration,
             source: None,
             source_session_epoch: SourceSessionEpoch::new(1),
-            loaded,
+            library: loaded,
             home: Arc::new(HomeSnapshot::default()),
             music_folder_id: None,
         }
     }
 
-    fn replacement_loaded(
-        directory: &tempfile::TempDir,
-        source_id: &SourceId,
-    ) -> Arc<LoadedLibrary> {
+    fn replacement_loaded(directory: &tempfile::TempDir, source_id: &SourceId) -> Arc<Library> {
         let library =
-            Library::open(directory.path().join("library.db")).expect("reopen loaded Play Store");
+            Libraries::open(directory.path().join("library.db")).expect("reopen loaded Play Store");
         let mut candidate = library
             .begin_source_candidate(CandidateHeader {
                 source_id: source_id.clone(),
@@ -1945,7 +2017,7 @@ mod loaded_play_tests {
             )
             .and_then(|prepared| prepared.accept())
             .expect("accept replacement candidate")
-            .loaded
+            .library
     }
 
     #[test]
@@ -2067,7 +2139,7 @@ mod loaded_play_tests {
         let configuration =
             SourceConfiguration::local(source_id, "Local", vec![directory.path().to_path_buf()])
                 .expect("Local source configuration");
-        let selected = SelectedSourceSession::new(selected_runtime(configuration, loaded));
+        let selected = ActiveSource::fixed_for_test(selected_runtime(configuration, loaded));
         let runtime = tokio::runtime::Builder::new_current_thread()
             .build()
             .expect("queue intent runtime");
@@ -2116,7 +2188,7 @@ mod loaded_play_tests {
         let configuration =
             SourceConfiguration::local(source_id, "Local", vec![directory.path().to_path_buf()])
                 .expect("Local source configuration");
-        let selected = SelectedSourceSession::new(selected_runtime(configuration, loaded));
+        let selected = ActiveSource::fixed_for_test(selected_runtime(configuration, loaded));
         let runtime = tokio::runtime::Builder::new_current_thread()
             .build()
             .expect("radio runtime");
@@ -2152,7 +2224,7 @@ mod loaded_play_tests {
             vec![directory.path().to_path_buf()],
         )
         .expect("Local source configuration");
-        let selected = SelectedSourceSession::new(selected_runtime(
+        let selected = ActiveSource::fixed_for_test(selected_runtime(
             configuration.clone(),
             Arc::clone(&loaded),
         ));
@@ -2197,7 +2269,7 @@ mod loaded_play_tests {
             vec![directory.path().to_path_buf()],
         )
         .expect("Local source configuration");
-        let selected = SelectedSourceSession::new(selected_runtime(
+        let selected = ActiveSource::fixed_for_test(selected_runtime(
             configuration.clone(),
             Arc::clone(&loaded),
         ));
@@ -2234,7 +2306,7 @@ mod loaded_play_tests {
             SourceConfiguration::local(source_id, "Local", vec![directory.path().to_path_buf()])
                 .expect("Local source configuration");
         let selected =
-            SelectedSourceSession::new(selected_runtime(configuration, Arc::clone(&loaded)));
+            ActiveSource::fixed_for_test(selected_runtime(configuration, Arc::clone(&loaded)));
         let retired = Arc::downgrade(&loaded);
         let runtime = tokio::runtime::Builder::new_current_thread()
             .build()
@@ -2280,7 +2352,8 @@ mod loaded_play_tests {
         let source_id = SourceId::fake(9);
         let mut local_track = track(9, "Missing");
         local_track.source_path = Some(missing_text.clone());
-        let library = Library::open(directory.path().join("library.db")).expect("open Local Store");
+        let library =
+            Libraries::open(directory.path().join("library.db")).expect("open Local Store");
         let mut candidate = library
             .begin_source_candidate(CandidateHeader {
                 source_id: source_id.clone(),
@@ -2317,7 +2390,7 @@ mod loaded_play_tests {
             )
             .and_then(|prepared| prepared.accept())
             .expect("accept Local candidate")
-            .loaded;
+            .library;
         let configuration =
             SourceConfiguration::local(source_id, "Local", vec![directory.path().to_path_buf()])
                 .expect("Local source configuration");

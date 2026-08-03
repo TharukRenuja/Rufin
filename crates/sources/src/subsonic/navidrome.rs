@@ -17,10 +17,12 @@ use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
 
+use crate::policy::normalized_date;
 use crate::remote_http::{self, BodyLimit, RemoteHttpPolicy};
 use crate::source::{BatchEmitter, SourceReadProgress, SourceReadStage};
 use crate::{SourceError, SourceResult};
 
+use super::refresh::collect_genres;
 use super::{SubsonicSource, raw_item_id};
 
 const NAVIDROME_PAGE_SIZE: usize = 1_000;
@@ -71,18 +73,6 @@ impl SubsonicSource {
         self.navidrome_library_version > 0
     }
 
-    async fn navidrome_album_page(&self, offset: usize) -> SourceResult<Vec<NavidromeAlbum>> {
-        self.navidrome_page("album", offset).await
-    }
-
-    async fn navidrome_track_page(&self, offset: usize) -> SourceResult<Vec<NavidromeTrack>> {
-        self.navidrome_page("song", offset).await
-    }
-
-    async fn navidrome_artist_page(&self, offset: usize) -> SourceResult<Vec<NavidromeArtist>> {
-        self.navidrome_page("artist", offset).await
-    }
-
     pub(super) async fn emit_navidrome_library(
         &self,
         emitter: &mut BatchEmitter<'_>,
@@ -92,88 +82,110 @@ impl SubsonicSource {
         let mut relation_genres = BTreeMap::new();
         let mut album_images = HashMap::new();
 
-        progress(navidrome_stage(SourceReadStage::Albums, 0));
-        let mut offset = 0;
-        loop {
-            check_navidrome_cancelled(cancelled)?;
-            let page = self.navidrome_album_page(offset).await?;
-            if page.is_empty() {
-                break;
-            }
-            let page_len = page.len();
-            offset = navidrome_next_offset(offset, page_len, "album")?;
-            let albums = page
-                .into_iter()
-                .map(|album| album_from_navidrome(self, album))
-                .inspect(|album| {
-                    if let Some(image) = album.image_ref.as_ref() {
-                        album_images
-                            .insert(raw_item_id(album.id.as_str()).to_string(), image.clone());
-                    }
-                    collect_relation_genres(&album.relations.genres, &mut relation_genres);
-                })
-                .collect();
-            emitter.emit_async(CandidateBatch::Albums(albums)).await?;
-            progress(navidrome_stage(SourceReadStage::Albums, offset));
-            if page_len < NAVIDROME_PAGE_SIZE {
-                break;
-            }
-        }
-
-        progress(navidrome_stage(SourceReadStage::Tracks, 0));
-        offset = 0;
-        loop {
-            check_navidrome_cancelled(cancelled)?;
-            let page = self.navidrome_track_page(offset).await?;
-            if page.is_empty() {
-                break;
-            }
-            let page_len = page.len();
-            offset = navidrome_next_offset(offset, page_len, "track")?;
-            let mut tracks = Vec::with_capacity(page_len);
-            for navidrome_track in page {
-                let mut track = track_from_navidrome(self, navidrome_track);
-                if let Some(image) = track
-                    .album_id
-                    .as_ref()
-                    .and_then(|album_id| album_images.get(raw_item_id(album_id.as_str())))
-                {
-                    track.image_ref = Some(image.clone());
-                }
-                collect_relation_genres(&track.relations.genres, &mut relation_genres);
-                tracks.push(track);
-            }
-            emitter.emit_async(CandidateBatch::Tracks(tracks)).await?;
-            progress(navidrome_stage(SourceReadStage::Tracks, offset));
-            if page_len < NAVIDROME_PAGE_SIZE {
-                break;
-            }
-        }
-
-        progress(navidrome_stage(SourceReadStage::Artists, 0));
-        offset = 0;
-        loop {
-            check_navidrome_cancelled(cancelled)?;
-            let page = self.navidrome_artist_page(offset).await?;
-            if page.is_empty() {
-                break;
-            }
-            let page_len = page.len();
-            offset = navidrome_next_offset(offset, page_len, "artist")?;
-            emitter
-                .emit_async(CandidateBatch::Artists(
+        self.emit_navidrome_pages::<NavidromeAlbum>(
+            "album",
+            SourceReadStage::Albums,
+            emitter,
+            progress,
+            cancelled,
+            |page| {
+                CandidateBatch::Albums(
+                    page.into_iter()
+                        .map(|album| album_from_navidrome(self, album))
+                        .inspect(|album| {
+                            if let Some(image) = album.image_ref.as_ref() {
+                                album_images.insert(
+                                    raw_item_id(album.id.as_str()).to_string(),
+                                    image.clone(),
+                                );
+                            }
+                            collect_genres(&album.relations.genres, &mut relation_genres);
+                        })
+                        .collect(),
+                )
+            },
+        )
+        .await?;
+        self.emit_navidrome_pages::<NavidromeTrack>(
+            "song",
+            SourceReadStage::Tracks,
+            emitter,
+            progress,
+            cancelled,
+            |page| {
+                CandidateBatch::Tracks(
+                    page.into_iter()
+                        .map(|navidrome_track| {
+                            let mut track = track_from_navidrome(self, navidrome_track);
+                            if let Some(image) = track.album_id.as_ref().and_then(|album_id| {
+                                album_images.get(raw_item_id(album_id.as_str()))
+                            }) {
+                                track.image_ref = Some(image.clone());
+                            }
+                            collect_genres(&track.relations.genres, &mut relation_genres);
+                            track
+                        })
+                        .collect(),
+                )
+            },
+        )
+        .await?;
+        self.emit_navidrome_pages::<NavidromeArtist>(
+            "artist",
+            SourceReadStage::Artists,
+            emitter,
+            progress,
+            cancelled,
+            |page| {
+                CandidateBatch::Artists(
                     page.into_iter()
                         .map(|artist| artist_from_navidrome(self, artist))
                         .collect(),
-                ))
-                .await?;
-            progress(navidrome_stage(SourceReadStage::Artists, offset));
-            if page_len < NAVIDROME_PAGE_SIZE {
-                break;
-            }
-        }
+                )
+            },
+        )
+        .await?;
 
         Ok(relation_genres)
+    }
+
+    async fn emit_navidrome_pages<T: DeserializeOwned>(
+        &self,
+        endpoint: &str,
+        stage: SourceReadStage,
+        emitter: &mut BatchEmitter<'_>,
+        progress: &(dyn Fn(SourceReadProgress) + Send + Sync),
+        cancelled: &(dyn Fn() -> bool + Send + Sync),
+        mut transform: impl FnMut(Vec<T>) -> CandidateBatch,
+    ) -> SourceResult<()> {
+        progress(SourceReadProgress {
+            stage,
+            completed: 0,
+            total: None,
+        });
+        let mut offset = 0;
+        loop {
+            if cancelled() {
+                return Err(SourceError::Cancelled);
+            }
+            let page = self.navidrome_page(endpoint, offset).await?;
+            let page_len = page.len();
+            if page_len == 0 {
+                return Ok(());
+            }
+            offset = offset.checked_add(page_len).ok_or_else(|| {
+                SourceError::Other(format!("Navidrome {endpoint} offset overflowed"))
+            })?;
+            emitter.emit_async(transform(page)).await?;
+            progress(SourceReadProgress {
+                stage,
+                completed: offset,
+                total: None,
+            });
+            if page_len < NAVIDROME_PAGE_SIZE {
+                return Ok(());
+            }
+        }
     }
 
     async fn navidrome_page<T: DeserializeOwned>(
@@ -253,36 +265,6 @@ impl SubsonicSource {
         let next = required(login.token, "Navidrome session token")?;
         *token = Some(next.clone());
         Ok(next)
-    }
-}
-
-fn navidrome_next_offset(offset: usize, page_len: usize, item: &str) -> SourceResult<usize> {
-    offset
-        .checked_add(page_len)
-        .ok_or_else(|| SourceError::Other(format!("Navidrome {item} offset overflowed")))
-}
-
-fn collect_relation_genres(genres: &[GenreCredit], target: &mut BTreeMap<GenreId, String>) {
-    for genre in genres {
-        target
-            .entry(genre.id.clone())
-            .or_insert_with(|| genre.name.clone());
-    }
-}
-
-fn navidrome_stage(stage: SourceReadStage, completed: usize) -> SourceReadProgress {
-    SourceReadProgress {
-        stage,
-        completed,
-        total: None,
-    }
-}
-
-fn check_navidrome_cancelled(cancelled: &(dyn Fn() -> bool + Send + Sync)) -> SourceResult<()> {
-    if cancelled() {
-        Err(SourceError::Cancelled)
-    } else {
-        Ok(())
     }
 }
 
@@ -720,20 +702,6 @@ fn navidrome_image_ref(
     ImageRef::new(source.id("cover", &format!("{kind}-{raw_id}_0")), revision)
 }
 
-fn normalized_date(value: Option<String>) -> Option<String> {
-    let value = value?.trim().to_string();
-    if value.is_empty() {
-        return None;
-    }
-    if let Some(prefix) = value.get(..10)
-        && prefix.as_bytes().get(4) == Some(&b'-')
-        && prefix.as_bytes().get(7) == Some(&b'-')
-    {
-        return Some(prefix.to_string());
-    }
-    Some(value)
-}
-
 fn server_path(library_path: Option<&str>, path: &str) -> Option<String> {
     let reported_library_path = library_path?.trim();
     let library_path = reported_library_path.trim_end_matches(['/', '\\']);
@@ -898,9 +866,9 @@ mod tests {
         source
     }
 
-    fn page_match(offset: usize, token: &str) -> wiremock::MockBuilder {
+    fn page_match(endpoint: &str, offset: usize, token: &str) -> wiremock::MockBuilder {
         Mock::given(method("GET"))
-            .and(path("/api/song"))
+            .and(path(format!("/api/{endpoint}")))
             .and(header(
                 "x-nd-authorization",
                 format!("Bearer {token}").as_str(),
@@ -926,7 +894,7 @@ mod tests {
             .expect(1)
             .mount(&server)
             .await;
-        page_match(0, "token-a")
+        page_match("song", 0, "token-a")
             .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([])))
             .expect(1)
             .mount(&server)
@@ -934,15 +902,74 @@ mod tests {
         let source = navidrome_source(&server.uri());
 
         source
-            .navidrome_track_page(0)
+            .navidrome_page::<NavidromeTrack>("song", 0)
             .await
             .expect("Navidrome song page");
     }
 
     #[tokio::test]
+    async fn typed_page_walker_emits_every_navidrome_page() {
+        let server = MockServer::start().await;
+        let first_page = (0..NAVIDROME_PAGE_SIZE)
+            .map(|index| serde_json::json!({ "id": format!("artist-{index}") }))
+            .collect::<Vec<_>>();
+        page_match("artist", 0, "token-a")
+            .respond_with(ResponseTemplate::new(200).set_body_json(first_page))
+            .expect(1)
+            .mount(&server)
+            .await;
+        page_match("artist", NAVIDROME_PAGE_SIZE, "token-a")
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(serde_json::json!([{
+                    "id": "artist-last"
+                }])),
+            )
+            .expect(1)
+            .mount(&server)
+            .await;
+        let source = navidrome_source_with_token(&server, "token-a");
+        let mut batches = Vec::new();
+        let mut accept = |batch| {
+            batches.push(batch);
+            true
+        };
+        let mut emitter = BatchEmitter::new(&mut accept);
+
+        source
+            .emit_navidrome_pages::<NavidromeArtist>(
+                "artist",
+                SourceReadStage::Artists,
+                &mut emitter,
+                &|_| {},
+                &|| false,
+                |page| {
+                    CandidateBatch::Artists(
+                        page.into_iter()
+                            .map(|artist| artist_from_navidrome(&source, artist))
+                            .collect(),
+                    )
+                },
+            )
+            .await
+            .expect("Navidrome artist pages");
+        drop(emitter);
+
+        assert_eq!(
+            batches
+                .into_iter()
+                .map(|batch| match batch {
+                    CandidateBatch::Artists(artists) => artists.len(),
+                    _ => panic!("artist batch"),
+                })
+                .collect::<Vec<_>>(),
+            [NAVIDROME_PAGE_SIZE, 1]
+        );
+    }
+
+    #[tokio::test]
     async fn rotated_token_is_used_by_the_next_navidrome_page() {
         let server = MockServer::start().await;
-        page_match(0, "token-a")
+        page_match("song", 0, "token-a")
             .respond_with(
                 ResponseTemplate::new(200)
                     .insert_header("x-nd-authorization", "token-b")
@@ -955,7 +982,7 @@ mod tests {
             .expect(1)
             .mount(&server)
             .await;
-        page_match(NAVIDROME_PAGE_SIZE, "token-b")
+        page_match("song", NAVIDROME_PAGE_SIZE, "token-b")
             .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([])))
             .expect(1)
             .mount(&server)
@@ -963,11 +990,11 @@ mod tests {
         let source = navidrome_source_with_token(&server, "token-a");
 
         let mut first = source
-            .navidrome_track_page(0)
+            .navidrome_page::<NavidromeTrack>("song", 0)
             .await
             .expect("first Navidrome page");
         source
-            .navidrome_track_page(NAVIDROME_PAGE_SIZE)
+            .navidrome_page::<NavidromeTrack>("song", NAVIDROME_PAGE_SIZE)
             .await
             .expect("second Navidrome page");
 
@@ -982,7 +1009,7 @@ mod tests {
     #[tokio::test]
     async fn unauthorized_navidrome_request_reauthenticates_and_retries_once() {
         let server = MockServer::start().await;
-        page_match(0, "token-a")
+        page_match("song", 0, "token-a")
             .respond_with(ResponseTemplate::new(401))
             .expect(1)
             .mount(&server)
@@ -995,7 +1022,7 @@ mod tests {
             .expect(1)
             .mount(&server)
             .await;
-        page_match(0, "token-b")
+        page_match("song", 0, "token-b")
             .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([])))
             .expect(1)
             .mount(&server)
@@ -1003,7 +1030,7 @@ mod tests {
         let source = navidrome_source_with_token(&server, "token-a");
 
         source
-            .navidrome_track_page(0)
+            .navidrome_page::<NavidromeTrack>("song", 0)
             .await
             .expect("retried Navidrome page");
     }
@@ -1011,7 +1038,7 @@ mod tests {
     #[tokio::test]
     async fn second_navidrome_authentication_failure_is_returned() {
         let server = MockServer::start().await;
-        page_match(0, "token-a")
+        page_match("song", 0, "token-a")
             .respond_with(ResponseTemplate::new(401))
             .expect(1)
             .mount(&server)
@@ -1024,7 +1051,7 @@ mod tests {
             .expect(1)
             .mount(&server)
             .await;
-        page_match(0, "token-b")
+        page_match("song", 0, "token-b")
             .respond_with(ResponseTemplate::new(401))
             .expect(1)
             .mount(&server)
@@ -1032,7 +1059,7 @@ mod tests {
         let source = navidrome_source_with_token(&server, "token-a");
 
         assert!(matches!(
-            source.navidrome_track_page(0).await,
+            source.navidrome_page::<NavidromeTrack>("song", 0).await,
             Err(SourceError::Auth(_))
         ));
     }

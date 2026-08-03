@@ -4,7 +4,7 @@ use std::{
 };
 
 use ::library::{
-    AlbumId, AlbumSummary, ArtistId, ArtistSummary, GenreId, LoadedHomeItem, LoadedLibraryResult,
+    AlbumId, AlbumSummary, ArtistId, ArtistSummary, GenreId, LibraryQueryResult, LoadedHomeItem,
     MoodId, PlaylistId, PlaylistSummary, SmartPlaylistId, SmartPlaylistSummary, Track, TrackId,
     TrackList, TrackSelection,
 };
@@ -104,17 +104,17 @@ impl PlaybackTarget {
         }
     }
 
-    fn selection(&self, selected: &SelectedLibrary) -> LoadedLibraryResult<TrackSelection> {
+    fn selection(&self, selected: &SelectedLibrary) -> LibraryQueryResult<TrackSelection> {
         let folder = selected.music_folder_id.as_ref();
         match self {
-            Self::Track(id) => selected.loaded.track_selection(id).map(Into::into),
-            Self::Album(id) => Ok(selected.loaded.album_track_selection(id, folder)),
-            Self::Artist(id) => Ok(selected.loaded.artist_track_selection(id, folder)),
-            Self::Genre(id) => Ok(selected.loaded.genre_track_selection(id, folder)),
-            Self::Mood(id) => Ok(selected.loaded.mood_track_selection(id, folder)),
-            Self::Playlist(id) => Ok(selected.loaded.playlist_track_selection(id)),
+            Self::Track(id) => selected.library.track_selection(id).map(Into::into),
+            Self::Album(id) => Ok(selected.library.album_track_selection(id, folder)),
+            Self::Artist(id) => Ok(selected.library.artist_track_selection(id, folder)),
+            Self::Genre(id) => Ok(selected.library.genre_track_selection(id, folder)),
+            Self::Mood(id) => Ok(selected.library.mood_track_selection(id, folder)),
+            Self::Playlist(id) => Ok(selected.library.playlist_track_selection(id)),
             Self::SmartPlaylist(id) => {
-                Ok(selected.loaded.smart_playlist_track_selection(id, folder))
+                Ok(selected.library.smart_playlist_track_selection(id, folder))
             }
             Self::Prepared { tracks, .. } => Ok(tracks.clone().into()),
             Self::Contextual { target, .. } => target.selection(selected),
@@ -136,30 +136,28 @@ impl PlaybackTarget {
         }
     }
 
-    pub(crate) fn download_request(
-        &self,
-        shell: &Shell,
-    ) -> Option<crate::runtime::source::DownloadRequest> {
-        let selected = shell.library.selected.borrow().as_ref().cloned()?;
+    pub(crate) fn download(&self, shell: &Shell) {
+        let Some(selected) = shell.library.selected.borrow().as_ref().cloned() else {
+            return;
+        };
         match self.selection(&selected) {
-            Ok(tracks) => Some(selected.download_request(self.download_subject(), tracks)),
+            Ok(tracks) => selected
+                .operations
+                .download(self.download_subject(), tracks),
             Err(error) => {
                 warn!(target = ?self, %error, "failed to identify download tracks");
-                None
             }
         }
     }
 
-    pub(crate) fn remove_download_request(
-        &self,
-        shell: &Shell,
-    ) -> Option<crate::runtime::source::RemoveDownloadRequest> {
-        let selected = shell.library.selected.borrow().as_ref().cloned()?;
+    pub(crate) fn remove_download(&self, shell: &Shell) {
+        let Some(selected) = shell.library.selected.borrow().as_ref().cloned() else {
+            return;
+        };
         match self.selection(&selected) {
-            Ok(tracks) => Some(selected.remove_download_request(tracks)),
+            Ok(tracks) => selected.operations.remove_download(tracks),
             Err(error) => {
                 warn!(target = ?self, %error, "failed to identify downloaded tracks");
-                None
             }
         }
     }
@@ -167,7 +165,7 @@ impl PlaybackTarget {
     pub(crate) fn download_status(
         &self,
         selected: &SelectedLibrary,
-    ) -> LoadedLibraryResult<library::DownloadStatus> {
+    ) -> LibraryQueryResult<library::DownloadStatus> {
         self.selection(selected)?.download_status()
     }
 
@@ -1398,7 +1396,7 @@ pub(crate) fn install_smart_playlist_drop_target(
     target_id: &SmartPlaylistId,
 ) {
     let widget = target.as_ref().downgrade();
-    let smart_playlists = shell.products.smart_playlists.clone();
+    let source = shell.selected_source_operations();
     let target_id = target_id.clone();
     let drop_target = gtk::DropTarget::new(String::static_type(), gtk::gdk::DragAction::MOVE);
     drop_target.connect_drop(move |_, value, _, y| {
@@ -1409,11 +1407,14 @@ pub(crate) fn install_smart_playlist_drop_target(
         if dragged_id == target_id {
             return false;
         }
+        let Some(source) = source.as_ref() else {
+            return false;
+        };
         let Some(widget) = widget.upgrade() else {
             return false;
         };
         let after = y > f64::from(widget.height()) / 2.0;
-        smart_playlists.move_relative(dragged_id, target_id.clone(), after);
+        source.move_smart_playlist(dragged_id, target_id.clone(), after);
         true
     });
     target.add_controller(drop_target);

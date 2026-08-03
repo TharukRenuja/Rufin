@@ -31,11 +31,11 @@ pub(crate) fn runtime_inputs(diagnostics: DiagnosticsHandle) -> Result<RuntimeIn
     });
     let stored = settings.load();
     let secrets = Arc::new(SwitchableSecretStore::new(platform_secret_store(&stored)));
-    let (library, repair) = match library::Library::open_with_repair(paths::store_file()) {
+    let (library, repair) = match library::Libraries::open_with_repair(paths::store_file()) {
         Ok(opened) => opened,
         Err(error) => {
             warn!(%error, "could not use the saved Store; startup will continue in memory");
-            (library::Library::memory().map_err(string_error)?, None)
+            (library::Libraries::memory().map_err(string_error)?, None)
         }
     };
     if let Some(repair) = repair {
@@ -54,6 +54,7 @@ pub(crate) fn runtime_inputs(diagnostics: DiagnosticsHandle) -> Result<RuntimeIn
     )?);
 
     let (source_events, source_receiver) = unbounded();
+    let (playback_events, playback_receiver) = unbounded();
     let (download_events, download_receiver) = unbounded();
     let (discovery_events, discovery_receiver) = unbounded();
     let (waveform_events, waveform_receiver) = unbounded();
@@ -68,18 +69,6 @@ pub(crate) fn runtime_inputs(diagnostics: DiagnosticsHandle) -> Result<RuntimeIn
     };
     let downloads =
         downloads::Downloads::new(paths::downloads_dir(), runtime.clone(), download_events);
-    let download_source_events = source_events.clone();
-    runtime.spawn(async move {
-        while let Ok(event) = download_receiver.recv().await {
-            if download_source_events
-                .send(ui::runtime::SourceEvent::Downloads(event))
-                .await
-                .is_err()
-            {
-                break;
-            }
-        }
-    });
     let discord = Arc::new(desktop_integration::Discord::new());
     let release_updates = ReleaseUpdateOwner::new(
         settings.clone(),
@@ -96,7 +85,7 @@ pub(crate) fn runtime_inputs(diagnostics: DiagnosticsHandle) -> Result<RuntimeIn
     } = SourceOwner::open_dormant(
         artwork.clone(),
         library.clone(),
-        downloads,
+        downloads.clone(),
         settings.clone(),
         Arc::clone(&secrets),
         Arc::clone(&scrobbler),
@@ -123,7 +112,7 @@ pub(crate) fn runtime_inputs(diagnostics: DiagnosticsHandle) -> Result<RuntimeIn
         library.clone(),
         settings.clone(),
         runtime.clone(),
-        source_events,
+        playback_events,
         source.acceptance_sender(),
         Arc::clone(&waveform),
         Arc::clone(&lyrics),
@@ -189,7 +178,6 @@ pub(crate) fn runtime_inputs(diagnostics: DiagnosticsHandle) -> Result<RuntimeIn
 
     source.start()?;
     let source_handle: ui::runtime::SourceHandle = source.clone();
-    let smart_playlists: ui::runtime::SmartPlaylistHandle = source;
     let transport: playback::TransportHandle = playback.clone();
     let queue: playback::QueueHandle = playback.clone();
     let radio: playback::RadioHandle = playback;
@@ -198,7 +186,7 @@ pub(crate) fn runtime_inputs(diagnostics: DiagnosticsHandle) -> Result<RuntimeIn
         diagnostics,
         products: ProductHandles {
             source: source_handle,
-            smart_playlists,
+            downloads,
             playback: PlaybackHandles {
                 transport,
                 queue,
@@ -213,6 +201,8 @@ pub(crate) fn runtime_inputs(diagnostics: DiagnosticsHandle) -> Result<RuntimeIn
         receivers: ProductReceivers {
             source: source_receiver,
             source_discovery: discovery_receiver,
+            downloads: download_receiver,
+            playback: playback_receiver,
             waveform: waveform_receiver,
             lyrics: lyrics_receiver,
             release_updates: release_update_receiver,

@@ -224,14 +224,10 @@ impl JellyfinSource {
             let finished = pages.advance(count, page.total_record_count)?;
             for playlist in page.items.into_iter().map(playlist_from_item) {
                 check_cancelled(cancelled)?;
-                match self.read_playlist_snapshot(playlist).await? {
-                    Some(snapshot) => {
-                        emitter
-                            .emit_async(CandidateBatch::Playlists(vec![snapshot]))
-                            .await?;
-                    }
-                    None => emitter.skipped_playlist(),
-                }
+                let snapshot = self.read_playlist_snapshot(playlist).await?;
+                emitter
+                    .emit_async(CandidateBatch::Playlists(vec![snapshot]))
+                    .await?;
             }
             progress(stage(
                 SourceReadStage::Playlists,
@@ -299,9 +295,7 @@ impl JellyfinSource {
                 }
                 CurrentItemKind::Playlist if new_or_only(&known, AcceptedKind::Playlist) => {
                     let playlist = playlist_from_item(item.clone());
-                    let Some(snapshot) = self.read_playlist_snapshot(playlist).await? else {
-                        return Ok(SourceLibraryChangeRead::Full);
-                    };
+                    let snapshot = self.read_playlist_snapshot(playlist).await?;
                     playlists.insert(snapshot.playlist.id.clone(), snapshot);
                 }
                 CurrentItemKind::Other if known.is_empty() => {}
@@ -522,25 +516,23 @@ impl PageState {
         reported_total: Option<usize>,
     ) -> SourceResult<bool> {
         if let Some(reported_total) = reported_total {
-            if self.total.is_some_and(|total| total != reported_total) {
-                return Err(unstable_page());
-            }
             self.total = Some(reported_total);
         }
 
-        self.offset = self.offset.checked_add(count).ok_or_else(unstable_page)?;
-        match self.total {
-            Some(total) if self.offset > total => Err(unstable_page()),
-            Some(total) if self.offset == total => Ok(true),
-            Some(_) if count == 0 => Err(unstable_page()),
-            Some(_) => Ok(false),
-            None => Ok(count == 0),
+        if count == 0 {
+            return match self.total {
+                Some(total) if self.offset < total => Err(incomplete_page()),
+                _ => Ok(true),
+            };
         }
+
+        self.offset = self.offset.checked_add(count).ok_or_else(incomplete_page)?;
+        Ok(self.total.is_some_and(|total| self.offset >= total))
     }
 }
 
-fn unstable_page() -> SourceError {
-    SourceError::Other("Jellyfin returned an unstable page".to_string())
+fn incomplete_page() -> SourceError {
+    SourceError::Other("Jellyfin returned an incomplete page".to_string())
 }
 
 fn stage(stage: SourceReadStage, completed: usize, total: Option<usize>) -> SourceReadProgress {
@@ -582,11 +574,13 @@ mod paging_tests {
     }
 
     #[test]
-    fn a_changed_declared_total_is_rejected() {
+    fn the_latest_declared_total_controls_completion() {
         let mut pages = PageState::default();
 
         assert!(!pages.advance(1, Some(2)).expect("first page"));
-        assert!(pages.advance(1, Some(3)).is_err());
+        assert!(!pages.advance(1, Some(3)).expect("larger total"));
+        assert!(pages.advance(1, Some(3)).expect("last page"));
+        assert_eq!(pages.total(), Some(3));
     }
 
     #[test]
@@ -600,10 +594,11 @@ mod paging_tests {
     }
 
     #[test]
-    fn items_beyond_the_declared_total_are_rejected() {
+    fn a_stale_smaller_total_does_not_discard_returned_items() {
         let mut pages = PageState::default();
 
-        assert!(pages.advance(2, Some(1)).is_err());
+        assert!(pages.advance(2, Some(1)).expect("returned items"));
+        assert_eq!(pages.offset(), 2);
     }
 
     #[test]

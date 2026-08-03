@@ -1,16 +1,12 @@
 use crate::SettingsHandle;
 use library::{
-    AcceptedLibraryChange, FavoriteItemId, HomeSectionKind, HomeSnapshot, LoadedLibrary,
-    MetadataItemId, MusicFolderId, SourceId, Track, TrackSelection,
+    AcceptedLibraryChange, FavoriteItemId, HomeSectionKind, HomeSnapshot, Library, MusicFolderId,
+    SourceId, Track, TrackSelection,
 };
 use playback::{LoadedPlayRequest, PlaybackProjection, QueuePlacement, SourceSessionEpoch};
 use std::sync::Arc;
 
-use super::source::{ConfiguredSources, SourceOperation};
-use downloads::DownloadSubject;
-
-use super::source::{DownloadRequest, RemoveDownloadRequest};
-use super::source::{MetadataEditRequest, MetadataIdentificationRequest, MetadataRequest};
+use super::source::{ConfiguredSources, SelectedSourceHandle, SourceOperation};
 use super::{DiagnosticsHandle, ProductHandles, ProductReceivers};
 
 #[derive(Clone)]
@@ -20,8 +16,9 @@ pub struct SelectedLibrary {
     pub music_folder_id: Option<MusicFolderId>,
     pub playlist_tracks_can_repeat: bool,
     pub artwork: artwork::SourceImages,
-    pub loaded: Arc<LoadedLibrary>,
+    pub library: Arc<Library>,
     pub home: Arc<HomeSnapshot>,
+    pub operations: SelectedSourceHandle,
 }
 
 impl SelectedLibrary {
@@ -52,58 +49,6 @@ impl SelectedLibrary {
             placement,
         )
     }
-
-    pub fn download_request(
-        &self,
-        subject: DownloadSubject,
-        tracks: TrackSelection,
-    ) -> DownloadRequest {
-        DownloadRequest {
-            source_id: self.source_id.clone(),
-            source_session_epoch: self.source_session_epoch,
-            subject,
-            tracks,
-        }
-    }
-
-    pub fn remove_download_request(&self, tracks: TrackSelection) -> RemoveDownloadRequest {
-        RemoveDownloadRequest {
-            source_id: self.source_id.clone(),
-            source_session_epoch: self.source_session_epoch,
-            tracks,
-        }
-    }
-
-    pub fn metadata_request(&self, item_id: MetadataItemId) -> MetadataRequest {
-        MetadataRequest {
-            source_id: self.source_id.clone(),
-            source_session_epoch: self.source_session_epoch,
-            item_id,
-        }
-    }
-
-    pub fn metadata_edit_request(&self, edit: library::MetadataEdit) -> MetadataEditRequest {
-        MetadataEditRequest {
-            source_id: self.source_id.clone(),
-            source_session_epoch: self.source_session_epoch,
-            edit,
-        }
-    }
-
-    pub fn metadata_identification_request(
-        &self,
-        item_id: MetadataItemId,
-        editing: library::MetadataEditing,
-        values: library::MetadataValues,
-    ) -> MetadataIdentificationRequest {
-        MetadataIdentificationRequest {
-            source_id: self.source_id.clone(),
-            source_session_epoch: self.source_session_epoch,
-            item_id,
-            editing,
-            values,
-        }
-    }
 }
 
 /// Ordered selected-source lifecycle publication.
@@ -117,16 +62,11 @@ pub enum SourceEvent {
     Selected {
         configured: ConfiguredSources,
         selected: SelectedLibrary,
-        playback: PlaybackProjection,
+        playback: Box<PlaybackProjection>,
     },
     LibraryReplaced {
         configured: ConfiguredSources,
         selected: SelectedLibrary,
-    },
-    Playback {
-        source_id: SourceId,
-        source_session_epoch: SourceSessionEpoch,
-        projection: PlaybackProjection,
     },
     Operation(SourceOperation),
     Home(HomePublication),
@@ -137,10 +77,15 @@ pub enum SourceEvent {
     },
     LibraryUpdate(SelectedLibraryUpdate),
     FavoriteFailure(FavoriteFailure),
-    Downloads(downloads::DownloadEvent),
     ReleaseSelected {
         acknowledged: async_channel::Sender<()>,
     },
+}
+
+pub struct PlaybackPublication {
+    pub source_id: SourceId,
+    pub source_session_epoch: SourceSessionEpoch,
+    pub projection: PlaybackProjection,
 }
 
 #[derive(Clone)]

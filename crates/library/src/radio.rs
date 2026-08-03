@@ -1,4 +1,4 @@
-//! Native-first radio composition with one common LoadedLibrary fallback.
+//! Native-first radio composition with one common Library fallback.
 //!
 //! Sources acquire native recommendations. Library admits them, deduplicates
 //! every stage, and underfills from genre, artist, then the complete selected
@@ -9,8 +9,8 @@ use std::collections::{HashMap, HashSet};
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    AlbumId, ArtistId, GenreId, LoadedLibrary, LoadedLibraryError, MusicFolderId, PlaylistId,
-    Track, TrackId,
+    AlbumId, ArtistId, GenreId, Library, LibraryQueryError, MusicFolderId, PlaylistId, Track,
+    TrackId,
     loaded::{AlbumSlot, LoadedItems, LoadedState, TrackSlot},
 };
 
@@ -70,14 +70,14 @@ pub enum RadioUnavailable {
     #[error("no matching radio tracks were found")]
     Empty,
     #[error(transparent)]
-    Loaded(#[from] LoadedLibraryError),
+    Query(#[from] LibraryQueryError),
 }
 
-impl LoadedLibrary {
+impl Library {
     pub fn compose_random(
         &self,
         request: RandomComposition,
-    ) -> Result<Vec<Track>, LoadedLibraryError> {
+    ) -> Result<Vec<Track>, LibraryQueryError> {
         let limit = request.limit.clamp(1, 500);
         let state = self.read_state()?;
         let mut seen = HashSet::new();
@@ -277,10 +277,7 @@ struct RadioContext {
     excluded_album: Option<AlbumId>,
 }
 
-fn radio_context(
-    loaded: &LoadedLibrary,
-    seed: &RadioSeed,
-) -> Result<RadioContext, RadioUnavailable> {
+fn radio_context(loaded: &Library, seed: &RadioSeed) -> Result<RadioContext, RadioUnavailable> {
     let state = loaded.read_state()?;
     let context = match seed {
         RadioSeed::Track(track_id) => {

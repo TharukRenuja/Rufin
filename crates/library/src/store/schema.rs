@@ -1,7 +1,7 @@
 //! Final Store schema.
 //!
 //! Routes never query these tables. The Store writes bounded source
-//! candidates and hydrates one selected LoadedLibrary from the newest accepted
+//! candidates and hydrates one selected Library from the newest accepted
 //! candidate.
 
 use rusqlite::{Connection, OptionalExtension};
@@ -40,7 +40,7 @@ const MIGRATIONS: &[Migration] = &[
 
 const CREATE_SCHEMA: &str = r###"-- Rufin Store schema 35.
 --
--- Product routes hydrate LoadedLibrary and do not query these tables for
+-- Product routes hydrate Library and do not query these tables for
 -- sorting or filtering.
 
 PRAGMA foreign_keys = ON;
@@ -513,7 +513,7 @@ CREATE TABLE local_playlist_entries (
         ON DELETE NO ACTION
 ) STRICT;
 
--- Smart playlist membership is derived in LoadedLibrary. Only the user-owned
+-- Smart playlist membership is derived in Library. Only the user-owned
 -- definition and display order are durable.
 CREATE TABLE smart_playlists (
     source_id TEXT NOT NULL CHECK (source_id <> ''),
@@ -695,7 +695,7 @@ CREATE INDEX lyrics_cache_eviction_idx
 
 -- One row is the current found or missing outcome for one Album. A changed
 -- exact identity replaces it, so obsolete identities do not accumulate.
--- LoadedLibrary overlays a found result without mutating source facts.
+-- Library overlays a found result without mutating source facts.
 CREATE TABLE album_release_info (
     source_id TEXT NOT NULL CHECK (source_id <> ''),
     album_id TEXT NOT NULL CHECK (album_id <> ''),

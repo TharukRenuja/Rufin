@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use crate::{
-    Library, LibraryError, LibraryResult, LoadedLibrary, LocalFile, LocalFileKind, LocalReadState,
+    Libraries, Library, LibraryError, LibraryResult, LocalFile, LocalFileKind, LocalReadState,
     MetadataError, MetadataItem, MetadataItemId, MetadataSubject, SourceId, Track, TrackId,
 };
 
@@ -108,69 +108,61 @@ pub(crate) struct LocalMatchKey {
 impl Library {
     pub fn replace_local_access(
         &self,
-        loaded: &Arc<LoadedLibrary>,
         mapping: LocalAccessMapping,
         mut files: Vec<LocalAccessFile>,
     ) -> LibraryResult<LocalAccessStatus> {
-        if loaded.source_id().as_str().is_empty() {
+        if self.source_id().as_str().is_empty() {
             return Err(LibraryError::Persistence(
                 "Local access requires a source".to_string(),
             ));
         }
         files.sort_by(|left, right| left.path.cmp(&right.path));
         self.store
-            .replace_local_access(loaded.source_id().clone(), files.clone())?;
-        loaded.replace_local_access(Some(mapping), files)?;
-        loaded.local_access_status().map_err(Into::into)
+            .replace_local_access(self.source_id().clone(), files.clone())?;
+        self.replace_local_access_state(Some(mapping), files)?;
+        self.local_access_status().map_err(Into::into)
     }
 
     pub fn configure_local_access(
         &self,
-        loaded: &Arc<LoadedLibrary>,
         mapping: LocalAccessMapping,
     ) -> LibraryResult<LocalAccessStatus> {
-        self.configure_local_access_mapping(loaded, Some(mapping))?;
-        loaded.local_access_status().map_err(Into::into)
+        self.configure_local_access_mapping(Some(mapping))?;
+        self.local_access_status().map_err(Into::into)
     }
 
     pub fn configure_local_access_mapping(
         &self,
-        loaded: &Arc<LoadedLibrary>,
         mapping: Option<LocalAccessMapping>,
     ) -> LibraryResult<()> {
-        loaded.configure_local_access(mapping)?;
+        self.configure_local_access_state(mapping)?;
         Ok(())
     }
 
-    pub fn accept_local_access_mapping(
-        &self,
-        loaded: &Arc<LoadedLibrary>,
-        mapping: LocalAccessMapping,
-    ) -> LibraryResult<()> {
-        loaded.accept_local_access_mapping(mapping)?;
+    pub fn accept_local_access_mapping(&self, mapping: LocalAccessMapping) -> LibraryResult<()> {
+        self.accept_local_access_mapping_state(mapping)?;
         Ok(())
     }
 
-    pub fn clear_local_access(
-        &self,
-        loaded: &Arc<LoadedLibrary>,
-    ) -> LibraryResult<LocalAccessStatus> {
-        self.store.clear_local_access(loaded.source_id().clone())?;
-        loaded.replace_local_access(None, Vec::new())?;
-        loaded.local_access_status().map_err(Into::into)
+    pub fn clear_local_access(&self) -> LibraryResult<LocalAccessStatus> {
+        self.store.clear_local_access(self.source_id().clone())?;
+        self.replace_local_access_state(None, Vec::new())?;
+        self.local_access_status().map_err(Into::into)
     }
+}
 
+impl Libraries {
     pub fn discard_local_access(&self, source_id: SourceId) -> LibraryResult<()> {
         self.store.clear_local_access(source_id)?;
         Ok(())
     }
 }
 
-impl LoadedLibrary {
+impl Library {
     pub fn replace_downloaded_files(
         &self,
         mut files: HashMap<TrackId, PathBuf>,
-    ) -> crate::LoadedLibraryResult<Vec<TrackId>> {
+    ) -> crate::LibraryQueryResult<Vec<TrackId>> {
         let mut state = self.write_state()?;
         let removed = files
             .keys()
@@ -192,10 +184,10 @@ impl LoadedLibrary {
         &self,
         track_id: TrackId,
         path: PathBuf,
-    ) -> crate::LoadedLibraryResult<()> {
+    ) -> crate::LibraryQueryResult<()> {
         let mut state = self.write_state()?;
         if state.tracks.get(&track_id).is_none() {
-            return Err(crate::LoadedLibraryError::MissingItem {
+            return Err(crate::LibraryQueryError::MissingItem {
                 kind: "Track",
                 id: track_id.to_string(),
             });
@@ -213,7 +205,7 @@ impl LoadedLibrary {
     pub fn remove_downloaded_file(
         &self,
         track_id: &TrackId,
-    ) -> crate::LoadedLibraryResult<Option<PathBuf>> {
+    ) -> crate::LibraryQueryResult<Option<PathBuf>> {
         let mut state = self.write_state()?;
         let removed = state.downloaded_files.remove(track_id);
         if removed.is_some() {
@@ -222,11 +214,11 @@ impl LoadedLibrary {
         Ok(removed)
     }
 
-    pub fn is_downloaded(&self, track_id: &TrackId) -> crate::LoadedLibraryResult<bool> {
+    pub fn is_downloaded(&self, track_id: &TrackId) -> crate::LibraryQueryResult<bool> {
         Ok(self.read_state()?.downloaded_files.contains_key(track_id))
     }
 
-    pub fn downloaded_track_ids(&self) -> crate::LoadedLibraryResult<HashSet<TrackId>> {
+    pub fn downloaded_track_ids(&self) -> crate::LibraryQueryResult<HashSet<TrackId>> {
         Ok(self
             .read_state()?
             .downloaded_files
@@ -235,11 +227,11 @@ impl LoadedLibrary {
             .collect())
     }
 
-    pub(crate) fn replace_local_access(
+    pub(crate) fn replace_local_access_state(
         &self,
         mapping: Option<LocalAccessMapping>,
         files: Vec<LocalAccessFile>,
-    ) -> crate::LoadedLibraryResult<()> {
+    ) -> crate::LibraryQueryResult<()> {
         let mut state = self.write_state()?;
         let (local_access_paths, local_access_index) = index_local_access(&files, mapping.as_ref());
         state.local_access_mapping = mapping;
@@ -249,10 +241,10 @@ impl LoadedLibrary {
         Ok(())
     }
 
-    pub(crate) fn configure_local_access(
+    pub(crate) fn configure_local_access_state(
         &self,
         mapping: Option<LocalAccessMapping>,
-    ) -> crate::LoadedLibraryResult<()> {
+    ) -> crate::LibraryQueryResult<()> {
         let mut state = self.write_state()?;
         let (local_access_paths, local_access_index) =
             index_local_access(&state.local_access, mapping.as_ref());
@@ -262,10 +254,10 @@ impl LoadedLibrary {
         Ok(())
     }
 
-    pub(crate) fn accept_local_access_mapping(
+    pub(crate) fn accept_local_access_mapping_state(
         &self,
         mapping: LocalAccessMapping,
-    ) -> crate::LoadedLibraryResult<()> {
+    ) -> crate::LibraryQueryResult<()> {
         let mut state = self.write_state()?;
         let same_root = state
             .local_access_mapping
@@ -279,7 +271,7 @@ impl LoadedLibrary {
         Ok(())
     }
 
-    pub fn local_access_status(&self) -> crate::LoadedLibraryResult<LocalAccessStatus> {
+    pub fn local_access_status(&self) -> crate::LibraryQueryResult<LocalAccessStatus> {
         let state = self.read_state()?;
         let mut status = LocalAccessStatus {
             total_track_count: state.tracks.len(),
@@ -312,14 +304,14 @@ impl LoadedLibrary {
         Ok(status)
     }
 
-    pub fn local_access_files(&self) -> crate::LoadedLibraryResult<Vec<LocalAccessFile>> {
+    pub fn local_access_files(&self) -> crate::LibraryQueryResult<Vec<LocalAccessFile>> {
         Ok(self.read_state()?.local_access.clone())
     }
 
     pub fn metadata_item(
         &self,
         item_id: &MetadataItemId,
-    ) -> crate::LoadedLibraryResult<Option<MetadataItem>> {
+    ) -> crate::LibraryQueryResult<Option<MetadataItem>> {
         match item_id {
             MetadataItemId::Track(id) => self.track(id).map(|item| item.map(MetadataItem::Track)),
             MetadataItemId::Album(id) => self
@@ -334,7 +326,7 @@ impl LoadedLibrary {
     pub fn metadata_subject(
         self: &Arc<Self>,
         item_id: &MetadataItemId,
-    ) -> crate::LoadedLibraryResult<Option<MetadataSubject>> {
+    ) -> crate::LibraryQueryResult<Option<MetadataSubject>> {
         let Some(item) = self.metadata_item(item_id)? else {
             return Ok(None);
         };
@@ -434,7 +426,7 @@ impl LoadedLibrary {
     pub fn playable_file(
         &self,
         track_id: &TrackId,
-    ) -> crate::LoadedLibraryResult<Option<PlayableFile>> {
+    ) -> crate::LibraryQueryResult<Option<PlayableFile>> {
         let state = self.read_state()?;
         let Some(track) = state.tracks.get(track_id) else {
             return Ok(None);
@@ -454,7 +446,7 @@ impl LoadedLibrary {
     pub fn sidecar_audio_file(
         &self,
         track_id: &TrackId,
-    ) -> crate::LoadedLibraryResult<Option<SidecarAudioFile>> {
+    ) -> crate::LibraryQueryResult<Option<SidecarAudioFile>> {
         let state = self.read_state()?;
         let Some(track) = state.tracks.get(track_id) else {
             return Ok(None);
