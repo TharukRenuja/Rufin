@@ -22,8 +22,7 @@ use localization::{album_count_text, track_count_text};
 
 const SERVER_PROVIDER_ICON_SIZE: i32 = 28;
 const DOWNLOAD_JOB_DRAG_PREFIX: &str = "rufin-download-job:";
-const DEFAULT_DOWNLOAD_DIRECTORY_SUBTITLE: &str =
-    msgid("By default, this uses Rufin's own cache directory.");
+const DEFAULT_DOWNLOAD_DIRECTORY_SUBTITLE: &str = msgid("Rufin data folder");
 
 pub(super) fn library_page(
     shell: &Rc<Shell>,
@@ -78,15 +77,12 @@ fn library_sources_page(
 
     let servers_group = adw::PreferencesGroup::builder()
         .title(tr("Servers"))
-        .description(tr("Configure saved music sources and local file access."))
         .build();
 
     if remote_sources.is_empty() {
         let row = adw::ActionRow::builder()
             .title(tr("No remote sources configured"))
-            .subtitle(tr(
-                "Add a server to use Jellyfin, Navidrome, or OpenSubsonic.",
-            ))
+            .subtitle(tr("Jellyfin, Navidrome, or OpenSubsonic"))
             .build();
         servers_group.add(&row);
     } else {
@@ -182,7 +178,7 @@ fn library_sources_page(
         let downloads_group = adw::PreferencesGroup::builder()
             .title(tr("Downloads"))
             .description(tr(
-                "Keep music from the selected server available without a connection. Folder changes apply to new downloads.",
+                "Keep music available offline. Folder changes only affect new downloads",
             ))
             .build();
         let folder = adw::ActionRow::builder()
@@ -341,13 +337,12 @@ fn library_sources_page(
     let local_group = adw::PreferencesGroup::builder()
         .title(tr("Local Folders"))
         .description(tr(
-            "These folders are combined into the Local source and shown through folder browsing.",
+            "These folders are combined into the Local source and shown through folder browsing",
         ))
         .build();
     if configured.local_folders.is_empty() {
         let row = adw::ActionRow::builder()
             .title(tr("No local folders configured"))
-            .subtitle(tr("Add folders to use the Local source."))
             .build();
         local_group.add(&row);
     } else {
@@ -584,7 +579,7 @@ fn confirm_remove_download_rule(
     let dialog = adw::AlertDialog::builder()
         .heading(tr("Remove Rule and Downloads"))
         .body(tr(
-            "Tracks used only by this rule will be deleted. Downloads shared with another rule or manual download will be kept.",
+            "Only downloads from this rule will be deleted. Shared and manual downloads stay",
         ))
         .build();
     dialog.add_response("cancel", &tr("Cancel"));
@@ -615,14 +610,12 @@ fn download_rule_title(rule: DownloadRule) -> &'static str {
 
 fn download_rule_subtitle(rule: DownloadRule) -> &'static str {
     match rule {
-        DownloadRule::EntireLibrary => msgid("Download every track, including tracks added later."),
+        DownloadRule::EntireLibrary => msgid("Everything, including new tracks"),
         DownloadRule::Favorites => {
-            msgid("Download favorite tracks and tracks from favorite albums and artists.")
+            msgid("Favorite tracks, plus tracks from favorite albums and artists")
         }
-        DownloadRule::AllPlaylists => msgid("Download tracks from every playlist."),
-        DownloadRule::LatestFiveAlbums => {
-            msgid("Keep tracks from the five most recently added albums downloaded.")
-        }
+        DownloadRule::AllPlaylists => msgid("Tracks from every playlist"),
+        DownloadRule::LatestFiveAlbums => msgid("Tracks from your five latest albums"),
     }
 }
 
@@ -875,7 +868,7 @@ fn confirm_remove_all_downloads(
     let dialog = adw::AlertDialog::builder()
         .heading(tr("Remove All Downloads"))
         .body(tr(
-            "Downloaded music from this server will no longer be available offline. Automatic download rules will also be turned off.",
+            "Downloads from this server will be removed, and automatic rules will be turned off",
         ))
         .build();
     dialog.add_response("cancel", &tr("Cancel"));
@@ -977,11 +970,7 @@ fn download_queue_header() -> (adw::PreferencesRow, gtk::Button) {
 fn confirm_remove_local_folder(shell: &Rc<Shell>, path: String, row: adw::ActionRow) {
     let dialog = adw::AlertDialog::builder()
         .heading(tr("Remove Local Folder"))
-        .body(format!(
-            "{}\n{}",
-            tr("This removes the folder from the Local source."),
-            path
-        ))
+        .body(path.clone())
         .build();
     let cancel = tr("Cancel");
     let remove = tr("Remove");
@@ -1058,7 +1047,7 @@ fn local_mapping_status(summary: Option<&SourceLocalAccessSummary>) -> String {
     }
     let status = &summary.status;
     if status.total_track_count == 0 {
-        return tr("Local file mapping saved. Sync to preview matches.");
+        return tr("Saved, sync to preview matches");
     }
     format!(
         "{}: {} direct, {} prefix, {} metadata, {} unmatched",

@@ -578,7 +578,7 @@ fn jellyfin_settings_group(
 ) -> Result<gtk::Widget, String> {
     let instant_mix = adw::SwitchRow::builder()
         .title(tr("Use Jellyfin Instant Mix for recommendations"))
-        .subtitle(tr("This uses Jellyfin API for play radio, necessary if you want recommendation plugins to work."))
+        .subtitle(tr("This uses Jellyfin API for play radio, necessary if you want recommendation plugins to work"))
         .active(saved.jellyfin_use_instant_mix.unwrap_or(false))
         .build();
     let instant_mix_for_submit = instant_mix.clone();
@@ -658,7 +658,7 @@ impl SourceSetupFlow for JellyfinSetupFlow {
 
         let instant_mix = adw::SwitchRow::builder()
             .title(tr("Use Jellyfin Instant Mix for recommendations"))
-            .subtitle(tr("This uses Jellyfin API for play radio, necessary if you want recommendation plugins to work."))
+            .subtitle(tr("This uses Jellyfin API for play radio, necessary if you want recommendation plugins to work"))
             .active(self.use_instant_mix.get())
             .build();
         let instant_group = adw::PreferencesGroup::new();
@@ -826,7 +826,6 @@ fn saved_source_recovery_group(shell: &Rc<Shell>, compact: bool) -> Option<adw::
     }
     let group = adw::PreferencesGroup::builder()
         .title(tr("Saved Sources"))
-        .description(tr("Choose a configured source or add another."))
         .build();
     for source in sources {
         let registration = source_presentation(&source.kind);
@@ -1366,9 +1365,7 @@ fn discovery_status_label(status: &DiscoveryStatus) -> String {
     match status {
         DiscoveryStatus::Idle => tr("Searching will start automatically"),
         DiscoveryStatus::Searching => tr("Searching for Jellyfin servers on the local network..."),
-        DiscoveryStatus::Empty => {
-            tr("No Jellyfin servers found. Enter the address manually or search again")
-        }
+        DiscoveryStatus::Empty => tr("No servers found, add one manually or try again"),
         DiscoveryStatus::Found(_) => String::new(),
         DiscoveryStatus::Failed(error) => {
             tr_with("Server discovery failed: {error}", &[("error", error)])

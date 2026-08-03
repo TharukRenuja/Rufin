@@ -366,7 +366,7 @@ impl FolderRouteProjection {
             let result = receiver
                 .recv()
                 .await
-                .unwrap_or_else(|_| Err("Folder request ended before completion.".into()));
+                .unwrap_or_else(|_| Err(tr("Couldn't load this folder")));
             if let Some(projection) = projection.upgrade() {
                 projection.apply_loaded(result);
             }

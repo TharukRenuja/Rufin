@@ -996,7 +996,7 @@ fn local_access_replacement_state(
     root: Option<&Path>,
 ) -> (bool, String) {
     let Some(root) = root else {
-        return (false, tr("Choose the local music folder."));
+        return (false, tr("Choose a local music folder"));
     };
     let validation = validate_local_access_path(Some(source_path), server_prefix, "", Some(root));
     let Some(projected) = validation.projected else {
@@ -1044,7 +1044,7 @@ fn validate_local_access_path(
     let base = if local_prefix.is_empty() {
         let Some(folder) = folder else {
             return LocalAccessPathValidation {
-                message: tr("Choose a local music folder."),
+                message: tr("Choose a local music folder"),
                 projected: None,
                 saveable: false,
             };
@@ -1073,7 +1073,7 @@ fn validate_local_access_path(
                 }
             }
             _ => LocalAccessPathValidation {
-                message: tr("Server sample does not match the server prefix."),
+                message: tr("Server prefix doesn't match"),
                 projected: None,
                 saveable: false,
             },
@@ -1097,7 +1097,7 @@ fn validate_local_access_path(
         };
     }
     LocalAccessPathValidation {
-        message: tr("Enter a matching server prefix to map this path."),
+        message: tr("Add a matching server prefix"),
         projected,
         saveable: false,
     }
@@ -1114,19 +1114,19 @@ fn local_access_status_text(
     }
     if !remote {
         return if changed {
-            tr("Save to rescan this local library.")
+            tr("Save to rescan")
         } else {
-            tr("Local library folder is saved.")
+            tr("Saved")
         };
     }
     if !draft.local_prefix.trim().is_empty() && !Path::new(draft.local_prefix.trim()).is_dir() {
-        return tr("Choose an existing local prefix.");
+        return tr("Choose an existing local folder");
     }
     if status.total_track_count == 0 {
         return if changed {
-            tr("Save to rescan this local library.")
+            tr("Save to rescan")
         } else {
-            tr("Local library folder is saved.")
+            tr("Saved")
         };
     }
 
@@ -1144,15 +1144,15 @@ fn local_access_status_text(
     ];
     if changed {
         trn_with(
-            "Unsaved changes. {direct} direct, {prefix} prefix, {metadata} metadata, {unmatched} unmatched of {total} track.",
-            "Unsaved changes. {direct} direct, {prefix} prefix, {metadata} metadata, {unmatched} unmatched of {total} tracks.",
+            "Unsaved changes. {direct} direct, {prefix} prefix, {metadata} metadata, {unmatched} unmatched of {total} track",
+            "Unsaved changes. {direct} direct, {prefix} prefix, {metadata} metadata, {unmatched} unmatched of {total} tracks",
             status.total_track_count as u64,
             &args,
         )
     } else {
         trn_with(
-            "Saved mapping. {direct} direct, {prefix} prefix, {metadata} metadata, {unmatched} unmatched of {total} track.",
-            "Saved mapping. {direct} direct, {prefix} prefix, {metadata} metadata, {unmatched} unmatched of {total} tracks.",
+            "Saved mapping. {direct} direct, {prefix} prefix, {metadata} metadata, {unmatched} unmatched of {total} track",
+            "Saved mapping. {direct} direct, {prefix} prefix, {metadata} metadata, {unmatched} unmatched of {total} tracks",
             status.total_track_count as u64,
             &args,
         )
@@ -1314,10 +1314,7 @@ mod tests {
         );
 
         assert!(!validation.saveable);
-        assert_eq!(
-            validation.message,
-            "Enter a matching server prefix to map this path."
-        );
+        assert_eq!(validation.message, "Add a matching server prefix");
     }
 
     #[test]

@@ -37,7 +37,6 @@ impl Shell {
     ) {
         let dialog = adw::AlertDialog::builder()
             .heading(tr("Rename Playlist"))
-            .body(tr("Enter a new playlist name."))
             .build();
         dialog.add_response("cancel", &tr("Cancel"));
         dialog.add_response("rename", &tr("Rename"));

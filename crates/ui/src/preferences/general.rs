@@ -147,8 +147,7 @@ pub(crate) fn scrobbling_page(shell: &Rc<Shell>) -> adw::PreferencesPage {
                 &shell,
                 request,
                 "Failed to open Last.fm authorization: ",
-                tr("Timed out waiting for Last.fm authorization."),
-                "Last.fm authorization task failed.",
+                tr_with("Couldn't connect to {service}", &[("service", "Last.fm")]),
                 true,
             )
             .await
@@ -240,8 +239,7 @@ pub(crate) fn scrobbling_page(shell: &Rc<Shell>) -> adw::PreferencesPage {
                 &shell,
                 ScrobblingConnection::LibreFm,
                 "Failed to open Libre.fm authorization: ",
-                tr("Timed out waiting for Libre.fm authorization"),
-                "Libre.fm authorization task failed.",
+                tr_with("Couldn't connect to {service}", &[("service", "Libre.fm")]),
                 false,
             )
             .await
@@ -382,8 +380,7 @@ async fn connect_scrobbling(
     shell: &Rc<Shell>,
     request: ScrobblingConnection,
     open_error: &'static str,
-    timeout_error: String,
-    closed_error: &'static str,
+    connection_error: String,
     refresh_external_artwork: bool,
 ) -> Result<String, String> {
     let events = shell.products.scrobbling.connect(request);
@@ -410,11 +407,11 @@ async fn connect_scrobbling(
                 }
                 return Ok(username);
             }
-            ScrobblingConnectionEvent::TimedOut => return Err(timeout_error),
+            ScrobblingConnectionEvent::TimedOut => return Err(connection_error.clone()),
             ScrobblingConnectionEvent::Failed(error) => return Err(error),
         }
     }
-    Err(closed_error.to_string())
+    Err(connection_error)
 }
 pub(crate) fn playback_page(shell: &Rc<Shell>) -> adw::PreferencesPage {
     let page = adw::PreferencesPage::builder()
@@ -700,7 +697,6 @@ pub(crate) fn playback_page(shell: &Rc<Shell>) -> adw::PreferencesPage {
 
     let reset_row = adw::ActionRow::builder()
         .title(tr("Reset equalizer"))
-        .subtitle(tr("Restore selected preset to default bands."))
         .build();
     let reset_button = gtk::Button::with_label(&tr("Reset"));
     reset_button.set_valign(gtk::Align::Center);
