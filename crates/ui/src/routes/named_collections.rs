@@ -549,7 +549,7 @@ impl NamedCollectionGridCell {
         controls.add_to_overlay(&overlay);
         controls.connect_hover(&overlay);
 
-        let cover = cards::square_cover_frame(&overlay);
+        let cover = cards::square_cover_frame(&overlay, &controls.transport);
         let body = CollectionGridCardCell::new(&shell, fields, cover.upcast());
         let downloaded_item = Rc::clone(&current_item);
         body.set_download_badge(shell.download_badge(true, move |selected| {
