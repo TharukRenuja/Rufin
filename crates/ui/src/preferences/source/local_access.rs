@@ -644,7 +644,7 @@ pub(crate) fn metadata_local_access_recovery_form(
             choose.set_sensitive(view.controls_sensitive);
             continue_button.set_sensitive(view.continue_sensitive);
             continue_button.set_label(&if view.checking {
-                tr("Checking…")
+                tr("Checking...")
             } else {
                 tr("Continue")
             });
