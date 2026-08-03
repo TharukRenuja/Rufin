@@ -109,7 +109,6 @@ pub use smart_playlists::{
     SmartPlaylistSummary,
 };
 pub use store::StoreRepairReport;
-pub use store::schema30::*;
 
 #[derive(Debug, Error)]
 pub enum LibraryError {
@@ -120,8 +119,6 @@ pub enum LibraryError {
     },
     #[error("invalid final Store: {0}")]
     InvalidStore(String),
-    #[error("released Store migration failed: {0}")]
-    ReleasedMigration(String),
     #[error("Library persistence failed: {0}")]
     Persistence(String),
     #[error("a source candidate cannot continue after a batch write failed")]

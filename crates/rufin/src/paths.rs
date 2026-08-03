@@ -5,7 +5,6 @@ use directories::ProjectDirs;
 
 const STORE_DIRECTORY: &str = "store";
 const STORE_FILE: &str = "rufin-store.sqlite";
-const RELEASED_STORE_FILE: &str = "rufin-cache.sqlite";
 const SETTINGS_FILE: &str = "settings.json";
 const SECRETS_FILE: &str = "secrets.json";
 const ARTWORK_DIRECTORY: &str = "covers";
@@ -51,10 +50,6 @@ pub(crate) fn secrets_file() -> PathBuf {
 
 pub(crate) fn store_file() -> PathBuf {
     cache_dir().join(STORE_DIRECTORY).join(STORE_FILE)
-}
-
-pub(crate) fn released_store_file() -> PathBuf {
-    cache_dir().join(STORE_DIRECTORY).join(RELEASED_STORE_FILE)
 }
 
 pub(crate) fn artwork_dir() -> PathBuf {

@@ -7,7 +7,6 @@ mod paths;
 mod playback;
 mod radio;
 mod release_update;
-mod schema30_migration;
 mod scrobbling;
 mod settings;
 mod source;

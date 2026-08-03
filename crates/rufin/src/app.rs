@@ -24,13 +24,6 @@ pub(crate) fn runtime_inputs(diagnostics: DiagnosticsHandle) -> Result<RuntimeIn
     if let Err(error) = paths::prepare() {
         warn!(%error, "could not prepare every Rufin data directory");
     }
-    if let Err(error) = crate::schema30_migration::install_if_needed(
-        &paths::settings_file(),
-        &paths::released_store_file(),
-        &paths::store_file(),
-    ) {
-        warn!(%error, "could not import released Rufin data; startup will continue");
-    }
     let runtime = tokio::runtime::Handle::current();
     let settings = SettingsFile::open(paths::settings_file()).unwrap_or_else(|error| {
         warn!(%error, "could not use saved settings; startup will continue with defaults");

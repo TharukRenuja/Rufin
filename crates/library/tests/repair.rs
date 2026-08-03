@@ -157,6 +157,45 @@ fn missing_source_table_repairs_without_touching_configuration_or_durable_rows()
 }
 
 #[test]
+fn schema_30_store_is_preserved_and_replaced_without_blocking_startup() {
+    let directory = tempfile::tempdir().expect("temporary recovery directory");
+    let store_path = directory.path().join("rufin-store.sqlite");
+    let old_store = Connection::open(&store_path).expect("create old Rufin Store");
+    old_store
+        .execute_batch(
+            "PRAGMA application_id = 0;
+             PRAGMA user_version = 30;
+             CREATE TABLE sources(
+                 source_id TEXT PRIMARY KEY,
+                 kind TEXT NOT NULL,
+                 name TEXT,
+                 provider_payload TEXT
+             );
+             INSERT INTO sources VALUES (
+                 'local:legacy', 'local', 'Local', '{}'
+             );",
+        )
+        .expect("create schema 30 Rufin Store");
+    drop(old_store);
+    let before = fs::read(&store_path).expect("read old Rufin Store");
+
+    let (library, repair) = Library::open_with_repair(&store_path)
+        .expect("replace old Rufin Store without blocking startup");
+    let repair = repair.expect("old Store replacement report");
+    assert_eq!(
+        fs::read(&repair.preserved_store).expect("read preserved old Store"),
+        before,
+        "the schema 30 Store remains available beside its replacement"
+    );
+    assert!(
+        library
+            .load_source(&SourceId::new("local"))
+            .expect("read replacement Store")
+            .is_none()
+    );
+}
+
+#[test]
 fn unsupported_and_unidentifiable_stores_are_preserved_and_rebuilt() {
     let directory = tempfile::tempdir().expect("temporary recovery directory");
     let unknown_path = directory.path().join("unknown.sqlite");

@@ -225,7 +225,7 @@ pub(crate) struct SettingsFile {
 
 impl SettingsFile {
     pub(crate) fn open(path: PathBuf) -> Result<Self, String> {
-        let mut value = read_startup_settings(&path)?.stored;
+        let mut value = read_startup_settings(&path)?;
         value.migrate_defaults();
         let mut changed = false;
         if value.jellyfin_device_id.trim().is_empty() {
@@ -584,36 +584,19 @@ pub(crate) fn read_settings(path: &Path) -> Result<StoredSettings, String> {
     }
 }
 
-pub(crate) struct StartupSettings {
-    pub(crate) stored: StoredSettings,
-    pub(crate) raw: Option<serde_json::Value>,
-}
-
-pub(crate) fn read_startup_settings(path: &Path) -> Result<StartupSettings, String> {
+fn read_startup_settings(path: &Path) -> Result<StoredSettings, String> {
     let raw = match fs::read_to_string(path) {
         Ok(raw) if raw.trim().is_empty() => {
-            return Ok(StartupSettings {
-                stored: StoredSettings::default(),
-                raw: None,
-            });
+            return Ok(StoredSettings::default());
         }
         Ok(raw) => raw,
         Err(error) if error.kind() == ErrorKind::NotFound => {
-            return Ok(StartupSettings {
-                stored: StoredSettings::default(),
-                raw: None,
-            });
+            return Ok(StoredSettings::default());
         }
         Err(error) => return Err(error.to_string()),
     };
-    let parsed = serde_json::from_str::<serde_json::Value>(&raw).and_then(|value| {
-        serde_json::from_value::<StoredSettings>(value.clone()).map(|stored| (stored, value))
-    });
-    match parsed {
-        Ok((stored, raw)) => Ok(StartupSettings {
-            stored,
-            raw: Some(raw),
-        }),
+    match serde_json::from_str(&raw) {
+        Ok(stored) => Ok(stored),
         Err(error) => {
             let preserved = preserve_unreadable_settings(path)?;
             warn!(
@@ -622,10 +605,7 @@ pub(crate) fn read_startup_settings(path: &Path) -> Result<StartupSettings, Stri
                 preserved_path = %preserved.display(),
                 "preserved unreadable settings and continued with defaults"
             );
-            Ok(StartupSettings {
-                stored: StoredSettings::default(),
-                raw: None,
-            })
+            Ok(StoredSettings::default())
         }
     }
 }
