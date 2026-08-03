@@ -7,8 +7,8 @@ use async_channel::Sender;
 use library::{
     AlbumId, ArtistId, CandidateBatch, FavoriteAcceptance, FavoriteItemId, FolderContents,
     FolderId, GenreId, HomeFacts, HomeSectionKind, ImageRef, LocalAccessTarget, LocalArtworkRef,
-    LocalComponentBaseline, LocalComponentReplacement, MetadataDraft, MetadataEdit, MetadataError,
-    MetadataValues, MusicFolderId, PlaylistAcceptance, PlaylistEdit, PlaylistId, PlaylistSnapshot,
+    LocalComponentReplacement, MetadataDraft, MetadataEdit, MetadataError, MetadataValues,
+    MusicFolderId, PlaylistAcceptance, PlaylistEdit, PlaylistId, PlaylistSnapshot,
     ProviderFreshness, SearchRequest, SearchResults, SourceHomeSection, SourceHomeSectionKind,
     SourceId, TrackId,
 };
@@ -224,24 +224,12 @@ impl LocalFilesystemChange {
     }
 }
 
-pub struct SourceLocalCheck {
-    inner: crate::local::LocalCheck,
-}
-
-impl SourceLocalCheck {
-    pub fn file_seeds(&self) -> &[library::LocalFileSeed] {
-        self.inner.file_seeds()
-    }
-}
-
-pub struct SourceLocalChange {
-    inner: crate::local::LocalChange,
-}
-
-impl SourceLocalChange {
-    pub fn component_seeds(&self) -> &[library::LocalComponentSeed] {
-        self.inner.component_seeds()
-    }
+#[derive(Debug, thiserror::Error)]
+pub enum LocalChangePreparationError {
+    #[error(transparent)]
+    Source(#[from] SourceError),
+    #[error(transparent)]
+    Library(#[from] library::LibraryError),
 }
 
 /// Inputs that determine the canonical facts emitted by one source.
@@ -807,51 +795,23 @@ impl Source {
         }
     }
 
-    pub fn check_local(
+    /// Prepares one Local filesystem change against Library's accepted facts.
+    /// The returned replacement is inert until Library accepts it.
+    pub fn prepare_local_change(
         &self,
+        library: &library::Library,
         change: LocalFilesystemChange,
-        cancelled: &(dyn Fn() -> bool + Send + Sync),
-    ) -> SourceResult<SourceLocalCheck> {
-        let Implementation::Local(source) = &self.implementation else {
-            return Err(SourceError::InvalidRequest(
-                "filesystem verification requires a Local source",
-            ));
-        };
-        source
-            .check(change, cancelled)
-            .map(|inner| SourceLocalCheck { inner })
-    }
-
-    pub fn confirm_local_change(
-        &self,
-        check: SourceLocalCheck,
-        baseline: library::LocalFileBaseline,
+        observed_at: i64,
         progress: &(dyn Fn(SourceReadProgress) + Send + Sync),
         cancelled: &(dyn Fn() -> bool + Send + Sync),
-    ) -> SourceResult<Option<SourceLocalChange>> {
+    ) -> Result<Option<LocalComponentReplacement>, LocalChangePreparationError> {
         let Implementation::Local(source) = &self.implementation else {
             return Err(SourceError::InvalidRequest(
-                "filesystem verification requires a Local source",
-            ));
+                "filesystem change preparation requires a Local source",
+            )
+            .into());
         };
-        source
-            .confirm_change(check.inner, baseline, progress, cancelled)
-            .map(|change| change.map(|inner| SourceLocalChange { inner }))
-    }
-
-    pub fn complete_local_change(
-        &self,
-        change: SourceLocalChange,
-        baseline: LocalComponentBaseline,
-        observed_at: i64,
-        cancelled: &(dyn Fn() -> bool + Send + Sync),
-    ) -> SourceResult<LocalComponentReplacement> {
-        let Implementation::Local(source) = &self.implementation else {
-            return Err(SourceError::InvalidRequest(
-                "filesystem replacement requires a Local source",
-            ));
-        };
-        source.complete_change(change.inner, baseline, observed_at, cancelled)
+        source.prepare_change(library, change, observed_at, progress, cancelled)
     }
 
     pub async fn read_source_facts(

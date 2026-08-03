@@ -461,6 +461,98 @@ fn failed_target_prepare_keeps_the_selected_session() {
 }
 
 #[test]
+fn preparing_a_replacement_keeps_downloads_on_the_current_library() {
+    let directory = tempfile::tempdir().expect("temporary Rufin data directory");
+    let runtime = test_runtime();
+    let libraries = Libraries::open(directory.path().join("library.db")).expect("open Library");
+    let current_id = SourceId::new("local:server:current-downloads");
+    let current_track_id = library::TrackId::new("local:track:current-downloads");
+    let current = accept_library(
+        &libraries,
+        current_id.clone(),
+        vec![test_track(
+            current_track_id.clone(),
+            "Current",
+            PathBuf::from("Current.flac"),
+            None,
+        )],
+        Vec::new(),
+        1,
+    );
+    let replacement_id = SourceId::new("local:server:replacement-downloads");
+    let replacement = accept_library(
+        &libraries,
+        replacement_id.clone(),
+        vec![test_track(
+            library::TrackId::new("local:track:replacement-downloads"),
+            "Replacement",
+            PathBuf::from("Replacement.flac"),
+            None,
+        )],
+        Vec::new(),
+        2,
+    );
+    let settings = SettingsFile::memory();
+    let (bootstrap, _events, download_events) =
+        test_owner_with_download_events(directory.path(), &runtime, libraries, settings);
+    let _current_session = install_selected_for_test(
+        &bootstrap.owner,
+        test_configuration(current_id, "Current"),
+        None,
+        Arc::clone(&current),
+        SourceSessionEpoch::new(1),
+    );
+    let _playback = attach_test_playback(&bootstrap.owner, &runtime, directory.path());
+
+    runtime.block_on(async {
+        bootstrap
+            .owner
+            .shared
+            .downloads
+            .attach(None, &current, None)
+            .await
+            .expect("attach current downloads");
+        let operations = bootstrap.owner.as_ref().clone();
+        let (_session, _selected, prepared) = operations
+            .prepare_runtime(
+                test_configuration(replacement_id, "Replacement"),
+                None,
+                replacement,
+                None,
+                None,
+            )
+            .await
+            .expect("prepare replacement runtime");
+
+        let tracks: library::TrackSelection = current
+            .track_list(None, TrackSort::Title, false)
+            .expect("current Track selection")
+            .into();
+        bootstrap.owner.shared.downloads.download(
+            Arc::clone(&current),
+            downloads::DownloadSubject::Track(current_track_id.clone()),
+            tracks,
+        );
+        let feedback = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            loop {
+                if let downloads::DownloadEvent::Feedback(feedback) =
+                    download_events.recv().await.expect("download publication")
+                {
+                    break feedback;
+                }
+            }
+        })
+        .await
+        .expect("current Library must remain the Downloads target during preparation");
+        assert_eq!(
+            feedback.subject,
+            downloads::DownloadSubject::Track(current_track_id)
+        );
+        drop(prepared);
+    });
+}
+
+#[test]
 fn activity_publishes_while_candidate_acquisition_is_blocked_and_rebases_once() {
     let directory = tempfile::tempdir().expect("temporary Rufin data directory");
     let path = directory.path().join("library.db");
@@ -862,22 +954,10 @@ fn local_metadata_edit_prepares_the_written_file_for_library_acceptance() {
     let MetadataRefresh::Local(change) = refresh else {
         panic!("Local metadata write did not request a Local refresh");
     };
-    let check = source
-        .check_local(change, &|| false)
-        .expect("check written Local metadata");
-    let accepted_files = accepted
-        .local_file_baseline(check.file_seeds())
-        .expect("read accepted Local file baseline");
-    let change = source
-        .confirm_local_change(check, accepted_files, &|_| {}, &|| false)
-        .expect("confirm written Local metadata")
-        .expect("written Local metadata changed");
-    let baseline = accepted
-        .local_component_baseline(change.component_seeds())
-        .expect("read accepted Local component baseline");
     let replacement = source
-        .complete_local_change(change, baseline, 1, &|| false)
-        .expect("prepare Local metadata replacement");
+        .prepare_local_change(&accepted, change, 1, &|_| {}, &|| false)
+        .expect("prepare Local metadata replacement")
+        .expect("written Local metadata changed");
     let change = accepted
         .accept_local_component(replacement)
         .expect("accept metadata component")
@@ -1217,10 +1297,26 @@ fn test_owner(
     libraries: Libraries,
     settings: SettingsFile,
 ) -> (SourceBootstrap, async_channel::Receiver<SourceEvent>) {
+    let (bootstrap, events, _download_events) =
+        test_owner_with_download_events(directory, runtime, libraries, settings);
+    (bootstrap, events)
+}
+
+fn test_owner_with_download_events(
+    directory: &Path,
+    runtime: &tokio::runtime::Runtime,
+    libraries: Libraries,
+    settings: SettingsFile,
+) -> (
+    SourceBootstrap,
+    async_channel::Receiver<SourceEvent>,
+    async_channel::Receiver<downloads::DownloadEvent>,
+) {
     let artwork = artwork::Artwork::new(directory.join("artwork"), runtime.handle().clone())
         .expect("open Artwork");
     let (events, event_receiver) = async_channel::unbounded();
     let (discovery, _discovery_receiver) = async_channel::unbounded();
+    let (download_events, download_event_receiver) = async_channel::unbounded();
     let secrets = Arc::new(SwitchableSecretStore::new(Arc::new(
         MemorySecretStore::new(),
     )));
@@ -1231,14 +1327,73 @@ fn test_owner(
     let bootstrap = SourceOwner::open_dormant(
         artwork,
         libraries,
-        test_downloads(directory.join("downloads"), runtime.handle().clone()),
+        downloads::Downloads::new(
+            directory.join("downloads"),
+            runtime.handle().clone(),
+            download_events,
+            Vec::new(),
+        ),
         settings,
         secrets,
         scrobbler,
         runtime.handle().clone(),
         SourceOutputs { events, discovery },
     );
-    (bootstrap, event_receiver)
+    (bootstrap, event_receiver, download_event_receiver)
+}
+
+#[derive(Default)]
+struct AcceptingPlaybackBackend;
+
+impl ::playback::PlaybackBackend for AcceptingPlaybackBackend {
+    fn send(
+        &mut self,
+        _command: ::playback::BackendCommand,
+    ) -> Result<(), ::playback::BackendError> {
+        Ok(())
+    }
+
+    fn drain_events(&mut self) -> Vec<::playback::BackendEvent> {
+        Vec::new()
+    }
+}
+
+fn attach_test_playback(
+    owner: &Arc<SourceOwner>,
+    runtime: &tokio::runtime::Runtime,
+    directory: &Path,
+) -> Arc<PlaybackOwner> {
+    let (playback_events, _playback_event_receiver) = async_channel::unbounded();
+    let (waveform_events, _waveform_event_receiver) = async_channel::unbounded();
+    let waveform = crate::waveform::WaveformOwner::new(
+        runtime.handle().clone(),
+        waveform_events,
+        directory.join("waveforms"),
+        false,
+    );
+    let (lyrics_events, _lyrics_event_receiver) = async_channel::unbounded();
+    let stored = owner.shared.settings.load();
+    let lyrics = ::lyrics::LyricsService::new(
+        owner.shared.library.clone(),
+        runtime.handle().clone(),
+        stored.ui.lyrics,
+        stored.ui.private_mode,
+        lyrics_events,
+    );
+    let playback = PlaybackOwner::new(
+        owner.shared.library.clone(),
+        owner.shared.settings.clone(),
+        runtime.handle().clone(),
+        playback_events,
+        owner.acceptance_sender(),
+        waveform,
+        lyrics,
+        Arc::new(desktop_integration::Discord::new()),
+        Arc::clone(&owner.shared.scrobbler),
+        || Ok(Box::<AcceptingPlaybackBackend>::default()),
+    );
+    owner.attach_playback(&playback);
+    playback
 }
 
 fn install_selected_for_test(
@@ -1353,11 +1508,6 @@ fn test_track(
             ..TrackRelations::default()
         },
     })
-}
-
-fn test_downloads(root: PathBuf, runtime: tokio::runtime::Handle) -> downloads::Downloads {
-    let (events, _receiver) = async_channel::unbounded();
-    downloads::Downloads::new(root, runtime, events, Vec::new())
 }
 
 fn write_silent_wav(path: &Path) -> std::io::Result<()> {

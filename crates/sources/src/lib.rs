@@ -1,8 +1,9 @@
 //! Concrete music sources behind one source-agnostic application boundary.
 //!
 //! Providers own authentication, HTTP or filesystem work, paging, and wire
-//! translation. Rufin owns source lifecycle and passes their canonical facts
-//! to Library; Sources never receives a Library, Store, or selected runtime.
+//! translation. Rufin owns source lifecycle and passes canonical facts to
+//! Library. Local preparation reads one selected Library's accepted baselines;
+//! only Library can accept and persist the resulting replacement.
 
 mod config;
 mod operations;

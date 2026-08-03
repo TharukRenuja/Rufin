@@ -168,6 +168,51 @@ fn selected_commands_require_the_exact_attached_library() {
 }
 
 #[tokio::test]
+async fn failed_attachment_still_retires_the_previous_library() {
+    let directory = tempfile::tempdir().expect("temporary downloads");
+    let blocked_root = directory.path().join("not-a-directory");
+    std::fs::write(&blocked_root, b"file").expect("create unusable downloads root");
+    let previous_root = tempfile::tempdir().expect("previous Library");
+    let target_root = tempfile::tempdir().expect("target Library");
+    let previous_id = SourceId::fake(1);
+    let target_id = SourceId::fake(2);
+    let (previous, _) = accepted_track(previous_root.path(), previous_id.clone(), TrackId::fake(1));
+    let (target, _) = accepted_track(target_root.path(), target_id.clone(), TrackId::fake(2));
+    let mut actor = test_actor(&blocked_root);
+    actor.attached.insert(
+        previous_id,
+        AttachedSource {
+            source: None,
+            loaded: Arc::downgrade(&previous),
+            music_folder_id: None,
+            directory: None,
+        },
+    );
+    actor.selected = Some(Arc::downgrade(&previous));
+    let (response, result) = async_channel::bounded(1);
+    let mut active = Vec::new();
+
+    actor
+        .apply(
+            Command::Attach {
+                source: None,
+                loaded: Arc::downgrade(&target),
+                music_folder_id: None,
+                response,
+            },
+            &mut active,
+        )
+        .await;
+
+    assert!(result.recv().await.expect("attachment result").is_err());
+    assert_eq!(
+        actor.attached_source_id(&Arc::downgrade(&target)),
+        Some(target_id)
+    );
+    assert_eq!(actor.attached_source_id(&Arc::downgrade(&previous)), None);
+}
+
+#[tokio::test]
 async fn pause_and_source_replacement_are_admitted_during_selection_preparation() {
     let directory = tempfile::tempdir().expect("temporary downloads");
     let replacement_directory = tempfile::tempdir().expect("replacement Library");

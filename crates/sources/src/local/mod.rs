@@ -7,7 +7,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use library::{HomeFacts, LocalComponentBaseline, LocalComponentReplacement};
+use library::{HomeFacts, LocalComponentReplacement};
 use serde::Deserialize;
 
 use crate::source::{BatchEmitter, SourceReadProgress};
@@ -93,30 +93,6 @@ pub struct LocalSource {
     roots: Vec<PathBuf>,
 }
 
-/// Filesystem observations that have not yet been compared with Library's
-/// accepted file facts.
-pub(crate) struct LocalCheck {
-    inner: scan::LocalCheck,
-}
-
-impl LocalCheck {
-    pub(crate) fn file_seeds(&self) -> &[library::LocalFileSeed] {
-        &self.inner.file_seeds
-    }
-}
-
-/// One confirmed Local dependency change, including its already parsed file
-/// facts and the logical Library component needed to finish it.
-pub(crate) struct LocalChange {
-    inner: scan::LocalChange,
-}
-
-impl LocalChange {
-    pub(crate) fn component_seeds(&self) -> &[library::LocalComponentSeed] {
-        &self.inner.component_seeds
-    }
-}
-
 impl LocalSource {
     pub fn from_configuration(configuration: &SourceConfiguration) -> SourceResult<Self> {
         let config = LocalSourceConfig::from_configuration(configuration)?;
@@ -162,39 +138,28 @@ impl LocalSource {
         Ok((None, HomeFacts::RufinDefined))
     }
 
-    pub(crate) fn check(
+    pub(crate) fn prepare_change(
         &self,
+        library: &library::Library,
         change: crate::LocalFilesystemChange,
+        observed_at: i64,
+        progress: &(dyn Fn(SourceReadProgress) + Send + Sync),
         cancelled: &(dyn Fn() -> bool + Send + Sync),
-    ) -> SourceResult<LocalCheck> {
-        let inner = match change {
+    ) -> Result<Option<LocalComponentReplacement>, crate::LocalChangePreparationError> {
+        let check = match change {
             crate::LocalFilesystemChange::Paths(paths) => {
                 scan::check_exact(&self.roots, paths, cancelled)
             }
             crate::LocalFilesystemChange::Rescan => scan::check_automatic(&self.roots, cancelled),
         }?;
-        Ok(LocalCheck { inner })
-    }
-
-    pub(crate) fn confirm_change(
-        &self,
-        check: LocalCheck,
-        baseline: library::LocalFileBaseline,
-        progress: &(dyn Fn(SourceReadProgress) + Send + Sync),
-        cancelled: &(dyn Fn() -> bool + Send + Sync),
-    ) -> SourceResult<Option<LocalChange>> {
-        scan::confirm_change(check.inner, baseline, progress, cancelled)
-            .map(|change| change.map(|inner| LocalChange { inner }))
-    }
-
-    pub(crate) fn complete_change(
-        &self,
-        change: LocalChange,
-        baseline: LocalComponentBaseline,
-        observed_at: i64,
-        cancelled: &(dyn Fn() -> bool + Send + Sync),
-    ) -> SourceResult<LocalComponentReplacement> {
-        scan::complete_change(change.inner, baseline, observed_at, cancelled)
+        let file_baseline = library.local_file_baseline(check.file_seeds())?;
+        let Some(change) = scan::confirm_change(check, file_baseline, progress, cancelled)? else {
+            return Ok(None);
+        };
+        let component_baseline = library.local_component_baseline(change.component_seeds())?;
+        scan::complete_change(change, component_baseline, observed_at, cancelled)
+            .map(Some)
+            .map_err(Into::into)
     }
 
     pub(crate) fn image_bytes(

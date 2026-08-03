@@ -25,17 +25,29 @@ const LOCAL_CUE_MAX_BYTES: usize = 1024 * 1024;
 const LOCAL_BATCH_SIZE: usize = 1024;
 
 pub(super) struct LocalCheck {
-    pub(super) file_seeds: Vec<LocalFileSeed>,
+    file_seeds: Vec<LocalFileSeed>,
     inventory: Inventory,
     cue_sheets: HashMap<String, Option<CueSheet>>,
 }
 
+impl LocalCheck {
+    pub(super) fn file_seeds(&self) -> &[LocalFileSeed] {
+        &self.file_seeds
+    }
+}
+
 pub(super) struct LocalChange {
-    pub(super) component_seeds: Vec<LocalComponentSeed>,
+    component_seeds: Vec<LocalComponentSeed>,
     inventory: Inventory,
     changed_paths: BTreeSet<String>,
     affected_paths: HashSet<String>,
     changed_facts: CollectedFacts,
+}
+
+impl LocalChange {
+    pub(super) fn component_seeds(&self) -> &[LocalComponentSeed] {
+        &self.component_seeds
+    }
 }
 
 struct Inventory {

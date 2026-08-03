@@ -1692,7 +1692,6 @@ impl SourceOwner {
                 selected.source = source;
                 selected.library = commit.library;
                 self.shared.replace_selected_runtime(selected.clone()).await;
-                self.shared.publish_configured().await;
                 return Ok(Some(selected));
             }
             return Ok(None);
@@ -2725,14 +2724,6 @@ impl SourceOwner {
         let prepared =
             blocking(move || playback.prepare_selected(playback_session, playback_selected))
                 .await?;
-        self.shared
-            .downloads
-            .attach(
-                selected.source.clone(),
-                &selected.library,
-                selected.music_folder_id.clone(),
-            )
-            .await?;
         Ok((session, selected, prepared))
     }
 
@@ -2757,7 +2748,8 @@ impl SourceOwner {
         let cutover = blocking(move || playback_for_stop.stop_for_source_switch()).await?;
         self.shared.release_selected().await;
         self.shared
-            .install_selected_slot(Arc::clone(&session), Arc::clone(&selected));
+            .install_selected_slot(session, Arc::clone(&selected));
+        self.shared.attach_selected_downloads(&selected).await;
         Ok(playback.install_prepared(prepared, cutover))
     }
 }
@@ -2908,17 +2900,7 @@ impl Shared {
     }
 
     async fn publish_library_replacement(&self, selected: SelectedSourceState) {
-        let same_library = self
-            .selected()
-            .is_some_and(|current| Arc::ptr_eq(&current.library, &selected.library));
-        if same_library {
-            if !self.replace_selected(selected) {
-                return;
-            }
-            if let Some(selected) = self.selected() {
-                self.attach_selected_downloads(&selected).await;
-            }
-        } else if !self.replace_selected_runtime(selected).await {
+        if !self.replace_selected_runtime(selected).await {
             return;
         }
         let Some(session) = self.selected_session() else {
@@ -3291,25 +3273,9 @@ async fn prepare_local_change(
 ) -> Result<Option<library::LocalComponentReplacement>, String> {
     blocking(move || {
         let should_stop = || cancelled.load(Ordering::Acquire);
-        let check = source
-            .check_local(change, &should_stop)
-            .map_err(string_error)?;
-        let accepted_files = loaded
-            .local_file_baseline(check.file_seeds())
-            .map_err(string_error)?;
         let progress = |_: SourceReadProgress| {};
-        let Some(change) = source
-            .confirm_local_change(check, accepted_files, &progress, &should_stop)
-            .map_err(string_error)?
-        else {
-            return Ok(None);
-        };
-        let baseline = loaded
-            .local_component_baseline(change.component_seeds())
-            .map_err(string_error)?;
         source
-            .complete_local_change(change, baseline, unix_seconds(), &should_stop)
-            .map(Some)
+            .prepare_local_change(&loaded, change, unix_seconds(), &progress, &should_stop)
             .map_err(string_error)
     })
     .await

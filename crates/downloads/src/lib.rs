@@ -715,13 +715,11 @@ impl Actor {
                 let result = self
                     .attach(source_id.clone(), source, live, music_folder_id, directory)
                     .await;
-                let attached = result.is_ok();
-                if attached {
-                    self.selected = Some(loaded);
-                    self.pending_rules = None;
-                }
+                let ready = result.is_ok();
+                self.selected = Some(loaded);
+                self.pending_rules = None;
                 let _ = response.send(result).await;
-                if attached {
+                if ready {
                     self.reconcile_all_rules(&source_id);
                 }
             }
