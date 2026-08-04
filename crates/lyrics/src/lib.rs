@@ -535,7 +535,11 @@ pub fn japanese_reading_for_language_options(
                             if previous_was_word && is_word {
                                 output.push(' ');
                             }
-                            output.push_str(&reading.to_romaji());
+                            if contains_japanese_script(surface) {
+                                output.push_str(&reading.to_romaji());
+                            } else {
+                                output.push_str(surface);
+                            }
                             (output, is_word)
                         },
                     )
@@ -568,8 +572,9 @@ fn japanese_reader_needed(
     if !show_furigana && !show_romanization {
         return false;
     }
-    let japanese = contains_japanese_kana(text)
-        || language.and_then(normalize_language_tag).as_deref() == Some("ja");
+    let japanese = contains_japanese_script(text)
+        && (contains_japanese_kana(text)
+            || language.and_then(normalize_language_tag).as_deref() == Some("ja"));
     japanese && (show_romanization || show_furigana && text.chars().any(is_kanji))
 }
 
@@ -654,6 +659,10 @@ pub fn contains_japanese_kana(text: &str) -> bool {
             0x3040..=0x30ff | 0x31f0..=0x31ff | 0xff66..=0xff9f
         )
     })
+}
+
+fn contains_japanese_script(text: &str) -> bool {
+    contains_japanese_kana(text) || text.chars().any(is_kanji)
 }
 
 fn is_kanji(character: char) -> bool {
@@ -972,6 +981,13 @@ mod tests {
     }
 
     #[test]
+    fn romaji_preserves_non_japanese_parts_of_mixed_text() {
+        let reading = japanese_reading("君との Moon will shine 42!").expect("Japanese reading");
+
+        assert_eq!(reading.romanization, "kimi to no Moon will shine 42!");
+    }
+
+    #[test]
     fn japanese_readings_are_inferred_once_for_the_complete_document() {
         let mut inferred = document(LyricsRole::Original, None, "君の名は");
         inferred.lines.push(LyricsLine {
@@ -1000,6 +1016,19 @@ mod tests {
 
         let chinese = document(LyricsRole::Original, Some("zh"), "君の名は");
         assert!(!chinese.is_japanese_for_readings());
+    }
+
+    #[test]
+    fn japanese_documents_do_not_romanize_plain_latin_lines() {
+        assert!(
+            japanese_reading_for_language_options(
+                "Already written in Latin",
+                Some("ja"),
+                false,
+                true,
+            )
+            .is_none()
+        );
     }
 
     #[test]
