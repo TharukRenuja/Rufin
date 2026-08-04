@@ -11,7 +11,7 @@ pub const MAX_AUTO_DJ_REFILL_THRESHOLD: u8 = 10;
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 pub enum PlaybackTransitionMode {
     #[default]
-    Default,
+    #[serde(alias = "Default")]
     Gapless,
     Crossfade,
 }
@@ -80,7 +80,7 @@ pub struct PlaybackSettings {
 impl Default for PlaybackSettings {
     fn default() -> Self {
         Self {
-            transition_mode: PlaybackTransitionMode::Default,
+            transition_mode: PlaybackTransitionMode::Gapless,
             crossfade_seconds: default_crossfade_seconds(),
             skip_same_album_crossfade: false,
             audio_fade_on_status_change: true,
@@ -149,6 +149,22 @@ fn sanitize_equalizer_bands(bands: &mut Vec<f64>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn legacy_default_transition_migrates_to_gapless() {
+        let mode = serde_json::from_str::<PlaybackTransitionMode>(r#""Default""#)
+            .expect("deserialize the legacy transition mode");
+
+        assert_eq!(mode, PlaybackTransitionMode::Gapless);
+        assert_eq!(
+            serde_json::to_string(&mode).expect("serialize the migrated transition mode"),
+            r#""Gapless""#
+        );
+        assert_eq!(
+            PlaybackSettings::default().transition_mode,
+            PlaybackTransitionMode::Gapless
+        );
+    }
 
     #[test]
     fn playback_settings_clamp_crossfade_range() {

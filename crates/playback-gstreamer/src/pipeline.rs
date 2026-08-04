@@ -132,7 +132,7 @@ impl PlayerPipeline {
         }
     }
 
-    pub(super) fn set_state(&self, state: gst::State) -> Result<(), String> {
+    pub(super) fn set_state(&self, state: gst::State) -> Result<gst::StateChangeSuccess, String> {
         let Some(session) = self.session.as_ref() else {
             return Err(format!("GStreamer session {} is not active", self.name));
         };
@@ -200,7 +200,10 @@ impl PlayerPipeline {
         }
     }
 
-    pub(super) fn rearm_stream_window(&mut self, stream: &ResolvedStream) -> Result<(), String> {
+    pub(super) fn rearm_stream_window(
+        &mut self,
+        stream: &ResolvedStream,
+    ) -> Result<gst::Seqnum, String> {
         let Some(session) = self.session.as_mut() else {
             return Err(format!("GStreamer session {} is not active", self.name));
         };
@@ -350,10 +353,9 @@ impl PipelineSession {
         self.pipeline.set_property("mute", muted);
     }
 
-    pub(super) fn set_state(&self, state: gst::State) -> Result<(), String> {
+    pub(super) fn set_state(&self, state: gst::State) -> Result<gst::StateChangeSuccess, String> {
         self.pipeline
             .set_state(state)
-            .map(|_| ())
             .map_err(|error| error.to_string())
     }
 
@@ -387,16 +389,26 @@ impl PipelineSession {
         result.map_err(|error| error.to_string())
     }
 
-    fn rearm_stream_window(&mut self, stream: &ResolvedStream) -> Result<(), String> {
+    fn rearm_stream_window(&mut self, stream: &ResolvedStream) -> Result<gst::Seqnum, String> {
         let clock = SourceClock::from_stream(stream);
         let start_millis = clock.physical_seek(0);
-        let previous = self.clock;
-        self.clock = clock;
-        if let Err(error) = self.seek_physical_millis(start_millis) {
-            self.clock = previous;
-            return Err(error);
-        }
-        Ok(())
+        let end_millis = clock
+            .end_millis()
+            .ok_or_else(|| "Adjacent stream window has no end boundary".to_string())?;
+        // GstBin gives the top-level AsyncDone its own sequence number, so retain the
+        // last number allocated before this seek instead of expecting exact equality.
+        let confirmation_after = gst::Seqnum::next();
+        self.pipeline
+            .seek(
+                1.0,
+                gst::SeekFlags::FLUSH | gst::SeekFlags::ACCURATE | gst::SeekFlags::SEGMENT,
+                gst::SeekType::Set,
+                gst::ClockTime::from_mseconds(start_millis.min(end_millis)),
+                gst::SeekType::Set,
+                gst::ClockTime::from_mseconds(end_millis),
+            )
+            .map(|_| confirmation_after)
+            .map_err(|error| error.to_string())
     }
 
     pub(super) fn position(&self) -> Option<gst::ClockTime> {
