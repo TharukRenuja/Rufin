@@ -34,8 +34,9 @@
 - Rich keyboard shortcut catalog, with navigation covered as well
 - Rich customization while preserving GTK menus
 - Smart playlists that support nested rules
+- Light/Dark theme with accent customization
 - System tray integration
-- Secure storage for all server credentials and API secrets
+- Secure storage by default for all server credentials and API secrets
 - Simple private mode for pausing external activity
 - Path matching with your music server and local folders, you can play from your local files while keeping server reporting
 - Automatic updates for Windows and MacOS builds
@@ -229,23 +230,31 @@ the next launch. Logs have secrets and absolute folder paths redacted, but you m
 
 Or you can just run Rufin from the terminal:
 
-For flatpak:
-
 ```bash
-flatpak run --env=RUST_LOG=debug io.github.screwys.Rufin 2>&1
+flatpak run --env=RUST_LOG=debug io.github.screwys.Rufin 2>&1 # for flatpak
 ```
 
-For native packages:
-
 ```bash
-RUST_LOG=debug rufin
+RUST_LOG=debug rufin # for native packages
 ```
 
-For development build:
+```bash
+just debug  # for local build
+```
+
+To test if Rufin can play a specific media (reading metadata and actual GStreamer audio decoding):
 
 ```bash
-just debug
+flatpak run --filesystem=host:ro io.github.screwys.Rufin --verify-media (realpath "media_path.format")
+  ```
+```bash
+rufin --verify-media media_path.format
+  ```"
+
+```bash
+cargo run -p rufin -- --verify-media "media_path.format"
 ```
+If should exit silently if the media can be played.
 
 ## Uninstallation
 
@@ -275,7 +284,7 @@ Built with [GTK 4](https://www.gtk.org/), [libadwaita](https://gitlab.gnome.org/
 
 Rufin is greatly influenced by [Feishin](https://github.com/jeffvli/feishin), and a lot of design decisions are directly borrowed; as much we can achieve natively.
 
-Player backend design and Smart Playlists are inspired from [Strawberry](https://github.com/strawberrymusicplayer/strawberry).
+Player backend design and Smart Playlists are inspired from [Strawberry](https://github.com/strawberrymusicplayer/strawberry) (therefore [Clementine](https://github.com/clementine-player/Clementine) as well).
 
 ## Translation credits
 
