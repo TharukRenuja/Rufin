@@ -248,8 +248,8 @@ To test if Rufin can play a specific media (reading metadata and actual GStreame
 flatpak run --filesystem=host:ro io.github.screwys.Rufin --verify-media (realpath "media_path.format")
   ```
 ```bash
-rufin --verify-media media_path.format
-  ```"
+rufin --verify-media "media_path.format"
+  ```
 
 ```bash
 cargo run -p rufin -- --verify-media "media_path.format"
@@ -284,7 +284,7 @@ Built with [GTK 4](https://www.gtk.org/), [libadwaita](https://gitlab.gnome.org/
 
 Rufin is greatly influenced by [Feishin](https://github.com/jeffvli/feishin), and a lot of design decisions are directly borrowed; as much we can achieve natively.
 
-Player backend design and Smart Playlists are inspired from [Strawberry](https://github.com/strawberrymusicplayer/strawberry) (therefore [Clementine](https://github.com/clementine-player/Clementine) as well).
+Player backend design and Smart Playlists are inspired from [Strawberry](https://github.com/strawberrymusicplayer/strawberry) (fork of [Clementine](https://github.com/clementine-player/Clementine)).
 
 ## Translation credits
 
