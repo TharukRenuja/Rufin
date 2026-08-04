@@ -112,6 +112,21 @@ fn prepare_replacement(
             &destination,
             &mut report,
             SimpleFamily {
+                name: "Pending favorites",
+                select: "SELECT source_id, item_kind, item_id, favorite,
+                                previous_favorite, attempts, next_attempt_at
+                         FROM pending_favorites",
+                insert: "INSERT INTO pending_favorites(
+                             source_id, item_kind, item_id, favorite,
+                             previous_favorite, attempts, next_attempt_at
+                         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            },
+        )?;
+        salvage_simple_family(
+            source,
+            &destination,
+            &mut report,
+            SimpleFamily {
                 name: "Local playlists",
                 select: "SELECT source_id, playlist_id, name
                      FROM local_playlists

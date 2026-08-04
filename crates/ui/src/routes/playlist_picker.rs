@@ -180,7 +180,7 @@ fn context_playlist_picker(
     let footer = gtk::Box::new(gtk::Orientation::Horizontal, 8);
     let skip = gtk::CheckButton::with_label(&tr("Don't duplicate"));
     skip.set_active(true);
-    skip.set_sensitive(
+    skip.set_visible(
         shell
             .library
             .selected

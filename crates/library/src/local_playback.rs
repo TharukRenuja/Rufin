@@ -496,7 +496,7 @@ pub(crate) fn index_local_access(
     (paths, index)
 }
 
-fn playable_file_for(
+pub(crate) fn playable_file_for(
     track: &Track,
     local_files: &HashMap<String, LocalFile>,
     mapping: Option<&LocalAccessMapping>,

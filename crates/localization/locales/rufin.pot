@@ -386,6 +386,9 @@ msgstr ""
 msgid "Could not save diagnostic log"
 msgstr ""
 
+msgid "Could not update favorites"
+msgstr ""
+
 #, rust-format
 msgid "Couldn't connect to {service}"
 msgstr ""
@@ -1550,6 +1553,9 @@ msgstr ""
 
 #, rust-format
 msgid "Server discovery failed: {error}"
+msgstr ""
+
+msgid "Server is unreachable"
 msgstr ""
 
 msgid "Server lyrics are off in private mode"

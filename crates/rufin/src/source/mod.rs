@@ -7,16 +7,16 @@ use std::future::Future;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, Weak};
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use artwork::{Artwork, SourceImages};
 use async_channel::{Receiver, Sender};
 use library::{
-    AcceptedHomeChange, AcceptedLibraryChange, CandidateChange, FavoriteItemId, FolderContents,
-    HomeSectionKind, HomeSnapshot, Libraries, Library, LocalAccessTarget, MetadataDraft,
-    MetadataEdit, MetadataEditing, MetadataError, MetadataItemId, MusicFolderId, PlaylistEdit,
-    PlaylistTrackAdd, PreparedSourceCandidate, RecordedActivity, SmartPlaylistBuiltin,
-    SmartPlaylistDefinition, SmartPlaylistId, SourceId, Track, TrackSort,
+    AcceptedHomeChange, AcceptedLibraryChange, CandidateChange, FavoriteAcceptance, FavoriteItemId,
+    FolderContents, HomeSectionKind, HomeSnapshot, Libraries, Library, LocalAccessTarget,
+    MetadataDraft, MetadataEdit, MetadataEditing, MetadataError, MetadataItemId, MusicFolderId,
+    PlaylistEdit, PlaylistTrackAdd, PreparedSourceCandidate, RecordedActivity,
+    SmartPlaylistBuiltin, SmartPlaylistDefinition, SmartPlaylistId, SourceId, Track, TrackSort,
 };
 use playback::{PlaybackProjection, SourceSessionEpoch};
 use scrobbling::Scrobbler;
@@ -35,7 +35,8 @@ use ui::runtime::source::{
     SourceProgressStage, SourceSettingsChange, SourceSetup, SourceSummary,
 };
 use ui::runtime::{
-    FavoriteFailure, HomePublication, SelectedLibrary, SelectedLibraryUpdate, SourceEvent,
+    HomePublication, SelectedLibrary, SelectedLibraryUpdate, SourceEvent, SourceNotice,
+    SourceNoticeKind,
 };
 
 use crate::album_release::run_selected_album_release_lookup;
@@ -48,6 +49,9 @@ use crate::settings::{
 use downloads::Downloads;
 
 const SOURCE_CHECK_INTERVAL: Duration = Duration::from_secs(5 * 60);
+const FAVORITE_RETRY_BASE: u64 = 30;
+const FAVORITE_RETRY_MAX: u64 = 5 * 60;
+const FAVORITE_RETRY_BATCH: usize = 100;
 
 mod connection;
 mod local_access;
@@ -460,6 +464,7 @@ impl SourceOwner {
             interval.tick().await;
             loop {
                 interval.tick().await;
+                periodic.request_favorite_retry();
                 periodic.request_freshness_check(false);
             }
         });
@@ -476,6 +481,19 @@ impl SourceOwner {
             } else {
                 operations.cancel_album_release_lookup(false);
             }
+        });
+    }
+
+    fn request_favorite_retry(&self) {
+        self.spawn_serialized(false, |mut operations, _| async move {
+            let Some(selected) = operations
+                .shared
+                .selected()
+                .filter(|selected| selected.source.is_some())
+            else {
+                return;
+            };
+            operations.retry_remote_favorites(selected).await;
         });
     }
 
@@ -924,50 +942,172 @@ impl SourceOwner {
         selected: Arc<SelectedSourceState>,
         item: FavoriteItemId,
         favorite: bool,
-        previous: bool,
     ) {
-        let result = match selected.source.as_ref() {
-            Some(source) => source
-                .set_favorite(item.clone(), favorite)
-                .await
-                .map_err(string_error),
-            None => Err(source_access_unavailable()),
-        };
-        let acceptance = match result {
-            Ok(acceptance) => acceptance,
-            Err(message) => {
-                self.shared
-                    .send_event(SourceEvent::FavoriteFailure(FavoriteFailure {
-                        source_id: selected.source_id().clone(),
-                        source_session_epoch: selected.source_session_epoch,
-                        item_id: item,
-                        authoritative_favorite: previous,
-                        message,
-                    }))
-                    .await;
+        if selected.configuration.is_local() {
+            let library = Arc::clone(&selected.library);
+            let acceptance = FavoriteAcceptance::RufinOwned { item, favorite };
+            match blocking(move || library.accept_favorite(acceptance).map_err(string_error)).await
+            {
+                Ok(change) => self.publish_accepted_change(&selected, change).await,
+                Err(error) => self.shared.warn_nonfatal(&error),
+            }
+            return;
+        }
+
+        let library = Arc::clone(&selected.library);
+        let queued_item = item.clone();
+        let queued = blocking(move || {
+            library
+                .queue_remote_favorite(queued_item, favorite, unix_seconds())
+                .map_err(string_error)
+        })
+        .await;
+        let change = match queued {
+            Ok(change) => change,
+            Err(error) => {
+                self.shared.warn_nonfatal(&error);
                 return;
             }
         };
-        if !self.shared.matches_selected(&selected.qualifier()) {
-            return;
-        }
-        let library = Arc::clone(&selected.library);
-        match blocking(move || library.accept_favorite(acceptance).map_err(string_error)).await {
-            Ok(change) => {
-                self.publish_accepted_change(&selected, change).await;
+        self.publish_accepted_change(&selected, change).await;
+        let pending = library::PendingFavorite {
+            item,
+            favorite,
+            attempts: 0,
+        };
+        match selected.source.clone() {
+            Some(source) => {
+                self.deliver_remote_favorite(&selected, source, pending, true)
+                    .await;
             }
-            Err(message) => {
-                self.shared
-                    .send_event(SourceEvent::FavoriteFailure(FavoriteFailure {
-                        source_id: selected.source_id().clone(),
-                        source_session_epoch: selected.source_session_epoch,
-                        item_id: item,
-                        authoritative_favorite: previous,
-                        message,
-                    }))
+            None => {
+                self.defer_remote_favorite(&selected, &pending).await;
+                self.send_source_notice(&selected, SourceNoticeKind::ServerUnreachable)
                     .await;
             }
         }
+    }
+
+    async fn retry_remote_favorites(&mut self, selected: Arc<SelectedSourceState>) {
+        let Some(source) = selected.source.clone() else {
+            return;
+        };
+        if selected.configuration.is_local() {
+            return;
+        }
+        let library = Arc::clone(&selected.library);
+        let due = blocking(move || {
+            library
+                .due_remote_favorites(unix_seconds(), FAVORITE_RETRY_BATCH)
+                .map_err(string_error)
+        })
+        .await;
+        let due = match due {
+            Ok(due) => due,
+            Err(error) => {
+                self.shared.warn_nonfatal(&error);
+                return;
+            }
+        };
+        for pending in due {
+            if !self
+                .deliver_remote_favorite(&selected, Arc::clone(&source), pending, false)
+                .await
+            {
+                break;
+            }
+        }
+    }
+
+    async fn deliver_remote_favorite(
+        &mut self,
+        selected: &SelectedSourceState,
+        source: Arc<Source>,
+        pending: library::PendingFavorite,
+        notify: bool,
+    ) -> bool {
+        match source
+            .set_favorite(pending.item.clone(), pending.favorite)
+            .await
+        {
+            Ok(_) => {
+                let library = Arc::clone(&selected.library);
+                let item = pending.item;
+                if let Err(error) = blocking(move || {
+                    library
+                        .complete_remote_favorite(item, pending.favorite)
+                        .map_err(string_error)
+                })
+                .await
+                {
+                    self.shared.warn_nonfatal(&error);
+                }
+                true
+            }
+            Err(error) if source_error_is_temporary(&error) => {
+                warn!(%error, "favorite delivery will be retried");
+                self.defer_remote_favorite(selected, &pending).await;
+                if notify {
+                    self.send_source_notice(selected, SourceNoticeKind::ServerUnreachable)
+                        .await;
+                }
+                false
+            }
+            Err(error) => {
+                warn!(%error, "favorite delivery was rejected");
+                let library = Arc::clone(&selected.library);
+                let item = pending.item;
+                let rejected = blocking(move || {
+                    library
+                        .reject_remote_favorite(item, pending.favorite)
+                        .map_err(string_error)
+                })
+                .await;
+                match rejected {
+                    Ok(Some(change)) => self.publish_accepted_change(selected, change).await,
+                    Ok(None) => {}
+                    Err(error) => self.shared.warn_nonfatal(&error),
+                }
+                if notify {
+                    self.send_source_notice(selected, SourceNoticeKind::FavoriteRejected)
+                        .await;
+                }
+                true
+            }
+        }
+    }
+
+    async fn defer_remote_favorite(
+        &self,
+        selected: &SelectedSourceState,
+        pending: &library::PendingFavorite,
+    ) {
+        let delay = FAVORITE_RETRY_BASE
+            .saturating_mul(1_u64 << pending.attempts.min(3))
+            .min(FAVORITE_RETRY_MAX);
+        let next_attempt_at = unix_seconds().saturating_add(delay as i64);
+        let library = Arc::clone(&selected.library);
+        let item = pending.item.clone();
+        let favorite = pending.favorite;
+        if let Err(error) = blocking(move || {
+            library
+                .defer_remote_favorite(item, favorite, next_attempt_at)
+                .map_err(string_error)
+        })
+        .await
+        {
+            self.shared.warn_nonfatal(&error);
+        }
+    }
+
+    async fn send_source_notice(&self, selected: &SelectedSourceState, kind: SourceNoticeKind) {
+        self.shared
+            .send_event(SourceEvent::Notice(SourceNotice {
+                source_id: selected.source_id().clone(),
+                source_session_epoch: selected.source_session_epoch,
+                kind,
+            }))
+            .await;
     }
 
     async fn edit_playlist(&mut self, selected: Arc<SelectedSourceState>, edit: PlaylistEdit) {
@@ -1870,10 +2010,7 @@ impl SelectedSourcePort for ActiveSource {
 
     fn set_favorite(&self, item: FavoriteItemId, favorite: bool) {
         self.spawn_selected(false, move |mut operations, selected, _| async move {
-            let previous = favorite_value(&selected.library, &item).unwrap_or(!favorite);
-            operations
-                .set_favorite(selected, item, favorite, previous)
-                .await;
+            operations.set_favorite(selected, item, favorite).await;
         });
     }
 
@@ -2260,7 +2397,7 @@ fn cached_folder_contents(
     })
 }
 
-fn source_error_allows_cache(error: &sources::SourceError) -> bool {
+pub(crate) fn source_error_allows_cache(error: &sources::SourceError) -> bool {
     matches!(
         error,
         sources::SourceError::Network(_)
@@ -2269,6 +2406,17 @@ fn source_error_allows_cache(error: &sources::SourceError) -> bool {
                 ..
             }
     )
+}
+
+fn source_error_is_temporary(error: &sources::SourceError) -> bool {
+    source_error_allows_cache(error)
+        || matches!(
+            error,
+            sources::SourceError::Server {
+                status: 408 | 425 | 429,
+                ..
+            }
+        )
 }
 
 fn reconcile_folder_contents(
@@ -2563,22 +2711,17 @@ fn initial_progress() -> SourceProgress {
     }
 }
 
-fn favorite_value(loaded: &Library, item: &FavoriteItemId) -> Option<bool> {
-    match item {
-        FavoriteItemId::Track(id) => loaded.track(id).ok().flatten().map(|track| track.favorite),
-        FavoriteItemId::Album(id) => loaded.album(id).ok().flatten().map(|album| album.favorite),
-        FavoriteItemId::Artist(id) => loaded
-            .artist(id)
-            .ok()
-            .flatten()
-            .map(|artist| artist.favorite),
-    }
-}
-
 pub(crate) fn source_access_unavailable() -> String {
     "Live source access is unavailable. Check the saved credentials and refresh.".to_string()
 }
 
 fn string_error(error: impl std::fmt::Display) -> String {
     error.to_string()
+}
+
+fn unix_seconds() -> i64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_secs().min(i64::MAX as u64) as i64)
+        .unwrap_or_default()
 }

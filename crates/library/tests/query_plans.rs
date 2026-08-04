@@ -55,6 +55,16 @@ fn final_store_common_queries_keep_their_index_bounds() {
     );
     assert_indexed(
         &connection,
+        "SELECT item_kind, item_id, favorite, attempts
+         FROM pending_favorites
+         WHERE source_id = 'source'
+           AND next_attempt_at <= 1
+         ORDER BY next_attempt_at, item_kind, item_id
+         LIMIT 100",
+        "pending_favorites",
+    );
+    assert_indexed(
+        &connection,
         "SELECT rowid, length(CAST(payload AS BLOB))
          FROM lyrics_cache
          ORDER BY cached_at, rowid

@@ -113,6 +113,7 @@ impl Shell {
     }
 
     pub(crate) fn show_operation_feedback(self: &Rc<Self>, feedback: &OperationFeedback) {
+        crate::preferences::dialogs::release_notes::dismiss_release_notification(self);
         let title = self.download_subject_title(&feedback.subject);
         let count = track_count_text(feedback.item_count as u64);
         let subtitle = operation_feedback_subtitle(&feedback.kind, &count);

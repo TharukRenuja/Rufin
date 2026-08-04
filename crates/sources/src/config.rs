@@ -103,6 +103,10 @@ pub enum SourceCacheMatch {
 }
 
 impl SourceConfiguration {
+    pub fn is_local(&self) -> bool {
+        self.kind == crate::local::LOCAL_SOURCE_ID
+    }
+
     pub fn playlist_tracks_can_repeat(&self) -> bool {
         self.kind != crate::jellyfin::JELLYFIN_SOURCE_ID
     }

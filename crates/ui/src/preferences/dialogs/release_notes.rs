@@ -384,7 +384,7 @@ pub(crate) fn apply_release_update(shell: &Rc<Shell>, update: ReleaseUpdate) {
     }
 }
 
-fn dismiss_release_notification(shell: &Shell) {
+pub(crate) fn dismiss_release_notification(shell: &Shell) {
     if let Some(toast) = shell
         .preferences
         .release_notification_toast

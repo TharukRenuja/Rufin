@@ -1,7 +1,7 @@
 use crate::SettingsHandle;
 use library::{
-    AcceptedLibraryChange, FavoriteItemId, HomeSectionKind, HomeSnapshot, Library, MusicFolderId,
-    SourceId, Track, TrackSelection,
+    AcceptedLibraryChange, HomeSectionKind, HomeSnapshot, Library, MusicFolderId, SourceId, Track,
+    TrackSelection,
 };
 use playback::{LoadedPlayRequest, PlaybackProjection, QueuePlacement, SourceSessionEpoch};
 use std::sync::Arc;
@@ -76,7 +76,7 @@ pub enum SourceEvent {
         home: Arc<HomeSnapshot>,
     },
     LibraryUpdate(SelectedLibraryUpdate),
-    FavoriteFailure(FavoriteFailure),
+    Notice(SourceNotice),
     ReleaseSelected {
         acknowledged: async_channel::Sender<()>,
     },
@@ -105,12 +105,16 @@ pub struct SelectedLibraryUpdate {
 }
 
 #[derive(Clone, Debug)]
-pub struct FavoriteFailure {
+pub struct SourceNotice {
     pub source_id: SourceId,
     pub source_session_epoch: SourceSessionEpoch,
-    pub item_id: FavoriteItemId,
-    pub authoritative_favorite: bool,
-    pub message: String,
+    pub kind: SourceNoticeKind,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum SourceNoticeKind {
+    ServerUnreachable,
+    FavoriteRejected,
 }
 
 pub struct RuntimeInputs {

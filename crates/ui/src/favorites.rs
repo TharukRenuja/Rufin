@@ -242,20 +242,6 @@ impl Shell {
         update_favorite_controls(&self.favorites.controls, &key, favorite);
     }
 
-    pub(crate) fn restore_failed_favorite_change(
-        self: &Rc<Self>,
-        item_id: &FavoriteItemId,
-        favorite: bool,
-    ) {
-        if !self.favorite_response_matches_pending(item_id, !favorite) {
-            return;
-        }
-        self.update_visible_favorite_buttons(item_id, favorite);
-        if matches!(item_id, FavoriteItemId::Track(_)) {
-            self.sync_bottom_player_favorite();
-        }
-    }
-
     pub(crate) fn set_favorite_with_feedback(
         self: &Rc<Self>,
         item_id: FavoriteItemId,
