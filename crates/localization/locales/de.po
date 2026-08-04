@@ -461,6 +461,9 @@ msgstr "Benachrichtigungen verwalten"
 msgid "Could not save diagnostic log"
 msgstr ""
 
+msgid "Could not update favorites"
+msgstr ""
+
 msgid "Couldn't connect to {service}"
 msgstr ""
 
@@ -1730,6 +1733,11 @@ msgid "Seek playback"
 msgstr "Spulen"
 
 #, fuzzy
+#| msgid "Seek Forward"
+msgid "Seekbar"
+msgstr "Vorspulen"
+
+#, fuzzy
 #| msgid "Select Music Folder"
 msgid "Select Download Folder"
 msgstr "Musikordner auswählen"
@@ -1770,6 +1778,9 @@ msgstr "Servereinstellungen"
 
 msgid "Server discovery failed: {error}"
 msgstr "Server-Erkennung fehlgeschlagen: {error}"
+
+msgid "Server is unreachable"
+msgstr ""
 
 #, fuzzy
 #| msgid "Turn off private mode"
