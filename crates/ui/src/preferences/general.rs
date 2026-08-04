@@ -547,17 +547,6 @@ pub(crate) fn playback_page(shell: &Rc<Shell>) -> adw::PreferencesPage {
     );
     audio_group.add(&quality_row);
 
-    let waveform_row = adw::SwitchRow::builder()
-        .title(tr("Waveform seekbar"))
-        .subtitle(tr("Generate and cache waveforms for the current track"))
-        .active(app_settings.seekbar_waveform_enabled)
-        .build();
-    let waveform_shell = Rc::clone(shell);
-    waveform_row.connect_active_notify(move |row| {
-        waveform_shell.set_seekbar_waveform_enabled(row.is_active());
-    });
-    audio_group.add(&waveform_row);
-
     let output_row = adw::ActionRow::builder()
         .title(tr("Audio output"))
         .subtitle(selected_audio_output_title(
@@ -739,6 +728,7 @@ pub(crate) fn appearance_page(shell: &Rc<Shell>) -> adw::PreferencesPage {
         .build();
 
     page.add(&theme_group(shell));
+    page.add(&seekbar_group(shell));
     page.add(&layout_group(shell));
 
     let sidebar_items_group = adw::PreferencesGroup::new();
@@ -760,6 +750,23 @@ pub(crate) fn appearance_page(shell: &Rc<Shell>) -> adw::PreferencesPage {
     page.add(&context_menus_group);
 
     page
+}
+
+fn seekbar_group(shell: &Rc<Shell>) -> adw::PreferencesGroup {
+    let group = adw::PreferencesGroup::builder()
+        .title(tr("Seekbar"))
+        .build();
+    let waveform_row = adw::SwitchRow::builder()
+        .title(tr("Waveform seekbar"))
+        .subtitle(tr("Generate and cache waveforms for the current track"))
+        .active(shell.settings.current.borrow().seekbar_waveform_enabled)
+        .build();
+    let waveform_shell = Rc::clone(shell);
+    waveform_row.connect_active_notify(move |row| {
+        waveform_shell.set_seekbar_waveform_enabled(row.is_active());
+    });
+    group.add(&waveform_row);
+    group
 }
 
 fn theme_group(shell: &Rc<Shell>) -> adw::PreferencesGroup {

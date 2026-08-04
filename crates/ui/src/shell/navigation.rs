@@ -2,8 +2,9 @@ use std::{cell::RefCell, rc::Rc};
 
 use crate::interactions::{
     install_context_menu_openers, keep_parent_grab_for_nested_native_menus, popdown_native_menu,
-    popdown_on_anchor_unmap, replace_native_menu_checkmarks, show_native_menu_icons,
+    replace_native_menu_checkmarks, show_native_menu_icons,
 };
+use crate::localization::bind_widget_tooltip;
 use crate::preferences::source::selector::source_submenu;
 use crate::routes::collection_context::{
     present_album_context_menu, present_artist_context_menu, present_genre_context_menu,
@@ -137,6 +138,11 @@ pub(super) struct PrimaryMenuWidgets {
     pub(super) unmap_handler: RefCell<Option<glib::SignalHandlerId>>,
 }
 
+pub(super) struct NormalPrimaryMenuWidgets {
+    pub(super) button: gtk::MenuButton,
+    pub(super) popover: RefCell<Option<gtk::PopoverMenu>>,
+}
+
 pub(crate) struct NavigationWidgets {
     pub(super) split_view: adw::OverlaySplitView,
     pub(super) left_resize_handle: gtk::Box,
@@ -145,7 +151,7 @@ pub(crate) struct NavigationWidgets {
     pub(super) tiny_nav_button: gtk::Button,
     pub(super) normal_nav: gtk::Box,
     pub(super) compact_nav: gtk::Box,
-    pub(super) normal_main_menu: PrimaryMenuWidgets,
+    pub(super) normal_main_menu: NormalPrimaryMenuWidgets,
     pub(super) compact_main_menu: PrimaryMenuWidgets,
 }
 
@@ -153,14 +159,7 @@ pub(super) fn build_normal_navigation(shell: &Rc<Shell>) {
     shell
         .navigation_view
         .normal_nav
-        .append(&primary_menu_button(
-            &shell.navigation_view.normal_main_menu.button,
-            &shell.navigation_view.normal_main_menu.popover,
-            &shell.navigation_view.normal_main_menu.click_handler,
-            &shell.navigation_view.normal_main_menu.unmap_handler,
-            shell,
-            false,
-        ));
+        .append(&normal_sidebar_header(shell));
     for item in nav_items(shell) {
         shell.navigation_view.normal_nav.append(&nav_button(
             shell,
@@ -363,6 +362,31 @@ fn sidebar_spacer() -> gtk::Box {
     spacer
 }
 
+fn normal_sidebar_header(shell: &Rc<Shell>) -> adw::HeaderBar {
+    let search = gtk::Button::from_icon_name("system-search-symbolic");
+    bind_widget_tooltip(&search, msgid("Search"));
+    let search_shell = Rc::clone(shell);
+    search.connect_clicked(move |_| search_shell.navigate(Route::Search));
+
+    let title = gtk::Label::new(Some("Rufin"));
+    title.add_css_class("heading");
+
+    let menu = normal_primary_menu_button(
+        &shell.navigation_view.normal_main_menu.button,
+        &shell.navigation_view.normal_main_menu.popover,
+        shell,
+    );
+
+    let header = adw::HeaderBar::new();
+    header.add_css_class("flat");
+    header.set_show_start_title_buttons(false);
+    header.set_show_end_title_buttons(false);
+    header.pack_start(&search);
+    header.set_title_widget(Some(&title));
+    header.pack_end(&menu);
+    header
+}
+
 fn update_navigation_selection_in(container: &gtk::Box, active_route: &Route) {
     let active_route_class = nav_route_class(active_route);
     let active_pin_key = sidebar_pin_route_key(active_route);
@@ -439,10 +463,10 @@ fn primary_menu_button(
     shell: &Rc<Shell>,
     compact: bool,
 ) -> gtk::Button {
-    button.add_css_class("nav-button");
     button.add_css_class("primary-menu-button");
     button.add_css_class("flat");
     if compact {
+        button.add_css_class("nav-button");
         button.add_css_class("rail-button");
     }
     relocalize_primary_menu_button(
@@ -485,31 +509,77 @@ fn update_primary_menu_popover(
             row_popover.popup();
         }
     });
-    let unmap_handler = popdown_on_anchor_unmap(button, &popover);
+    let unmap_handler = crate::interactions::popdown_on_anchor_unmap(button, &popover);
     *handler_slot.borrow_mut() = Some(handler);
     *unmap_handler_slot.borrow_mut() = Some(unmap_handler);
 }
 
-pub(super) fn popup_primary_menu(
-    shell: &Rc<Shell>,
+fn normal_primary_menu_button(
+    button: &gtk::MenuButton,
     popover_slot: &RefCell<Option<gtk::PopoverMenu>>,
-) {
-    if let Some(popover) = popover_slot.borrow().as_ref() {
+    shell: &Rc<Shell>,
+) -> gtk::MenuButton {
+    button.set_icon_name("open-menu-symbolic");
+    chrome::configure_normal_primary_menu_button(button);
+    let popover = primary_menu_popover(shell);
+    let mapped_popover = popover.clone();
+    let row_shell = Rc::downgrade(shell);
+    popover.connect_map(move |_| {
+        if let Some(shell) = row_shell.upgrade() {
+            refresh_primary_menu(&mapped_popover, &shell);
+        }
+    });
+    button.set_popover(Some(&popover));
+    popover_slot.replace(Some(popover));
+    button.clone()
+}
+
+pub(super) fn popup_compact_primary_menu(shell: &Rc<Shell>) {
+    if let Some(popover) = shell
+        .navigation_view
+        .compact_main_menu
+        .popover
+        .borrow()
+        .as_ref()
+    {
         refresh_primary_menu(popover, shell);
         popover.popup();
     }
 }
 
+pub(super) fn popup_normal_primary_menu(shell: &Rc<Shell>) {
+    if let Some(popover) = shell
+        .navigation_view
+        .normal_main_menu
+        .popover
+        .borrow()
+        .as_ref()
+    {
+        refresh_primary_menu(popover, shell);
+        shell.navigation_view.normal_main_menu.button.popup();
+    }
+}
+
 pub(crate) fn popdown_primary_menu(shell: &Shell) {
-    for slot in [
-        &shell.navigation_view.normal_main_menu.popover,
-        &shell.navigation_view.compact_main_menu.popover,
-    ] {
-        if let Some(popover) = slot.borrow().as_ref()
-            && popover.is_visible()
-        {
-            popdown_native_menu(popover);
-        }
+    if shell
+        .navigation_view
+        .normal_main_menu
+        .popover
+        .borrow()
+        .as_ref()
+        .is_some_and(gtk::prelude::WidgetExt::is_visible)
+    {
+        shell.navigation_view.normal_main_menu.button.popdown();
+    }
+    if let Some(popover) = shell
+        .navigation_view
+        .compact_main_menu
+        .popover
+        .borrow()
+        .as_ref()
+        && popover.is_visible()
+    {
+        popdown_native_menu(popover);
     }
 }
 
@@ -667,10 +737,6 @@ fn sidebar_menu_content(compact: bool) -> gtk::Box {
     if compact {
         let text = gtk::Label::new(Some(&compact_sidebar_label_text("Menu")));
         configure_rail_label(&text);
-        content.append(&text);
-    } else {
-        let text = gtk::Label::new(Some(&tr("Menu")));
-        configure_sidebar_entry_label(&text);
         content.append(&text);
     }
 

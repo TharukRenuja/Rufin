@@ -42,6 +42,24 @@ fn automatic_updates_are_opt_in_and_persisted() {
 }
 
 #[test]
+fn waveform_seekbar_is_opt_in_and_persists() {
+    assert!(!Settings::default().seekbar_waveform_enabled);
+
+    let mut missing = serde_json::to_value(Settings::default()).expect("serialize settings");
+    missing
+        .as_object_mut()
+        .expect("settings object")
+        .remove("seekbar_waveform_enabled");
+    let restored = serde_json::from_value::<Settings>(missing).expect("restore older settings");
+    assert!(!restored.seekbar_waveform_enabled);
+
+    let mut enabled = serde_json::to_value(Settings::default()).expect("serialize settings");
+    enabled["seekbar_waveform_enabled"] = true.into();
+    let restored = serde_json::from_value::<Settings>(enabled).expect("restore waveform setting");
+    assert!(restored.seekbar_waveform_enabled);
+}
+
+#[test]
 fn accent_preference_defaults_for_older_settings_and_persists() {
     let mut legacy = serde_json::to_value(Settings::default()).expect("serialize settings");
     legacy
