@@ -33,43 +33,43 @@
   <screenshots>
     <screenshot type="default">
       <caption>Browse your music library</caption>
-      <image type="source" width="1000" height="700">https://raw.githubusercontent.com/screwys/Rufin/v0.12.0/data/screenshots/Rufin.png</image>
+      <image type="source" width="1000" height="700">https://raw.githubusercontent.com/screwys/Rufin/v0.12.5/data/screenshots/Rufin.png</image>
     </screenshot>
     <screenshot>
       <caption>Browse all tracks</caption>
-      <image type="source" width="1000" height="700">https://raw.githubusercontent.com/screwys/Rufin/v0.12.0/data/screenshots/tracks_page.png</image>
+      <image type="source" width="1000" height="700">https://raw.githubusercontent.com/screwys/Rufin/v0.12.5/data/screenshots/tracks_page.png</image>
     </screenshot>
     <screenshot>
       <caption>Browse all albums</caption>
-      <image type="source" width="1000" height="700">https://raw.githubusercontent.com/screwys/Rufin/v0.12.0/data/screenshots/albums_page.png</image>
+      <image type="source" width="1000" height="700">https://raw.githubusercontent.com/screwys/Rufin/v0.12.5/data/screenshots/albums_page.png</image>
     </screenshot>
     <screenshot>
       <caption>View artist details</caption>
-      <image type="source" width="1000" height="700">https://raw.githubusercontent.com/screwys/Rufin/v0.12.0/data/screenshots/artist_detail.png</image>
+      <image type="source" width="1000" height="700">https://raw.githubusercontent.com/screwys/Rufin/v0.12.5/data/screenshots/artist_detail.png</image>
     </screenshot>
     <screenshot>
       <caption>View album details</caption>
-      <image type="source" width="1000" height="700">https://raw.githubusercontent.com/screwys/Rufin/v0.12.0/data/screenshots/album_detail.png</image>
+      <image type="source" width="1000" height="700">https://raw.githubusercontent.com/screwys/Rufin/v0.12.5/data/screenshots/album_detail.png</image>
     </screenshot>
     <screenshot>
       <caption>Use the fullscreen player</caption>
-      <image type="source" width="1000" height="700">https://raw.githubusercontent.com/screwys/Rufin/v0.12.0/data/screenshots/visualizer.png</image>
+      <image type="source" width="1000" height="700">https://raw.githubusercontent.com/screwys/Rufin/v0.12.5/data/screenshots/visualizer.png</image>
     </screenshot>
     <screenshot>
       <caption>Customize the display</caption>
-      <image type="source" width="1000" height="700">https://raw.githubusercontent.com/screwys/Rufin/v0.12.0/data/screenshots/customize_display.png</image>
+      <image type="source" width="1000" height="700">https://raw.githubusercontent.com/screwys/Rufin/v0.12.5/data/screenshots/customize_display.png</image>
     </screenshot>
     <screenshot>
       <caption>Manage downloads</caption>
-      <image type="source" width="1000" height="700">https://raw.githubusercontent.com/screwys/Rufin/v0.12.0/data/screenshots/download_settings.png</image>
+      <image type="source" width="1000" height="700">https://raw.githubusercontent.com/screwys/Rufin/v0.12.5/data/screenshots/download_settings.png</image>
     </screenshot>
     <screenshot>
       <caption>Configure playback</caption>
-      <image type="source" width="1000" height="700">https://raw.githubusercontent.com/screwys/Rufin/v0.12.0/data/screenshots/playback_settings.png</image>
+      <image type="source" width="1000" height="700">https://raw.githubusercontent.com/screwys/Rufin/v0.12.5/data/screenshots/playback_settings.png</image>
     </screenshot>
     <screenshot>
       <caption>Customize the layout</caption>
-      <image type="source" width="1000" height="700">https://raw.githubusercontent.com/screwys/Rufin/v0.12.0/data/screenshots/layout_settings.png</image>
+      <image type="source" width="1000" height="700">https://raw.githubusercontent.com/screwys/Rufin/v0.12.5/data/screenshots/layout_settings.png</image>
     </screenshot>
   </screenshots>
   <launchable type="desktop-id">io.github.screwys.Rufin.desktop</launchable>
@@ -80,6 +80,38 @@
     <control>touch</control>
   </supports>
   <releases>
+    <release version="0.12.5" date="2026-08-04">
+      <description>
+        <p>This time it is a quick release! Now that Rufin is cross-platform, we had to add appearance controls. This release is mostly about the appearance and QoL improvements, plus playback hardening. I am also checking AUR status periodically to push the new release while it is down.</p>
+        <ul>
+          <li>Made gapless the default transition mode, improved the slow network/cold start reliability and made playback handle more edge cases.</li>
+        </ul>
+        <ul>
+          <li>You can now set Rufin's theme and accent colors from preferences. Layout tab is renamed to Appearance, waveform setting is moved to there and made opt-in.</li>
+        </ul>
+        <ul>
+          <li>Refined full left sidebar so that search is directly reachable without adding it as a route, also reworked the search route for better visuals.</li>
+        </ul>
+        <ul>
+          <li>Improved the offline browsing remotes, some covers were not shown despite being cached and search route was giving errors; both of these are resolved now.</li>
+        </ul>
+        <ul>
+          <li>Two new keyboard shortcuts for closing the app window and directly quitting the app.</li>
+        </ul>
+        <ul>
+          <li>Instrumental track indicator in lyrics panel instead of just showing no lyrics.</li>
+        </ul>
+        <ul>
+          <li>Metadata editor table now gives a subtle highlight to changed entries after &quot;Identify&quot;.</li>
+        </ul>
+        <ul>
+          <li>Fixed an issue with romaji setting incorrectly being applied to non-Japanese strings.</li>
+        </ul>
+        <ul>
+          <li>Fixed an issue with control buttons overflowing small grids.</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.12.0" date="2026-08-02">
       <description>
         <p>We have two important changes this release: metadata editing is now here, and Rufin is available for Windows &amp; MacOS! With the number of features added recently, I want to polish these in next releases, and then hopefully we will be able to do a v1.0.0 release.</p>
