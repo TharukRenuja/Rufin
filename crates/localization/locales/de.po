@@ -461,6 +461,9 @@ msgstr "Benachrichtigungen verwalten"
 msgid "Could not save diagnostic log"
 msgstr ""
 
+msgid "Could not update favorites"
+msgstr ""
+
 msgid "Couldn't connect to {service}"
 msgstr ""
 
@@ -1775,6 +1778,9 @@ msgstr "Servereinstellungen"
 
 msgid "Server discovery failed: {error}"
 msgstr "Server-Erkennung fehlgeschlagen: {error}"
+
+msgid "Server is unreachable"
+msgstr ""
 
 #, fuzzy
 #| msgid "Turn off private mode"

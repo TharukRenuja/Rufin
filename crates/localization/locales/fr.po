@@ -381,6 +381,9 @@ msgstr ""
 msgid "Could not save diagnostic log"
 msgstr ""
 
+msgid "Could not update favorites"
+msgstr ""
+
 msgid "Couldn't connect to {service}"
 msgstr ""
 
@@ -1543,6 +1546,9 @@ msgid "Server Settings"
 msgstr ""
 
 msgid "Server discovery failed: {error}"
+msgstr ""
+
+msgid "Server is unreachable"
 msgstr ""
 
 msgid "Server lyrics are off in private mode"

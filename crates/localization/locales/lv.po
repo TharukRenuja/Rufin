@@ -469,6 +469,9 @@ msgstr "Pārvaldīt paziņojumus"
 msgid "Could not save diagnostic log"
 msgstr ""
 
+msgid "Could not update favorites"
+msgstr ""
+
 #, fuzzy
 #| msgid "Connect to Music Server"
 msgid "Couldn't connect to {service}"
@@ -1784,6 +1787,11 @@ msgid "Server discovery failed: {error}"
 msgstr "Servera meklēšana neizdevās: {error}"
 
 #, fuzzy
+#| msgid "Server selector"
+msgid "Server is unreachable"
+msgstr "Servera izvēlētājs"
+
+#, fuzzy
 #| msgid "Turn off private mode"
 msgid "Server lyrics are off in private mode"
 msgstr "Izslēgt privāto režīmu"
@@ -2618,9 +2626,6 @@ msgstr[2] "pirms {count} gadiem"
 
 #~ msgid "Search server lyrics before external providers"
 #~ msgstr "Meklēt servera tekstus pirms ārējiem pakalpojuma sniedzējiem"
-
-#~ msgid "Server selector"
-#~ msgstr "Servera izvēlētājs"
 
 #~ msgid "Sort by"
 #~ msgstr "Kārtot pēc"

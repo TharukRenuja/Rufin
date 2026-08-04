@@ -461,6 +461,9 @@ msgstr "Teavituste haldus"
 msgid "Could not save diagnostic log"
 msgstr ""
 
+msgid "Could not update favorites"
+msgstr ""
+
 #, fuzzy
 #| msgid "Connect to Music Server"
 msgid "Couldn't connect to {service}"
@@ -1776,6 +1779,11 @@ msgid "Server discovery failed: {error}"
 msgstr "Serveri leidmine ei õnnestunud: {error}"
 
 #, fuzzy
+#| msgid "Server selector"
+msgid "Server is unreachable"
+msgstr "Serverivalija"
+
+#, fuzzy
 #| msgid "Turn off private mode"
 msgid "Server lyrics are off in private mode"
 msgstr "Lülita privaatne režiim välja"
@@ -2594,9 +2602,6 @@ msgstr[1] "{count} aastat tagasi"
 #~ msgid "Search server lyrics before external providers"
 #~ msgstr ""
 #~ "Enne välisest teenusest otsimist vaata, kas laulusõnad on serveris olemas"
-
-#~ msgid "Server selector"
-#~ msgstr "Serverivalija"
 
 #~ msgid "Songs"
 #~ msgstr "Lood"

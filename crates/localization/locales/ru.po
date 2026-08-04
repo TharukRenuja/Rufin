@@ -426,6 +426,9 @@ msgstr "Управление уведомлениями"
 msgid "Could not save diagnostic log"
 msgstr "Не удалось сохранить диагностический журнал"
 
+msgid "Could not update favorites"
+msgstr ""
+
 msgid "Couldn't connect to {service}"
 msgstr "Подключиться к {service}"
 
@@ -1603,6 +1606,11 @@ msgstr "Настройки Сервера"
 msgid "Server discovery failed: {error}"
 msgstr "Не удалось выполнить поиск сервера: {error}"
 
+#, fuzzy
+#| msgid "Server selector"
+msgid "Server is unreachable"
+msgstr "Выбор сервера"
+
 msgid "Server lyrics are off in private mode"
 msgstr "Тексты песен с сервера выключены в приватном режиме"
 
@@ -2376,9 +2384,6 @@ msgstr[2] "{count} лет назад"
 
 #~ msgid "Server sample does not match the server prefix."
 #~ msgstr "Пример сервера не соответствует префиксу сервера."
-
-#~ msgid "Server selector"
-#~ msgstr "Выбор сервера"
 
 #~ msgid "Server settings saved."
 #~ msgstr "Настройки сервера сохранены."
