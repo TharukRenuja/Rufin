@@ -468,6 +468,10 @@ impl SourceOwner {
                 .send_event(SourceEvent::Operation(SourceOperation::Idle))
                 .await;
         }
+        SourceOwner {
+            shared: Arc::clone(&self.shared),
+        }
+        .request_favorite_retry();
         Ok(())
     }
 

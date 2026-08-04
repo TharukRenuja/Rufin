@@ -655,6 +655,10 @@ impl Shell {
         if !self.settings.current.borrow().control_notifications_enabled {
             return;
         }
+        self.show_feedback_toast(title);
+    }
+
+    pub(crate) fn show_feedback_toast(&self, title: String) {
         let generation = self.control_feedback.generation.get() + 1;
         self.control_feedback.generation.set(generation);
         self.chrome.control_feedback_label.set_text(&title);

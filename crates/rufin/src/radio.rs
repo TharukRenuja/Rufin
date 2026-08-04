@@ -16,7 +16,7 @@ use sources::NativeSourceResult;
 use tracing::warn;
 
 use crate::playback::random_u64;
-use crate::source::WeakActiveSource;
+use crate::source::{WeakActiveSource, source_error_allows_cache};
 
 const MANUAL_RADIO_COUNT: usize = 20;
 
@@ -38,8 +38,10 @@ pub(crate) fn request_auto_dj(
         return;
     }
     let source = initial.source.clone();
+    let local_source = initial.configuration.is_local();
     runtime.spawn(async move {
         let limit = request.requested_count.saturating_mul(4).clamp(1, 500);
+        let source_unavailable = source.is_none() && !local_source;
         let native = match source.as_ref() {
             Some(source) => {
                 source
@@ -48,9 +50,10 @@ pub(crate) fn request_auto_dj(
             }
             None => Ok(NativeSourceResult::Unavailable),
         };
-        let native = match native {
-            Ok(NativeSourceResult::Available(tracks)) => Some(tracks),
-            Ok(NativeSourceResult::Unavailable) | Err(_) => None,
+        let (native, require_local_playback) = match native {
+            Ok(NativeSourceResult::Available(tracks)) => (Some(tracks), false),
+            Ok(NativeSourceResult::Unavailable) => (None, source_unavailable),
+            Err(error) => (None, source_error_allows_cache(&error)),
         };
         let Some(current) = selected.upgrade().and_then(|selected| selected.resolve()) else {
             return;
@@ -63,6 +66,7 @@ pub(crate) fn request_auto_dj(
                 excluded_track_ids: Vec::new(),
                 limit: request.requested_count,
                 include_seed_track: false,
+                require_local_playback,
                 variation: random_u64(),
             },
         )
@@ -103,6 +107,7 @@ pub(crate) fn play_radio(
         return None;
     };
     let source = initial.source.clone();
+    let local_source = initial.configuration.is_local();
     Some(runtime.spawn(async move {
         let include_seed_track = match &request.seed {
             RadioSeed::Track(seed_track_id) => {
@@ -118,6 +123,7 @@ pub(crate) fn play_radio(
         } else {
             reservation.queued_track_ids.clone()
         };
+        let source_unavailable = source.is_none() && !local_source;
         let native = match source.as_ref() {
             Some(source) => {
                 source
@@ -126,9 +132,10 @@ pub(crate) fn play_radio(
             }
             None => Ok(NativeSourceResult::Unavailable),
         };
-        let native = match native {
-            Ok(NativeSourceResult::Available(tracks)) => Some(tracks),
-            Ok(NativeSourceResult::Unavailable) | Err(_) => None,
+        let (native, require_local_playback) = match native {
+            Ok(NativeSourceResult::Available(tracks)) => (Some(tracks), false),
+            Ok(NativeSourceResult::Unavailable) => (None, source_unavailable),
+            Err(error) => (None, source_error_allows_cache(&error)),
         };
         let Some(current) = selected.upgrade().and_then(|selected| selected.resolve()) else {
             return;
@@ -141,6 +148,7 @@ pub(crate) fn play_radio(
                 excluded_track_ids,
                 limit: MANUAL_RADIO_COUNT,
                 include_seed_track,
+                require_local_playback,
                 variation: random_u64(),
             },
         )

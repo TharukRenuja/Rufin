@@ -9,10 +9,11 @@ use rusqlite::{Connection, OptionalExtension};
 use super::{StoreError, StoreResult};
 
 pub(crate) const APPLICATION_ID: i64 = 1_381_320_270;
-pub(crate) const SCHEMA_VERSION: i64 = 35;
+pub(crate) const SCHEMA_VERSION: i64 = 36;
 const FIRST_STORE_SCHEMA_VERSION: i64 = 32;
 const MUSIC_FOLDER_ARTWORK_SCHEMA_VERSION: i64 = 33;
 const FILESYSTEM_IDENTITY_SCHEMA_VERSION: i64 = 34;
+const RECENT_PLAYS_SCHEMA_VERSION: i64 = 35;
 
 struct Migration {
     from_version: i64,
@@ -33,12 +34,17 @@ const MIGRATIONS: &[Migration] = &[
     },
     Migration {
         from_version: FILESYSTEM_IDENTITY_SCHEMA_VERSION,
-        to_version: SCHEMA_VERSION,
+        to_version: RECENT_PLAYS_SCHEMA_VERSION,
         run: migrate_schema_34,
+    },
+    Migration {
+        from_version: RECENT_PLAYS_SCHEMA_VERSION,
+        to_version: SCHEMA_VERSION,
+        run: migrate_schema_35,
     },
 ];
 
-const CREATE_SCHEMA: &str = r###"-- Rufin Store schema 35.
+const CREATE_SCHEMA: &str = r###"-- Rufin Store schema 36.
 --
 -- Product routes hydrate Library and do not query these tables for
 -- sorting or filtering.
@@ -48,7 +54,7 @@ PRAGMA foreign_keys = ON;
 BEGIN IMMEDIATE;
 
 PRAGMA application_id = 1381320270; -- "RUFN"
-PRAGMA user_version = 35;
+PRAGMA user_version = 36;
 
 -- One row is one complete or in-progress source-library candidate. The newest
 -- accepted library_id is current; there is no mutable head row.
@@ -493,6 +499,25 @@ CREATE TABLE local_favorites (
     PRIMARY KEY (source_id, item_kind, item_id)
 ) STRICT;
 
+-- Remote favorites are accepted locally before delivery. One row is the
+-- latest desired value for an item; retries therefore coalesce repeated
+-- toggles without replaying stale intermediate states.
+CREATE TABLE pending_favorites (
+    source_id TEXT NOT NULL CHECK (source_id <> ''),
+    item_kind TEXT NOT NULL CHECK (
+        item_kind IN ('album', 'track', 'artist')
+    ),
+    item_id TEXT NOT NULL CHECK (item_id <> ''),
+    favorite INTEGER NOT NULL CHECK (favorite IN (0, 1)),
+    previous_favorite INTEGER NOT NULL CHECK (previous_favorite IN (0, 1)),
+    attempts INTEGER NOT NULL DEFAULT 0 CHECK (attempts >= 0),
+    next_attempt_at INTEGER NOT NULL CHECK (next_attempt_at >= 0),
+    PRIMARY KEY (source_id, item_kind, item_id)
+) STRICT;
+
+CREATE INDEX pending_favorites_due_idx
+    ON pending_favorites(source_id, next_attempt_at, item_kind, item_id);
+
 CREATE TABLE local_playlists (
     source_id TEXT NOT NULL CHECK (source_id <> ''),
     playlist_id TEXT NOT NULL CHECK (playlist_id <> ''),
@@ -935,8 +960,36 @@ pub(crate) fn initialize(connection: &Connection) -> StoreResult<()> {
 fn migrate_schema_34(connection: &Connection) -> StoreResult<()> {
     let transaction = connection.unchecked_transaction()?;
     backfill_recent_plays(&transaction)?;
-    transaction.pragma_update(None, "user_version", SCHEMA_VERSION)?;
+    transaction.pragma_update(None, "user_version", RECENT_PLAYS_SCHEMA_VERSION)?;
     transaction.commit()?;
+    Ok(())
+}
+
+fn migrate_schema_35(connection: &Connection) -> StoreResult<()> {
+    connection.execute_batch(
+        r###"BEGIN IMMEDIATE;
+
+CREATE TABLE pending_favorites (
+    source_id TEXT NOT NULL CHECK (source_id <> ''),
+    item_kind TEXT NOT NULL CHECK (
+        item_kind IN ('album', 'track', 'artist')
+    ),
+    item_id TEXT NOT NULL CHECK (item_id <> ''),
+    favorite INTEGER NOT NULL CHECK (favorite IN (0, 1)),
+    previous_favorite INTEGER NOT NULL CHECK (previous_favorite IN (0, 1)),
+    attempts INTEGER NOT NULL DEFAULT 0 CHECK (attempts >= 0),
+    next_attempt_at INTEGER NOT NULL CHECK (next_attempt_at >= 0),
+    PRIMARY KEY (source_id, item_kind, item_id)
+) STRICT;
+
+CREATE INDEX pending_favorites_due_idx
+    ON pending_favorites(source_id, next_attempt_at, item_kind, item_id);
+
+PRAGMA user_version = 36;
+
+COMMIT;
+"###,
+    )?;
     Ok(())
 }
 
@@ -1083,6 +1136,28 @@ mod tests {
     }
 
     #[test]
+    fn schema_35_adds_the_pending_favorite_outbox() {
+        let connection = Connection::open_in_memory().expect("open Store");
+        initialize(&connection).expect("initialize current Store");
+        connection
+            .execute_batch(
+                "DROP INDEX pending_favorites_due_idx;
+                 DROP TABLE pending_favorites;
+                 PRAGMA user_version = 35;",
+            )
+            .expect("prepare schema 35 Store");
+
+        initialize(&connection).expect("migrate schema 35 Store");
+        assert_eq!(
+            pragma_i64(&connection, "user_version").expect("read migrated schema"),
+            SCHEMA_VERSION
+        );
+        connection
+            .query_row("SELECT count(*) FROM pending_favorites", [], |_| Ok(()))
+            .expect("pending favorite outbox exists");
+    }
+
+    #[test]
     fn schema_33_filesystem_identities_are_preserved_when_the_range_checks_are_removed() {
         let connection = Connection::open_in_memory().expect("open Store");
         initialize(&connection).expect("initialize current Store");
@@ -1120,6 +1195,7 @@ mod tests {
                 [],
             )
             .expect("write Local access file");
+        remove_pending_favorite_schema(&connection);
         connection
             .pragma_update(None, "user_version", MUSIC_FOLDER_ARTWORK_SCHEMA_VERSION)
             .expect("prepare schema 33 Store");
@@ -1170,6 +1246,7 @@ mod tests {
                 [],
             )
             .expect("write a play recorded after migration");
+        remove_pending_favorite_schema(&connection);
         connection
             .pragma_update(None, "user_version", FILESYSTEM_IDENTITY_SCHEMA_VERSION)
             .expect("prepare schema 34 Store");
@@ -1249,6 +1326,7 @@ mod tests {
                 )
                 .expect("write migrated activity");
         }
+        remove_pending_favorite_schema(&connection);
         connection
             .pragma_update(None, "user_version", FILESYSTEM_IDENTITY_SCHEMA_VERSION)
             .expect("prepare schema 34 Store");
@@ -1294,6 +1372,7 @@ mod tests {
                 [],
             )
             .expect("write music folder");
+        remove_pending_favorite_schema(&connection);
         connection
             .execute_batch(
                 "ALTER TABLE music_folders RENAME TO schema_33_music_folders;
@@ -1338,5 +1417,14 @@ mod tests {
             folder,
             ("folder:test".to_string(), "Music".to_string(), None, None)
         );
+    }
+
+    fn remove_pending_favorite_schema(connection: &Connection) {
+        connection
+            .execute_batch(
+                "DROP INDEX pending_favorites_due_idx;
+                 DROP TABLE pending_favorites;",
+            )
+            .expect("remove schema 36 favorite outbox");
     }
 }

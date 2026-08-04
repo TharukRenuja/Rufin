@@ -3,6 +3,7 @@ use std::sync::Arc;
 
 use adw::prelude::AdwDialogExt;
 use gtk::glib;
+use localization::tr;
 use playback::QueuePageQuery;
 use tracing::warn;
 
@@ -14,8 +15,8 @@ use crate::routes::playlist_picker::refresh_context_playlist_picker;
 use crate::routes::route::Route;
 use crate::runtime::source::{DiscoveryStatus, DiscoveryUpdate, SourceOperation};
 use crate::runtime::{
-    FavoriteFailure, HomePublication, ProductReceivers, SelectedLibraryUpdate, SourceEvent,
-    WaveformProjection,
+    HomePublication, ProductReceivers, SelectedLibraryUpdate, SourceEvent, SourceNotice,
+    SourceNoticeKind, WaveformProjection,
 };
 
 use super::Shell;
@@ -107,7 +108,7 @@ fn apply_source_event(shell: &Rc<Shell>, event: SourceEvent) {
             home,
         } => apply_home_replacement(shell, source_id, source_session_epoch, home),
         SourceEvent::LibraryUpdate(update) => apply_selected_library_update(shell, update),
-        SourceEvent::FavoriteFailure(failure) => apply_favorite_failure(shell, failure),
+        SourceEvent::Notice(notice) => apply_source_notice(shell, notice),
         SourceEvent::ReleaseSelected { acknowledged } => {
             release_selected_source(shell);
             let _ = acknowledged.try_send(());
@@ -427,21 +428,23 @@ fn apply_selected_library_update(shell: &Rc<Shell>, update: SelectedLibraryUpdat
     shell.apply_library_update_to_mounted_route(&update);
 }
 
-fn apply_favorite_failure(shell: &Rc<Shell>, failure: FavoriteFailure) {
+fn apply_source_notice(shell: &Rc<Shell>, notice: SourceNotice) {
     let matches_selected = shell
         .library
         .selected
         .borrow()
         .as_ref()
         .is_some_and(|selected| {
-            selected.source_id == failure.source_id
-                && selected.source_session_epoch == failure.source_session_epoch
+            selected.source_id == notice.source_id
+                && selected.source_session_epoch == notice.source_session_epoch
         });
     if !matches_selected {
         return;
     }
-    shell.restore_failed_favorite_change(&failure.item_id, failure.authoritative_favorite);
-    warn!(error = %failure.message, "favorite change failed");
+    shell.show_feedback_toast(match notice.kind {
+        SourceNoticeKind::ServerUnreachable => tr("Server is unreachable"),
+        SourceNoticeKind::FavoriteRejected => tr("Could not update favorites"),
+    });
 }
 
 fn apply_source_operation(shell: &Rc<Shell>, operation: SourceOperation) {

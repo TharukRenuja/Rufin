@@ -12,6 +12,7 @@ use crate::{
     AlbumId, ArtistId, GenreId, Library, LibraryQueryError, MusicFolderId, PlaylistId, Track,
     TrackId,
     loaded::{AlbumSlot, LoadedItems, LoadedState, TrackSlot},
+    local_playback::playable_file_for,
 };
 
 const RADIO_CANDIDATE_MULTIPLIER: usize = 8;
@@ -51,6 +52,7 @@ pub struct RadioComposition {
     pub excluded_track_ids: Vec<TrackId>,
     pub limit: usize,
     pub include_seed_track: bool,
+    pub require_local_playback: bool,
     pub variation: u64,
 }
 
@@ -148,6 +150,11 @@ impl Library {
         let candidate_limit = limit
             .saturating_mul(RADIO_CANDIDATE_MULTIPLIER)
             .clamp(limit, MAX_RADIO_CANDIDATES);
+        let selection_limit = if request.require_local_playback {
+            candidate_limit
+        } else {
+            limit
+        };
         let context = radio_context(self, &request.seed)?;
         let seed_key = request.seed.key();
         let mut excluded = request
@@ -158,7 +165,7 @@ impl Library {
             excluded.insert(seed_track.id.clone());
         }
         let mut seen = excluded.clone();
-        let mut selected = Vec::with_capacity(limit);
+        let mut selected = Vec::with_capacity(selection_limit);
 
         if let Some(candidates) = request.native {
             let state = self.read_state()?;
@@ -173,10 +180,16 @@ impl Library {
                 admitted.push(state.tracks.get(&track.id).cloned().unwrap_or(track));
             }
             drop(state);
-            append_stage(&seed_key, request.variation, admitted, limit, &mut selected);
+            append_stage(
+                &seed_key,
+                request.variation,
+                admitted,
+                selection_limit,
+                &mut selected,
+            );
         }
 
-        if selected.len() < limit {
+        if selected.len() < selection_limit {
             let state = self.read_state()?;
             let mut genre = Vec::new();
             for (index, id) in context.genre_ids.iter().enumerate() {
@@ -203,12 +216,12 @@ impl Library {
                 &seed_key,
                 request.variation.wrapping_add(1),
                 genre,
-                limit,
+                selection_limit,
                 &mut selected,
             );
 
             let mut artist = Vec::new();
-            if selected.len() < limit {
+            if selected.len() < selection_limit {
                 for (index, id) in context.artist_ids.iter().enumerate() {
                     let Some(loaded_artist) = state.artists.get(id) else {
                         continue;
@@ -233,12 +246,12 @@ impl Library {
                     &seed_key,
                     request.variation.wrapping_add(2),
                     artist,
-                    limit,
+                    selection_limit,
                     &mut selected,
                 );
             }
 
-            if selected.len() < limit {
+            if selected.len() < selection_limit {
                 let mut random = Vec::new();
                 append_source_tracks(
                     &state.tracks,
@@ -252,7 +265,7 @@ impl Library {
                     &seed_key,
                     request.variation.wrapping_add(3),
                     random,
-                    limit,
+                    selection_limit,
                     &mut selected,
                 );
             }
@@ -263,11 +276,31 @@ impl Library {
         {
             selected.insert(0, seed);
         }
+        if request.require_local_playback {
+            let state = self.read_state()?;
+            selected.retain(|track| locally_available(&state, track));
+            selected.truncate(limit);
+        }
         if selected.is_empty() {
             return Err(RadioUnavailable::Empty);
         }
         Ok(selected)
     }
+}
+
+fn locally_available(state: &LoadedState, track: &Track) -> bool {
+    state
+        .downloaded_files
+        .get(&track.id)
+        .is_some_and(|path| path.is_file())
+        || playable_file_for(
+            track,
+            &state.local_files,
+            state.local_access_mapping.as_ref(),
+            &state.local_access,
+            &state.local_access_index,
+        )
+        .is_some_and(|file| file.path().is_file())
 }
 
 struct RadioContext {

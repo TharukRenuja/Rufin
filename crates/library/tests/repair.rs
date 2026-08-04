@@ -43,7 +43,7 @@ fn missing_source_table_repairs_without_touching_configuration_or_durable_rows()
     let (library, repair) =
         Libraries::open_with_repair(&store_path).expect("repair identified final Store");
     let report = repair.expect("repair report");
-    assert_eq!(report.recovered_rows, 9);
+    assert_eq!(report.recovered_rows, 10);
     assert_eq!(
         report.skipped_rows, 1,
         "one unreadable user row must not prevent independent salvage"
@@ -105,6 +105,7 @@ fn missing_source_table_repairs_without_touching_configuration_or_durable_rows()
     }
     for table in [
         "local_favorites",
+        "pending_favorites",
         "local_playlists",
         "local_playlist_entries",
         "smart_playlists",
@@ -256,6 +257,10 @@ fn insert_source_and_user_rows(connection: &Connection) {
              );
              INSERT INTO local_favorites(source_id, item_kind, item_id)
              VALUES ('local', 'track', 'track:1');
+             INSERT INTO pending_favorites(
+                source_id, item_kind, item_id, favorite, previous_favorite,
+                attempts, next_attempt_at
+             ) VALUES ('local', 'track', 'track:1', 1, 0, 2, 30);
              INSERT INTO local_playlists(source_id, playlist_id, name)
              VALUES ('local', 'playlist:1', 'Saved mix');
              INSERT INTO local_playlist_entries(

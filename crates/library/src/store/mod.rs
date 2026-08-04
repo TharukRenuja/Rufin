@@ -20,8 +20,8 @@ use crate::{
     CandidateChange, CandidateFinish, CandidateHeader, CueSegment, FavoriteItemId, Genre, GenreId,
     HomeFacts, ImageRef, LibraryInput, LocalAccessFile, LocalArtworkRef, LocalFile, LocalFileKind,
     LocalImport, LocalReadState, LyricsCacheAuthority, LyricsCacheInput, LyricsCacheKey,
-    LyricsCacheTrim, LyricsCacheWrite, MusicFolder, MusicFolderId, NewScrobble, PendingScrobble,
-    PendingScrobbleId, PlaybackCheckpoint, PlaybackLoad, PlaybackOccurrenceId,
+    LyricsCacheTrim, LyricsCacheWrite, MusicFolder, MusicFolderId, NewScrobble, PendingFavorite,
+    PendingScrobble, PendingScrobbleId, PlaybackCheckpoint, PlaybackLoad, PlaybackOccurrenceId,
     PlaybackProgressUpdate, PlaybackQueueSnapshot, PlaybackState, PlaybackStateUpdate,
     PlaybackWriteOutcome, Playlist, PlaylistEntry, PlaylistId, PlaylistSnapshot, ProviderFreshness,
     RecentPlay, ScrobbleService, SmartPlaylistBuiltin, SmartPlaylistId, SmartPlaylistRecord,
@@ -338,6 +338,66 @@ impl StoreLane {
         self.execute(move |worker| {
             worker.set_favorite(&source_id, &item_id, favorite, local, fallback)
         })
+    }
+
+    pub(crate) fn queue_remote_favorite(
+        &self,
+        source_id: SourceId,
+        item_id: FavoriteItemId,
+        favorite: bool,
+        previous: bool,
+        next_attempt_at: i64,
+        fallback: Option<FavoriteValue>,
+    ) -> StoreResult<()> {
+        self.execute(move |worker| {
+            worker.queue_remote_favorite(
+                &source_id,
+                &item_id,
+                favorite,
+                previous,
+                next_attempt_at,
+                fallback,
+            )
+        })
+    }
+
+    pub(crate) fn due_remote_favorites(
+        &self,
+        source_id: SourceId,
+        now: i64,
+        limit: usize,
+    ) -> StoreResult<Vec<PendingFavorite>> {
+        self.execute(move |worker| worker.due_remote_favorites(&source_id, now, limit))
+    }
+
+    pub(crate) fn complete_remote_favorite(
+        &self,
+        source_id: SourceId,
+        item_id: FavoriteItemId,
+        favorite: bool,
+    ) -> StoreResult<()> {
+        self.execute(move |worker| worker.complete_remote_favorite(&source_id, &item_id, favorite))
+    }
+
+    pub(crate) fn defer_remote_favorite(
+        &self,
+        source_id: SourceId,
+        item_id: FavoriteItemId,
+        favorite: bool,
+        next_attempt_at: i64,
+    ) -> StoreResult<()> {
+        self.execute(move |worker| {
+            worker.defer_remote_favorite(&source_id, &item_id, favorite, next_attempt_at)
+        })
+    }
+
+    pub(crate) fn reject_remote_favorite(
+        &self,
+        source_id: SourceId,
+        item_id: FavoriteItemId,
+        favorite: bool,
+    ) -> StoreResult<Option<bool>> {
+        self.execute(move |worker| worker.reject_remote_favorite(&source_id, &item_id, favorite))
     }
 
     pub(crate) fn replace_local_playlist(
@@ -942,6 +1002,7 @@ impl Worker {
         )?;
         for table in [
             "local_favorites",
+            "pending_favorites",
             "smart_playlists",
             "local_imports",
             "listening_aggregates",
@@ -1301,6 +1362,194 @@ impl Worker {
         }
         transaction.commit()?;
         Ok(())
+    }
+
+    fn queue_remote_favorite(
+        &mut self,
+        source_id: &SourceId,
+        item_id: &FavoriteItemId,
+        favorite: bool,
+        previous: bool,
+        next_attempt_at: i64,
+        fallback: Option<FavoriteValue>,
+    ) -> StoreResult<()> {
+        let library_id =
+            self.current_library_id(source_id)?
+                .ok_or_else(|| StoreError::InvalidValue {
+                    kind: "favorite source",
+                    value: source_id.to_string(),
+                })?;
+        let transaction = self.connection.transaction()?;
+        if persist_favorite(&transaction, library_id, item_id, favorite, fallback)? {
+            invalidate_content_digest(&transaction, library_id)?;
+        }
+        transaction.execute(
+            "INSERT INTO pending_favorites(
+                 source_id, item_kind, item_id, favorite, previous_favorite,
+                 attempts, next_attempt_at
+             ) VALUES (?1, ?2, ?3, ?4, ?5, 0, ?6)
+             ON CONFLICT(source_id, item_kind, item_id)
+             DO UPDATE SET favorite = excluded.favorite,
+                           next_attempt_at = excluded.next_attempt_at",
+            params![
+                source_id.as_str(),
+                item_id.kind().as_str(),
+                item_id.as_str(),
+                i64::from(favorite),
+                i64::from(previous),
+                next_attempt_at,
+            ],
+        )?;
+        transaction.commit()?;
+        Ok(())
+    }
+
+    fn due_remote_favorites(
+        &mut self,
+        source_id: &SourceId,
+        now: i64,
+        limit: usize,
+    ) -> StoreResult<Vec<PendingFavorite>> {
+        let mut statement = self.connection.prepare(
+            "SELECT item_kind, item_id, favorite, attempts
+             FROM pending_favorites
+             WHERE source_id = ?1 AND next_attempt_at <= ?2
+             ORDER BY next_attempt_at, item_kind, item_id
+             LIMIT ?3",
+        )?;
+        statement
+            .query_map(
+                params![
+                    source_id.as_str(),
+                    now,
+                    i64::try_from(limit).map_err(|_| StoreError::IntegerRange)?,
+                ],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, i64>(2)?,
+                        row.get::<_, i64>(3)?,
+                    ))
+                },
+            )?
+            .map(|row| {
+                let (kind, id, favorite, attempts) = row?;
+                Ok(PendingFavorite {
+                    item: favorite_item_id(&kind, id)?,
+                    favorite: favorite != 0,
+                    attempts: checked_u32(attempts)?,
+                })
+            })
+            .collect()
+    }
+
+    fn complete_remote_favorite(
+        &mut self,
+        source_id: &SourceId,
+        item_id: &FavoriteItemId,
+        favorite: bool,
+    ) -> StoreResult<()> {
+        let library_id =
+            self.current_library_id(source_id)?
+                .ok_or_else(|| StoreError::InvalidValue {
+                    kind: "favorite source",
+                    value: source_id.to_string(),
+                })?;
+        let transaction = self.connection.transaction()?;
+        let removed = transaction.execute(
+            "DELETE FROM pending_favorites
+             WHERE source_id = ?1 AND item_kind = ?2 AND item_id = ?3
+               AND favorite = ?4",
+            params![
+                source_id.as_str(),
+                item_id.kind().as_str(),
+                item_id.as_str(),
+                i64::from(favorite),
+            ],
+        )?;
+        if removed > 0
+            && favorite_row_exists(&transaction, library_id, item_id)?
+            && persist_favorite(&transaction, library_id, item_id, favorite, None)?
+        {
+            invalidate_content_digest(&transaction, library_id)?;
+        }
+        transaction.commit()?;
+        Ok(())
+    }
+
+    fn defer_remote_favorite(
+        &mut self,
+        source_id: &SourceId,
+        item_id: &FavoriteItemId,
+        favorite: bool,
+        next_attempt_at: i64,
+    ) -> StoreResult<()> {
+        self.connection.execute(
+            "UPDATE pending_favorites
+             SET attempts = attempts + 1, next_attempt_at = ?5
+             WHERE source_id = ?1 AND item_kind = ?2 AND item_id = ?3
+               AND favorite = ?4",
+            params![
+                source_id.as_str(),
+                item_id.kind().as_str(),
+                item_id.as_str(),
+                i64::from(favorite),
+                next_attempt_at,
+            ],
+        )?;
+        Ok(())
+    }
+
+    fn reject_remote_favorite(
+        &mut self,
+        source_id: &SourceId,
+        item_id: &FavoriteItemId,
+        favorite: bool,
+    ) -> StoreResult<Option<bool>> {
+        let library_id =
+            self.current_library_id(source_id)?
+                .ok_or_else(|| StoreError::InvalidValue {
+                    kind: "favorite source",
+                    value: source_id.to_string(),
+                })?;
+        let transaction = self.connection.transaction()?;
+        let previous = transaction
+            .query_row(
+                "SELECT previous_favorite FROM pending_favorites
+                 WHERE source_id = ?1 AND item_kind = ?2 AND item_id = ?3
+                   AND favorite = ?4",
+                params![
+                    source_id.as_str(),
+                    item_id.kind().as_str(),
+                    item_id.as_str(),
+                    i64::from(favorite),
+                ],
+                |row| row.get::<_, i64>(0),
+            )
+            .optional()?;
+        let Some(previous) = previous else {
+            return Ok(None);
+        };
+        transaction.execute(
+            "DELETE FROM pending_favorites
+             WHERE source_id = ?1 AND item_kind = ?2 AND item_id = ?3
+               AND favorite = ?4",
+            params![
+                source_id.as_str(),
+                item_id.kind().as_str(),
+                item_id.as_str(),
+                i64::from(favorite),
+            ],
+        )?;
+        let previous = previous != 0;
+        if favorite_row_exists(&transaction, library_id, item_id)?
+            && persist_favorite(&transaction, library_id, item_id, previous, None)?
+        {
+            invalidate_content_digest(&transaction, library_id)?;
+        }
+        transaction.commit()?;
+        Ok(Some(previous))
     }
 
     fn replace_local_playlist(
@@ -3039,6 +3288,43 @@ fn persist_favorite(
     Ok(true)
 }
 
+fn favorite_row_exists(
+    transaction: &Transaction<'_>,
+    library_id: i64,
+    item_id: &FavoriteItemId,
+) -> StoreResult<bool> {
+    let (table, id_column) = match item_id {
+        FavoriteItemId::Album(_) => ("albums", "album_id"),
+        FavoriteItemId::Track(_) => ("tracks", "track_id"),
+        FavoriteItemId::Artist(_) => ("artists", "artist_id"),
+    };
+    Ok(transaction
+        .query_row(
+            &format!(
+                "SELECT 1 FROM {table}
+                 WHERE library_id = ?1 AND {id_column} = ?2"
+            ),
+            params![library_id, item_id.as_str()],
+            |_| Ok(()),
+        )
+        .optional()?
+        .is_some())
+}
+
+fn favorite_item_id(kind: &str, id: String) -> StoreResult<FavoriteItemId> {
+    Ok(match kind {
+        "album" => FavoriteItemId::Album(AlbumId::new(id)),
+        "track" => FavoriteItemId::Track(TrackId::new(id)),
+        "artist" => FavoriteItemId::Artist(ArtistId::new(id)),
+        _ => {
+            return Err(StoreError::InvalidValue {
+                kind: "favorite item kind",
+                value: kind.to_string(),
+            });
+        }
+    })
+}
+
 fn invalidate_content_digest(transaction: &Transaction<'_>, library_id: i64) -> StoreResult<()> {
     transaction.execute(
         "UPDATE source_libraries
@@ -3503,6 +3789,7 @@ fn complete_loaded_input(
         .extend(load_local_playlists(connection, source_id)?);
     input.smart_playlists = load_smart_playlists(connection, source_id)?;
     input.local_favorites = load_local_favorites(connection, source_id)?;
+    apply_pending_favorites(connection, source_id, &mut input)?;
     input.unresolved_album_releases =
         apply_album_release_info(connection, source_id, &mut input.albums)?;
     input.activity = load_track_activity(connection, source_id)?;
@@ -3512,6 +3799,68 @@ fn complete_loaded_input(
     }
     input.home = Some(home);
     Ok(input)
+}
+
+fn apply_pending_favorites(
+    connection: &Connection,
+    source_id: &SourceId,
+    input: &mut LibraryInput,
+) -> StoreResult<()> {
+    let mut statement = connection.prepare(
+        "SELECT item_kind, item_id, favorite
+         FROM pending_favorites
+         WHERE source_id = ?1",
+    )?;
+    let pending = statement
+        .query_map([source_id.as_str()], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, i64>(2)? != 0,
+            ))
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    let mut albums = input
+        .albums
+        .iter_mut()
+        .map(|album| (album.id.as_str().to_string(), album))
+        .collect::<HashMap<_, _>>();
+    let mut tracks = input
+        .tracks
+        .iter_mut()
+        .map(|track| (track.id.as_str().to_string(), track))
+        .collect::<HashMap<_, _>>();
+    let mut artists = input
+        .artists
+        .iter_mut()
+        .map(|artist| (artist.id.as_str().to_string(), artist))
+        .collect::<HashMap<_, _>>();
+    for (kind, id, favorite) in pending {
+        match kind.as_str() {
+            "album" => {
+                if let Some(album) = albums.get_mut(&id) {
+                    album.favorite = favorite;
+                }
+            }
+            "track" => {
+                if let Some(track) = tracks.get_mut(&id) {
+                    track.favorite = favorite;
+                }
+            }
+            "artist" => {
+                if let Some(artist) = artists.get_mut(&id) {
+                    artist.favorite = favorite;
+                }
+            }
+            _ => {
+                return Err(StoreError::InvalidValue {
+                    kind: "favorite item kind",
+                    value: kind,
+                });
+            }
+        }
+    }
+    Ok(())
 }
 
 fn load_current_local_access(

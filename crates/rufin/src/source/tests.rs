@@ -733,6 +733,78 @@ fn same_session_executor_change_retires_previous_access_tasks() {
 }
 
 #[test]
+fn cached_remote_favorite_is_accepted_and_queued_without_source_access() {
+    let directory = tempfile::tempdir().expect("temporary Rufin data directory");
+    let runtime = test_runtime();
+    let libraries = Libraries::open(directory.path().join("library.db")).expect("open Library");
+    let source_id = SourceId::new("navidrome:server:favorite-offline");
+    let track_id = library::TrackId::new("navidrome:track:favorite-offline");
+    let library = accept_library(
+        &libraries,
+        source_id.clone(),
+        vec![test_track(
+            track_id.clone(),
+            "Offline favorite",
+            PathBuf::from("Offline favorite.flac"),
+            None,
+        )],
+        Vec::new(),
+        1,
+    );
+    let (bootstrap, events) = test_owner(
+        directory.path(),
+        &runtime,
+        libraries,
+        SettingsFile::memory(),
+    );
+    let session = install_selected_for_test(
+        &bootstrap.owner,
+        test_remote_configuration(source_id, "Offline favorite"),
+        None,
+        Arc::clone(&library),
+        SourceSessionEpoch::new(1),
+    );
+
+    session.set_favorite(FavoriteItemId::Track(track_id.clone()), true);
+    let (update, notice) = runtime.block_on(async {
+        let update = events.recv().await.expect("optimistic favorite update");
+        let notice = events.recv().await.expect("offline favorite notice");
+        (update, notice)
+    });
+    assert!(matches!(
+        update,
+        SourceEvent::LibraryUpdate(SelectedLibraryUpdate {
+            change: AcceptedLibraryChange {
+                favorite: Some(library::FavoriteAcknowledgement { favorite: true, .. }),
+                ..
+            },
+            ..
+        })
+    ));
+    assert!(matches!(
+        notice,
+        SourceEvent::Notice(SourceNotice {
+            kind: SourceNoticeKind::ServerUnreachable,
+            ..
+        })
+    ));
+    assert!(
+        library
+            .track(&track_id)
+            .expect("read optimistic Track")
+            .expect("optimistic Track")
+            .favorite
+    );
+    assert_eq!(
+        library
+            .due_remote_favorites(i64::MAX, 10)
+            .expect("read favorite outbox")
+            .len(),
+        1
+    );
+}
+
+#[test]
 fn cached_folder_and_search_work_without_source_access() {
     let directory = tempfile::tempdir().expect("temporary Rufin data directory");
     let runtime = test_runtime();
@@ -2124,6 +2196,12 @@ fn test_configuration(source_id: SourceId, name: &str) -> SourceConfiguration {
         })
         .to_string(),
     }
+}
+
+fn test_remote_configuration(source_id: SourceId, name: &str) -> SourceConfiguration {
+    let mut configuration = test_configuration(source_id, name);
+    configuration.kind = "navidrome".to_string();
+    configuration
 }
 
 fn test_track(

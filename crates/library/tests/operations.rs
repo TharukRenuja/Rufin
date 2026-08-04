@@ -1098,6 +1098,113 @@ fn finished_candidate_stays_invisible_until_acceptance() {
 }
 
 #[test]
+fn remote_favorites_remain_optimistic_across_restart_and_retry() {
+    let directory = tempfile::tempdir().expect("temporary Store directory");
+    let path = directory.path().join("library.db");
+    let libraries = Libraries::open(&path).expect("open Library");
+    let source_id = SourceId::new("jellyfin:server:favorite-outbox");
+    let source_track = track();
+    let accepted = accept_track(
+        &libraries,
+        source_id.clone(),
+        digest(4),
+        source_track.clone(),
+        None,
+        1,
+    );
+    let item = FavoriteItemId::Track(source_track.id.clone());
+
+    accepted
+        .library
+        .queue_remote_favorite(item.clone(), true, 10)
+        .expect("queue optimistic favorite");
+    assert!(
+        accepted
+            .library
+            .track(&source_track.id)
+            .expect("read optimistic Track")
+            .expect("optimistic Track")
+            .favorite
+    );
+    assert_eq!(
+        accepted
+            .library
+            .due_remote_favorites(10, 10)
+            .expect("read due favorite"),
+        vec![library::PendingFavorite {
+            item: item.clone(),
+            favorite: true,
+            attempts: 0,
+        }]
+    );
+    accepted
+        .library
+        .defer_remote_favorite(item.clone(), true, 30)
+        .expect("defer favorite");
+    assert!(
+        accepted
+            .library
+            .due_remote_favorites(29, 10)
+            .expect("read deferred favorites")
+            .is_empty()
+    );
+
+    drop(accepted);
+    drop(libraries);
+    let reopened_libraries = Libraries::open(&path).expect("reopen Library");
+    let reopened = reopened_libraries
+        .load_source(&source_id)
+        .expect("load source")
+        .expect("accepted source");
+    assert!(
+        reopened
+            .track(&source_track.id)
+            .expect("read reopened Track")
+            .expect("reopened Track")
+            .favorite,
+        "pending delivery remains visible after restart"
+    );
+    assert_eq!(
+        reopened
+            .due_remote_favorites(30, 10)
+            .expect("read retried favorite")[0]
+            .attempts,
+        1
+    );
+    reopened
+        .complete_remote_favorite(item.clone(), true)
+        .expect("complete favorite delivery");
+    assert!(
+        reopened
+            .due_remote_favorites(i64::MAX, 10)
+            .expect("read completed outbox")
+            .is_empty()
+    );
+
+    reopened
+        .queue_remote_favorite(item.clone(), false, 40)
+        .expect("queue unfavorite");
+    let rollback = reopened
+        .reject_remote_favorite(item, false)
+        .expect("reject unfavorite")
+        .expect("rejected value was current");
+    assert_eq!(
+        rollback
+            .favorite
+            .expect("rollback acknowledgement")
+            .favorite,
+        true
+    );
+    assert!(
+        reopened
+            .track(&source_track.id)
+            .expect("read rolled back Track")
+            .expect("rolled back Track")
+            .favorite
+    );
+}
+
+#[test]
 fn remote_point_updates_restore_the_complete_refresh_shortcut() {
     let directory = tempfile::tempdir().expect("temporary Store directory");
     let library = Libraries::open(directory.path().join("library.db")).expect("open Library");
@@ -5421,6 +5528,7 @@ fn full_and_point_relationships_match_after_reopen() {
                 excluded_track_ids: Vec::new(),
                 limit: 2,
                 include_seed_track: false,
+                require_local_playback: false,
                 variation: 0,
             })
             .expect("compose Album Genre radio")
@@ -5461,6 +5569,7 @@ fn full_and_point_relationships_match_after_reopen() {
             excluded_track_ids: Vec::new(),
             limit: 2,
             include_seed_track: false,
+            require_local_playback: false,
             variation: 0,
         })
         .expect("underfill native Album Genre radio");
@@ -5589,6 +5698,29 @@ fn radio_varies_its_bounded_window_and_passes_excluded_tracks() {
         })
         .expect("accept radio Tracks");
 
+    let downloaded = directory.path().join("radio-0001.flac");
+    std::fs::write(&downloaded, b"available").expect("write downloaded radio Track");
+    accepted
+        .library
+        .set_downloaded_file(tracks[1].id.clone(), downloaded)
+        .expect("attach downloaded radio Track");
+    let offline = accepted
+        .library
+        .compose_radio(RadioComposition {
+            seed: RadioSeed::Track(tracks[0].id.clone()),
+            native: None,
+            excluded_track_ids: Vec::new(),
+            limit: 20,
+            include_seed_track: false,
+            require_local_playback: true,
+            variation: 0,
+        })
+        .expect("compose offline radio");
+    assert_eq!(
+        offline.iter().map(|track| &track.id).collect::<Vec<_>>(),
+        vec![&tracks[1].id]
+    );
+
     let compose = |variation, excluded_track_ids| {
         accepted
             .library
@@ -5598,6 +5730,7 @@ fn radio_varies_its_bounded_window_and_passes_excluded_tracks() {
                 excluded_track_ids,
                 limit: 1,
                 include_seed_track: false,
+                require_local_playback: false,
                 variation,
             })
             .expect("compose bounded radio")
