@@ -85,7 +85,7 @@ fn sidebar_resize_handle() -> gtk::Box {
 }
 
 pub fn build(app: &adw::Application, inputs: RuntimeInputs) {
-    crate::application::style::install_css();
+    let appearance = crate::application::style::ApplicationAppearance::install();
 
     let loaded_at = std::time::Instant::now();
     let RuntimeInputs {
@@ -98,6 +98,7 @@ pub fn build(app: &adw::Application, inputs: RuntimeInputs) {
         release_history,
     } = inputs;
     let settings = settings_handle.load();
+    appearance.apply(&settings);
     info!(
         first_run = configured_sources.first_run,
         elapsed_ms = loaded_at.elapsed().as_millis(),
@@ -451,6 +452,7 @@ pub fn build(app: &adw::Application, inputs: RuntimeInputs) {
 
     let shell = Rc::new(Shell {
         diagnostics,
+        appearance,
         settings: settings_state,
         navigation,
         library: library_state,

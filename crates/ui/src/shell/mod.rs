@@ -56,6 +56,7 @@ impl Shell {
 
 pub(crate) struct Shell {
     pub(crate) diagnostics: DiagnosticsHandle,
+    pub(crate) appearance: crate::application::style::ApplicationAppearance,
     pub(crate) settings: SettingsState,
     pub(crate) navigation: NavigationState,
     pub(crate) library: LibraryState,

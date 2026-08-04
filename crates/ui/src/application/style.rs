@@ -1,13 +1,228 @@
-pub(crate) fn install_css() {
-    let Some(display) = gtk::gdk::Display::default() else {
-        return;
-    };
+use crate::{AccentPreference, Settings, ThemePreference};
 
-    let provider = gtk::CssProvider::new();
-    provider.load_from_string(include_str!("../style.css"));
-    gtk::style_context_add_provider_for_display(
-        &display,
-        &provider,
-        gtk::STYLE_PROVIDER_PRIORITY_APPLICATION,
-    );
+const LIGHT_SURFACE_TOKENS: &str = r#"  --window-bg-color: #fafafb;
+  --window-fg-color: rgb(0 0 6 / 80%);
+  --view-bg-color: #ffffff;
+  --view-fg-color: rgb(0 0 6 / 80%);
+  --headerbar-bg-color: #ffffff;
+  --headerbar-fg-color: rgb(0 0 6 / 80%);
+  --headerbar-border-color: rgb(0 0 6 / 80%);
+  --headerbar-backdrop-color: #fafafb;
+  --headerbar-shade-color: rgb(0 0 6 / 12%);
+  --headerbar-darker-shade-color: rgb(0 0 6 / 12%);
+  --sidebar-bg-color: #ebebed;
+  --sidebar-fg-color: rgb(0 0 6 / 80%);
+  --sidebar-backdrop-color: #f2f2f4;
+  --sidebar-shade-color: rgb(0 0 6 / 7%);
+  --sidebar-border-color: rgb(0 0 6 / 7%);
+  --secondary-sidebar-bg-color: #f3f3f5;
+  --secondary-sidebar-fg-color: rgb(0 0 6 / 80%);
+  --secondary-sidebar-backdrop-color: #f6f6fa;
+  --secondary-sidebar-shade-color: rgb(0 0 6 / 7%);
+  --secondary-sidebar-border-color: rgb(0 0 6 / 7%);
+  --card-bg-color: #ffffff;
+  --card-fg-color: rgb(0 0 6 / 80%);
+  --card-shade-color: rgb(0 0 6 / 7%);
+  --dialog-bg-color: #fafafb;
+  --dialog-fg-color: rgb(0 0 6 / 80%);
+  --popover-bg-color: #ffffff;
+  --popover-fg-color: rgb(0 0 6 / 80%);
+  --popover-shade-color: rgb(0 0 6 / 7%);
+  --thumbnail-bg-color: #ffffff;
+  --thumbnail-fg-color: rgb(0 0 6 / 80%);
+  --shade-color: rgb(0 0 6 / 7%);
+  --scrollbar-outline-color: #ffffff;
+  --active-toggle-bg-color: #ffffff;
+  --active-toggle-fg-color: rgb(0 0 6 / 80%);
+  --overview-bg-color: #f3f3f5;
+  --overview-fg-color: rgb(0 0 6 / 80%);
+  --standalone-color-oklab: min(l, 0.5) a b;
+"#;
+
+const DARK_SURFACE_TOKENS: &str = r#"  --window-bg-color: #222226;
+  --window-fg-color: #ffffff;
+  --view-bg-color: #1d1d20;
+  --view-fg-color: #ffffff;
+  --headerbar-bg-color: #2e2e32;
+  --headerbar-fg-color: #ffffff;
+  --headerbar-border-color: #ffffff;
+  --headerbar-backdrop-color: #28282c;
+  --headerbar-shade-color: rgb(0 0 6 / 36%);
+  --headerbar-darker-shade-color: rgb(0 0 12 / 90%);
+  --sidebar-bg-color: #2e2e32;
+  --sidebar-fg-color: #ffffff;
+  --sidebar-backdrop-color: #28282c;
+  --sidebar-shade-color: rgb(0 0 6 / 25%);
+  --sidebar-border-color: rgb(0 0 6 / 36%);
+  --secondary-sidebar-bg-color: #28282c;
+  --secondary-sidebar-fg-color: #ffffff;
+  --secondary-sidebar-backdrop-color: #252529;
+  --secondary-sidebar-shade-color: rgb(0 0 6 / 25%);
+  --secondary-sidebar-border-color: rgb(0 0 6 / 36%);
+  --card-bg-color: rgb(255 255 255 / 8%);
+  --card-fg-color: #ffffff;
+  --card-shade-color: rgb(0 0 6 / 36%);
+  --dialog-bg-color: #36363a;
+  --dialog-fg-color: #ffffff;
+  --popover-bg-color: #36363a;
+  --popover-fg-color: #ffffff;
+  --popover-shade-color: rgb(0 0 6 / 25%);
+  --thumbnail-bg-color: #39393d;
+  --thumbnail-fg-color: #ffffff;
+  --shade-color: rgb(0 0 6 / 25%);
+  --scrollbar-outline-color: rgb(0 0 12 / 95%);
+  --active-toggle-bg-color: rgb(255 255 255 / 20%);
+  --active-toggle-fg-color: #ffffff;
+  --overview-bg-color: #28282c;
+  --overview-fg-color: #ffffff;
+  --standalone-color-oklab: max(l, 0.85) a b;
+"#;
+
+pub(crate) struct ApplicationAppearance {
+    override_provider: gtk::CssProvider,
+}
+
+impl ApplicationAppearance {
+    pub(crate) fn install() -> Self {
+        let override_provider = gtk::CssProvider::new();
+        let Some(display) = gtk::gdk::Display::default() else {
+            return Self { override_provider };
+        };
+
+        let base_provider = gtk::CssProvider::new();
+        base_provider.load_from_string(include_str!("../style.css"));
+        gtk::style_context_add_provider_for_display(
+            &display,
+            &base_provider,
+            gtk::STYLE_PROVIDER_PRIORITY_APPLICATION,
+        );
+        gtk::style_context_add_provider_for_display(
+            &display,
+            &override_provider,
+            gtk::STYLE_PROVIDER_PRIORITY_USER + 1,
+        );
+
+        Self { override_provider }
+    }
+
+    pub(crate) fn apply(&self, settings: &Settings) {
+        adw::StyleManager::default().set_color_scheme(color_scheme(settings.theme_preference));
+        self.override_provider
+            .load_from_string(&appearance_override_css(
+                settings.theme_preference,
+                settings.accent_preference,
+            ));
+    }
+}
+
+fn color_scheme(preference: ThemePreference) -> adw::ColorScheme {
+    match preference {
+        ThemePreference::System => adw::ColorScheme::PreferLight,
+        ThemePreference::Light => adw::ColorScheme::ForceLight,
+        ThemePreference::Dark => adw::ColorScheme::ForceDark,
+    }
+}
+
+fn appearance_override_css(theme: ThemePreference, accent: AccentPreference) -> String {
+    let surface_tokens = match theme {
+        ThemePreference::System => "",
+        ThemePreference::Light => LIGHT_SURFACE_TOKENS,
+        ThemePreference::Dark => DARK_SURFACE_TOKENS,
+    };
+    let accent_color = accent_color(accent);
+    if surface_tokens.is_empty() && accent_color.is_none() {
+        return String::new();
+    }
+
+    let mut css = String::from(":root {\n");
+    css.push_str(surface_tokens);
+    if let Some(color) = accent_color {
+        css.push_str("  --accent-bg-color: ");
+        css.push_str(color);
+        css.push_str(";\n  --accent-fg-color: #ffffff;\n");
+        css.push_str(
+            "  --accent-color: oklab(from var(--accent-bg-color) var(--standalone-color-oklab));\n",
+        );
+    }
+    css.push_str("}\n");
+    css
+}
+
+fn accent_color(preference: AccentPreference) -> Option<&'static str> {
+    match preference {
+        AccentPreference::System => None,
+        AccentPreference::Blue => Some("#3584e4"),
+        AccentPreference::Teal => Some("#2190a4"),
+        AccentPreference::Green => Some("#3a944a"),
+        AccentPreference::Yellow => Some("#c88800"),
+        AccentPreference::Orange => Some("#ed5b00"),
+        AccentPreference::Red => Some("#e62d42"),
+        AccentPreference::Pink => Some("#d56199"),
+        AccentPreference::Purple => Some("#9141ac"),
+        AccentPreference::Slate => Some("#6f8396"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn theme_preferences_map_to_explicit_application_color_schemes() {
+        assert_eq!(
+            color_scheme(ThemePreference::System),
+            adw::ColorScheme::PreferLight
+        );
+        assert_eq!(
+            color_scheme(ThemePreference::Light),
+            adw::ColorScheme::ForceLight
+        );
+        assert_eq!(
+            color_scheme(ThemePreference::Dark),
+            adw::ColorScheme::ForceDark
+        );
+    }
+
+    #[test]
+    fn system_appearance_does_not_override_user_theme_tokens() {
+        assert_eq!(
+            appearance_override_css(ThemePreference::System, AccentPreference::System),
+            ""
+        );
+    }
+
+    #[test]
+    fn explicit_color_schemes_override_surface_tokens_only() {
+        let light = appearance_override_css(ThemePreference::Light, AccentPreference::System);
+        assert!(light.contains("--window-bg-color: #fafafb"));
+        assert!(light.contains("--view-bg-color: #ffffff"));
+        assert!(!light.contains("--accent-bg-color"));
+
+        let dark = appearance_override_css(ThemePreference::Dark, AccentPreference::System);
+        assert!(dark.contains("--window-bg-color: #222226"));
+        assert!(dark.contains("--view-bg-color: #1d1d20"));
+        assert!(!dark.contains("--accent-bg-color"));
+    }
+
+    #[test]
+    fn every_explicit_accent_overrides_the_accent_tokens() {
+        let expected = [
+            (AccentPreference::Blue, "#3584e4"),
+            (AccentPreference::Teal, "#2190a4"),
+            (AccentPreference::Green, "#3a944a"),
+            (AccentPreference::Yellow, "#c88800"),
+            (AccentPreference::Orange, "#ed5b00"),
+            (AccentPreference::Red, "#e62d42"),
+            (AccentPreference::Pink, "#d56199"),
+            (AccentPreference::Purple, "#9141ac"),
+            (AccentPreference::Slate, "#6f8396"),
+        ];
+        for (preference, color) in expected {
+            let css = appearance_override_css(ThemePreference::System, preference);
+            assert!(css.contains(&format!("--accent-bg-color: {color}")));
+            assert!(css.contains("--accent-fg-color: #ffffff"));
+            assert!(css.contains("--accent-color: oklab("));
+            assert!(!css.contains("--window-bg-color"));
+        }
+    }
 }

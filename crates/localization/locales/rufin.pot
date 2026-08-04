@@ -115,6 +115,9 @@ msgstr ""
 msgid "About Rufin"
 msgstr ""
 
+msgid "Accent color"
+msgstr ""
+
 msgid "Add Rule"
 msgstr ""
 
@@ -196,6 +199,9 @@ msgstr ""
 msgid "App settings"
 msgstr ""
 
+msgid "Appearance"
+msgstr ""
+
 msgid "Appears On"
 msgstr ""
 
@@ -251,6 +257,9 @@ msgid "BPM"
 msgstr ""
 
 msgid "Back"
+msgstr ""
+
+msgid "Blue"
 msgstr ""
 
 msgid "Cached"
@@ -334,6 +343,9 @@ msgstr ""
 msgid "Collections"
 msgstr ""
 
+msgid "Color scheme"
+msgstr ""
+
 msgid "Columns"
 msgstr ""
 
@@ -400,6 +412,9 @@ msgid "Customize display"
 msgstr ""
 
 msgid "Dance"
+msgstr ""
+
+msgid "Dark"
 msgstr ""
 
 msgid "Date added"
@@ -639,6 +654,9 @@ msgstr ""
 msgid "Go to Artist"
 msgstr ""
 
+msgid "Green"
+msgstr ""
+
 msgid "Grid labels"
 msgstr ""
 
@@ -699,9 +717,6 @@ msgstr ""
 msgid "Instrumental"
 msgstr ""
 
-msgid "Interface"
-msgstr ""
-
 msgid "JACK"
 msgstr ""
 
@@ -757,6 +772,9 @@ msgid "Libre.fm scrobbling"
 msgstr ""
 
 msgid "Libre.fm"
+msgstr ""
+
+msgid "Light"
 msgstr ""
 
 msgid "Limit"
@@ -1083,6 +1101,9 @@ msgstr ""
 msgid "Opening Libre.fm authorization..."
 msgstr ""
 
+msgid "Orange"
+msgstr ""
+
 msgid "Original"
 msgstr ""
 
@@ -1096,6 +1117,9 @@ msgid "Password"
 msgstr ""
 
 msgid "Pause"
+msgstr ""
+
+msgid "Pink"
 msgstr ""
 
 msgid "Pins"
@@ -1233,6 +1257,9 @@ msgstr ""
 msgid "PulseAudio"
 msgstr ""
 
+msgid "Purple"
+msgstr ""
+
 msgid "Queue a track to begin"
 msgstr ""
 
@@ -1264,6 +1291,9 @@ msgid "Recently released"
 msgstr ""
 
 msgid "Reconnect"
+msgstr ""
+
+msgid "Red"
 msgstr ""
 
 msgid "Refresh section"
@@ -1609,6 +1639,9 @@ msgstr ""
 msgid "Skip same-album crossfade"
 msgstr ""
 
+msgid "Slate"
+msgstr ""
+
 msgid "Smart Playlist"
 msgstr ""
 
@@ -1660,10 +1693,19 @@ msgstr ""
 msgid "System default"
 msgstr ""
 
+msgid "System"
+msgstr ""
+
+msgid "Teal"
+msgstr ""
+
 msgid "Techno"
 msgstr ""
 
 msgid "Text"
+msgstr ""
+
+msgid "Theme"
 msgstr ""
 
 msgid "This isn't available"
@@ -1790,6 +1832,9 @@ msgid "Waveform seekbar"
 msgstr ""
 
 msgid "Year"
+msgstr ""
+
+msgid "Yellow"
 msgstr ""
 
 msgid "Yes"

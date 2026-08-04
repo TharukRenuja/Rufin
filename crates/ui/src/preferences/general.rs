@@ -5,7 +5,7 @@ use std::{
 
 use super::{
     LASTFM_API_CREATE_URL, LISTENBRAINZ_TOKEN_URL, SCROBBLING_ICON_NAME,
-    context_menu::context_menus_expander, interface_group, layout::populate_home_block_rows,
+    context_menu::context_menus_expander, layout::populate_home_block_rows, layout_group,
     selection_row, sidebar_items_expander,
 };
 use crate::player::{
@@ -16,6 +16,7 @@ use crate::player::{
 };
 use crate::runtime::{ScrobblingConnection, ScrobblingConnectionEvent};
 use crate::shell::Shell;
+use crate::{AccentPreference, ThemePreference};
 use adw::prelude::*;
 use library::StreamQuality;
 use localization::{tr, tr_with};
@@ -731,13 +732,14 @@ pub(crate) fn playback_page(shell: &Rc<Shell>) -> adw::PreferencesPage {
 
     page
 }
-pub(crate) fn layout_page(shell: &Rc<Shell>) -> adw::PreferencesPage {
+pub(crate) fn appearance_page(shell: &Rc<Shell>) -> adw::PreferencesPage {
     let page = adw::PreferencesPage::builder()
-        .title(tr("Layout"))
-        .icon_name("preferences-desktop-display-symbolic")
+        .title(tr("Appearance"))
+        .icon_name("preferences-desktop-appearance-symbolic")
         .build();
 
-    page.add(&interface_group(shell));
+    page.add(&theme_group(shell));
+    page.add(&layout_group(shell));
 
     let sidebar_items_group = adw::PreferencesGroup::new();
     sidebar_items_group.add(&sidebar_items_expander(shell));
@@ -758,6 +760,78 @@ pub(crate) fn layout_page(shell: &Rc<Shell>) -> adw::PreferencesPage {
     page.add(&context_menus_group);
 
     page
+}
+
+fn theme_group(shell: &Rc<Shell>) -> adw::PreferencesGroup {
+    let group = adw::PreferencesGroup::builder().title(tr("Theme")).build();
+    let options = [tr("System"), tr("Light"), tr("Dark")];
+    let selected = theme_preference_index(shell.settings.current.borrow().theme_preference);
+    let theme_shell = Rc::clone(shell);
+    let row = selection_row(&tr("Color scheme"), &options, selected, move |selected| {
+        theme_shell.set_theme_preference(theme_preference_from_index(selected));
+    });
+    group.add(&row);
+
+    let accent_titles = AccentPreference::ALL.map(accent_preference_title);
+    let accent_title_refs = accent_titles.each_ref().map(String::as_str);
+    let accent_row = adw::ComboRow::builder()
+        .title(tr("Accent color"))
+        .model(&gtk::StringList::new(&accent_title_refs))
+        .selected(accent_preference_index(
+            shell.settings.current.borrow().accent_preference,
+        ))
+        .build();
+    let accent_shell = Rc::clone(shell);
+    accent_row.connect_selected_notify(move |row| {
+        accent_shell.set_accent_preference(accent_preference_from_index(row.selected()));
+    });
+    group.add(&accent_row);
+    group
+}
+
+pub(super) fn theme_preference_index(preference: ThemePreference) -> u32 {
+    match preference {
+        ThemePreference::System => 0,
+        ThemePreference::Light => 1,
+        ThemePreference::Dark => 2,
+    }
+}
+
+pub(super) fn theme_preference_from_index(index: u32) -> ThemePreference {
+    match index {
+        1 => ThemePreference::Light,
+        2 => ThemePreference::Dark,
+        _ => ThemePreference::System,
+    }
+}
+
+fn accent_preference_title(preference: AccentPreference) -> String {
+    match preference {
+        AccentPreference::System => tr("System"),
+        AccentPreference::Blue => tr("Blue"),
+        AccentPreference::Teal => tr("Teal"),
+        AccentPreference::Green => tr("Green"),
+        AccentPreference::Yellow => tr("Yellow"),
+        AccentPreference::Orange => tr("Orange"),
+        AccentPreference::Red => tr("Red"),
+        AccentPreference::Pink => tr("Pink"),
+        AccentPreference::Purple => tr("Purple"),
+        AccentPreference::Slate => tr("Slate"),
+    }
+}
+
+pub(super) fn accent_preference_index(preference: AccentPreference) -> u32 {
+    AccentPreference::ALL
+        .iter()
+        .position(|candidate| *candidate == preference)
+        .unwrap_or_default() as u32
+}
+
+pub(super) fn accent_preference_from_index(index: u32) -> AccentPreference {
+    AccentPreference::ALL
+        .get(index as usize)
+        .copied()
+        .unwrap_or_default()
 }
 pub(crate) fn transition_index(mode: PlaybackTransitionMode) -> u32 {
     match mode {

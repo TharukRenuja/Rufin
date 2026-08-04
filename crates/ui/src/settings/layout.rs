@@ -476,6 +476,34 @@ pub enum ThemePreference {
     Light,
     Dark,
 }
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+pub enum AccentPreference {
+    #[default]
+    System,
+    Blue,
+    Teal,
+    Green,
+    Yellow,
+    Orange,
+    Red,
+    Pink,
+    Purple,
+    Slate,
+}
+impl AccentPreference {
+    pub const ALL: [Self; 10] = [
+        Self::System,
+        Self::Blue,
+        Self::Teal,
+        Self::Green,
+        Self::Yellow,
+        Self::Orange,
+        Self::Red,
+        Self::Pink,
+        Self::Purple,
+        Self::Slate,
+    ];
+}
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, Serialize)]
 pub enum LibraryLayout {
     Row,
