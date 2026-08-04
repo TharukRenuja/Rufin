@@ -3,8 +3,8 @@ use std::fmt;
 use std::sync::Arc;
 
 use library::{
-    Album, AlbumArtwork, Artist, Genre, ImageRef, LocalArtworkRef, Mood, Playlist, SmartPlaylist,
-    SourceArtwork, Track,
+    Album, AlbumArtwork, Artist, ArtistArtwork, Genre, ImageRef, Library, LocalArtworkRef, Mood,
+    Playlist, SmartPlaylist, SourceArtwork, Track,
 };
 
 const COLLECTION_SLOT_LIMIT: usize = 4;
@@ -46,6 +46,79 @@ impl Candidate {
 pub struct ArtworkBinding {
     candidates: Arc<[Candidate]>,
     stable_identity: Arc<str>,
+}
+
+#[derive(Clone, Debug)]
+/// Artwork prepared for a live result, plus whether its identity exists in the loaded Library.
+pub struct BoundArtwork {
+    binding: ArtworkBinding,
+    library_item: bool,
+}
+
+impl BoundArtwork {
+    pub fn binding(&self) -> &ArtworkBinding {
+        &self.binding
+    }
+
+    pub fn into_binding(self) -> ArtworkBinding {
+        self.binding
+    }
+
+    pub const fn is_library_item(&self) -> bool {
+        self.library_item
+    }
+}
+
+/// Reads artwork associations already prepared by the loaded Library.
+///
+/// This accessor does not choose representative albums or rebuild relationships.
+pub struct ArtworkBindings<'a> {
+    library: &'a Library,
+}
+
+impl<'a> ArtworkBindings<'a> {
+    pub const fn new(library: &'a Library) -> Self {
+        Self { library }
+    }
+
+    pub fn track(&self, track: &Track) -> BoundArtwork {
+        match self.library.track(&track.id).ok().flatten() {
+            Some(loaded) => BoundArtwork {
+                binding: ArtworkBinding::track(&loaded),
+                library_item: true,
+            },
+            None => BoundArtwork {
+                binding: ArtworkBinding::track(track),
+                library_item: false,
+            },
+        }
+    }
+
+    pub fn album(&self, album: &Album) -> BoundArtwork {
+        match self.library.album_artwork(&album.id).ok().flatten() {
+            Some(artwork) => BoundArtwork {
+                binding: ArtworkBinding::album_artwork(&artwork),
+                library_item: true,
+            },
+            None => BoundArtwork {
+                binding: ArtworkBinding::album(album),
+                library_item: false,
+            },
+        }
+    }
+
+    pub fn artist(&self, artist: &Artist) -> BoundArtwork {
+        match self.library.artist_artwork(&artist.id).ok().flatten() {
+            Some(artwork) => BoundArtwork {
+                binding: ArtworkBinding::artist(&artwork),
+                library_item: true,
+            },
+            None => BoundArtwork {
+                binding: ArtworkBinding::artist_facts(artist, &[]),
+                library_item: false,
+            },
+        }
+    }
 }
 
 impl ArtworkBinding {
@@ -96,7 +169,11 @@ impl ArtworkBinding {
         candidates.finish()
     }
 
-    pub fn artist(artist: &Artist, representative_albums: &[AlbumArtwork]) -> Self {
+    pub fn artist(artist: &ArtistArtwork) -> Self {
+        Self::artist_facts(&artist.artist, &artist.representative_albums)
+    }
+
+    fn artist_facts(artist: &Artist, representative_albums: &[AlbumArtwork]) -> Self {
         let mut candidates = CandidateBuilder::default();
         candidates.push_local(artist.local_artwork.as_ref());
         candidates.push_native(artist.image_ref.as_ref());
@@ -525,7 +602,11 @@ mod tests {
             album_artwork("two", Some(image_ref("album-two-native"))),
         ];
 
-        let candidates = ArtworkBinding::artist(&artist, &representatives);
+        let artwork = ArtistArtwork {
+            artist: Arc::new(artist),
+            representative_albums: representatives.into(),
+        };
+        let candidates = ArtworkBinding::artist(&artwork);
 
         assert_eq!(
             candidates.candidates.first(),

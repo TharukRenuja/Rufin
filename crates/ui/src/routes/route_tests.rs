@@ -20,7 +20,10 @@ use super::library_fields::{
     album_field, column_width, compact_header_column_width, item_at, playlist_field,
     smart_playlist_field, sort_tracks, track_field,
 };
-use super::route_shell::{library_toolbar_end_margin, toolbar_sort_width_for_labels};
+use super::route_shell::{
+    library_toolbar_end_margin, library_toolbar_sort_width_for_labels,
+    toolbar_sort_width_for_labels,
+};
 use super::table_sizing::fitted_column_widths;
 use super::track_model::{TrackCollectionModel, prepare_track_projection};
 #[test]
@@ -757,6 +760,22 @@ fn route_sort_dropdown_reserves_longest_label() {
         long,
         toolbar_sort_width_for_labels(["Number of songs", "Title"])
     );
+}
+
+#[test]
+fn primary_library_sort_dropdowns_share_one_width() {
+    let widths = [
+        LibraryListKey::Tracks,
+        LibraryListKey::Albums,
+        LibraryListKey::Artists,
+    ]
+    .map(|key| {
+        library_toolbar_sort_width_for_labels(
+            available_sort_fields(key).iter().map(|field| field.title()),
+        )
+    });
+
+    assert!(widths.windows(2).all(|pair| pair[0] == pair[1]));
 }
 #[test]
 fn route_toolbar_reserves_window_controls_when_queue_hidden() {

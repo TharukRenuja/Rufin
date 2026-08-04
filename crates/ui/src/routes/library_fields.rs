@@ -147,35 +147,43 @@ pub(crate) fn artist_field_missing(artist: &ArtistSummary, field: LibraryField) 
         _ => false,
     }
 }
-pub(crate) fn album_field(album: &AlbumSummary, field: LibraryField) -> String {
-    let facts = &album.album;
+pub(crate) fn album_item_field(album: &library::Album, field: LibraryField) -> String {
     match field {
-        LibraryField::Title | LibraryField::TitleMerged => facts.title.clone(),
-        LibraryField::AlbumArtist | LibraryField::Artist => facts.artist.clone(),
-        LibraryField::Year => nonzero_year(facts.year),
-        LibraryField::ReleaseDate => facts.release_date.clone().unwrap_or_default(),
-        LibraryField::DateAdded => facts.date_added.clone().unwrap_or_default(),
-        LibraryField::LastPlayed => display_calendar_date(facts.last_played.as_deref()),
-        LibraryField::PlayCount => option_count(facts.play_count),
-        LibraryField::UserRating => option_rating(facts.user_rating),
-        LibraryField::Genre => facts.genre_names().collect::<Vec<_>>().join(", "),
+        LibraryField::Title | LibraryField::TitleMerged => album.title.clone(),
+        LibraryField::AlbumArtist | LibraryField::Artist => album.artist.clone(),
+        LibraryField::Year => nonzero_year(album.year),
+        LibraryField::ReleaseDate => album.release_date.clone().unwrap_or_default(),
+        LibraryField::DateAdded => album.date_added.clone().unwrap_or_default(),
+        LibraryField::LastPlayed => display_calendar_date(album.last_played.as_deref()),
+        LibraryField::PlayCount => option_count(album.play_count),
+        LibraryField::UserRating => option_rating(album.user_rating),
+        LibraryField::Genre => album.genre_names().collect::<Vec<_>>().join(", "),
+        LibraryField::Favorite => favorite_text(album.favorite),
+        _ => String::new(),
+    }
+}
+pub(crate) fn album_field(album: &AlbumSummary, field: LibraryField) -> String {
+    match field {
         LibraryField::SongCount => track_count_text(album.track_count.into()),
         LibraryField::Duration => crate::format_duration(album.duration_seconds),
-        LibraryField::Favorite => favorite_text(facts.favorite),
+        _ => album_item_field(&album.album, field),
+    }
+}
+pub(crate) fn artist_item_field(artist: &library::Artist, field: LibraryField) -> String {
+    match field {
+        LibraryField::Title | LibraryField::TitleMerged => artist.name.clone(),
+        LibraryField::LastPlayed => display_calendar_date(artist.last_played.as_deref()),
+        LibraryField::PlayCount => option_count(artist.play_count),
+        LibraryField::UserRating => option_rating(artist.user_rating),
+        LibraryField::Favorite => favorite_text(artist.favorite),
         _ => String::new(),
     }
 }
 pub(crate) fn artist_field(artist: &ArtistSummary, field: LibraryField) -> String {
-    let facts = &artist.artist;
     match field {
-        LibraryField::Title | LibraryField::TitleMerged => facts.name.clone(),
         LibraryField::AlbumCount => album_count_text(artist.album_count.into()),
         LibraryField::SongCount => track_count_text(artist.track_count.into()),
-        LibraryField::LastPlayed => display_calendar_date(facts.last_played.as_deref()),
-        LibraryField::PlayCount => option_count(facts.play_count),
-        LibraryField::UserRating => option_rating(facts.user_rating),
-        LibraryField::Favorite => favorite_text(facts.favorite),
-        _ => String::new(),
+        _ => artist_item_field(&artist.artist, field),
     }
 }
 pub(crate) fn playlist_field(playlist: &PlaylistSummary, field: LibraryField) -> String {
@@ -387,12 +395,27 @@ pub(crate) fn populate_library_field_rows(
     group: &adw::PreferencesGroup,
     rows: &Rc<RefCell<Vec<adw::ActionRow>>>,
 ) {
+    let settings = shell.settings.current.borrow().library_list(key);
+    populate_library_field_rows_for_set(
+        shell,
+        key,
+        field_set_for_layout(settings.layout),
+        group,
+        rows,
+    );
+}
+pub(crate) fn populate_library_field_rows_for_set(
+    shell: &Rc<Shell>,
+    key: LibraryListKey,
+    field_set: LibraryFieldSet,
+    group: &adw::PreferencesGroup,
+    rows: &Rc<RefCell<Vec<adw::ActionRow>>>,
+) {
     for row in rows.borrow_mut().drain(..) {
         group.remove(&row);
     }
 
     let settings = shell.settings.current.borrow().library_list(key);
-    let field_set = field_set_for_layout(settings.layout);
     group.set_title(&tr(field_group_title(field_set)));
 
     let active = active_fields_for_set(&settings, field_set).to_vec();
@@ -460,7 +483,7 @@ pub(crate) fn library_field_config_row(
             shell.update_library_list_settings(key, |settings| {
                 set_field_enabled(settings, key, field_set, field, check.is_active());
             });
-            populate_library_field_rows(&shell, key, &group, &rows);
+            populate_library_field_rows_for_set(&shell, key, field_set, &group, &rows);
         });
     }
     {
@@ -474,7 +497,7 @@ pub(crate) fn library_field_config_row(
             shell.update_library_list_settings(key, |settings| {
                 move_visible_field(settings, field_set, field, -1);
             });
-            populate_library_field_rows(&shell, key, &group, &rows);
+            populate_library_field_rows_for_set(&shell, key, field_set, &group, &rows);
         });
     }
     {
@@ -488,7 +511,7 @@ pub(crate) fn library_field_config_row(
             shell.update_library_list_settings(key, |settings| {
                 move_visible_field(settings, field_set, field, 1);
             });
-            populate_library_field_rows(&shell, key, &group, &rows);
+            populate_library_field_rows_for_set(&shell, key, field_set, &group, &rows);
         });
     }
 
@@ -526,7 +549,7 @@ pub(crate) fn library_field_config_row(
         shell.update_library_list_settings(key, |settings| {
             reorder_visible_field(settings, field_set, source_field, field, after);
         });
-        populate_library_field_rows(&shell, key, &group, &rows);
+        populate_library_field_rows_for_set(&shell, key, field_set, &group, &rows);
         true
     });
     row.add_controller(drop_target);
@@ -859,7 +882,10 @@ mod tests {
 
     use crate::{LibraryField, LibraryListKey, LibraryListSettings};
 
-    use super::{LibraryFieldSet, display_calendar_date, set_field_enabled, smart_playlist_field};
+    use super::{
+        LibraryFieldSet, album_field, album_item_field, display_calendar_date, set_field_enabled,
+        smart_playlist_field,
+    };
 
     fn smart_playlist_with_stats(track_count: u32, duration_seconds: u32) -> SmartPlaylistSummary {
         crate::test_support::smart_playlist_summary(
@@ -884,6 +910,16 @@ mod tests {
             smart_playlist_field(&resolved, LibraryField::Duration),
             "2m 0s"
         );
+    }
+
+    #[test]
+    fn live_album_fields_do_not_invent_library_summary_counts() {
+        let album = crate::test_support::album("album", "Live result");
+        assert_eq!(album_item_field(&album, LibraryField::Title), "Live result");
+        assert!(album_item_field(&album, LibraryField::SongCount).is_empty());
+
+        let summary = crate::test_support::album_summary(album, 3, 180);
+        assert_eq!(album_field(&summary, LibraryField::SongCount), "3 tracks");
     }
 
     #[test]

@@ -544,10 +544,17 @@ pub struct AlbumSummary {
 #[derive(Clone, Debug)]
 pub struct ArtistSummary {
     pub artist: Arc<Artist>,
-    pub representative_albums: Arc<[AlbumArtwork]>,
+    pub artwork: ArtistArtwork,
     pub album_count: u32,
     pub track_count: u32,
     pub duration_seconds: u32,
+}
+
+#[derive(Clone, Debug)]
+/// The stable source-scoped artwork association prepared when loaded relationships change.
+pub struct ArtistArtwork {
+    pub artist: Arc<Artist>,
+    pub representative_albums: Arc<[AlbumArtwork]>,
 }
 
 #[derive(Clone, Debug)]
@@ -1185,6 +1192,14 @@ impl Library {
             .and_then(|album| album_summary(&state, album, music_folder_id)))
     }
 
+    pub fn album_artwork(&self, album_id: &AlbumId) -> LibraryQueryResult<Option<AlbumArtwork>> {
+        let state = self.read_state()?;
+        Ok(state
+            .albums
+            .get(album_id)
+            .map(|album| album.artwork.clone()))
+    }
+
     pub fn artists(
         &self,
         music_folder_id: Option<&MusicFolderId>,
@@ -1216,6 +1231,17 @@ impl Library {
             .artists
             .get(artist_id)
             .and_then(|artist| artist_summary(&state, artist, music_folder_id)))
+    }
+
+    pub fn artist_artwork(
+        &self,
+        artist_id: &ArtistId,
+    ) -> LibraryQueryResult<Option<ArtistArtwork>> {
+        let state = self.read_state()?;
+        Ok(state
+            .artists
+            .get(artist_id)
+            .map(|artist| artist.artwork.clone()))
     }
 
     pub fn album_artists(
@@ -1825,14 +1851,10 @@ pub(crate) fn album_summary(
     album: &LoadedAlbum,
     music_folder_id: Option<&MusicFolderId>,
 ) -> Option<AlbumSummary> {
-    let (track_count, duration_seconds, representative_track) =
-        album_projection(state, album, music_folder_id)?;
+    let (track_count, duration_seconds, _) = album_projection(state, album, music_folder_id)?;
     Some(AlbumSummary {
         album: Arc::clone(&album.album),
-        artwork: AlbumArtwork {
-            album: Arc::clone(&album.album),
-            representative_track,
-        },
+        artwork: album.artwork.clone(),
         track_count,
         duration_seconds,
     })
@@ -1877,39 +1899,26 @@ fn artist_summary_and_credits(
         return None;
     }
 
-    let mut albums = artist_album_slots(state, &artist.id)
+    let album_count = artist_album_slots(state, &artist.id)
         .into_iter()
         .filter_map(|slot| state.albums.get_slot(slot))
-        .filter_map(|album| {
-            let summary = album_summary(state, album, music_folder_id)?;
-            has_album_artist_credit |= album
-                .relations
-                .album_artists
-                .iter()
-                .any(|credit| credit.id == artist.id);
-            Some((
-                album_is_primary_for_artist(state, album, &artist.id),
-                summary,
-            ))
+        .filter(|album| {
+            let in_scope = album_projection(state, album, music_folder_id).is_some();
+            if in_scope {
+                has_album_artist_credit |= album
+                    .relations
+                    .album_artists
+                    .iter()
+                    .any(|credit| credit.id == artist.id);
+            }
+            in_scope
         })
-        .collect::<Vec<_>>();
-    albums.sort_by(|(left_primary, left), (right_primary, right)| {
-        right_primary
-            .cmp(left_primary)
-            .then(left.album.year.cmp(&right.album.year))
-            .then_with(|| compare_albums(&left.album, &right.album))
-    });
-    let album_count = u32::try_from(albums.len()).unwrap_or(u32::MAX);
-    let representative_albums = albums
-        .iter()
-        .take(ARTIST_ARTWORK_LIMIT)
-        .map(|(_, album)| album.artwork.clone())
-        .collect::<Vec<_>>()
-        .into();
+        .count();
+    let album_count = u32::try_from(album_count).unwrap_or(u32::MAX);
     Some((
         ArtistSummary {
             artist: Arc::clone(&artist.artist),
-            representative_albums,
+            artwork: artist.artwork.clone(),
             album_count,
             track_count,
             duration_seconds,
@@ -1917,6 +1926,77 @@ fn artist_summary_and_credits(
         has_artist_credit,
         has_album_artist_credit,
     ))
+}
+
+pub(crate) fn organize_artwork_bindings(
+    state: &mut LoadedState,
+    album_ids: &std::collections::HashSet<AlbumId>,
+    artist_ids: &std::collections::HashSet<ArtistId>,
+) {
+    let album_bindings = album_ids
+        .iter()
+        .filter_map(|id| {
+            let album = state.albums.get(id)?;
+            let representative_track = album_projection(state, album, None)
+                .and_then(|(_, _, representative_track)| representative_track);
+            Some((
+                id.clone(),
+                AlbumArtwork {
+                    album: Arc::clone(&album.album),
+                    representative_track,
+                },
+            ))
+        })
+        .collect::<Vec<_>>();
+    for (id, artwork) in album_bindings {
+        if let Some(album) = state.albums.get_mut(&id) {
+            album.artwork = artwork;
+        }
+    }
+
+    let artist_bindings = artist_ids
+        .iter()
+        .filter_map(|id| {
+            let artist = state.artists.get(id)?;
+            let mut albums = artist_album_slots(state, id)
+                .into_iter()
+                .filter_map(|slot| state.albums.get_slot(slot))
+                .map(|album| {
+                    (
+                        album_is_primary_for_artist(state, album, id),
+                        album.year,
+                        Arc::clone(&album.album),
+                        album.artwork.clone(),
+                    )
+                })
+                .collect::<Vec<_>>();
+            albums.sort_by(
+                |(left_primary, left_year, left, _), (right_primary, right_year, right, _)| {
+                    right_primary
+                        .cmp(left_primary)
+                        .then(left_year.cmp(right_year))
+                        .then_with(|| compare_albums(left, right))
+                },
+            );
+            Some((
+                id.clone(),
+                ArtistArtwork {
+                    artist: Arc::clone(&artist.artist),
+                    representative_albums: albums
+                        .into_iter()
+                        .take(ARTIST_ARTWORK_LIMIT)
+                        .map(|(_, _, _, artwork)| artwork)
+                        .collect::<Vec<_>>()
+                        .into(),
+                },
+            ))
+        })
+        .collect::<Vec<_>>();
+    for (id, artwork) in artist_bindings {
+        if let Some(artist) = state.artists.get_mut(&id) {
+            artist.artwork = artwork;
+        }
+    }
 }
 
 fn artist_summary(

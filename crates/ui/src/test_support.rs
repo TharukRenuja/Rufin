@@ -1,9 +1,9 @@
 use std::sync::Arc;
 
 use library::{
-    Album, AlbumArtwork, AlbumId, AlbumRelations, AlbumSummary, CandidateBatch, CandidateFinish,
-    CandidateHeader, HomeFacts, Libraries, Library, Playlist, PlaylistEntry, PlaylistId,
-    PlaylistSnapshot, PlaylistSummary, STORE_ROW_BATCH_LIMIT, SmartPlaylist,
+    Album, AlbumArtwork, AlbumId, AlbumRelations, AlbumSummary, Artist, CandidateBatch,
+    CandidateFinish, CandidateHeader, HomeFacts, Libraries, Library, Playlist, PlaylistEntry,
+    PlaylistId, PlaylistSnapshot, PlaylistSummary, STORE_ROW_BATCH_LIMIT, SmartPlaylist,
     SmartPlaylistDefinition, SmartPlaylistId, SmartPlaylistSortField, SmartPlaylistSummary,
     SourceId, Track, TrackData, TrackId, TrackRelations,
 };
@@ -147,6 +147,16 @@ pub(crate) fn source_fixture(
     tracks: Vec<Track>,
     playlists: Vec<PlaylistSnapshot>,
 ) -> SourceFixture {
+    source_fixture_with_artists(source_id, albums, tracks, Vec::new(), playlists)
+}
+
+pub(crate) fn source_fixture_with_artists(
+    source_id: SourceId,
+    albums: Vec<Album>,
+    tracks: Vec<Track>,
+    artists: Vec<Artist>,
+    playlists: Vec<PlaylistSnapshot>,
+) -> SourceFixture {
     let directory = tempfile::tempdir().expect("temporary UI Store");
     let libraries = Libraries::open(directory.path().join("library.db")).expect("open UI Store");
     let mut candidate = libraries
@@ -165,6 +175,11 @@ pub(crate) fn source_fixture(
         candidate
             .write(CandidateBatch::Tracks(tracks.to_vec()))
             .expect("write UI Tracks");
+    }
+    for artists in artists.chunks(STORE_ROW_BATCH_LIMIT) {
+        candidate
+            .write(CandidateBatch::Artists(artists.to_vec()))
+            .expect("write UI Artists");
     }
     for playlists in playlists.chunks(STORE_ROW_BATCH_LIMIT) {
         candidate

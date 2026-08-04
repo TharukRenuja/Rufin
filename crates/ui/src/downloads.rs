@@ -260,12 +260,7 @@ impl Shell {
                 .artist_overview(id, selected.music_folder_id.as_ref())
                 .ok()
                 .flatten()
-                .map(|artist| {
-                    vec![ArtworkBinding::artist(
-                        &artist.summary.artist,
-                        &artist.summary.representative_albums,
-                    )]
-                }),
+                .map(|artist| vec![ArtworkBinding::artist(&artist.summary.artwork)]),
             DownloadSubject::Genre(id) => selected
                 .library
                 .genre_detail(id, selected.music_folder_id.as_ref())

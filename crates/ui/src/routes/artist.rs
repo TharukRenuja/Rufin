@@ -151,7 +151,7 @@ impl ArtistDetailHeaderProjection {
         self.track_count.set_text(&self.facts.track_text());
         self.cover.replace(
             shell,
-            ArtworkBinding::artist(&artist, &summary.representative_albums),
+            ArtworkBinding::artist(&summary.artwork),
             stable_seed(artist.id.as_str()),
         );
         shell.update_visible_favorite_buttons(
@@ -812,7 +812,7 @@ impl Shell {
         let seed = stable_seed(artist.id.as_str());
         let cover = detail_cover_projection(
             self,
-            ArtworkBinding::artist(&artist, &current_summary.borrow().representative_albums),
+            ArtworkBinding::artist(&current_summary.borrow().artwork),
             seed,
             cover_size,
             "artist-detail-cover",

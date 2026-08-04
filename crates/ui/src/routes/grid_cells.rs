@@ -45,6 +45,9 @@ use super::route_shell::restore_single_click_activation_on_primary_press;
 
 pub(super) trait ReusableCollectionGridCell<T>: 'static {
     fn widget(&self) -> gtk::Widget;
+    fn activatable(&self, _: &T) -> bool {
+        true
+    }
     fn bind(&self, position: u32, value: T);
     fn clear(&self);
     fn apply_fields(&self, fields: &[LibraryField]);
@@ -362,6 +365,9 @@ where
             return;
         };
         if let Some(cell) = bind_cells.borrow().get(&(item.as_ptr() as usize)) {
+            let activatable = cell.activatable(&value);
+            item.set_activatable(activatable);
+            item.set_selectable(activatable);
             cell.bind(item.position(), value);
         }
     });
@@ -370,6 +376,8 @@ where
         let Some(item) = item.downcast_ref::<gtk::ListItem>() else {
             return;
         };
+        item.set_activatable(false);
+        item.set_selectable(false);
         if let Some(cell) = unbind_cells.borrow().get(&(item.as_ptr() as usize)) {
             cell.clear();
         }
@@ -1034,7 +1042,7 @@ impl ReusableCollectionGridCell<ArtistSummary> for ArtistGridCell {
     fn bind(&self, _: u32, artist: ArtistSummary) {
         self.shell.bind_artwork_tile(
             &self.cover_tile,
-            ArtworkBinding::artist(&artist.artist, &artist.representative_albums),
+            ArtworkBinding::artist(&artist.artwork),
             stable_seed(artist.artist.id.as_str()),
             COLLECTION_GRID_MAX_CARD_WIDTH,
             LARGE_COVER_SIZE,
