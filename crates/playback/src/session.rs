@@ -621,7 +621,7 @@ impl PlaybackSession {
                     SessionUpdate::default()
                 }
             }
-            BackendEvent::NextUnavailable {
+            BackendEvent::NextPreparationFailed {
                 current_run,
                 next_run,
                 error,
@@ -629,7 +629,6 @@ impl PlaybackSession {
                 if self.next_plan.as_ref().is_some_and(|plan| {
                     plan.current_run == current_run && plan.next_run == next_run
                 }) {
-                    self.next_plan = None;
                     SessionUpdate {
                         effects: vec![SessionEffect::NonfatalError(error.message().to_string())],
                         ..SessionUpdate::default()
@@ -1134,7 +1133,7 @@ impl PlaybackSession {
             return update;
         };
         self.next_plan = reserved.filter(|plan| plan.occurrence == next_occurrence);
-        self.promote_or_begin(next_occurrence, false, &mut update.effects);
+        self.promote_or_begin(next_occurrence, true, &mut update.effects);
         update
     }
 
@@ -1397,13 +1396,6 @@ impl PlaybackSession {
             return SessionUpdate::default();
         }
         current.status = status;
-        match status {
-            TransportStatus::Playing => current.desired_playing = true,
-            TransportStatus::Paused | TransportStatus::Stopped => {
-                current.desired_playing = false;
-            }
-            TransportStatus::Resolving | TransportStatus::Buffering | TransportStatus::Failed => {}
-        }
         let mut update = SessionUpdate::changed();
         let progress_reported = self.emit_progress_facts(&mut update.effects);
         if matches!(status, TransportStatus::Playing | TransportStatus::Paused)
@@ -1485,6 +1477,10 @@ impl PlaybackSession {
         {
             return SessionUpdate::default();
         }
+        let desired_playing = self
+            .current_run
+            .as_ref()
+            .is_some_and(|current| current.desired_playing);
         let mut update = SessionUpdate::changed();
         let reserved = self.next_plan.clone();
         self.finish_current(RunEndReason::Completed, sample, &mut update.effects);
@@ -1494,7 +1490,7 @@ impl PlaybackSession {
             .map(|entry| entry.occurrence.clone());
         if let Some(next) = next {
             self.next_plan = reserved.filter(|plan| plan.occurrence == next);
-            self.promote_or_begin(next, false, &mut update.effects);
+            self.promote_or_begin(next, desired_playing, &mut update.effects);
         } else {
             self.auto_dj_waiting_for_continuation = true;
             self.maybe_request_auto_dj(&mut update.effects);
@@ -1508,16 +1504,33 @@ impl PlaybackSession {
         new_run: RunId,
         sample: &ClockSample,
     ) -> SessionUpdate {
-        if !self
+        let current_run = self.current_run.as_ref().map(|current| current.id);
+        if current_run == Some(new_run) {
+            return SessionUpdate::default();
+        }
+        if current_run != Some(old_run) {
+            return SessionUpdate {
+                effects: vec![SessionEffect::Backend(BackendCommand::Stop {
+                    run: new_run,
+                })],
+                ..SessionUpdate::default()
+            };
+        }
+        let desired_playing = self
             .current_run
             .as_ref()
-            .is_some_and(|current| current.id == old_run)
-            || !self
-                .next_plan
-                .as_ref()
-                .is_some_and(|plan| plan.current_run == old_run && plan.next_run == new_run)
+            .is_none_or(|current| current.desired_playing);
+        if !self
+            .next_plan
+            .as_ref()
+            .is_some_and(|plan| plan.current_run == old_run && plan.next_run == new_run)
         {
-            return SessionUpdate::default();
+            let mut update = self.accept_ended(old_run, sample);
+            update.effects.insert(
+                0,
+                SessionEffect::Backend(BackendCommand::Stop { run: new_run }),
+            );
+            return update;
         }
         let Some(occurrence) = self.next_plan.as_ref().map(|plan| plan.occurrence.clone()) else {
             return SessionUpdate::default();
@@ -1527,15 +1540,22 @@ impl PlaybackSession {
         if !self.sequence.activate(&occurrence) {
             return update;
         }
-        self.install_reserved_run(new_run, occurrence, &mut update.effects);
+        self.install_reserved_run(new_run, occurrence, desired_playing, &mut update.effects);
         self.mark_started(sample, &mut update.effects);
+        if !desired_playing {
+            update
+                .effects
+                .push(SessionEffect::Backend(BackendCommand::Pause {
+                    run: new_run,
+                }));
+        }
         update
     }
 
     fn promote_or_begin(
         &mut self,
         occurrence: OccurrenceId,
-        transitioned: bool,
+        desired_playing: bool,
         effects: &mut Vec<SessionEffect>,
     ) {
         let plan = self
@@ -1544,11 +1564,14 @@ impl PlaybackSession {
             .filter(|plan| plan.occurrence == occurrence);
         let Some(plan) = plan else {
             self.begin_selected_run(effects);
+            if !desired_playing && let Some(current) = self.current_run.as_mut() {
+                current.desired_playing = false;
+            }
             return;
         };
-        self.install_reserved_run(plan.next_run, occurrence, effects);
+        self.install_reserved_run(plan.next_run, occurrence, desired_playing, effects);
         match plan.resolution {
-            NextResolution::Ready(stream) if !transitioned => {
+            NextResolution::Ready(stream) if desired_playing => {
                 if let Some(current) = self.current_run.as_mut() {
                     current.status = TransportStatus::Buffering;
                 }
@@ -1559,8 +1582,13 @@ impl PlaybackSession {
                     start_position_millis: 0,
                 }));
             }
-            NextResolution::Resolving if !transitioned => {}
-            _ => {}
+            NextResolution::Ready(stream) => {
+                if let Some(current) = self.current_run.as_mut() {
+                    current.status = TransportStatus::Paused;
+                    current.resolved_stream = Some(stream);
+                }
+            }
+            NextResolution::Resolving => {}
         }
     }
 
@@ -1568,6 +1596,7 @@ impl PlaybackSession {
         &mut self,
         run: RunId,
         occurrence: OccurrenceId,
+        desired_playing: bool,
         effects: &mut Vec<SessionEffect>,
     ) {
         let Some(entry) = self
@@ -1578,12 +1607,14 @@ impl PlaybackSession {
         else {
             return;
         };
-        self.current_run = Some(RunContext::resolving(
+        let mut current = RunContext::resolving(
             run,
             self.play_id(run),
             self.sequence.source_id().clone(),
             &entry,
-        ));
+        );
+        current.desired_playing = desired_playing;
+        self.current_run = Some(current);
         effects.push(SessionEffect::CurrentMediaChanged);
         self.next_plan = None;
         self.buffering_percent = None;
@@ -1972,7 +2003,6 @@ fn decided_transition(
     next: &SequenceEntry,
 ) -> NextTransition {
     match settings.transition_mode {
-        PlaybackTransitionMode::Default => NextTransition::Default,
         PlaybackTransitionMode::Gapless => NextTransition::Gapless,
         PlaybackTransitionMode::Crossfade
             if settings.skip_same_album_crossfade
@@ -2081,6 +2111,224 @@ mod tests {
         assert!(ended.effects.iter().any(|effect| matches!(
             effect,
             SessionEffect::ResolveStream { run, .. } if *run == second
+        )));
+    }
+
+    #[test]
+    fn next_preparation_failure_retains_playing_and_paused_fallbacks() {
+        for pause_before_end in [false, true] {
+            let (mut session, current_run, next_run) = session_with_resolved_next();
+            let failed = session.handle_backend(
+                BackendEvent::NextPreparationFailed {
+                    current_run,
+                    next_run,
+                    error: crate::BackendFailure::new("next stream failed"),
+                },
+                &sample(2),
+            );
+
+            assert_eq!(session.current_run(), Some(current_run));
+            assert!(session.desired_playing());
+            assert!(matches!(
+                failed.effects.as_slice(),
+                [SessionEffect::NonfatalError(message)] if message == "next stream failed"
+            ));
+            assert!(!failed.effects.iter().any(|effect| matches!(
+                effect,
+                SessionEffect::FatalError(_)
+                    | SessionEffect::Listening(ListeningFact::Ended { .. })
+            )));
+            if pause_before_end {
+                session
+                    .handle_command(SessionCommand::Pause, &sample(3))
+                    .expect("pause before the failed handoff ends");
+            }
+
+            let ended =
+                session.handle_backend(BackendEvent::Ended { run: current_run }, &sample(4));
+
+            assert_eq!(session.current_run(), Some(next_run));
+            assert_eq!(session.desired_playing(), !pause_before_end);
+            let started_reserved = ended.effects.iter().any(|effect| {
+                matches!(
+                    effect,
+                    SessionEffect::Backend(BackendCommand::Start {
+                        run,
+                        current,
+                        start_position_millis: 0,
+                        ..
+                    }) if *run == next_run && current.uri() == "https://music.example/next.flac"
+                )
+            });
+            assert_eq!(started_reserved, !pause_before_end);
+            assert!(!ended.effects.iter().any(|effect| matches!(
+                effect,
+                SessionEffect::ResolveStream { run, .. } if *run == next_run
+            )));
+
+            if pause_before_end {
+                let resumed = session
+                    .handle_command(SessionCommand::Play, &sample(5))
+                    .expect("resume the retained fallback");
+                assert!(resumed.effects.iter().any(|effect| matches!(
+                    effect,
+                    SessionEffect::Backend(BackendCommand::Start { run, current, .. })
+                        if *run == next_run
+                            && current.uri() == "https://music.example/next.flac"
+                )));
+                assert!(!resumed.effects.iter().any(|effect| matches!(
+                    effect,
+                    SessionEffect::ResolveStream { run, .. } if *run == next_run
+                )));
+            }
+        }
+    }
+
+    #[test]
+    fn late_playing_state_cannot_resume_a_paused_transition() {
+        let (mut session, current_run, next_run) = session_with_resolved_next();
+        session
+            .handle_command(SessionCommand::Pause, &sample(2))
+            .expect("pause before the transition");
+        session.handle_backend(
+            BackendEvent::State {
+                run: current_run,
+                state: BackendState::Paused,
+            },
+            &sample(3),
+        );
+
+        session.handle_backend(
+            BackendEvent::State {
+                run: current_run,
+                state: BackendState::Playing,
+            },
+            &sample(4),
+        );
+        let transitioned = session.handle_backend(
+            BackendEvent::Transitioned {
+                old_run: current_run,
+                new_run: next_run,
+            },
+            &sample(5),
+        );
+
+        assert_eq!(session.current_run(), Some(next_run));
+        assert!(!session.desired_playing());
+        assert!(transitioned.effects.iter().any(|effect| matches!(
+            effect,
+            SessionEffect::Backend(BackendCommand::Pause { run }) if *run == next_run
+        )));
+    }
+
+    #[test]
+    fn late_paused_state_cannot_cancel_a_resumed_transition() {
+        let (mut session, current_run, next_run) = session_with_resolved_next();
+        session
+            .handle_command(SessionCommand::Pause, &sample(2))
+            .expect("pause before resuming");
+        session
+            .handle_command(SessionCommand::Play, &sample(3))
+            .expect("resume before the transition");
+
+        session.handle_backend(
+            BackendEvent::State {
+                run: current_run,
+                state: BackendState::Paused,
+            },
+            &sample(4),
+        );
+        let transitioned = session.handle_backend(
+            BackendEvent::Transitioned {
+                old_run: current_run,
+                new_run: next_run,
+            },
+            &sample(5),
+        );
+
+        assert_eq!(session.current_run(), Some(next_run));
+        assert!(session.desired_playing());
+        assert!(!transitioned.effects.iter().any(|effect| matches!(
+            effect,
+            SessionEffect::Backend(BackendCommand::Pause { run }) if *run == next_run
+        )));
+    }
+
+    #[test]
+    fn a_queue_change_wins_over_an_obsolete_prepared_transition() {
+        let mut session = session(&[1, 2, 3]);
+        let started = session
+            .handle_command(SessionCommand::Play, &sample(0))
+            .expect("start");
+        let current_run = session.current_run().expect("current run");
+        let obsolete_next_run = started
+            .effects
+            .iter()
+            .find_map(|effect| match effect {
+                SessionEffect::ResolveStream { run, .. } if *run != current_run => Some(*run),
+                _ => None,
+            })
+            .expect("original reserved next run");
+        session.stream_resolved(
+            current_run,
+            ResolvedStream::new("https://music.example/current.flac"),
+        );
+        session.handle_backend(BackendEvent::Started { run: current_run }, &sample(1));
+        session.stream_resolved(
+            obsolete_next_run,
+            ResolvedStream::new("https://music.example/obsolete.flac"),
+        );
+        session
+            .handle_command(SessionCommand::Pause, &sample(2))
+            .expect("pause before the transition boundary");
+        let replacement = session.sequence().entries()[2].occurrence.clone();
+        let replanned = session
+            .handle_command(SessionCommand::MoveAfterCurrent(replacement), &sample(3))
+            .expect("replace the reserved next track");
+        let replacement_run = replanned
+            .effects
+            .iter()
+            .find_map(|effect| match effect {
+                SessionEffect::ResolveStream { run, .. } => Some(*run),
+                _ => None,
+            })
+            .expect("replacement reserved run");
+        session.stream_resolved(
+            replacement_run,
+            ResolvedStream::new("https://music.example/replacement.flac"),
+        );
+
+        let transitioned = session.handle_backend(
+            BackendEvent::Transitioned {
+                old_run: current_run,
+                new_run: obsolete_next_run,
+            },
+            &sample(4),
+        );
+
+        assert_eq!(session.current_run(), Some(replacement_run));
+        assert!(!session.desired_playing());
+        assert_eq!(
+            session
+                .sequence()
+                .selected()
+                .map(|entry| entry.track.id.clone()),
+            Some(TrackId::fake(3))
+        );
+        assert!(transitioned.effects.iter().any(|effect| matches!(
+            effect,
+            SessionEffect::Backend(BackendCommand::Stop { run })
+                if *run == obsolete_next_run
+        )));
+        assert!(!transitioned.effects.iter().any(|effect| matches!(
+            effect,
+            SessionEffect::Backend(BackendCommand::Start { run, .. })
+                if *run == replacement_run
+        )));
+        assert!(!transitioned.effects.iter().any(|effect| matches!(
+            effect,
+            SessionEffect::Listening(ListeningFact::Started { run, .. })
+                if *run == obsolete_next_run
         )));
     }
 
@@ -2982,6 +3230,32 @@ mod tests {
             false,
             2,
         )
+    }
+
+    fn session_with_resolved_next() -> (PlaybackSession, RunId, RunId) {
+        let mut session = session(&[1, 2]);
+        let started = session
+            .handle_command(SessionCommand::Play, &sample(0))
+            .expect("start");
+        let current_run = session.current_run().expect("current run");
+        let next_run = started
+            .effects
+            .iter()
+            .find_map(|effect| match effect {
+                SessionEffect::ResolveStream { run, .. } if *run != current_run => Some(*run),
+                _ => None,
+            })
+            .expect("reserved next run");
+        session.stream_resolved(
+            current_run,
+            ResolvedStream::new("https://music.example/current.flac"),
+        );
+        session.handle_backend(BackendEvent::Started { run: current_run }, &sample(1));
+        session.stream_resolved(
+            next_run,
+            ResolvedStream::new("https://music.example/next.flac"),
+        );
+        (session, current_run, next_run)
     }
 
     fn empty_session() -> PlaybackSession {

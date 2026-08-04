@@ -2809,6 +2809,7 @@ version = "0.12.0"
 dependencies = [
  "library",
  "serde",
+ "serde_json",
  "thiserror",
 ]
 

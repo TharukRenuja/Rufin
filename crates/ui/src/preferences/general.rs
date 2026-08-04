@@ -429,7 +429,7 @@ pub(crate) fn playback_page(shell: &Rc<Shell>) -> adw::PreferencesPage {
     let transition_shell = Rc::clone(shell);
     let transition_row = selection_row(
         &tr("Transition mode"),
-        &[tr("Default"), tr("Gapless"), tr("Crossfade")],
+        &[tr("Gapless"), tr("Crossfade")],
         transition_index(settings.transition_mode),
         move |selected| {
             transition_shell.update_playback_settings(|settings| {
@@ -835,16 +835,14 @@ pub(super) fn accent_preference_from_index(index: u32) -> AccentPreference {
 }
 pub(crate) fn transition_index(mode: PlaybackTransitionMode) -> u32 {
     match mode {
-        PlaybackTransitionMode::Default => 0,
-        PlaybackTransitionMode::Gapless => 1,
-        PlaybackTransitionMode::Crossfade => 2,
+        PlaybackTransitionMode::Gapless => 0,
+        PlaybackTransitionMode::Crossfade => 1,
     }
 }
 pub(crate) fn transition_from_index(index: u32) -> PlaybackTransitionMode {
     match index {
-        1 => PlaybackTransitionMode::Gapless,
-        2 => PlaybackTransitionMode::Crossfade,
-        _ => PlaybackTransitionMode::Default,
+        1 => PlaybackTransitionMode::Crossfade,
+        _ => PlaybackTransitionMode::Gapless,
     }
 }
 pub(crate) fn replay_gain_index(mode: ReplayGainMode) -> u32 {

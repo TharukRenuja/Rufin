@@ -24,7 +24,6 @@ impl std::fmt::Display for RunId {
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum NextTransition {
     #[default]
-    Default,
     Gapless,
     Crossfade {
         duration_millis: u64,
@@ -165,7 +164,7 @@ pub enum BackendEvent {
     NextNeeded {
         run: RunId,
     },
-    NextUnavailable {
+    NextPreparationFailed {
         current_run: RunId,
         next_run: RunId,
         error: BackendFailure,
