@@ -1,6 +1,9 @@
 use std::rc::Rc;
 
-use crate::{LeftSidebarMode, LibraryColumnWidth, LibraryListKey, LibraryListSettings};
+use crate::{
+    AccentPreference, LeftSidebarMode, LibraryColumnWidth, LibraryListKey, LibraryListSettings,
+    ThemePreference,
+};
 use ::library::HomeBlockKind;
 use adw::prelude::*;
 use desktop_integration::{DisplayType, LinkType};
@@ -229,6 +232,30 @@ impl Shell {
             settings.type_to_search_enabled = enabled;
             true
         });
+    }
+
+    pub(super) fn set_theme_preference(self: &Rc<Self>, preference: ThemePreference) {
+        if let Some(settings) = self.update_app_settings("theme setting", |settings| {
+            if settings.theme_preference == preference {
+                return false;
+            }
+            settings.theme_preference = preference;
+            true
+        }) {
+            self.appearance.apply(&settings);
+        }
+    }
+
+    pub(super) fn set_accent_preference(self: &Rc<Self>, preference: AccentPreference) {
+        if let Some(settings) = self.update_app_settings("accent setting", |settings| {
+            if settings.accent_preference == preference {
+                return false;
+            }
+            settings.accent_preference = preference;
+            true
+        }) {
+            self.appearance.apply(&settings);
+        }
     }
 
     pub(crate) fn toggle_active_left_sidebar_size(self: &Rc<Self>) {

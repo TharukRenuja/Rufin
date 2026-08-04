@@ -14,8 +14,8 @@ use secrets::SecretStorageMode;
 use serde::{Deserialize, Serialize};
 
 use super::{
-    ContextMenuSettings, ExternalSiteLinkSettings, FolderViewSettings, LayoutSettings,
-    LibraryListKey, LibraryListSettings, LibraryListSettingsEntry, SidebarSettings,
+    AccentPreference, ContextMenuSettings, ExternalSiteLinkSettings, FolderViewSettings,
+    LayoutSettings, LibraryListKey, LibraryListSettings, LibraryListSettingsEntry, SidebarSettings,
     ThemePreference, default_library_list_settings, sanitized_window_size,
 };
 
@@ -28,6 +28,8 @@ pub struct Settings {
     #[serde(default)]
     pub context_menu: ContextMenuSettings,
     pub theme_preference: ThemePreference,
+    #[serde(default)]
+    pub accent_preference: AccentPreference,
     #[serde(default = "default_language_preference")]
     pub language: String,
     pub private_mode: bool,
@@ -101,6 +103,7 @@ impl Default for Settings {
             sidebar: SidebarSettings::default(),
             context_menu: ContextMenuSettings::default(),
             theme_preference: ThemePreference::System,
+            accent_preference: AccentPreference::System,
             language: default_language_preference(),
             private_mode: false,
             notifications_enabled: false,

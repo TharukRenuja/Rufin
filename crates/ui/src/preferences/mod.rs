@@ -21,7 +21,7 @@ mod library;
 pub(crate) mod persistence;
 pub(crate) mod source;
 
-use general::{layout_page, playback_page, scrobbling_page};
+use general::{appearance_page, playback_page, scrobbling_page};
 use layout::{
     discord_display_from_index, discord_display_index, discord_link_from_index, discord_link_index,
     left_sidebar_mode_from_index, left_sidebar_row, right_sidebar_mode_from_index,
@@ -122,7 +122,7 @@ impl Shell {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum PreferencesPageKind {
     General,
-    Layout,
+    Appearance,
     Scrobbling,
     Playback,
     Library,
@@ -131,7 +131,7 @@ enum PreferencesPageKind {
 impl PreferencesPageKind {
     const ALL: [Self; 5] = [
         Self::General,
-        Self::Layout,
+        Self::Appearance,
         Self::Scrobbling,
         Self::Playback,
         Self::Library,
@@ -140,7 +140,7 @@ impl PreferencesPageKind {
     fn name(self) -> &'static str {
         match self {
             Self::General => "general",
-            Self::Layout => "layout",
+            Self::Appearance => "appearance",
             Self::Scrobbling => "scrobbling",
             Self::Playback => "playback",
             Self::Library => "library",
@@ -150,7 +150,7 @@ impl PreferencesPageKind {
     fn title(self) -> String {
         match self {
             Self::General => tr("General"),
-            Self::Layout => tr("Layout"),
+            Self::Appearance => tr("Appearance"),
             Self::Scrobbling => tr("Scrobbling"),
             Self::Playback => tr("Playback"),
             Self::Library => tr("Library"),
@@ -160,7 +160,7 @@ impl PreferencesPageKind {
     fn icon_name(self) -> &'static str {
         match self {
             Self::General => "preferences-system-symbolic",
-            Self::Layout => "preferences-desktop-display-symbolic",
+            Self::Appearance => "preferences-desktop-appearance-symbolic",
             Self::Scrobbling => SCROBBLING_ICON_NAME,
             Self::Playback => "media-playback-start-symbolic",
             Self::Library => "rufin-route-tracks-symbolic",
@@ -643,7 +643,7 @@ fn build_preferences_page(
 ) -> gtk::Widget {
     match kind {
         PreferencesPageKind::General => general_page(shell, dialog).upcast(),
-        PreferencesPageKind::Layout => layout_page(shell).upcast(),
+        PreferencesPageKind::Appearance => appearance_page(shell).upcast(),
         PreferencesPageKind::Scrobbling => scrobbling_page(shell).upcast(),
         PreferencesPageKind::Playback => playback_page(shell).upcast(),
         PreferencesPageKind::Library => library::library_page(
@@ -1060,11 +1060,9 @@ fn secret_storage_mode_from_index(index: u32) -> SecretStorageMode {
         _ => SecretStorageMode::ConfigFile,
     }
 }
-fn interface_group(shell: &Rc<Shell>) -> adw::PreferencesGroup {
+fn layout_group(shell: &Rc<Shell>) -> adw::PreferencesGroup {
     let settings = shell.settings.current.borrow().clone();
-    let group = adw::PreferencesGroup::builder()
-        .title(tr("Interface"))
-        .build();
+    let group = adw::PreferencesGroup::builder().title(tr("Layout")).build();
 
     let default_left_shell = Rc::clone(shell);
     let default_left_row = left_sidebar_row(
