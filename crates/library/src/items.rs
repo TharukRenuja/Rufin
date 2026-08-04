@@ -1,7 +1,7 @@
 //! Canonical music values accepted from a source.
 //!
 //! Sources construct these values, the Store persists them, and one selected
-//! [`LoadedLibrary`](crate::LoadedLibrary) shares them with routes and
+//! [`Library`](crate::Library) shares them with routes and
 //! Playback. Relationships stay with the item that reported them; callers do
 //! not rebuild a second relation model.
 

@@ -17,18 +17,8 @@ msgstr ""
 "Content-Transfer-Encoding: 8bit\n"
 
 msgid ""
-"Changing secret backend removes legacy config secrets and signs you out "
-"everywhere, including API secrets. App cache is not affected."
-msgstr ""
-
-msgid ""
-"Downloaded music from this server will no longer be available offline. "
-"Automatic download rules will also be turned off."
-msgstr ""
-
-msgid ""
-"Keep music from the selected server available without a connection. Folder "
-"changes apply to new downloads."
+"Downloads from this server will be removed, and automatic rules will be "
+"turned off"
 msgstr ""
 
 msgid ""
@@ -40,13 +30,18 @@ msgid ""
 "No results \302\257\\_(\302\260\342\225\255\342\225\256\302\260)_/\302\257"
 msgstr ""
 
+msgid ""
+"Only downloads from this rule will be deleted. Shared and manual downloads "
+"stay"
+msgstr ""
+
 #, rust-format
 msgid ""
 "Saved mapping. {direct} direct, {prefix} prefix, {metadata} metadata, "
-"{unmatched} unmatched of {total} track."
+"{unmatched} unmatched of {total} track"
 msgid_plural ""
 "Saved mapping. {direct} direct, {prefix} prefix, {metadata} metadata, "
-"{unmatched} unmatched of {total} tracks."
+"{unmatched} unmatched of {total} tracks"
 msgstr[0] ""
 msgstr[1] ""
 
@@ -62,7 +57,7 @@ msgstr ""
 
 msgid ""
 "These folders are combined into the Local source and shown through folder "
-"browsing."
+"browsing"
 msgstr ""
 
 msgid ""
@@ -72,21 +67,21 @@ msgstr ""
 
 msgid ""
 "This uses Jellyfin API for play radio, necessary if you want recommendation "
-"plugins to work."
+"plugins to work"
 msgstr ""
 
 msgid ""
-"Tracks used only by this rule will be deleted. Downloads shared with another "
-"rule or manual download will be kept."
+"This will log you out and clear your secrets including API ones. Your app "
+"cache is not touched."
 msgstr ""
 
 #, rust-format
 msgid ""
 "Unsaved changes. {direct} direct, {prefix} prefix, {metadata} metadata, "
-"{unmatched} unmatched of {total} track."
+"{unmatched} unmatched of {total} track"
 msgid_plural ""
 "Unsaved changes. {direct} direct, {prefix} prefix, {metadata} metadata, "
-"{unmatched} unmatched of {total} tracks."
+"{unmatched} unmatched of {total} tracks"
 msgstr[0] ""
 msgstr[1] ""
 
@@ -120,22 +115,25 @@ msgstr ""
 msgid "About Rufin"
 msgstr ""
 
+msgid "Accent color"
+msgstr ""
+
 msgid "Add Rule"
+msgstr ""
+
+msgid "Add a matching server prefix"
 msgstr ""
 
 msgid "Add a new source"
 msgstr ""
 
-msgid "Add a server to use Jellyfin, Navidrome, or OpenSubsonic."
+msgid "Add a title"
 msgstr ""
 
 msgid "Add current"
 msgstr ""
 
 msgid "Add folder"
-msgstr ""
-
-msgid "Add folders to use the Local source."
 msgstr ""
 
 msgid "Add server"
@@ -201,6 +199,9 @@ msgstr ""
 msgid "App settings"
 msgstr ""
 
+msgid "Appearance"
+msgstr ""
+
 msgid "Appears On"
 msgstr ""
 
@@ -258,7 +259,7 @@ msgstr ""
 msgid "Back"
 msgstr ""
 
-msgid "By default, this uses Rufin's own cache directory."
+msgid "Blue"
 msgstr ""
 
 msgid "Cached"
@@ -291,31 +292,19 @@ msgid_plural "Changes apply to {count} tracks"
 msgstr[0] ""
 msgstr[1] ""
 
-msgid "Checking\342\200\246"
-msgstr ""
-
-msgid "Choose a configured source or add another."
+msgid "Checking..."
 msgstr ""
 
 msgid "Choose a local music folder"
 msgstr ""
 
-msgid "Choose a local music folder."
-msgstr ""
-
-msgid "Choose an existing local prefix."
+msgid "Choose an existing local folder"
 msgstr ""
 
 msgid "Choose at least one local music folder"
 msgstr ""
 
 msgid "Choose one or more folders to scan and play directly from this computer"
-msgstr ""
-
-msgid "Choose the current page layout."
-msgstr ""
-
-msgid "Choose the local music folder."
 msgstr ""
 
 msgid "Choose"
@@ -354,6 +343,9 @@ msgstr ""
 msgid "Collections"
 msgstr ""
 
+msgid "Color scheme"
+msgstr ""
+
 msgid "Columns"
 msgstr ""
 
@@ -364,9 +356,6 @@ msgid "Comment"
 msgstr ""
 
 msgid "Compact"
-msgstr ""
-
-msgid "Configure saved music sources and local file access."
 msgstr ""
 
 msgid "Connect"
@@ -397,6 +386,13 @@ msgstr ""
 msgid "Could not save diagnostic log"
 msgstr ""
 
+#, rust-format
+msgid "Couldn't connect to {service}"
+msgstr ""
+
+msgid "Couldn't load this folder"
+msgstr ""
+
 msgid "Couldn't search for lyrics"
 msgstr ""
 
@@ -418,6 +414,9 @@ msgstr ""
 msgid "Dance"
 msgstr ""
 
+msgid "Dark"
+msgstr ""
+
 msgid "Date added"
 msgstr ""
 
@@ -431,9 +430,6 @@ msgid "Default left sidebar"
 msgstr ""
 
 msgid "Default right sidebar"
-msgstr ""
-
-msgid "Default"
 msgstr ""
 
 msgid "Delete Playlist"
@@ -484,12 +480,6 @@ msgstr ""
 msgid "Download Queue"
 msgstr ""
 
-msgid "Download every track, including tracks added later."
-msgstr ""
-
-msgid "Download favorite tracks and tracks from favorite albums and artists."
-msgstr ""
-
 msgid "Download quality"
 msgstr ""
 
@@ -497,9 +487,6 @@ msgid "Download queued"
 msgstr ""
 
 msgid "Download started"
-msgstr ""
-
-msgid "Download tracks from every playlist."
 msgstr ""
 
 msgid "Download"
@@ -538,15 +525,6 @@ msgstr ""
 msgid "Enter API credentials first"
 msgstr ""
 
-msgid "Enter a matching server prefix to map this path."
-msgstr ""
-
-msgid "Enter a new playlist name."
-msgstr ""
-
-msgid "Enter a positive number."
-msgstr ""
-
 msgid "Enter a server address, username, and password"
 msgstr ""
 
@@ -554,6 +532,9 @@ msgid "Entire Library"
 msgstr ""
 
 msgid "Equalizer"
+msgstr ""
+
+msgid "Everything, including new tracks"
 msgstr ""
 
 msgid "Exit to tray"
@@ -581,6 +562,9 @@ msgid "Fade audio when playback is paused or resumed"
 msgstr ""
 
 msgid "Favorite tracks"
+msgstr ""
+
+msgid "Favorite tracks, plus tracks from favorite albums and artists"
 msgstr ""
 
 msgid "Favorite"
@@ -667,6 +651,9 @@ msgstr ""
 msgid "Go to Artist"
 msgstr ""
 
+msgid "Green"
+msgstr ""
+
 msgid "Grid labels"
 msgstr ""
 
@@ -697,7 +684,7 @@ msgstr ""
 msgid "Identify"
 msgstr ""
 
-msgid "Identifying\342\200\246"
+msgid "Identifying..."
 msgstr ""
 
 msgid "If the page doesn't load, then Libre.fm blocks your IP range/VPN"
@@ -727,13 +714,13 @@ msgstr ""
 msgid "Instrumental"
 msgstr ""
 
-msgid "Interface"
-msgstr ""
-
 msgid "JACK"
 msgstr ""
 
 msgid "Jellyfin"
+msgstr ""
+
+msgid "Jellyfin, Navidrome, or OpenSubsonic"
 msgstr ""
 
 msgid "Karaoke mode"
@@ -742,7 +729,7 @@ msgstr ""
 msgid "Keep album transitions gapless when possible"
 msgstr ""
 
-msgid "Keep tracks from the five most recently added albums downloaded."
+msgid "Keep music available offline. Folder changes only affect new downloads"
 msgstr ""
 
 msgid "Keyboard Shortcuts"
@@ -784,6 +771,9 @@ msgstr ""
 msgid "Libre.fm"
 msgstr ""
 
+msgid "Light"
+msgstr ""
+
 msgid "Limit"
 msgstr ""
 
@@ -814,13 +804,7 @@ msgstr ""
 msgid "Local file mapping is no longer available"
 msgstr ""
 
-msgid "Local file mapping saved. Sync to preview matches."
-msgstr ""
-
 msgid "Local file mapping"
-msgstr ""
-
-msgid "Local library folder is saved."
 msgstr ""
 
 msgid "Local library"
@@ -985,9 +969,6 @@ msgstr ""
 msgid "Next"
 msgstr ""
 
-msgid "No Jellyfin servers found. Enter the address manually or search again"
-msgstr ""
-
 msgid "No Servers Found"
 msgstr ""
 
@@ -1025,6 +1006,9 @@ msgid "No music from this artist yet"
 msgstr ""
 
 msgid "No remote sources configured"
+msgstr ""
+
+msgid "No servers found, add one manually or try again"
 msgstr ""
 
 msgid "No smart playlists yet"
@@ -1114,6 +1098,9 @@ msgstr ""
 msgid "Opening Libre.fm authorization..."
 msgstr ""
 
+msgid "Orange"
+msgstr ""
+
 msgid "Original"
 msgstr ""
 
@@ -1127,6 +1114,9 @@ msgid "Password"
 msgstr ""
 
 msgid "Pause"
+msgstr ""
+
+msgid "Pink"
 msgstr ""
 
 msgid "Pins"
@@ -1264,6 +1254,9 @@ msgstr ""
 msgid "PulseAudio"
 msgstr ""
 
+msgid "Purple"
+msgstr ""
+
 msgid "Queue a track to begin"
 msgstr ""
 
@@ -1295,6 +1288,9 @@ msgid "Recently released"
 msgstr ""
 
 msgid "Reconnect"
+msgstr ""
+
+msgid "Red"
 msgstr ""
 
 msgid "Refresh section"
@@ -1405,9 +1401,6 @@ msgstr ""
 msgid "Restore Default"
 msgstr ""
 
-msgid "Restore selected preset to default bands."
-msgstr ""
-
 msgid "Restore"
 msgstr ""
 
@@ -1424,6 +1417,9 @@ msgid "Romaji"
 msgstr ""
 
 msgid "Rows"
+msgstr ""
+
+msgid "Rufin data folder"
 msgstr ""
 
 msgid "Rufin is running in the tray"
@@ -1444,7 +1440,7 @@ msgstr ""
 msgid "Save Server Settings"
 msgstr ""
 
-msgid "Save to rescan this local library."
+msgid "Save to rescan"
 msgstr ""
 
 msgid "Save"
@@ -1459,7 +1455,10 @@ msgstr ""
 msgid "Saved"
 msgstr ""
 
-msgid "Saving\342\200\246"
+msgid "Saved, sync to preview matches"
+msgstr ""
+
+msgid "Saving..."
 msgstr ""
 
 msgid "Scrobbling"
@@ -1556,7 +1555,7 @@ msgstr ""
 msgid "Server path"
 msgstr ""
 
-msgid "Server sample does not match the server prefix."
+msgid "Server prefix doesn't match"
 msgstr ""
 
 msgid "Server"
@@ -1637,6 +1636,9 @@ msgstr ""
 msgid "Skip same-album crossfade"
 msgstr ""
 
+msgid "Slate"
+msgstr ""
+
 msgid "Smart Playlist"
 msgstr ""
 
@@ -1688,31 +1690,28 @@ msgstr ""
 msgid "System default"
 msgstr ""
 
+msgid "System"
+msgstr ""
+
+msgid "Teal"
+msgstr ""
+
 msgid "Techno"
 msgstr ""
 
 msgid "Text"
 msgstr ""
 
-msgid "This isn't available"
+msgid "Theme"
 msgstr ""
 
-msgid "This removes the folder from the Local source."
+msgid "This isn't available"
 msgstr ""
 
 msgid "This source cannot edit this field"
 msgstr ""
 
-msgid "Timed out waiting for Last.fm authorization."
-msgstr ""
-
-msgid "Timed out waiting for Libre.fm authorization"
-msgstr ""
-
 msgid "Title (merged)"
-msgstr ""
-
-msgid "Title cannot be empty."
 msgstr ""
 
 msgid "Title"
@@ -1728,6 +1727,12 @@ msgid "Track radio"
 msgstr ""
 
 msgid "Track"
+msgstr ""
+
+msgid "Tracks from every playlist"
+msgstr ""
+
+msgid "Tracks from your five latest albums"
 msgstr ""
 
 msgid "Tracks"
@@ -1770,6 +1775,9 @@ msgid "Use Jellyfin Instant Mix for recommendations"
 msgstr ""
 
 msgid "Use Rufin data folder"
+msgstr ""
+
+msgid "Use a number above zero"
 msgstr ""
 
 msgid "Use different layout below a threshold width"
@@ -1821,6 +1829,9 @@ msgid "Waveform seekbar"
 msgstr ""
 
 msgid "Year"
+msgstr ""
+
+msgid "Yellow"
 msgstr ""
 
 msgid "Yes"

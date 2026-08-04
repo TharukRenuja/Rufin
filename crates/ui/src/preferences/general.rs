@@ -5,7 +5,7 @@ use std::{
 
 use super::{
     LASTFM_API_CREATE_URL, LISTENBRAINZ_TOKEN_URL, SCROBBLING_ICON_NAME,
-    context_menu::context_menus_expander, interface_group, layout::populate_home_block_rows,
+    context_menu::context_menus_expander, layout::populate_home_block_rows, layout_group,
     selection_row, sidebar_items_expander,
 };
 use crate::player::{
@@ -16,9 +16,10 @@ use crate::player::{
 };
 use crate::runtime::{ScrobblingConnection, ScrobblingConnectionEvent};
 use crate::shell::Shell;
+use crate::{AccentPreference, ThemePreference};
 use adw::prelude::*;
+use library::StreamQuality;
 use localization::{tr, tr_with};
-use playback::StreamQuality;
 use playback::{
     EQUALIZER_BAND_COUNT, MAX_AUTO_DJ_REFILL_THRESHOLD, MAX_CROSSFADE_SECONDS,
     MIN_AUTO_DJ_REFILL_THRESHOLD, MIN_CROSSFADE_SECONDS, PlaybackTransitionMode, ReplayGainMode,
@@ -147,8 +148,7 @@ pub(crate) fn scrobbling_page(shell: &Rc<Shell>) -> adw::PreferencesPage {
                 &shell,
                 request,
                 "Failed to open Last.fm authorization: ",
-                tr("Timed out waiting for Last.fm authorization."),
-                "Last.fm authorization task failed.",
+                tr_with("Couldn't connect to {service}", &[("service", "Last.fm")]),
                 true,
             )
             .await
@@ -240,8 +240,7 @@ pub(crate) fn scrobbling_page(shell: &Rc<Shell>) -> adw::PreferencesPage {
                 &shell,
                 ScrobblingConnection::LibreFm,
                 "Failed to open Libre.fm authorization: ",
-                tr("Timed out waiting for Libre.fm authorization"),
-                "Libre.fm authorization task failed.",
+                tr_with("Couldn't connect to {service}", &[("service", "Libre.fm")]),
                 false,
             )
             .await
@@ -382,8 +381,7 @@ async fn connect_scrobbling(
     shell: &Rc<Shell>,
     request: ScrobblingConnection,
     open_error: &'static str,
-    timeout_error: String,
-    closed_error: &'static str,
+    connection_error: String,
     refresh_external_artwork: bool,
 ) -> Result<String, String> {
     let events = shell.products.scrobbling.connect(request);
@@ -410,11 +408,11 @@ async fn connect_scrobbling(
                 }
                 return Ok(username);
             }
-            ScrobblingConnectionEvent::TimedOut => return Err(timeout_error),
+            ScrobblingConnectionEvent::TimedOut => return Err(connection_error.clone()),
             ScrobblingConnectionEvent::Failed(error) => return Err(error),
         }
     }
-    Err(closed_error.to_string())
+    Err(connection_error)
 }
 pub(crate) fn playback_page(shell: &Rc<Shell>) -> adw::PreferencesPage {
     let page = adw::PreferencesPage::builder()
@@ -431,7 +429,7 @@ pub(crate) fn playback_page(shell: &Rc<Shell>) -> adw::PreferencesPage {
     let transition_shell = Rc::clone(shell);
     let transition_row = selection_row(
         &tr("Transition mode"),
-        &[tr("Default"), tr("Gapless"), tr("Crossfade")],
+        &[tr("Gapless"), tr("Crossfade")],
         transition_index(settings.transition_mode),
         move |selected| {
             transition_shell.update_playback_settings(|settings| {
@@ -700,7 +698,6 @@ pub(crate) fn playback_page(shell: &Rc<Shell>) -> adw::PreferencesPage {
 
     let reset_row = adw::ActionRow::builder()
         .title(tr("Reset equalizer"))
-        .subtitle(tr("Restore selected preset to default bands."))
         .build();
     let reset_button = gtk::Button::with_label(&tr("Reset"));
     reset_button.set_valign(gtk::Align::Center);
@@ -735,13 +732,14 @@ pub(crate) fn playback_page(shell: &Rc<Shell>) -> adw::PreferencesPage {
 
     page
 }
-pub(crate) fn layout_page(shell: &Rc<Shell>) -> adw::PreferencesPage {
+pub(crate) fn appearance_page(shell: &Rc<Shell>) -> adw::PreferencesPage {
     let page = adw::PreferencesPage::builder()
-        .title(tr("Layout"))
-        .icon_name("preferences-desktop-display-symbolic")
+        .title(tr("Appearance"))
+        .icon_name("preferences-desktop-appearance-symbolic")
         .build();
 
-    page.add(&interface_group(shell));
+    page.add(&theme_group(shell));
+    page.add(&layout_group(shell));
 
     let sidebar_items_group = adw::PreferencesGroup::new();
     sidebar_items_group.add(&sidebar_items_expander(shell));
@@ -763,18 +761,88 @@ pub(crate) fn layout_page(shell: &Rc<Shell>) -> adw::PreferencesPage {
 
     page
 }
+
+fn theme_group(shell: &Rc<Shell>) -> adw::PreferencesGroup {
+    let group = adw::PreferencesGroup::builder().title(tr("Theme")).build();
+    let options = [tr("System"), tr("Light"), tr("Dark")];
+    let selected = theme_preference_index(shell.settings.current.borrow().theme_preference);
+    let theme_shell = Rc::clone(shell);
+    let row = selection_row(&tr("Color scheme"), &options, selected, move |selected| {
+        theme_shell.set_theme_preference(theme_preference_from_index(selected));
+    });
+    group.add(&row);
+
+    let accent_titles = AccentPreference::ALL.map(accent_preference_title);
+    let accent_title_refs = accent_titles.each_ref().map(String::as_str);
+    let accent_row = adw::ComboRow::builder()
+        .title(tr("Accent color"))
+        .model(&gtk::StringList::new(&accent_title_refs))
+        .selected(accent_preference_index(
+            shell.settings.current.borrow().accent_preference,
+        ))
+        .build();
+    let accent_shell = Rc::clone(shell);
+    accent_row.connect_selected_notify(move |row| {
+        accent_shell.set_accent_preference(accent_preference_from_index(row.selected()));
+    });
+    group.add(&accent_row);
+    group
+}
+
+pub(super) fn theme_preference_index(preference: ThemePreference) -> u32 {
+    match preference {
+        ThemePreference::System => 0,
+        ThemePreference::Light => 1,
+        ThemePreference::Dark => 2,
+    }
+}
+
+pub(super) fn theme_preference_from_index(index: u32) -> ThemePreference {
+    match index {
+        1 => ThemePreference::Light,
+        2 => ThemePreference::Dark,
+        _ => ThemePreference::System,
+    }
+}
+
+fn accent_preference_title(preference: AccentPreference) -> String {
+    match preference {
+        AccentPreference::System => tr("System"),
+        AccentPreference::Blue => tr("Blue"),
+        AccentPreference::Teal => tr("Teal"),
+        AccentPreference::Green => tr("Green"),
+        AccentPreference::Yellow => tr("Yellow"),
+        AccentPreference::Orange => tr("Orange"),
+        AccentPreference::Red => tr("Red"),
+        AccentPreference::Pink => tr("Pink"),
+        AccentPreference::Purple => tr("Purple"),
+        AccentPreference::Slate => tr("Slate"),
+    }
+}
+
+pub(super) fn accent_preference_index(preference: AccentPreference) -> u32 {
+    AccentPreference::ALL
+        .iter()
+        .position(|candidate| *candidate == preference)
+        .unwrap_or_default() as u32
+}
+
+pub(super) fn accent_preference_from_index(index: u32) -> AccentPreference {
+    AccentPreference::ALL
+        .get(index as usize)
+        .copied()
+        .unwrap_or_default()
+}
 pub(crate) fn transition_index(mode: PlaybackTransitionMode) -> u32 {
     match mode {
-        PlaybackTransitionMode::Default => 0,
-        PlaybackTransitionMode::Gapless => 1,
-        PlaybackTransitionMode::Crossfade => 2,
+        PlaybackTransitionMode::Gapless => 0,
+        PlaybackTransitionMode::Crossfade => 1,
     }
 }
 pub(crate) fn transition_from_index(index: u32) -> PlaybackTransitionMode {
     match index {
-        1 => PlaybackTransitionMode::Gapless,
-        2 => PlaybackTransitionMode::Crossfade,
-        _ => PlaybackTransitionMode::Default,
+        1 => PlaybackTransitionMode::Crossfade,
+        _ => PlaybackTransitionMode::Gapless,
     }
 }
 pub(crate) fn replay_gain_index(mode: ReplayGainMode) -> u32 {

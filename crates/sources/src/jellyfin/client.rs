@@ -85,7 +85,7 @@ impl JellyfinSource {
         &self,
         raw_playlist_id: &str,
         fields: Option<&str>,
-    ) -> SourceResult<Option<Vec<(String, JellyfinItem)>>> {
+    ) -> SourceResult<Vec<(String, JellyfinItem)>> {
         let mut pages = PageState::default();
         let mut entry_ids = BTreeSet::new();
         let mut items = Vec::new();
@@ -106,21 +106,19 @@ impl JellyfinSource {
             }
             let response = self.get_json::<ItemQueryResult>(url).await?;
             let count = response.items.len();
-            let Ok(finished) = pages.advance(count, response.total_record_count) else {
-                return Ok(None);
-            };
+            let finished = pages.advance(count, response.total_record_count)?;
             for item in response.items {
                 let Some(entry_id) = item.playlist_item_id.as_deref().filter(|id| !id.is_empty())
                 else {
-                    return Ok(None);
+                    return Err(incomplete_playlist());
                 };
                 if !entry_ids.insert(entry_id.to_string()) {
-                    return Ok(None);
+                    return Err(incomplete_playlist());
                 }
                 items.push((entry_id.to_string(), item));
             }
             if finished {
-                return Ok(Some(items));
+                return Ok(items);
             }
         }
     }
@@ -128,32 +126,26 @@ impl JellyfinSource {
     pub(super) async fn read_playlist_entries(
         &self,
         raw_playlist_id: &str,
-    ) -> SourceResult<Option<Vec<PlaylistEntry>>> {
+    ) -> SourceResult<Vec<PlaylistEntry>> {
         Ok(self
             .read_playlist_rows(raw_playlist_id, None)
             .await?
-            .map(|items| {
-                items
-                    .into_iter()
-                    .map(|(entry_id, item)| PlaylistEntry {
-                        occurrence_id: entry_id,
-                        track_id: TrackId::new(jellyfin_id("track", &item.id)),
-                    })
-                    .collect()
-            }))
+            .into_iter()
+            .map(|(entry_id, item)| PlaylistEntry {
+                occurrence_id: entry_id,
+                track_id: TrackId::new(jellyfin_id("track", &item.id)),
+            })
+            .collect())
     }
 
     pub(super) async fn read_playlist_snapshot(
         &self,
         playlist: Playlist,
-    ) -> SourceResult<Option<PlaylistSnapshot>> {
-        let Some(entries) = self
+    ) -> SourceResult<PlaylistSnapshot> {
+        let entries = self
             .read_playlist_entries(raw_item_id(playlist.id.as_str()))
-            .await?
-        else {
-            return Ok(None);
-        };
-        Ok(Some(PlaylistSnapshot { playlist, entries }))
+            .await?;
+        Ok(PlaylistSnapshot { playlist, entries })
     }
 }
 
@@ -204,11 +196,11 @@ fn folder_contents(folders: Vec<Folder>, tracks: Vec<Track>) -> library::FolderC
 impl JellyfinSource {
     pub(crate) async fn random_tracks(
         &self,
-        request: RandomTrackRequest,
+        criteria: &RandomCriteria,
     ) -> SourceResult<Vec<Track>> {
         let mut url = endpoint(&self.base_url, "Items")?;
-        let limit = request.limit.clamp(1, 500).to_string();
-        let years = jellyfin_year_filter(request.min_year, request.max_year)?;
+        let limit = criteria.limit.clamp(1, 500).to_string();
+        let years = jellyfin_year_filter(criteria.min_year, criteria.max_year)?;
         {
             let mut query = url.query_pairs_mut();
             query
@@ -223,16 +215,16 @@ impl JellyfinSource {
             if let Some(years) = years.as_deref() {
                 query.append_pair("Years", years);
             }
-            if let Some(genre_id) = request.genre_id.as_ref() {
+            if let Some(genre_id) = criteria.genre_id.as_ref() {
                 query.append_pair("GenreIds", raw_item_id(genre_id.as_str()));
-            } else if let Some(genre_name) = request
+            } else if let Some(genre_name) = criteria
                 .genre_name
                 .as_deref()
                 .filter(|name| !name.is_empty())
             {
                 query.append_pair("Genres", genre_name);
             }
-            match request.played_filter {
+            match criteria.played_filter {
                 PlayedFilter::All => {}
                 PlayedFilter::Unplayed => {
                     query.append_pair("IsPlayed", "false");
@@ -251,18 +243,19 @@ impl JellyfinSource {
 impl JellyfinSource {
     pub(crate) async fn generated_tracks(
         &self,
-        request: GeneratedTracksRequest,
+        seed: &RadioSeed,
+        limit: usize,
     ) -> SourceResult<Vec<Track>> {
         if self.use_instant_mix {
-            return self.instant_mix_tracks(&request.seed, request.limit).await;
+            return self.instant_mix_tracks(seed, limit).await;
         }
-        if let library::RadioSeed::Track(track_id) = &request.seed {
-            let tracks = self.similar_tracks(track_id, request.limit).await?;
+        if let RadioSeed::Track(track_id) = seed {
+            let tracks = self.similar_tracks(track_id, limit).await?;
             if !tracks.is_empty() {
                 return Ok(tracks);
             }
         }
-        self.instant_mix_tracks(&request.seed, request.limit).await
+        self.instant_mix_tracks(seed, limit).await
     }
 }
 
@@ -279,21 +272,20 @@ impl JellyfinSource {
             .append_pair("Fields", PLAYLIST_FIELDS);
         let playlist = playlist_from_item(self.get_json::<JellyfinItem>(playlist_url).await?);
 
-        let entries = self
-            .read_playlist_entries(raw_playlist_id)
-            .await?
-            .ok_or_else(|| {
-                SourceError::Other("Jellyfin returned an incomplete playlist".to_string())
-            })?;
+        let entries = self.read_playlist_entries(raw_playlist_id).await?;
         Ok(PlaylistSnapshot { playlist, entries })
     }
+}
+
+fn incomplete_playlist() -> SourceError {
+    SourceError::Other("Jellyfin returned an incomplete playlist".to_string())
 }
 
 impl JellyfinSource {
     pub(crate) async fn resolve_stream(
         &self,
         request: &StreamRequest,
-    ) -> SourceResult<StreamDescriptor> {
+    ) -> SourceResult<ResolvedStream> {
         stream_descriptor(
             &self.base_url,
             &self.user_id,
@@ -475,12 +467,12 @@ impl JellyfinSource {
 }
 
 impl JellyfinSource {
-    pub(crate) async fn report_playback(&self, report: PlaybackReport) -> SourceResult<()> {
-        let path = match report.kind {
-            PlaybackReportKind::Started => "Sessions/Playing",
-            PlaybackReportKind::Progress => "Sessions/Playing/Progress",
-            PlaybackReportKind::QualifiedPlay => return Ok(()),
-            PlaybackReportKind::Stopped => "Sessions/Playing/Stopped",
+    pub(crate) async fn report_playback(&self, report: SourceReportFact) -> SourceResult<()> {
+        let path = match report.phase {
+            SourceReportPhase::Started => "Sessions/Playing",
+            SourceReportPhase::Progress => "Sessions/Playing/Progress",
+            SourceReportPhase::QualifiedPlay => return Ok(()),
+            SourceReportPhase::Ended => "Sessions/Playing/Stopped",
         };
         let url = endpoint(&self.base_url, path)?;
         let body = PlaybackReportDto::from_report(report);
@@ -560,7 +552,7 @@ pub(super) fn stream_descriptor(
     access_token: &str,
     trust_invalid_certificate: bool,
     request: &StreamRequest,
-) -> SourceResult<StreamDescriptor> {
+) -> SourceResult<ResolvedStream> {
     let raw_track_id = raw_item_id(request.track_id.as_str());
     let max_bitrate = request
         .quality
@@ -604,7 +596,7 @@ pub(super) fn stream_descriptor(
         }
     }
     Ok(
-        StreamDescriptor::with_redacted(url.to_string(), redacted_url.to_string())
+        ResolvedStream::with_redacted(url.to_string(), redacted_url.to_string())
             .with_trust_invalid_certificate(trust_invalid_certificate),
     )
 }
@@ -649,9 +641,6 @@ pub(super) fn auth_header(config: &JellyfinClientConfig, token: Option<&str>) ->
     }
     value
 }
-pub(super) fn raw_item_id(id: &str) -> &str {
-    id.rsplit(':').next().unwrap_or(id)
-}
 pub(super) fn jellyfin_year_filter(
     min_year: Option<u16>,
     max_year: Option<u16>,
@@ -684,11 +673,6 @@ pub(super) fn raw_track_ids(track_ids: &[TrackId]) -> Vec<String> {
 }
 pub(super) fn stable_source_id(input: &str) -> String {
     format!("{:016x}", stable_hash(input))
-}
-pub(crate) fn stable_hash(input: &str) -> u64 {
-    input.bytes().fold(0xcbf2_9ce4_8422_2325, |hash, byte| {
-        (hash ^ u64::from(byte)).wrapping_mul(0x0000_0100_0000_01b3)
-    })
 }
 pub(super) fn ticks_to_millis(ticks: Option<i64>) -> Option<u64> {
     ticks.map(|value| (value.max(0) / 10_000) as u64)
@@ -939,7 +923,7 @@ impl JellyfinSource {
         let raw_track_id = raw_item_id(track_id.as_str());
         let local_url = endpoint(&self.base_url, &format!("Audio/{raw_track_id}/Lyrics"))?;
         match self.send_json::<LyricDto>(self.client.get(local_url)).await {
-            Ok(dto) => Ok(Some(lyrics_from_dto(NativeLyricsOrigin::Server, dto))),
+            Ok(dto) => Ok(Some(lyrics_from_dto(dto))),
             Err(SourceError::NotFound) => Ok(None),
             Err(error) => Err(error),
         }
@@ -964,16 +948,15 @@ impl JellyfinSource {
         };
         let lyric_url = endpoint(&self.base_url, &format!("Providers/Lyrics/{}", first.id))?;
         match self.send_json::<LyricDto>(self.client.get(lyric_url)).await {
-            Ok(dto) => Ok(Some(lyrics_from_dto(NativeLyricsOrigin::Remote, dto))),
+            Ok(dto) => Ok(Some(lyrics_from_dto(dto))),
             Err(SourceError::NotFound) => Ok(None),
             Err(error) => Err(error),
         }
     }
 }
 
-pub(super) fn lyrics_from_dto(origin: NativeLyricsOrigin, dto: LyricDto) -> NativeLyrics {
+pub(super) fn lyrics_from_dto(dto: LyricDto) -> NativeLyrics {
     NativeLyrics {
-        origin,
         documents: vec![NativeLyricsDocument {
             role: NativeLyricsRole::Original,
             language: None,
@@ -1092,21 +1075,20 @@ pub(super) struct PlaybackReportDto {
 }
 
 impl PlaybackReportDto {
-    pub(super) fn from_report(report: PlaybackReport) -> Self {
+    pub(super) fn from_report(report: SourceReportFact) -> Self {
+        let position_seconds = (report.position_millis / 1_000).min(u64::from(u32::MAX)) as u32;
         Self {
             can_seek: true,
             item_id: raw_item_id(report.track_id.as_str()).to_string(),
             is_paused: report.paused,
             is_muted: report.muted,
-            position_ticks: i64::from(report.position_seconds) * 10_000_000,
-            volume_level: i32::from(report.volume_percent.min(100)),
+            position_ticks: i64::from(position_seconds) * 10_000_000,
+            volume_level: (report.volume.clamp(0.0, 1.0) * 100.0).round() as i32,
             play_method: "DirectPlay",
-            repeat_mode: if report.repeat_one {
-                "RepeatOne"
-            } else if report.repeat_all {
-                "RepeatAll"
-            } else {
-                "RepeatNone"
+            repeat_mode: match report.repeat_mode {
+                RepeatMode::Off => "RepeatNone",
+                RepeatMode::One => "RepeatOne",
+                RepeatMode::All => "RepeatAll",
             },
             playback_order: if report.shuffle { "Shuffle" } else { "Default" },
             failed: report.failed,

@@ -1,9 +1,9 @@
 //! Rufin's durable music library.
 //!
-//! Concrete sources provide canonical facts. Library accepts those facts into
-//! its private SQLite Store and hydrates one source-scoped [`LoadedLibrary`].
-//! Rufin owns which loaded source is selected; routes and Playback never query
-//! SQLite or receive a general Store handle.
+//! Concrete sources provide canonical facts. [`Libraries`] accepts those facts
+//! into its private SQLite Store and hydrates one source-scoped [`Library`].
+//! Rufin owns which source is selected; routes and Playback never query SQLite
+//! or receive a general Store handle.
 
 use std::path::Path;
 use std::sync::Arc;
@@ -84,6 +84,7 @@ mod scrobbles;
 mod search;
 pub mod smart_playlists;
 mod store;
+mod stream;
 
 pub use activity::*;
 pub use album_release::*;
@@ -109,6 +110,7 @@ pub use smart_playlists::{
     SmartPlaylistSummary,
 };
 pub use store::StoreRepairReport;
+pub use stream::*;
 
 #[derive(Debug, Error)]
 pub enum LibraryError {
@@ -124,7 +126,7 @@ pub enum LibraryError {
     #[error("a source candidate cannot continue after a batch write failed")]
     CandidateWriteFailed,
     #[error(transparent)]
-    Loaded(#[from] LoadedLibraryError),
+    Query(#[from] LibraryQueryError),
 }
 
 pub type LibraryResult<T> = Result<T, LibraryError>;
@@ -145,17 +147,17 @@ impl From<store::StoreError> for LibraryError {
     }
 }
 
-/// Cloneable access to Library's typed operations.
+/// Cloneable access to the Store operations shared by every source library.
 ///
 /// Operations are blocking because they cross the one Store lane. Rufin calls
 /// them from its blocking boundary, never from GTK or a Tokio worker.
 #[derive(Clone)]
-pub struct Library {
+pub struct Libraries {
     store: store::StoreLane,
     home_sessions: Arc<home::HomeSessions>,
 }
 
-impl Library {
+impl Libraries {
     pub fn open(path: impl AsRef<Path>) -> LibraryResult<Self> {
         Ok(Self {
             store: store::StoreLane::open(path.as_ref().to_path_buf())?,
@@ -188,15 +190,15 @@ impl Library {
         ))
     }
 
-    pub fn load_source(&self, source_id: &SourceId) -> LibraryResult<Option<Arc<LoadedLibrary>>> {
+    pub fn load_source(&self, source_id: &SourceId) -> LibraryResult<Option<Arc<Library>>> {
         let loaded = self
             .store
             .load_current(source_id.clone())?
-            .map(LoadedLibrary::build)
+            .map(|input| Library::build(input, self.store.clone(), Arc::clone(&self.home_sessions)))
             .transpose()
             .map_err(LibraryError::from)?;
         if let Some(loaded) = &loaded {
-            self.prepare_home(loaded)?;
+            loaded.prepare_home()?;
         }
         Ok(loaded)
     }

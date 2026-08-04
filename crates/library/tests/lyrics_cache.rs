@@ -1,5 +1,5 @@
 use library::{
-    Library, LyricsCacheAuthority, LyricsCacheInput, LyricsCacheKey, LyricsCacheWrite, SourceId,
+    Libraries, LyricsCacheAuthority, LyricsCacheInput, LyricsCacheKey, LyricsCacheWrite, SourceId,
     TrackId,
 };
 
@@ -21,7 +21,7 @@ fn lyrics_cache_reopens_as_an_opaque_bounded_value() {
     let payload = "Lyrics owns the representation; Library preserves these bytes.".to_string();
 
     {
-        let library = Library::open(&path).expect("open Library");
+        let library = Libraries::open(&path).expect("open Library");
         let trim = library
             .store_lyrics(LyricsCacheWrite {
                 key: key.clone(),
@@ -35,7 +35,7 @@ fn lyrics_cache_reopens_as_an_opaque_bounded_value() {
         assert_eq!(trim.bytes_removed, 0);
     }
 
-    let library = Library::open(&path).expect("reopen Library");
+    let library = Libraries::open(&path).expect("reopen Library");
     let cached = library
         .cached_lyrics(key.clone(), input.clone())
         .expect("read lyrics cache")
@@ -68,7 +68,7 @@ fn lyrics_cache_reopens_as_an_opaque_bounded_value() {
 fn incompatible_lyrics_input_discards_the_rebuildable_row() {
     let directory = tempfile::tempdir().expect("temporary Store directory");
     let library =
-        Library::open(directory.path().join("library.db")).expect("open temporary Library");
+        Libraries::open(directory.path().join("library.db")).expect("open temporary Library");
     let key = LyricsCacheKey {
         source_id: SourceId::new("jellyfin:lyrics-cache"),
         track_id: TrackId::new("track:lyrics-cache"),
@@ -114,7 +114,7 @@ fn incompatible_lyrics_input_discards_the_rebuildable_row() {
 fn clearing_fetched_track_lyrics_removes_every_language_variant_only() {
     let directory = tempfile::tempdir().expect("temporary Store directory");
     let library =
-        Library::open(directory.path().join("library.db")).expect("open temporary Library");
+        Libraries::open(directory.path().join("library.db")).expect("open temporary Library");
     let source_id = SourceId::new("subsonic:lyrics-cache");
     let track_id = TrackId::new("track:variants");
     let input = LyricsCacheInput {

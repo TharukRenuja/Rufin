@@ -1851,11 +1851,59 @@ fn bytes_to_mib(bytes: usize) -> usize {
 
 #[cfg(test)]
 mod tests {
-
     use library::{AlbumId, ArtistCredit, ArtistId, TrackData, TrackRelations};
     use tempfile::tempdir;
 
     use super::*;
+
+    #[test]
+    fn native_lyrics_apply_offset_and_preserve_language_roles_and_agents() {
+        let lyrics = lyrics_from_native(sources::NativeLyrics {
+            documents: vec![sources::NativeLyricsDocument {
+                role: sources::NativeLyricsRole::Translation,
+                language: Some("eng-US".to_string()),
+                offset_millis: 250,
+                lines: vec![sources::NativeLyricLine {
+                    text: "Eyes".to_string(),
+                    start_millis: Some(1_000),
+                    end_millis: Some(2_000),
+                    cue_lines: vec![sources::NativeLyricCueLine {
+                        text: "Eyes".to_string(),
+                        start_millis: Some(1_000),
+                        end_millis: Some(2_000),
+                        agent_id: Some("lead".to_string()),
+                        cues: vec![sources::NativeLyricCue {
+                            text: "Eyes".to_string(),
+                            start_millis: 1_100,
+                            end_millis: Some(1_400),
+                            byte_start: 0,
+                            byte_end_exclusive: 4,
+                        }],
+                    }],
+                }],
+                agents: vec![sources::NativeLyricAgent {
+                    id: "lead".to_string(),
+                    role: sources::NativeLyricAgentRole::Voice,
+                    name: Some("Lead".to_string()),
+                }],
+            }],
+        });
+
+        assert_eq!(lyrics.origin, LyricsOrigin::Native);
+        let document = &lyrics.documents()[0];
+        assert_eq!(document.role, LyricsRole::Translation);
+        assert_eq!(document.language.as_deref(), Some("en"));
+        assert_eq!(document.lines[0].start_millis, Some(750));
+        assert_eq!(document.lines[0].end_millis, Some(1_750));
+        let cue_line = &document.lines[0].cue_lines[0];
+        assert_eq!(cue_line.start_millis, Some(750));
+        assert_eq!(cue_line.end_millis, Some(1_750));
+        assert_eq!(cue_line.cues[0].start_millis, 850);
+        assert_eq!(cue_line.cues[0].end_millis, Some(1_150));
+        assert_eq!(cue_line.cues[0].byte_end_exclusive, 4);
+        assert_eq!(document.agents[0].role, LyricsAgentRole::Voice);
+        assert_eq!(document.agents[0].name.as_deref(), Some("Lead"));
+    }
 
     fn track() -> Track {
         Track::new(TrackData {

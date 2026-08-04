@@ -136,7 +136,7 @@ fn source_menu_content(
     let icon_name = configured_source_icon_name(&source);
     let music_folders = selected
         .filter(|selected| selected.source_id == source.id)
-        .and_then(|selected| selected.loaded.music_folders().ok())
+        .and_then(|selected| selected.library.music_folders().ok())
         .unwrap_or_else(|| Arc::from([]));
     let selected_music_folder_id = if music_folders.is_empty() {
         None
@@ -172,6 +172,7 @@ fn replace_selection_actions(shell: &Rc<Shell>, content: &SourceMenuContent) {
                 let shell = Rc::clone(shell);
                 let source_id = source.id.clone();
                 move || {
+                    popdown_primary_menu(&shell);
                     if shell.source.configured.borrow().selected_source_id.as_ref()
                         != Some(&source_id)
                     {
@@ -219,9 +220,7 @@ fn choice_action(name: &str, active: bool, select: impl Fn() + 'static) -> gio::
 }
 
 fn select_music_folder(shell: &Shell, folder_id: Option<MusicFolderId>) {
-    let Some(source_id) = shell.source.configured.borrow().selected_source_id.clone() else {
-        return;
-    };
+    popdown_primary_menu(shell);
     let selected_folder_id = shell
         .library
         .selected
@@ -231,7 +230,9 @@ fn select_music_folder(shell: &Shell, folder_id: Option<MusicFolderId>) {
     if selected_folder_id.as_ref() == folder_id.as_ref() {
         return;
     }
-    shell.products.source.set_music_folder(source_id, folder_id);
+    if let Some(source) = shell.selected_source_operations() {
+        source.set_music_folder(folder_id);
+    }
 }
 
 fn source_menu_label(source: &SourceSummary) -> String {

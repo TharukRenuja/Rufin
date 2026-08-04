@@ -1,38 +1,35 @@
 //! Random play, manual radio, and AutoDJ composition.
 //!
-//! Concrete Sources acquire native candidates, the selected `LoadedLibrary`
+//! Concrete Sources acquire native candidates, the selected `Library`
 //! applies Rufin's common fallback and dedupe rules, and Playback alone mutates
 //! the queue. This module retains no recommendation catalog or selected-source
 //! state.
 
 use std::sync::Arc;
 
-use library::{
-    LoadedLibrary, NativeRadioResult, RadioComposition, RadioSeed, RandomComposition,
-    RandomPlayedFilter, Track,
-};
+use library::{Library, RadioComposition, RadioSeed, RandomComposition, Track};
 use playback::{
     AutoDjRequest, Batch, BatchItem, Placement, Playback, Provenance, RadioPlayRequest,
     RandomPlayRequest,
 };
-use sources::{GeneratedTracksRequest, NativeSourceResult, RandomTrackRequest};
+use sources::NativeSourceResult;
 use tracing::warn;
 
 use crate::playback::random_u64;
-use crate::source::WeakSelectedSourceSession;
+use crate::source::WeakActiveSource;
 
 const MANUAL_RADIO_COUNT: usize = 20;
 
 pub(crate) fn request_auto_dj(
     runtime: tokio::runtime::Handle,
-    selected: WeakSelectedSourceSession,
+    selected: WeakActiveSource,
     playback: Playback,
     request: AutoDjRequest,
 ) {
-    let Some(initial) = selected.snapshot() else {
+    let Some(initial) = selected.upgrade().and_then(|selected| selected.resolve()) else {
         return;
     };
-    if initial.loaded.source_id() != &request.source_id {
+    if initial.library.source_id() != &request.source_id {
         let _ = playback.auto_dj_unavailable(
             request.source_id,
             request.seed_occurrence,
@@ -40,30 +37,26 @@ pub(crate) fn request_auto_dj(
         );
         return;
     }
-    let source = initial.source;
-    drop(initial.loaded);
+    let source = initial.source.clone();
     runtime.spawn(async move {
         let limit = request.requested_count.saturating_mul(4).clamp(1, 500);
         let native = match source.as_ref() {
             Some(source) => {
                 source
-                    .generated_tracks(GeneratedTracksRequest {
-                        seed: RadioSeed::Track(request.seed_track_id.clone()),
-                        limit,
-                    })
+                    .generated_tracks(&RadioSeed::Track(request.seed_track_id.clone()), limit)
                     .await
             }
             None => Ok(NativeSourceResult::Unavailable),
         };
         let native = match native {
-            Ok(NativeSourceResult::Available(tracks)) => NativeRadioResult::Candidates(tracks),
-            Ok(NativeSourceResult::Unavailable) | Err(_) => NativeRadioResult::Unavailable,
+            Ok(NativeSourceResult::Available(tracks)) => Some(tracks),
+            Ok(NativeSourceResult::Unavailable) | Err(_) => None,
         };
-        let Some(current) = selected.snapshot() else {
+        let Some(current) = selected.upgrade().and_then(|selected| selected.resolve()) else {
             return;
         };
         let result = compose_radio(
-            current.loaded,
+            Arc::clone(&current.library),
             RadioComposition {
                 seed: RadioSeed::Track(request.seed_track_id),
                 native,
@@ -94,7 +87,7 @@ pub(crate) fn request_auto_dj(
 
 pub(crate) fn play_radio(
     runtime: tokio::runtime::Handle,
-    selected: WeakSelectedSourceSession,
+    selected: WeakActiveSource,
     playback: Playback,
     request: RadioPlayRequest,
 ) -> Option<tokio::task::JoinHandle<()>> {
@@ -106,11 +99,10 @@ pub(crate) fn play_radio(
             return None;
         }
     };
-    let Some(initial) = selected.snapshot() else {
+    let Some(initial) = selected.upgrade().and_then(|selected| selected.resolve()) else {
         return None;
     };
-    let source = initial.source;
-    drop(initial.loaded);
+    let source = initial.source.clone();
     Some(runtime.spawn(async move {
         let include_seed_track = match &request.seed {
             RadioSeed::Track(seed_track_id) => {
@@ -129,23 +121,20 @@ pub(crate) fn play_radio(
         let native = match source.as_ref() {
             Some(source) => {
                 source
-                    .generated_tracks(GeneratedTracksRequest {
-                        seed: request.seed.clone(),
-                        limit: MANUAL_RADIO_COUNT,
-                    })
+                    .generated_tracks(&request.seed, MANUAL_RADIO_COUNT)
                     .await
             }
             None => Ok(NativeSourceResult::Unavailable),
         };
         let native = match native {
-            Ok(NativeSourceResult::Available(tracks)) => NativeRadioResult::Candidates(tracks),
-            Ok(NativeSourceResult::Unavailable) | Err(_) => NativeRadioResult::Unavailable,
+            Ok(NativeSourceResult::Available(tracks)) => Some(tracks),
+            Ok(NativeSourceResult::Unavailable) | Err(_) => None,
         };
-        let Some(current) = selected.snapshot() else {
+        let Some(current) = selected.upgrade().and_then(|selected| selected.resolve()) else {
             return;
         };
         let composed = compose_radio(
-            current.loaded,
+            Arc::clone(&current.library),
             RadioComposition {
                 seed: request.seed,
                 native,
@@ -169,7 +158,7 @@ pub(crate) fn play_radio(
 
 pub(crate) fn play_random(
     runtime: tokio::runtime::Handle,
-    selected: WeakSelectedSourceSession,
+    selected: WeakActiveSource,
     playback: Playback,
     request: RandomPlayRequest,
 ) -> Option<tokio::task::JoinHandle<()>> {
@@ -181,29 +170,16 @@ pub(crate) fn play_random(
             return None;
         }
     };
-    let Some(initial) = selected.snapshot() else {
+    let Some(initial) = selected.upgrade().and_then(|selected| selected.resolve()) else {
         return None;
     };
-    let source = initial.source;
-    drop(initial.loaded);
+    let source = initial.source.clone();
     Some(runtime.spawn(async move {
-        let native_request = RandomTrackRequest {
-            limit: request.limit,
-            min_year: request.min_year,
-            max_year: request.max_year,
-            genre_id: request.genre_id.clone(),
-            genre_name: request.genre_name.clone(),
-            played_filter: match request.played_filter {
-                playback::PlayedFilter::All => sources::PlayedFilter::All,
-                playback::PlayedFilter::Unplayed => sources::PlayedFilter::Unplayed,
-                playback::PlayedFilter::Played => sources::PlayedFilter::Played,
-            },
-        };
         let native = match source.as_ref() {
-            Some(source) => source.random_tracks(native_request).await,
+            Some(source) => source.random_tracks(&request.criteria).await,
             None => Ok(NativeSourceResult::Unavailable),
         };
-        let Some(current) = selected.snapshot() else {
+        let Some(current) = selected.upgrade().and_then(|selected| selected.resolve()) else {
             return;
         };
         let native = match native {
@@ -211,20 +187,11 @@ pub(crate) fn play_random(
             Ok(NativeSourceResult::Unavailable) | Err(_) => Vec::new(),
         };
         let tracks = compose_random(
-            current.loaded,
+            Arc::clone(&current.library),
             RandomComposition {
                 native,
-                limit: request.limit,
-                min_year: request.min_year,
-                max_year: request.max_year,
-                genre_id: request.genre_id,
-                genre_name: request.genre_name,
-                played: match request.played_filter {
-                    playback::PlayedFilter::All => RandomPlayedFilter::All,
-                    playback::PlayedFilter::Unplayed => RandomPlayedFilter::Unplayed,
-                    playback::PlayedFilter::Played => RandomPlayedFilter::Played,
-                },
-                music_folder_id: current.music_folder_id,
+                criteria: request.criteria,
+                music_folder_id: current.music_folder_id.clone(),
                 variation: random_u64(),
             },
         )
@@ -235,7 +202,7 @@ pub(crate) fn play_random(
 }
 
 async fn compose_radio(
-    loaded: Arc<LoadedLibrary>,
+    loaded: Arc<Library>,
     request: RadioComposition,
 ) -> Result<Vec<Track>, String> {
     tokio::task::spawn_blocking(move || {
@@ -248,7 +215,7 @@ async fn compose_radio(
 }
 
 async fn compose_random(
-    loaded: Arc<LoadedLibrary>,
+    loaded: Arc<Library>,
     request: RandomComposition,
 ) -> Result<Vec<Track>, String> {
     tokio::task::spawn_blocking(move || {

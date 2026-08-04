@@ -1,11 +1,11 @@
-use library::Library;
+use library::Libraries;
 use rusqlite::Connection;
 
 #[test]
 fn final_store_common_queries_keep_their_index_bounds() {
     let directory = tempfile::tempdir().expect("temporary Store directory");
     let path = directory.path().join("library.db");
-    let library = Library::open(&path).expect("create final Store");
+    let library = Libraries::open(&path).expect("create final Store");
     let connection = Connection::open(&path).expect("inspect final Store");
 
     assert_indexed(

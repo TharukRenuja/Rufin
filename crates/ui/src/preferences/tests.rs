@@ -1,10 +1,38 @@
 use super::{
+    general::{
+        accent_preference_from_index, accent_preference_index, theme_preference_from_index,
+        theme_preference_index,
+    },
     layout::{reorder_home_blocks, visibility_position_subtitle},
     reorder_sidebar_item_settings, sidebar_route_item_subtitle,
 };
-use crate::{SidebarRouteItem, SidebarRouteItemSettings};
+use crate::{AccentPreference, SidebarRouteItem, SidebarRouteItemSettings, ThemePreference};
 use library::HomeBlockKind;
 use localization::tr;
+
+#[test]
+fn theme_preference_selector_round_trips_every_choice() {
+    for preference in [
+        ThemePreference::System,
+        ThemePreference::Light,
+        ThemePreference::Dark,
+    ] {
+        assert_eq!(
+            theme_preference_from_index(theme_preference_index(preference)),
+            preference
+        );
+    }
+}
+
+#[test]
+fn accent_preference_selector_round_trips_every_choice() {
+    for preference in AccentPreference::ALL {
+        assert_eq!(
+            accent_preference_from_index(accent_preference_index(preference)),
+            preference
+        );
+    }
+}
 
 #[test]
 fn reorder_list_subtitles_show_visibility_before_position() {

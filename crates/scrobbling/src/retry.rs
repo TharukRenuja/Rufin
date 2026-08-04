@@ -3,7 +3,7 @@ use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use library::{Library, NewScrobble, PendingScrobble, PendingScrobbleId, ScrobbleService};
+use library::{Libraries, NewScrobble, PendingScrobble, PendingScrobbleId, ScrobbleService};
 use playback::{CompletedScrobble, ListeningTrack};
 use reqwest::blocking::Client;
 use tracing::warn;
@@ -151,7 +151,7 @@ struct Worker {
 }
 
 impl Worker {
-    fn new(library: Library, state: Arc<Mutex<DeliveryState>>) -> Result<Self, String> {
+    fn new(library: Libraries, state: Arc<Mutex<DeliveryState>>) -> Result<Self, String> {
         let client = Client::builder()
             .timeout(Duration::from_secs(6))
             .user_agent(USER_AGENT)
@@ -189,14 +189,14 @@ impl Worker {
 }
 
 pub struct Scrobbler {
-    library: Library,
+    library: Libraries,
     state: Arc<Mutex<DeliveryState>>,
     worker: Worker,
 }
 
 impl Scrobbler {
     pub fn new(
-        library: Library,
+        library: Libraries,
         mut settings: Settings,
         private_mode: bool,
     ) -> Result<Self, String> {
@@ -305,7 +305,7 @@ impl Scrobbler {
 
 fn run_worker(
     client: Client,
-    library: Library,
+    library: Libraries,
     state: Arc<Mutex<DeliveryState>>,
     receiver: Receiver<()>,
     pending: Arc<Mutex<PendingWork>>,
@@ -359,7 +359,7 @@ fn deliver_now_playing(client: &Client, state: &Arc<Mutex<DeliveryState>>, track
     }
 }
 
-fn deliver_due(client: &Client, library: &Library, state: &Arc<Mutex<DeliveryState>>) {
+fn deliver_due(client: &Client, library: &Libraries, state: &Arc<Mutex<DeliveryState>>) {
     let targets = state
         .lock()
         .ok()
@@ -398,7 +398,7 @@ fn deliver_due(client: &Client, library: &Library, state: &Arc<Mutex<DeliverySta
 }
 
 fn finish_delivery(
-    library: &Library,
+    library: &Libraries,
     pending: PendingScrobble,
     now: i64,
     result: Result<(), DeliveryError>,
@@ -678,7 +678,7 @@ mod tests {
     fn delivery_results_delete_or_preserve_the_original_completed_play() {
         let directory = tempfile::tempdir().expect("temporary scrobbling directory");
         let path = directory.path().join("library.db");
-        let library = Library::open(&path).expect("open Library");
+        let library = Libraries::open(&path).expect("open Libraries");
         let account_id = "listener";
 
         let success = queue_one(&library, account_id, "success", 11);
@@ -752,7 +752,7 @@ mod tests {
         );
         drop(library);
 
-        let reopened = Library::open(&path).expect("reopen Library");
+        let reopened = Libraries::open(&path).expect("reopen Libraries");
         assert!(
             reopened
                 .due_scrobbles(ScrobbleService::LastFm, account_id, i64::MAX, 10)
@@ -798,7 +798,7 @@ mod tests {
         let account_id = audioscrobbler_account_id(ScrobbleService::LastFm, &previous.lastfm);
 
         let directory = tempfile::tempdir().expect("temporary scrobbling directory");
-        let library = Library::open(directory.path().join("library.db")).expect("open Library");
+        let library = Libraries::open(directory.path().join("library.db")).expect("open Libraries");
         library
             .queue_scrobbles(vec![new_scrobble(&account_id, "blocked", 10)])
             .expect("queue completed play");
@@ -833,7 +833,7 @@ mod tests {
     }
 
     fn queue_one(
-        library: &Library,
+        library: &Libraries,
         account_id: &str,
         play_id: &str,
         started_at: i64,

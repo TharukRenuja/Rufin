@@ -1,11 +1,8 @@
-use std::collections::BTreeMap;
-
-use library::CandidateBatch;
+use library::{CandidateBatch, StreamQuality};
 use wiremock::matchers::{method, path, query_param};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 use super::*;
-use crate::StreamQuality;
 use crate::source::{BatchEmitter, SourceReadProgress};
 
 fn account(base_url: &str, username: &str) -> SubsonicSourceConfig {
@@ -151,6 +148,34 @@ fn settings_input(
 }
 
 #[tokio::test]
+async fn artist_radio_uses_the_common_similar_songs_endpoint() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/rest/getSimilarSongs.view"))
+        .and(query_param("id", "artist-one"))
+        .and(query_param("count", "25"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(envelope(serde_json::json!({
+                "similarSongs": { "song": [] }
+            }))),
+        )
+        .expect(1)
+        .mount(&server)
+        .await;
+    let source = provider(&server);
+
+    let tracks = source
+        .generated_tracks(
+            &library::RadioSeed::Artist(library::ArtistId::new(source.id("artist", "artist-one"))),
+            25,
+        )
+        .await
+        .expect("artist radio recommendations");
+
+    assert!(tracks.is_empty());
+}
+
+#[tokio::test]
 async fn get_song_keeps_the_reported_absolute_path() {
     let server = MockServer::start().await;
     Mock::given(method("GET"))
@@ -280,21 +305,16 @@ async fn navidrome_acquisition_uses_real_file_paths_and_richer_metadata() {
         .mount(&server)
         .await;
     let source = navidrome_provider(&server);
-    let mut batches = Vec::new();
-    let mut accept = |batch| {
-        batches.push(batch);
-        true
-    };
-    let mut emitter = BatchEmitter::new(&mut accept);
+    let (batches, receiver) = async_channel::unbounded();
+    let emitter = BatchEmitter::new(batches);
     let progress = |_: SourceReadProgress| {};
 
     source
-        .emit_navidrome_library(&mut emitter, &progress, &|| false)
+        .emit_navidrome_library(&emitter, &progress, &|| false)
         .await
         .expect("Navidrome library supplement");
     drop(emitter);
-    let tracks = batches
-        .into_iter()
+    let tracks = std::iter::from_fn(|| receiver.try_recv().ok())
         .find_map(|batch| match batch {
             CandidateBatch::Tracks(tracks) => Some(tracks),
             _ => None,
@@ -341,17 +361,6 @@ async fn navidrome_acquisition_uses_real_file_paths_and_richer_metadata() {
         tracks[0].relations.music_folders[0].as_str(),
         "navidrome:music-folder:7"
     );
-    assert_eq!(
-        tracks[0]
-            .image_ref
-            .as_ref()
-            .map(|image| (image.item_id.as_str(), image.tag.as_deref())),
-        Some((
-            "navidrome:cover:al-album-one_0",
-            Some("2025-04-04T12:00:00Z")
-        ))
-    );
-
     let generic: SubsonicSong = serde_json::from_value(serde_json::json!({
         "id": "track-two",
         "title": "Second",
@@ -685,17 +694,18 @@ async fn qualified_play_reports_the_original_start_time() {
     let source = provider(&server);
 
     source
-        .report_playback(PlaybackReport {
-            kind: PlaybackReportKind::QualifiedPlay,
+        .report_playback(SourceReportFact {
+            run: playback::RunId::new(1),
+            source_id: SourceId::new("subsonic:server:test"),
             track_id: TrackId::new("subsonic:track:song-one"),
+            phase: SourceReportPhase::QualifiedPlay,
             started_at_unix_seconds: 1_700_000_000,
-            position_seconds: 90,
+            position_millis: 90_000,
             paused: false,
             muted: false,
-            volume_percent: 100,
+            volume: 1.0,
             shuffle: false,
-            repeat_one: false,
-            repeat_all: false,
+            repeat_mode: playback::RepeatMode::Off,
             failed: false,
         })
         .await
@@ -866,7 +876,7 @@ async fn password_backed_same_account_edit_keeps_the_configured_opensubsonic_sou
     let current_identity = current.input_identity().expect("legacy Navidrome identity");
     let input = settings_input(&server, "After", "new-password", false);
 
-    let SourceEditResult::SameAccount(connected) = edit(
+    let SourceEditResult::Connected(connected) = edit(
         current.clone(),
         Some("old-salt:old-token".to_string()),
         input,
@@ -935,7 +945,7 @@ async fn password_backed_different_account_edit_returns_a_new_opensubsonic_sourc
     let mut input = settings_input(&server, "After", "new-password", false);
     input.username = "Other Listener".to_string();
 
-    let SourceEditResult::DifferentAccount(connected) = edit(
+    let SourceEditResult::Connected(connected) = edit(
         current.clone(),
         Some("old-salt:old-token".to_string()),
         input,
@@ -968,7 +978,7 @@ async fn trust_only_edit_reopens_opensubsonic_from_the_saved_credential_without_
     let current = saved_configuration(&server, "Before", false);
     let input = settings_input(&server, "Before", "", true);
 
-    let SourceEditResult::SameAccount(connected) = edit(
+    let SourceEditResult::Connected(connected) = edit(
         current.clone(),
         Some("saved-salt:saved-token".to_string()),
         input,
@@ -990,7 +1000,7 @@ async fn trust_only_edit_reopens_opensubsonic_from_the_saved_credential_without_
 }
 
 #[tokio::test]
-async fn complete_acquisition_pages_through_server_caps_and_uses_album_cover_identity() {
+async fn complete_acquisition_pages_through_server_caps_and_keeps_track_cover_identity() {
     let server = MockServer::start().await;
     Mock::given(method("GET"))
         .and(path("/rest/getAlbumList2.view"))
@@ -1073,31 +1083,19 @@ async fn complete_acquisition_pages_through_server_caps_and_uses_album_cover_ide
         .mount(&server)
         .await;
     let source = provider(&server);
-    let mut batches = Vec::new();
-    let mut accept = |batch| {
-        batches.push(batch);
-        true
-    };
-    let mut emitter = BatchEmitter::new(&mut accept);
+    let (batches, receiver) = async_channel::unbounded();
+    let emitter = BatchEmitter::new(batches);
     let progress = |_: SourceReadProgress| {};
-    let album_images = source
-        .emit_albums(&mut emitter, &mut BTreeMap::new(), &progress, &|| false)
+    source
+        .emit_albums(&emitter, &progress, &|| false)
         .await
         .expect("read Albums");
     source
-        .emit_tracks(
-            &[],
-            &album_images,
-            &mut emitter,
-            &mut BTreeMap::new(),
-            &progress,
-            &|| false,
-        )
+        .emit_tracks(&[], &emitter, &progress, &|| false)
         .await
         .expect("read Tracks");
     drop(emitter);
-    let tracks = batches
-        .into_iter()
+    let tracks = std::iter::from_fn(|| receiver.try_recv().ok())
         .filter_map(|batch| match batch {
             CandidateBatch::Tracks(tracks) => Some(tracks),
             _ => None,
@@ -1111,14 +1109,14 @@ async fn complete_acquisition_pages_through_server_caps_and_uses_album_cover_ide
             .image_ref
             .as_ref()
             .map(|image| image.item_id.as_str()),
-        Some("subsonic:cover:album-cover")
+        Some("subsonic:cover:track-alias-one")
     );
     assert_eq!(
         tracks[1]
             .image_ref
             .as_ref()
             .map(|image| image.item_id.as_str()),
-        Some("subsonic:cover:album-cover")
+        Some("subsonic:cover:track-alias-two")
     );
     assert_eq!(
         tracks[2]

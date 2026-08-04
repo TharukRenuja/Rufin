@@ -1,14 +1,10 @@
 //! Exact Album release lookup state.
 //!
 //! Source Album facts remain canonical. A matching found result is overlaid on
-//! hydration or patched into the selected LoadedLibrary; missing results only
+//! hydration or patched into the selected Library; missing results only
 //! prevent repeated lookup of the same exact identity.
 
-use std::sync::Arc;
-
-use crate::{
-    AcceptedLibraryChange, AlbumId, Library, LibraryError, LibraryResult, LoadedLibrary, SourceId,
-};
+use crate::{AcceptedLibraryChange, AlbumId, Library, LibraryError, LibraryResult, SourceId};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum AlbumReleaseIdentity {
@@ -47,15 +43,14 @@ pub enum AlbumReleaseResult {
 impl Library {
     pub fn take_album_release_lookups(
         &self,
-        loaded: &Arc<LoadedLibrary>,
         limit: usize,
     ) -> LibraryResult<Vec<AlbumReleaseCandidate>> {
         if limit == 0 {
             return Ok(Vec::new());
         }
-        let source_id = loaded.source_id().clone();
-        let library_id = loaded.library_id();
-        let state = loaded.read_state()?;
+        let source_id = self.source_id().clone();
+        let library_id = self.library_id();
+        let state = self.read_state()?;
         let mut album_ids = state
             .unresolved_album_releases
             .iter()
@@ -87,12 +82,10 @@ impl Library {
 
     pub fn accept_album_release_result(
         &self,
-        loaded: &Arc<LoadedLibrary>,
         candidate: AlbumReleaseCandidate,
         result: AlbumReleaseResult,
     ) -> LibraryResult<Option<AcceptedLibraryChange>> {
-        if loaded.source_id() != &candidate.source_id || loaded.library_id() != candidate.library_id
-        {
+        if self.source_id() != &candidate.source_id || self.library_id() != candidate.library_id {
             return Ok(None);
         }
         if matches!(
@@ -111,7 +104,7 @@ impl Library {
         if !accepted {
             return Ok(None);
         }
-        loaded.mark_album_release_resolved(&candidate.album_id)?;
+        self.mark_album_release_resolved(&candidate.album_id)?;
         let AlbumReleaseResult::Found {
             release_types,
             is_compilation,
@@ -119,7 +112,7 @@ impl Library {
         else {
             return Ok(None);
         };
-        Ok(Some(loaded.replace_album_release(
+        Ok(Some(self.replace_album_release(
             &candidate.album_id,
             release_types,
             is_compilation,

@@ -1,6 +1,6 @@
 use std::{cell::Cell, rc::Rc, sync::Arc};
 
-use ::library::{LoadedLibrary, MoodDetail, MoodSummary, MusicFolderId};
+use ::library::{Library, MoodDetail, MoodSummary, MusicFolderId};
 use adw::prelude::*;
 use artwork::ArtworkBinding;
 
@@ -34,7 +34,7 @@ impl Shell {
         self: &Rc<Self>,
         mood_id: ::library::MoodId,
         detail: Option<MoodDetail>,
-        loaded: Arc<LoadedLibrary>,
+        loaded: Arc<Library>,
         music_folder_id: Option<MusicFolderId>,
     ) -> MountedRoute {
         let Some(detail) = detail else {
@@ -229,7 +229,7 @@ impl Shell {
 }
 
 pub(crate) fn load_mood_detail(
-    loaded: &Arc<LoadedLibrary>,
+    loaded: &Arc<Library>,
     mood_id: &::library::MoodId,
     music_folder_id: Option<&MusicFolderId>,
     settings: &LibraryListSettings,

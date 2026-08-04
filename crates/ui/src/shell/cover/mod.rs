@@ -612,7 +612,7 @@ impl Shell {
         }
         let generation = self.artwork.thumbnail_warm.generation.get();
         let shell = Rc::downgrade(self);
-        let loaded = Arc::clone(&selected.loaded);
+        let loaded = Arc::clone(&selected.library);
         let music_folder_id = selected.music_folder_id.clone();
         let prefer_server_playlist_covers =
             self.settings.current.borrow().prefer_server_playlist_covers;
@@ -703,11 +703,11 @@ impl Shell {
 }
 
 fn source_thumbnail_bindings(
-    loaded: &Arc<::library::LoadedLibrary>,
+    loaded: &Arc<::library::Library>,
     music_folder_id: Option<&::library::MusicFolderId>,
     prefer_server_playlist_covers: bool,
     limit: usize,
-) -> Result<Arc<[ArtworkBinding]>, ::library::LoadedLibraryError> {
+) -> Result<Arc<[ArtworkBinding]>, ::library::LibraryQueryError> {
     if limit == 0 {
         return Ok(Arc::default());
     }
@@ -777,7 +777,7 @@ fn source_thumbnail_bindings(
     let tracks = loaded.track_list(music_folder_id, ::library::TrackSort::Title, false)?;
     for position in 0..tracks.len().min(limit) {
         let Some(track) = tracks.track(position)? else {
-            return Err(::library::LoadedLibraryError::StaleTrackSelection);
+            return Err(::library::LibraryQueryError::StaleTrackSelection);
         };
         if !push_source_thumbnail_binding(
             &mut bindings,

@@ -9,6 +9,8 @@ use playback::QueuePlacement;
 use super::collection_context::{present_album_context_menu, present_track_context_menu};
 use super::collections::PlaybackTarget;
 use super::home_layout::home_showcase_cover_size;
+#[cfg(test)]
+use super::library_fields::COLLECTION_GRID_MAX_CARD_WIDTH;
 use super::library_fields::{COLLECTION_GRID_CARD_MARGIN, COLLECTION_GRID_MIN_CARD_WIDTH};
 use crate::favorites::{
     album_favorite_key, favorite_button_is_active, favorite_icon_button,
@@ -17,13 +19,29 @@ use crate::favorites::{
 use crate::interactions::install_context_menu_openers;
 use crate::shell::Shell;
 use crate::shell::actions::{
-    ActionButtonVariant, MORE_ICON, PLAY_ICON, PLAY_LATER_ICON, PLAY_NEXT_ICON,
-    configure_action_button, icon_button, icon_button_without_tooltip,
+    ActionButtonVariant, COVER_PRIMARY_ACTION_SIZE, COVER_SIDE_ACTION_SIZE, MORE_ICON, PLAY_ICON,
+    PLAY_LATER_ICON, PLAY_NEXT_ICON, configure_action_button, icon_button,
+    icon_button_without_tooltip,
 };
 use crate::shell::cover::presentation::stable_seed;
 use crate::shell::cover::{ArtworkTile, cover_fetch_size_for_display};
 
-const COVER_CORNER_ACTION_INSET: i32 = 8;
+const COVER_CORNER_HORIZONTAL_INSET: i32 = 4;
+const COVER_CORNER_VERTICAL_INSET: i32 = 8;
+const COVER_TRANSPORT_COMPACT_GAP: i32 = 3;
+const COVER_TRANSPORT_REGULAR_GAP: i32 = 8;
+
+fn cover_hover_transport_width(spacing: i32) -> i32 {
+    COVER_SIDE_ACTION_SIZE * 2 + COVER_PRIMARY_ACTION_SIZE + spacing * 2
+}
+
+fn cover_hover_transport_spacing(cover_width: i32) -> i32 {
+    let available_spacing = cover_width
+        .saturating_sub(COVER_CORNER_HORIZONTAL_INSET * 2)
+        .saturating_sub(cover_hover_transport_width(0))
+        / 2;
+    available_spacing.clamp(COVER_TRANSPORT_COMPACT_GAP, COVER_TRANSPORT_REGULAR_GAP)
+}
 
 #[derive(Clone)]
 pub(crate) struct ShowcaseCoverOverlay {
@@ -442,6 +460,36 @@ mod collection_grid_card_inset_tests {
             )
         );
     }
+
+    #[test]
+    fn cover_hover_transport_spacing_uses_available_grid_width() {
+        assert_eq!(
+            cover_hover_transport_width(COVER_TRANSPORT_COMPACT_GAP),
+            COLLECTION_GRID_MIN_CARD_WIDTH
+        );
+
+        let regular_width = cover_hover_transport_width(COVER_TRANSPORT_REGULAR_GAP)
+            + COVER_CORNER_HORIZONTAL_INSET * 2;
+        assert_eq!(cover_hover_transport_spacing(regular_width - 1), 7);
+        assert_eq!(
+            cover_hover_transport_spacing(regular_width),
+            COVER_TRANSPORT_REGULAR_GAP
+        );
+
+        let mut previous_spacing = COVER_TRANSPORT_COMPACT_GAP;
+        for cover_width in COLLECTION_GRID_MIN_CARD_WIDTH..=COLLECTION_GRID_MAX_CARD_WIDTH {
+            let spacing = cover_hover_transport_spacing(cover_width);
+            assert!(spacing >= previous_spacing);
+            assert!(cover_hover_transport_width(spacing) <= cover_width);
+            if spacing > COVER_TRANSPORT_COMPACT_GAP {
+                assert!(
+                    cover_hover_transport_width(spacing) + COVER_CORNER_HORIZONTAL_INSET * 2
+                        <= cover_width
+                );
+            }
+            previous_spacing = spacing;
+        }
+    }
 }
 
 pub(super) fn collection_grid_card_inset(
@@ -466,7 +514,9 @@ mod square_cover_frame_imp {
     use gtk::{glib, prelude::*, subclass::prelude::*};
 
     #[derive(Default)]
-    pub struct SquareCoverFrame;
+    pub struct SquareCoverFrame {
+        pub(super) transport: glib::WeakRef<gtk::Box>,
+    }
 
     #[glib::object_subclass]
     impl ObjectSubclass for SquareCoverFrame {
@@ -500,6 +550,12 @@ mod square_cover_frame_imp {
         }
 
         fn size_allocate(&self, width: i32, height: i32, baseline: i32) {
+            if let Some(transport) = self.transport.upgrade() {
+                let spacing = super::cover_hover_transport_spacing(width);
+                if transport.spacing() != spacing {
+                    transport.set_spacing(spacing);
+                }
+            }
             if let Some(child) = self.obj().first_child() {
                 child.allocate(width, height, baseline, None);
             }
@@ -528,8 +584,14 @@ gtk::glib::wrapper! {
         @implements gtk::Accessible, gtk::Buildable, gtk::ConstraintTarget;
 }
 
-pub(super) fn square_cover_frame(child: &impl IsA<gtk::Widget>) -> SquareCoverFrame {
+pub(super) fn square_cover_frame(
+    child: &impl IsA<gtk::Widget>,
+    transport: &gtk::Box,
+) -> SquareCoverFrame {
+    use gtk::subclass::prelude::ObjectSubclassIsExt;
+
     let frame: SquareCoverFrame = gtk::glib::Object::new();
+    frame.imp().transport.set(Some(transport));
     frame.set_hexpand(true);
     frame.set_halign(gtk::Align::Fill);
     frame.set_valign(gtk::Align::Start);
@@ -554,8 +616,8 @@ impl CoverHoverControls {
         configure_action_button(&menu, ActionButtonVariant::CoverCornerMenu, None);
         menu.set_halign(gtk::Align::Start);
         menu.set_valign(gtk::Align::End);
-        menu.set_margin_start(COVER_CORNER_ACTION_INSET);
-        menu.set_margin_bottom(COVER_CORNER_ACTION_INSET);
+        menu.set_margin_start(COVER_CORNER_HORIZONTAL_INSET);
+        menu.set_margin_bottom(COVER_CORNER_VERTICAL_INSET);
         menu.set_visible(false);
         self.menu = Some(menu.clone());
         menu
@@ -624,8 +686,8 @@ pub(super) fn cover_hover_controls_with_favorite(
     configure_action_button(&favorite, ActionButtonVariant::CoverCornerFavorite, None);
     favorite.set_halign(gtk::Align::End);
     favorite.set_valign(gtk::Align::Start);
-    favorite.set_margin_top(COVER_CORNER_ACTION_INSET);
-    favorite.set_margin_end(COVER_CORNER_ACTION_INSET);
+    favorite.set_margin_top(COVER_CORNER_VERTICAL_INSET);
+    favorite.set_margin_end(COVER_CORNER_HORIZONTAL_INSET);
     favorite.set_visible(false);
     set_favorite_button_active(&favorite, favorite_active);
     controls.favorite = Some(favorite.clone());
@@ -670,7 +732,7 @@ pub(super) fn cover_play_hover_controls(size: i32, play_label: &str) -> CoverHov
     );
     play_last.set_visible(true);
 
-    let transport = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    let transport = gtk::Box::new(gtk::Orientation::Horizontal, COVER_TRANSPORT_REGULAR_GAP);
     transport.add_css_class("cover-hover-transport");
     transport.set_halign(gtk::Align::Center);
     transport.set_valign(gtk::Align::Center);

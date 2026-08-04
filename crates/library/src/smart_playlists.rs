@@ -1,4 +1,4 @@
-//! Smart playlist definitions and LoadedLibrary evaluation.
+//! Smart playlist definitions and Library evaluation.
 //!
 //! Only user-owned definitions are durable. Membership is derived from the
 //! selected source's accepted Track handles, so routes and Playback share one
@@ -744,7 +744,7 @@ impl EvaluatedSmartPlaylist {
 
     fn detail(
         &self,
-        loaded: &Arc<crate::LoadedLibrary>,
+        loaded: &Arc<crate::Library>,
         state: &LoadedState,
         music_folder_id: Option<&MusicFolderId>,
     ) -> Arc<SmartPlaylistDetail> {
@@ -1268,10 +1268,10 @@ fn text_cmp(left: &str, right: &str) -> Ordering {
         .cmp(right.bytes().map(|byte| byte.to_ascii_lowercase()))
 }
 
-impl crate::LoadedLibrary {
+impl crate::Library {
     pub fn missing_builtin_smart_playlists(
         &self,
-    ) -> crate::LoadedLibraryResult<Vec<SmartPlaylistBuiltin>> {
+    ) -> crate::LibraryQueryResult<Vec<SmartPlaylistBuiltin>> {
         let state = self.read_state()?;
         Ok(SmartPlaylistBuiltin::all()
             .into_iter()
@@ -1287,13 +1287,13 @@ impl crate::LoadedLibrary {
     pub fn smart_playlist(
         &self,
         id: &SmartPlaylistId,
-    ) -> crate::LoadedLibraryResult<Option<Arc<SmartPlaylist>>> {
+    ) -> crate::LibraryQueryResult<Option<Arc<SmartPlaylist>>> {
         Ok(self.read_state()?.smart_playlists.get(id).cloned())
     }
 
     pub fn smart_playlist_rule_value_suggestions(
         &self,
-    ) -> crate::LoadedLibraryResult<(Vec<String>, Vec<String>)> {
+    ) -> crate::LibraryQueryResult<(Vec<String>, Vec<String>)> {
         let state = self.read_state()?;
         let mut genres = HashSet::new();
         let mut moods = HashSet::new();
@@ -1327,7 +1327,7 @@ impl crate::LoadedLibrary {
     pub fn smart_playlists(
         &self,
         music_folder_id: Option<&MusicFolderId>,
-    ) -> crate::LoadedLibraryResult<Arc<[SmartPlaylistSummary]>> {
+    ) -> crate::LibraryQueryResult<Arc<[SmartPlaylistSummary]>> {
         let state = self.read_state()?;
         let mut playlists = state
             .smart_playlists
@@ -1347,7 +1347,7 @@ impl crate::LoadedLibrary {
         &self,
         id: &SmartPlaylistId,
         music_folder_id: Option<&MusicFolderId>,
-    ) -> crate::LoadedLibraryResult<Option<SmartPlaylistSummary>> {
+    ) -> crate::LibraryQueryResult<Option<SmartPlaylistSummary>> {
         let state = self.read_state()?;
         Ok(state
             .smart_playlists
@@ -1359,7 +1359,7 @@ impl crate::LoadedLibrary {
         self: &Arc<Self>,
         id: &SmartPlaylistId,
         music_folder_id: Option<&MusicFolderId>,
-    ) -> crate::LoadedLibraryResult<Option<Arc<SmartPlaylistDetail>>> {
+    ) -> crate::LibraryQueryResult<Option<Arc<SmartPlaylistDetail>>> {
         let state = self.read_state()?;
         Ok(state.smart_playlists.get(id).map(|playlist| {
             evaluate_playlist(Arc::clone(playlist), &state, music_folder_id).detail(
@@ -1374,7 +1374,7 @@ impl crate::LoadedLibrary {
         self: &Arc<Self>,
         id: &SmartPlaylistId,
         music_folder_id: Option<&MusicFolderId>,
-    ) -> crate::LoadedLibraryResult<TrackList> {
+    ) -> crate::LibraryQueryResult<TrackList> {
         let state = self.read_state()?;
         let slots = state
             .smart_playlists
@@ -1389,7 +1389,7 @@ impl crate::LoadedLibrary {
         &self,
         id: &SmartPlaylistId,
         music_folder_id: Option<&MusicFolderId>,
-    ) -> crate::LoadedLibraryResult<bool> {
+    ) -> crate::LibraryQueryResult<bool> {
         let state = self.read_state()?;
         Ok(state.download_coverage.smart_playlist(id, music_folder_id))
     }
@@ -1397,7 +1397,7 @@ impl crate::LoadedLibrary {
     pub(crate) fn replace_smart_playlist(
         &self,
         record: SmartPlaylistRecord,
-    ) -> crate::LoadedLibraryResult<()> {
+    ) -> crate::LibraryQueryResult<()> {
         let mut state = self.write_state()?;
         let id = record.id.clone();
         state
@@ -1410,7 +1410,7 @@ impl crate::LoadedLibrary {
     fn smart_playlist_record(
         &self,
         id: &SmartPlaylistId,
-    ) -> crate::LoadedLibraryResult<Option<SmartPlaylistRecord>> {
+    ) -> crate::LibraryQueryResult<Option<SmartPlaylistRecord>> {
         let state = self.read_state()?;
         Ok(state
             .smart_playlists
@@ -1418,7 +1418,7 @@ impl crate::LoadedLibrary {
             .map(|playlist| record_from_playlist(playlist)))
     }
 
-    fn smart_playlist_records(&self) -> crate::LoadedLibraryResult<Vec<SmartPlaylistRecord>> {
+    fn smart_playlist_records(&self) -> crate::LibraryQueryResult<Vec<SmartPlaylistRecord>> {
         let state = self.read_state()?;
         let mut records = state
             .smart_playlists
@@ -1436,11 +1436,11 @@ impl crate::LoadedLibrary {
     fn replace_smart_playlist_order(
         &self,
         ordered_ids: &[SmartPlaylistId],
-    ) -> crate::LoadedLibraryResult<()> {
+    ) -> crate::LibraryQueryResult<()> {
         let mut state = self.write_state()?;
         for (position, id) in ordered_ids.iter().enumerate() {
             let playlist = state.smart_playlists.get_mut(id).ok_or_else(|| {
-                crate::LoadedLibraryError::MissingItem {
+                crate::LibraryQueryError::MissingItem {
                     kind: "smart playlist",
                     id: id.as_str().to_string(),
                 }
@@ -1454,7 +1454,7 @@ impl crate::LoadedLibrary {
     pub(crate) fn remove_smart_playlist(
         &self,
         id: &SmartPlaylistId,
-    ) -> crate::LoadedLibraryResult<bool> {
+    ) -> crate::LibraryQueryResult<bool> {
         let mut state = self.write_state()?;
         let removed = state.smart_playlists.remove(id).is_some();
         if removed {
@@ -1467,9 +1467,8 @@ impl crate::LoadedLibrary {
 impl crate::Library {
     pub fn initialize_smart_playlists(
         &self,
-        loaded: &Arc<crate::LoadedLibrary>,
     ) -> crate::LibraryResult<Option<AcceptedLibraryChange>> {
-        let records = loaded.smart_playlist_records()?;
+        let records = self.smart_playlist_records()?;
         let mut next_position = records
             .iter()
             .map(|record| record.position)
@@ -1483,8 +1482,8 @@ impl crate::Library {
         }) {
             let record = builtin_record(builtin, next_position);
             self.store
-                .put_smart_playlist(loaded.source_id().clone(), record.clone())?;
-            loaded.replace_smart_playlist(record.clone())?;
+                .put_smart_playlist(self.source_id().clone(), record.clone())?;
+            self.replace_smart_playlist(record.clone())?;
             accepted.push(record.id);
             next_position = next_position.saturating_add(1);
         }
@@ -1496,11 +1495,10 @@ impl crate::Library {
 
     pub fn create_smart_playlist(
         &self,
-        loaded: &Arc<crate::LoadedLibrary>,
         name: String,
         definition: SmartPlaylistDefinition,
     ) -> crate::LibraryResult<Option<AcceptedLibraryChange>> {
-        let position = loaded
+        let position = self
             .smart_playlist_records()?
             .into_iter()
             .map(|record| record.position)
@@ -1513,32 +1511,30 @@ impl crate::Library {
             builtin: None,
             definition,
         };
-        self.put_smart_playlist(loaded, record)
+        self.put_smart_playlist(record)
     }
 
     pub fn update_smart_playlist(
         &self,
-        loaded: &Arc<crate::LoadedLibrary>,
         id: SmartPlaylistId,
         name: String,
         definition: SmartPlaylistDefinition,
     ) -> crate::LibraryResult<Option<AcceptedLibraryChange>> {
-        let mut record = loaded
+        let mut record = self
             .smart_playlist_record(&id)?
             .ok_or_else(|| missing_smart_playlist(&id))?;
         record.name = name.trim().to_string();
         record.definition = definition;
-        self.put_smart_playlist(loaded, record)
+        self.put_smart_playlist(record)
     }
 
     pub fn delete_smart_playlist(
         &self,
-        loaded: &Arc<crate::LoadedLibrary>,
         id: &SmartPlaylistId,
     ) -> crate::LibraryResult<Option<AcceptedLibraryChange>> {
         self.store
-            .remove_smart_playlist(loaded.source_id().clone(), id.clone())?;
-        if !loaded.remove_smart_playlist(id)? {
+            .remove_smart_playlist(self.source_id().clone(), id.clone())?;
+        if !self.remove_smart_playlist(id)? {
             return Ok(None);
         }
         Ok(Some(AcceptedLibraryChange {
@@ -1549,33 +1545,31 @@ impl crate::Library {
 
     pub fn restore_builtin_smart_playlist(
         &self,
-        loaded: &Arc<crate::LoadedLibrary>,
         builtin: SmartPlaylistBuiltin,
     ) -> crate::LibraryResult<Option<AcceptedLibraryChange>> {
-        if loaded
+        if self
             .smart_playlist_records()?
             .into_iter()
             .any(|record| record.builtin == Some(builtin))
         {
             return Ok(None);
         }
-        let position = loaded
+        let position = self
             .smart_playlist_records()?
             .into_iter()
             .map(|record| record.position)
             .max()
             .map_or(0, |position| position.saturating_add(1));
-        self.put_smart_playlist(loaded, builtin_record(builtin, position))
+        self.put_smart_playlist(builtin_record(builtin, position))
     }
 
     pub fn move_smart_playlist_relative(
         &self,
-        loaded: &Arc<crate::LoadedLibrary>,
         dragged_id: SmartPlaylistId,
         target_id: SmartPlaylistId,
         after: bool,
     ) -> crate::LibraryResult<Option<AcceptedLibraryChange>> {
-        let records = loaded.smart_playlist_records()?;
+        let records = self.smart_playlist_records()?;
         let ids = records
             .iter()
             .map(|record| record.id.clone())
@@ -1584,8 +1578,8 @@ impl crate::Library {
             return Ok(None);
         };
         self.store
-            .replace_smart_playlist_order(loaded.source_id().clone(), ordered_ids.clone())?;
-        loaded.replace_smart_playlist_order(&ordered_ids)?;
+            .replace_smart_playlist_order(self.source_id().clone(), ordered_ids.clone())?;
+        self.replace_smart_playlist_order(&ordered_ids)?;
         Ok(Some(AcceptedLibraryChange {
             smart_playlists: ordered_ids,
             ..AcceptedLibraryChange::default()
@@ -1594,16 +1588,15 @@ impl crate::Library {
 
     fn put_smart_playlist(
         &self,
-        loaded: &Arc<crate::LoadedLibrary>,
         mut record: SmartPlaylistRecord,
     ) -> crate::LibraryResult<Option<AcceptedLibraryChange>> {
         normalize_definition(&mut record.definition);
-        if loaded.smart_playlist_record(&record.id)?.as_ref() == Some(&record) {
+        if self.smart_playlist_record(&record.id)?.as_ref() == Some(&record) {
             return Ok(None);
         }
         self.store
-            .put_smart_playlist(loaded.source_id().clone(), record.clone())?;
-        loaded.replace_smart_playlist(record.clone())?;
+            .put_smart_playlist(self.source_id().clone(), record.clone())?;
+        self.replace_smart_playlist(record.clone())?;
         Ok(Some(AcceptedLibraryChange {
             smart_playlists: vec![record.id],
             ..AcceptedLibraryChange::default()

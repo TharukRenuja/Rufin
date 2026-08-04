@@ -7,20 +7,18 @@ mod events;
 mod inputs;
 mod release_update;
 mod scrobbling;
-pub mod smart_playlists;
 pub mod source;
 mod waveform;
 
 pub use ::playback::PlaybackHandles;
 pub use diagnostics::{DiagnosticsHandle, DiagnosticsPort};
 pub use downloads::{
-    DownloadEvent, DownloadQuality, DownloadQueueItem, DownloadQueueSnapshot, DownloadQueueState,
-    DownloadSubject,
+    DownloadEvent, DownloadQueueItem, DownloadQueueSnapshot, DownloadQueueState, DownloadSubject,
 };
 pub use events::ProductReceivers;
 pub use inputs::{
-    FavoriteFailure, HomePublication, RuntimeInputs, SelectedLibrary, SelectedLibraryUpdate,
-    SourceEvent,
+    FavoriteFailure, HomePublication, PlaybackPublication, RuntimeInputs, SelectedLibrary,
+    SelectedLibraryUpdate, SourceEvent,
 };
 pub use release_update::{
     ReleaseHistory, ReleaseNote, ReleaseUpdate, ReleaseUpdateHandle, ReleaseUpdatePort,
@@ -29,14 +27,13 @@ pub use scrobbling::{
     LastFmPreferences, LibreFmPreferences, ListenBrainzPreferences, ScrobblingConnection,
     ScrobblingConnectionEvent, ScrobblingHandle, ScrobblingPort, ScrobblingPreferences,
 };
-pub use smart_playlists::{SmartPlaylistHandle, SmartPlaylistPort};
-pub use source::{SourceHandle, SourcePort};
+pub use source::{SelectedSourceHandle, SelectedSourcePort, SourceHandle, SourcePort};
 pub use waveform::WaveformProjection;
 
 #[derive(Clone)]
 pub struct ProductHandles {
     pub source: SourceHandle,
-    pub smart_playlists: SmartPlaylistHandle,
+    pub downloads: downloads::Downloads,
     pub playback: PlaybackHandles,
     pub artwork: artwork::Artwork,
     pub lyrics: lyrics::LyricsHandle,

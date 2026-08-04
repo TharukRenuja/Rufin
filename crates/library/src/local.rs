@@ -6,13 +6,12 @@
 
 use std::collections::{BTreeMap, BTreeSet, HashSet, VecDeque};
 use std::path::Path;
-use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    AcceptedLibraryChange, Album, AlbumId, Artist, ArtistId, Genre, GenreId, Library,
-    LibraryResult, LoadedLibrary, Track, TrackId,
+    AcceptedHomeChange, AcceptedLibraryChange, Album, AlbumId, Artist, ArtistId, Genre, GenreId,
+    Library, LibraryResult, Track, TrackId,
     loaded::{ItemReplacement, LocalArtworkItemId},
 };
 
@@ -165,7 +164,6 @@ pub struct LocalComponentBaseline {
 impl Library {
     pub fn accept_local_component(
         &self,
-        loaded: &Arc<LoadedLibrary>,
         replacement: LocalComponentReplacement,
     ) -> LibraryResult<Option<AcceptedLibraryChange>> {
         let LocalComponentReplacement {
@@ -194,17 +192,17 @@ impl Library {
         if files.is_empty() && removed_paths.is_empty() && replacement.is_empty() {
             return Ok(None);
         }
-        let favorite_update = loaded.local_favorite_update(&replacement)?;
+        let favorite_update = self.local_favorite_update(&replacement)?;
         let stored = self.store.replace_local_component(
-            loaded.source_id().clone(),
-            loaded.library_id(),
+            self.source_id().clone(),
+            self.library_id(),
             observed_at,
             files,
             removed_paths,
             replacement,
             favorite_update,
         )?;
-        let accepted = loaded.replace_local_component(
+        let mut accepted = self.replace_local_component(
             stored.files,
             stored.removed_paths,
             stored.replacement,
@@ -213,11 +211,14 @@ impl Library {
             stored.activity,
             stored.unresolved_album_releases,
         )?;
+        accepted.home = AcceptedHomeChange::Rebuild;
+        accepted.download_coverage_changed = true;
+        accepted.album_release_candidates_changed = true;
         Ok(Some(accepted))
     }
 }
 
-impl LoadedLibrary {
+impl Library {
     /// Returns only accepted filesystem observations needed to decide whether a
     /// Local notification represents a real change.
     ///

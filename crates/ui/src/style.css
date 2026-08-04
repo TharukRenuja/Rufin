@@ -666,6 +666,21 @@ button.suggested-action:disabled {
   box-shadow: none;
 }
 
+row.entry.metadata-identified-change {
+  background: color-mix(in srgb, var(--accent-bg-color) 10%, var(--card-bg-color));
+  box-shadow: inset 3px 0 var(--accent-color);
+}
+
+row.entry.metadata-identified-change:dir(rtl) {
+  box-shadow: inset -3px 0 var(--accent-color);
+}
+
+@media (prefers-contrast: more) {
+  row.entry.metadata-identified-change {
+    background: color-mix(in srgb, var(--accent-bg-color) 18%, var(--card-bg-color));
+  }
+}
+
 row.entry.password.focused,
 row.entry.password:focus-within {
   outline: none;

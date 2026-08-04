@@ -4,13 +4,11 @@
 //! records the promised lifetime/monthly totals and bounded recent history;
 //! it does not redraw a mounted Home or create a general event log.
 
-use std::collections::HashSet;
-use std::sync::Arc;
-
 use crate::{
-    AcceptedLibraryChange, ArtistId, GenreId, Library, LibraryError, LibraryResult, LoadedLibrary,
-    LoadedLibraryError, SourceId, Track, TrackId,
+    AcceptedHomeChange, AcceptedLibraryChange, ArtistId, GenreId, Library, LibraryError,
+    LibraryQueryError, LibraryResult, Track, TrackId,
 };
+use std::collections::HashSet;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct AcceptedPlay {
@@ -102,11 +100,7 @@ pub struct RecordedActivity {
 }
 
 impl Library {
-    pub fn record_play(
-        &self,
-        loaded: &Arc<LoadedLibrary>,
-        play: AcceptedPlay,
-    ) -> LibraryResult<Option<RecordedActivity>> {
+    pub fn record_play(&self, play: AcceptedPlay) -> LibraryResult<Option<RecordedActivity>> {
         if play.play_id.is_empty() {
             return Err(LibraryError::Persistence(
                 "accepted play ID cannot be empty".to_string(),
@@ -118,7 +112,7 @@ impl Library {
                 play.month
             )));
         }
-        let track = loaded
+        let track = self
             .track(&play.track_id)?
             .ok_or_else(|| missing_track(&play.track_id))?;
         let primary = if track.relations.artists.is_empty() {
@@ -158,7 +152,7 @@ impl Library {
             context: Some(track.artist.clone()),
         });
         let replacement = self.store.record_activity(
-            loaded.source_id().clone(),
+            self.source_id().clone(),
             ActivityWrite {
                 play_id: Some(play.play_id.clone()),
                 track_id: track.id.clone(),
@@ -187,11 +181,7 @@ impl Library {
         }))
     }
 
-    pub fn activity_summary(
-        &self,
-        source_id: &SourceId,
-        period: ActivityPeriod,
-    ) -> LibraryResult<ActivitySummary> {
+    pub fn activity_summary(&self, period: ActivityPeriod) -> LibraryResult<ActivitySummary> {
         if matches!(&period, ActivityPeriod::Month(month) if !valid_month(month))
             || matches!(&period, ActivityPeriod::Year(year) if !(1970..=9999).contains(year))
         {
@@ -199,19 +189,17 @@ impl Library {
                 "activity period is invalid".to_string(),
             ));
         }
-        Ok(self.store.activity_summary(source_id.clone(), period)?)
+        Ok(self
+            .store
+            .activity_summary(self.source_id().clone(), period)?)
     }
 
-    pub fn record_skip(
-        &self,
-        loaded: &Arc<LoadedLibrary>,
-        skip: AcceptedSkip,
-    ) -> LibraryResult<RecordedActivity> {
-        let track = loaded
+    pub fn record_skip(&self, skip: AcceptedSkip) -> LibraryResult<RecordedActivity> {
+        let track = self
             .track(&skip.track_id)?
             .ok_or_else(|| missing_track(&skip.track_id))?;
         let replacement = self.store.record_activity(
-            loaded.source_id().clone(),
+            self.source_id().clone(),
             ActivityWrite {
                 play_id: None,
                 track_id: track.id.clone(),
@@ -235,12 +223,18 @@ impl Library {
 
     pub fn apply_recorded_activity(
         &self,
-        loaded: &Arc<LoadedLibrary>,
         update: &RecordedActivity,
     ) -> LibraryResult<Option<AcceptedLibraryChange>> {
-        loaded
-            .replace_track_activity(update.activity.clone(), update.recent_play.clone())
-            .map_err(Into::into)
+        let played_track = update
+            .recent_play
+            .as_ref()
+            .map(|play| play.track_id.clone());
+        let mut accepted =
+            self.replace_track_activity(update.activity.clone(), update.recent_play.clone())?;
+        if let (Some(change), Some(track_id)) = (&mut accepted, played_track) {
+            change.home = AcceptedHomeChange::Played(track_id);
+        }
+        Ok(accepted)
     }
 }
 
@@ -267,7 +261,7 @@ fn valid_month(value: &str) -> bool {
 }
 
 fn missing_track(id: &TrackId) -> LibraryError {
-    LoadedLibraryError::MissingItem {
+    LibraryQueryError::MissingItem {
         kind: "track",
         id: id.to_string(),
     }

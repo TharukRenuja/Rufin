@@ -1,7 +1,7 @@
 use std::{cell::RefCell, collections::HashMap};
 
 use gtk::{gio, glib, prelude::*};
-use library::{AcceptedTrackReplacement, LoadedLibraryResult, SourceId, Track, TrackId, TrackList};
+use library::{AcceptedTrackReplacement, LibraryQueryResult, SourceId, Track, TrackId, TrackList};
 use playback::{LoadedPlayRequest, QueuePlacement, SourceSessionEpoch};
 
 use crate::LibraryListSettings;
@@ -28,7 +28,7 @@ pub(crate) struct PreparedTrackProjection {
 pub(crate) fn prepare_track_projection(
     source: TrackList,
     request: TrackProjectionRequest,
-) -> LoadedLibraryResult<PreparedTrackProjection> {
+) -> LibraryQueryResult<PreparedTrackProjection> {
     let visible = visible_tracks(&source, &request.query, &request.settings)?;
     Ok(PreparedTrackProjection {
         source,
@@ -582,7 +582,7 @@ fn visible_tracks(
     source: &TrackList,
     query: &str,
     settings: &LibraryListSettings,
-) -> LoadedLibraryResult<TrackList> {
+) -> LibraryQueryResult<TrackList> {
     if source.has_played_at() {
         let query = query.to_lowercase();
         return source.filtered_in_source_order(

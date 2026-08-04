@@ -1,11 +1,14 @@
 //! Concrete music sources behind one source-agnostic application boundary.
 //!
-//! Providers own authentication, HTTP or filesystem work, paging, and wire
-//! translation. Rufin owns source lifecycle and passes their canonical facts
-//! to Library; Sources never receives a Library, Store, or selected runtime.
+//! Providers own authentication, HTTP or filesystem work, paging, wire
+//! translation, and preparation of invisible Library candidates. Rufin owns
+//! source lifecycle, artwork preparation, and candidate acceptance. Local
+//! preparation reads one selected Library's accepted baselines; only Library
+//! can accept and persist the resulting replacement.
 
 mod config;
 mod operations;
+mod policy;
 mod source;
 
 mod jellyfin;
@@ -19,10 +22,8 @@ pub use config::{
     SourceConfiguration, SourceSettingsInput, SourceSetupInput,
 };
 pub use operations::{
-    GeneratedTracksRequest, ImageBytes, LyricsSearch, NativeLyricAgent, NativeLyricAgentRole,
-    NativeLyricCue, NativeLyricCueLine, NativeLyricLine, NativeLyrics, NativeLyricsDocument,
-    NativeLyricsOrigin, NativeLyricsRole, PlaybackReport, PlaybackReportKind, PlayedFilter,
-    RandomTrackRequest, StreamDescriptor, StreamQuality, StreamRequest,
+    ImageBytes, LyricsSearch, NativeLyricAgent, NativeLyricAgentRole, NativeLyricCue,
+    NativeLyricCueLine, NativeLyricLine, NativeLyrics, NativeLyricsDocument, NativeLyricsRole,
 };
 pub use source::*;
 

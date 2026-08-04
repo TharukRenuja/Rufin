@@ -11,8 +11,7 @@ use crate::localization::{
     bind_label_text, bind_search_placeholder, bind_widget_tooltip, localized_column,
     localized_label,
 };
-use crate::runtime::SelectedLibrary;
-use crate::runtime::source::FolderRequest;
+use crate::runtime::{SelectedLibrary, SelectedSourceHandle};
 use crate::shell::Shell;
 use crate::shell::cover::THUMB_COVER_SIZE;
 use crate::shell::cover::presentation::stable_seed;
@@ -112,7 +111,9 @@ pub(crate) struct FolderRouteProjection {
     root: gtk::Widget,
     shell: Weak<Shell>,
     pub(crate) path: Vec<FolderPathItem>,
-    request: FolderRequest,
+    source: SelectedSourceHandle,
+    folder_id: Option<::library::FolderId>,
+    music_folder_id: Option<::library::MusicFolderId>,
     status: gtk::Stack,
     search: gtk::SearchEntry,
     tree: gtk::ListBox,
@@ -286,17 +287,13 @@ impl FolderRouteProjection {
         status.set_visible_child_name("loading");
         wrapper.append(&status);
 
-        let request = FolderRequest {
-            source_id: selected.source_id.clone(),
-            source_session_epoch: selected.source_session_epoch,
-            folder_id: path.last().map(|item| item.id.clone()),
-            music_folder_id: selected.music_folder_id.clone(),
-        };
         let projection = Rc::new(Self {
             root: wrapper.upcast(),
             shell: Rc::downgrade(shell),
+            source: selected.operations.clone(),
+            folder_id: path.last().map(|item| item.id.clone()),
+            music_folder_id: selected.music_folder_id.clone(),
             path,
-            request,
             status,
             search,
             tree,
@@ -356,17 +353,19 @@ impl FolderRouteProjection {
     }
 
     fn request(self: &Rc<Self>) {
-        let Some(shell) = self.shell.upgrade() else {
+        if self.shell.upgrade().is_none() {
             return;
-        };
+        }
         self.begin_refresh();
-        let receiver = shell.products.source.folder(self.request.clone());
+        let receiver = self
+            .source
+            .folder(self.folder_id.clone(), self.music_folder_id.clone());
         let projection = Rc::downgrade(self);
         glib::spawn_future_local(async move {
             let result = receiver
                 .recv()
                 .await
-                .unwrap_or_else(|_| Err("Folder request ended before completion.".into()));
+                .unwrap_or_else(|_| Err(tr("Couldn't load this folder")));
             if let Some(projection) = projection.upgrade() {
                 projection.apply_loaded(result);
             }

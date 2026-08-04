@@ -216,19 +216,19 @@ impl Shell {
             .as_ref()
             .and_then(|selected| match item_id {
                 FavoriteItemId::Track(id) => selected
-                    .loaded
+                    .library
                     .track(id)
                     .ok()
                     .flatten()
                     .map(|track| track.favorite),
                 FavoriteItemId::Album(id) => selected
-                    .loaded
+                    .library
                     .album(id)
                     .ok()
                     .flatten()
                     .map(|album| album.favorite),
                 FavoriteItemId::Artist(id) => selected
-                    .loaded
+                    .library
                     .artist(id)
                     .ok()
                     .flatten()
@@ -262,6 +262,9 @@ impl Shell {
         favorite: bool,
         button: Option<&gtk::Button>,
     ) {
+        let Some(source) = self.selected_source_operations() else {
+            return;
+        };
         let track_favorite_changed = matches!(item_id, FavoriteItemId::Track(_));
         self.favorites
             .pending_intents
@@ -271,7 +274,7 @@ impl Shell {
             set_favorite_button_active(button, favorite);
         }
         self.update_visible_favorite_buttons(&item_id, favorite);
-        self.products.source.set_favorite(item_id.clone(), favorite);
+        source.set_favorite(item_id.clone(), favorite);
         if track_favorite_changed {
             self.sync_bottom_player_favorite();
         }

@@ -844,31 +844,31 @@ fn sidebar_pin_items(shell: &Shell) -> Vec<SidebarPinItem> {
         .filter(|pin| pin.source_id() == &selected.source_id)
         .filter_map(|pin| match pin {
             SidebarPin::Album { album_id, .. } => selected
-                .loaded
+                .library
                 .album_summary(&album_id, folder)
                 .ok()
                 .flatten()
                 .map(SidebarPinItem::Album),
             SidebarPin::Artist { artist_id, .. } => selected
-                .loaded
+                .library
                 .artist_summary(&artist_id, folder)
                 .ok()
                 .flatten()
                 .map(SidebarPinItem::Artist),
             SidebarPin::Genre { genre_id, .. } => selected
-                .loaded
+                .library
                 .genre_summary(&genre_id, folder)
                 .ok()
                 .flatten()
                 .map(SidebarPinItem::Genre),
             SidebarPin::Playlist { playlist_id, .. } => selected
-                .loaded
+                .library
                 .playlist_summary(&playlist_id)
                 .ok()
                 .flatten()
                 .map(SidebarPinItem::Playlist),
             SidebarPin::SmartPlaylist { playlist_id, .. } => selected
-                .loaded
+                .library
                 .smart_playlist_summary(&playlist_id, folder)
                 .ok()
                 .flatten()

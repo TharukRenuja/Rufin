@@ -1,7 +1,7 @@
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::HashSet;
 use std::time::Duration;
 
-use library::{CandidateBatch, GenreCredit, HomeFacts, ImageRef, ProviderFreshness};
+use library::{CandidateBatch, HomeFacts, ProviderFreshness};
 
 use super::*;
 use crate::source::{BatchEmitter, SourceReadProgress, SourceReadStage};
@@ -40,7 +40,7 @@ impl SubsonicSource {
 
     pub(crate) async fn read_facts(
         &self,
-        emitter: &mut BatchEmitter<'_>,
+        emitter: &BatchEmitter,
         progress: &(dyn Fn(SourceReadProgress) + Send + Sync),
         cancelled: &(dyn Fn() -> bool + Send + Sync),
     ) -> SourceResult<(Option<ProviderFreshness>, HomeFacts)> {
@@ -52,51 +52,30 @@ impl SubsonicSource {
             .emit_async(CandidateBatch::MusicFolders(music_folders.clone()))
             .await?;
 
-        let relation_genres = if self.has_navidrome_library() {
+        if self.has_navidrome_library() {
             self.emit_navidrome_library(emitter, progress, cancelled)
-                .await?
+                .await?;
         } else {
-            let mut relation_genres = BTreeMap::new();
             check_cancelled(cancelled)?;
             progress(stage(SourceReadStage::Albums, 0));
-            let album_images = self
-                .emit_albums(emitter, &mut relation_genres, progress, cancelled)
-                .await?;
+            self.emit_albums(emitter, progress, cancelled).await?;
 
             progress(stage(SourceReadStage::Tracks, 0));
-            self.emit_tracks(
-                &music_folders,
-                &album_images,
-                emitter,
-                &mut relation_genres,
-                progress,
-                cancelled,
-            )
-            .await?;
+            self.emit_tracks(&music_folders, emitter, progress, cancelled)
+                .await?;
 
             check_cancelled(cancelled)?;
             progress(stage(SourceReadStage::Artists, 0));
             emitter
                 .emit_async(CandidateBatch::Artists(self.get_all_artists().await?))
                 .await?;
-            relation_genres
-        };
+        }
 
         check_cancelled(cancelled)?;
         progress(stage(SourceReadStage::Genres, 0));
-        let mut genres = self.read_genres().await?;
-        let mut genre_ids = genres
-            .iter()
-            .map(|genre| genre.id.clone())
-            .collect::<HashSet<_>>();
-        genres.extend(relation_genres.into_iter().filter_map(|(id, name)| {
-            genre_ids.insert(id.clone()).then_some(Genre {
-                id,
-                name,
-                image_ref: None,
-            })
-        }));
-        emitter.emit_async(CandidateBatch::Genres(genres)).await?;
+        emitter
+            .emit_async(CandidateBatch::Genres(self.read_genres().await?))
+            .await?;
 
         check_cancelled(cancelled)?;
         progress(stage(SourceReadStage::Playlists, 0));
@@ -120,14 +99,12 @@ impl SubsonicSource {
 
     pub(super) async fn emit_albums(
         &self,
-        emitter: &mut BatchEmitter<'_>,
-        relation_genres: &mut BTreeMap<GenreId, String>,
+        emitter: &BatchEmitter,
         progress: &(dyn Fn(SourceReadProgress) + Send + Sync),
         cancelled: &(dyn Fn() -> bool + Send + Sync),
-    ) -> SourceResult<HashMap<String, ImageRef>> {
+    ) -> SourceResult<()> {
         let mut offset = 0_usize;
         let mut seen = HashSet::new();
-        let mut album_images = HashMap::new();
         loop {
             check_cancelled(cancelled)?;
             let body: AlbumListBody = self
@@ -142,7 +119,7 @@ impl SubsonicSource {
                 .await?;
             let page = body.album_list.album;
             if page.is_empty() {
-                return Ok(album_images);
+                return Ok(());
             }
             let page_len = page.len();
             offset = offset.checked_add(page.len()).ok_or_else(|| {
@@ -156,17 +133,12 @@ impl SubsonicSource {
                         "OpenSubsonic repeated an album page".to_string(),
                     ));
                 }
-                let album = album_from_dto(self, album);
-                if let Some(image) = &album.image_ref {
-                    album_images.insert(raw_id, image.clone());
-                }
-                collect_genres(&album.relations.genres, relation_genres);
-                albums.push(album);
+                albums.push(album_from_dto(self, album));
             }
             emitter.emit_async(CandidateBatch::Albums(albums)).await?;
             progress(stage(SourceReadStage::Albums, offset));
             if page_len < ALBUM_REQUEST_SIZE {
-                return Ok(album_images);
+                return Ok(());
             }
         }
     }
@@ -174,9 +146,7 @@ impl SubsonicSource {
     pub(super) async fn emit_tracks(
         &self,
         music_folders: &[MusicFolder],
-        album_images: &HashMap<String, ImageRef>,
-        emitter: &mut BatchEmitter<'_>,
-        relation_genres: &mut BTreeMap<GenreId, String>,
+        emitter: &BatchEmitter,
         progress: &(dyn Fn(SourceReadProgress) + Send + Sync),
         cancelled: &(dyn Fn() -> bool + Send + Sync),
     ) -> SourceResult<()> {
@@ -223,23 +193,13 @@ impl SubsonicSource {
                             "OpenSubsonic repeated a track page".to_string(),
                         ));
                     }
-                    let album_image = song
-                        .album_id
-                        .as_ref()
-                        .map(raw_id_string)
-                        .and_then(|id| album_images.get(&id))
-                        .cloned();
                     let mut track = track_from_dto(self, song);
-                    if album_image.is_some() {
-                        track.image_ref = album_image;
-                    }
                     if !seen_tracks.insert(track.id.clone()) {
                         continue;
                     }
                     if let Some(folder) = folder {
                         track.relations.music_folders.push(folder.id.clone());
                     }
-                    collect_genres(&track.relations.genres, relation_genres);
                     tracks.push(track);
                 }
                 emitted += tracks.len();
@@ -266,34 +226,25 @@ impl SubsonicSource {
 
     async fn read_genres(&self) -> SourceResult<Vec<Genre>> {
         let body: GenresBody = self.get_json("getGenres", &[]).await?;
-        let mut genres = body
+        Ok(body
             .genres
             .genre
             .into_iter()
             .map(|genre| genre_from_dto(self, genre))
-            .collect::<Vec<_>>();
-        genres.sort_by(|left, right| {
-            left.name
-                .to_lowercase()
-                .cmp(&right.name.to_lowercase())
-                .then_with(|| left.id.cmp(&right.id))
-        });
-        Ok(genres)
+            .collect())
     }
 
     async fn emit_playlists(
         &self,
-        emitter: &mut BatchEmitter<'_>,
+        emitter: &BatchEmitter,
         progress: &(dyn Fn(SourceReadProgress) + Send + Sync),
         cancelled: &(dyn Fn() -> bool + Send + Sync),
     ) -> SourceResult<()> {
         let body: PlaylistsBody = self.get_json("getPlaylists", &[]).await?;
-        let mut playlists = body
+        let playlists = body
             .playlists
             .map(|playlists| playlists.playlist)
             .unwrap_or_default();
-        playlists
-            .sort_by_key(|playlist| playlist.name.as_deref().unwrap_or_default().to_lowercase());
         let total = playlists.len();
         for (position, playlist) in playlists.into_iter().enumerate() {
             check_cancelled(cancelled)?;
@@ -438,14 +389,6 @@ fn freshness(status: ScanStatus) -> ProviderFreshness {
     ProviderFreshness {
         version: FRESHNESS_VERSION,
         marker,
-    }
-}
-
-fn collect_genres(genres: &[GenreCredit], target: &mut BTreeMap<GenreId, String>) {
-    for genre in genres {
-        target
-            .entry(genre.id.clone())
-            .or_insert_with(|| genre.name.clone());
     }
 }
 

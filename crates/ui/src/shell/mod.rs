@@ -15,7 +15,7 @@ use crate::preferences::PreferencesState;
 use crate::preferences::source::SourceState;
 use crate::routes::LibraryState;
 use crate::routes::playlist_picker::PlaylistPickerState;
-use crate::runtime::{DiagnosticsHandle, ProductHandles};
+use crate::runtime::{DiagnosticsHandle, ProductHandles, SelectedSourceHandle};
 use crate::settings::SettingsState;
 use actions::ControlFeedbackState;
 use chrome::WindowChrome;
@@ -37,21 +37,26 @@ mod window_state;
 use route::RouteViewport;
 
 impl Shell {
+    pub(crate) fn selected_source_operations(&self) -> Option<SelectedSourceHandle> {
+        self.library
+            .selected
+            .borrow()
+            .as_ref()
+            .map(|selected| selected.operations.clone())
+    }
+
     pub(crate) fn metadata_editing_available(&self, item_id: library::MetadataItemId) -> bool {
         self.library
             .selected
             .borrow()
             .as_ref()
-            .is_some_and(|selected| {
-                self.products
-                    .source
-                    .metadata_editing_available(selected.metadata_request(item_id))
-            })
+            .is_some_and(|selected| selected.operations.metadata_editing_available(&item_id))
     }
 }
 
 pub(crate) struct Shell {
     pub(crate) diagnostics: DiagnosticsHandle,
+    pub(crate) appearance: crate::application::style::ApplicationAppearance,
     pub(crate) settings: SettingsState,
     pub(crate) navigation: NavigationState,
     pub(crate) library: LibraryState,

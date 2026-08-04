@@ -1,19 +1,17 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::future::Future;
 
-use library::{ArtistId, CandidateBatch, GenreId, HomeFacts, SourceHomeSectionKind};
+use library::{ArtistId, CandidateBatch, GenreId, HomeFacts, Library, SourceHomeSectionKind};
 
 use super::*;
-use crate::source::{
-    BatchEmitter, SourceLibraryChangeRead, SourceLibraryItemId, SourceReadProgress, SourceReadStage,
-};
+use crate::source::{BatchEmitter, PreparedSourceChange, SourceReadProgress, SourceReadStage};
 
 const CHANGED_ITEM_BATCH_SIZE: usize = 100;
 
 impl JellyfinSource {
     pub(crate) async fn read_facts(
         &self,
-        emitter: &mut BatchEmitter<'_>,
+        emitter: &BatchEmitter,
         progress: &(dyn Fn(SourceReadProgress) + Send + Sync),
         cancelled: &(dyn Fn() -> bool + Send + Sync),
     ) -> SourceResult<(Option<library::ProviderFreshness>, HomeFacts)> {
@@ -210,7 +208,7 @@ impl JellyfinSource {
 
     async fn emit_playlists(
         &self,
-        emitter: &mut BatchEmitter<'_>,
+        emitter: &BatchEmitter,
         progress: &(dyn Fn(SourceReadProgress) + Send + Sync),
         cancelled: &(dyn Fn() -> bool + Send + Sync),
     ) -> SourceResult<()> {
@@ -224,14 +222,10 @@ impl JellyfinSource {
             let finished = pages.advance(count, page.total_record_count)?;
             for playlist in page.items.into_iter().map(playlist_from_item) {
                 check_cancelled(cancelled)?;
-                match self.read_playlist_snapshot(playlist).await? {
-                    Some(snapshot) => {
-                        emitter
-                            .emit_async(CandidateBatch::Playlists(vec![snapshot]))
-                            .await?;
-                    }
-                    None => emitter.skipped_playlist(),
-                }
+                let snapshot = self.read_playlist_snapshot(playlist).await?;
+                emitter
+                    .emit_async(CandidateBatch::Playlists(vec![snapshot]))
+                    .await?;
             }
             progress(stage(
                 SourceReadStage::Playlists,
@@ -246,15 +240,19 @@ impl JellyfinSource {
 }
 
 impl JellyfinSource {
-    pub(crate) async fn read_library_change(
+    pub(crate) async fn prepare_change(
         &self,
-        requested: BTreeSet<String>,
-        contains: &(dyn Fn(&SourceLibraryItemId) -> bool + Send + Sync),
-    ) -> SourceResult<SourceLibraryChangeRead> {
-        if requested.is_empty() {
-            return Ok(SourceLibraryChangeRead::Ignored);
+        library: &Library,
+        upserts: BTreeSet<String>,
+        removals: BTreeSet<String>,
+    ) -> SourceResult<PreparedSourceChange> {
+        if upserts.is_empty() && removals.is_empty() {
+            return Ok(PreparedSourceChange::Ignored);
         }
-        let available = self.items_by_ids(&requested).await?;
+        if !upserts.is_disjoint(&removals) {
+            return Ok(PreparedSourceChange::Full);
+        }
+        let available = self.items_by_ids(&upserts).await?;
         let mut albums = BTreeMap::new();
         let mut tracks = BTreeMap::new();
         let mut artists = BTreeMap::new();
@@ -263,22 +261,24 @@ impl JellyfinSource {
         let mut removed_playlists = BTreeSet::new();
         let mut referenced_albums = BTreeSet::new();
 
-        for raw_id in requested {
-            let known = accepted_kinds(&raw_id, contains);
-            let Some(item) = available.get(&raw_id) else {
-                match known.as_slice() {
-                    [] => {}
-                    [AcceptedKind::Track] => {
-                        removed_tracks.insert(TrackId::new(jellyfin_id("track", &raw_id)));
-                    }
-                    [AcceptedKind::Playlist] => {
-                        removed_playlists.insert(PlaylistId::new(jellyfin_id("playlist", &raw_id)));
-                    }
-                    _ => return Ok(SourceLibraryChangeRead::Full),
+        for raw_id in removals {
+            match accepted_kinds(library, &raw_id).as_slice() {
+                [] => {}
+                [AcceptedKind::Track] => {
+                    removed_tracks.insert(TrackId::new(jellyfin_id("track", &raw_id)));
                 }
-                continue;
-            };
+                [AcceptedKind::Playlist] => {
+                    removed_playlists.insert(PlaylistId::new(jellyfin_id("playlist", &raw_id)));
+                }
+                _ => return Ok(PreparedSourceChange::Full),
+            }
+        }
 
+        for raw_id in upserts {
+            let known = accepted_kinds(library, &raw_id);
+            let Some(item) = available.get(&raw_id) else {
+                return Ok(PreparedSourceChange::Full);
+            };
             match current_item_kind(item) {
                 CurrentItemKind::Track if new_or_only(&known, AcceptedKind::Track) => {
                     let track = track_from_item(item.clone());
@@ -299,9 +299,7 @@ impl JellyfinSource {
                 }
                 CurrentItemKind::Playlist if new_or_only(&known, AcceptedKind::Playlist) => {
                     let playlist = playlist_from_item(item.clone());
-                    let Some(snapshot) = self.read_playlist_snapshot(playlist).await? else {
-                        return Ok(SourceLibraryChangeRead::Full);
-                    };
+                    let snapshot = self.read_playlist_snapshot(playlist).await?;
                     playlists.insert(snapshot.playlist.id.clone(), snapshot);
                 }
                 CurrentItemKind::Other if known.is_empty() => {}
@@ -311,7 +309,7 @@ impl JellyfinSource {
                 | CurrentItemKind::Playlist
                 | CurrentItemKind::Genre
                 | CurrentItemKind::Folder
-                | CurrentItemKind::Other => return Ok(SourceLibraryChangeRead::Full),
+                | CurrentItemKind::Other => return Ok(PreparedSourceChange::Full),
             }
         }
 
@@ -321,14 +319,14 @@ impl JellyfinSource {
             .collect::<BTreeSet<_>>();
         let referenced = self.items_by_ids(&missing_albums).await?;
         for raw_id in missing_albums {
-            let known = accepted_kinds(&raw_id, contains);
+            let known = accepted_kinds(library, &raw_id);
             let Some(item) = referenced.get(&raw_id) else {
-                return Ok(SourceLibraryChangeRead::Full);
+                return Ok(PreparedSourceChange::Full);
             };
             if current_item_kind(item) != CurrentItemKind::Album
                 || !new_or_only(&known, AcceptedKind::Album)
             {
-                return Ok(SourceLibraryChangeRead::Full);
+                return Ok(PreparedSourceChange::Full);
             }
             let album = album_from_item(item.clone());
             albums.insert(album.id.clone(), album);
@@ -341,9 +339,9 @@ impl JellyfinSource {
             && removed_tracks.is_empty()
             && removed_playlists.is_empty()
         {
-            return Ok(SourceLibraryChangeRead::Ignored);
+            return Ok(PreparedSourceChange::Ignored);
         }
-        Ok(SourceLibraryChangeRead::Exact(
+        Ok(PreparedSourceChange::SourceUpdate(
             library::SourceLibraryUpdate {
                 albums: albums.into_values().collect(),
                 tracks: tracks.into_values().collect(),
@@ -388,42 +386,53 @@ enum AcceptedKind {
     MusicFolder,
 }
 
-fn accepted_kinds(
-    raw_id: &str,
-    contains: &(dyn Fn(&SourceLibraryItemId) -> bool + Send + Sync),
-) -> Vec<AcceptedKind> {
-    [
-        (
-            AcceptedKind::Album,
-            SourceLibraryItemId::Album(AlbumId::new(jellyfin_id("album", raw_id))),
-        ),
-        (
-            AcceptedKind::Track,
-            SourceLibraryItemId::Track(TrackId::new(jellyfin_id("track", raw_id))),
-        ),
-        (
-            AcceptedKind::Artist,
-            SourceLibraryItemId::Artist(ArtistId::new(jellyfin_id("artist", raw_id))),
-        ),
-        (
-            AcceptedKind::Genre,
-            SourceLibraryItemId::Genre(GenreId::new(jellyfin_id("genre", raw_id))),
-        ),
-        (
-            AcceptedKind::Playlist,
-            SourceLibraryItemId::Playlist(PlaylistId::new(jellyfin_id("playlist", raw_id))),
-        ),
-        (
-            AcceptedKind::MusicFolder,
-            SourceLibraryItemId::MusicFolder(MusicFolderId::new(jellyfin_id(
-                "music-folder",
-                raw_id,
-            ))),
-        ),
-    ]
-    .into_iter()
-    .filter_map(|(kind, item)| contains(&item).then_some(kind))
-    .collect()
+impl AcceptedKind {
+    const ALL: [Self; 6] = [
+        Self::Album,
+        Self::Track,
+        Self::Artist,
+        Self::Genre,
+        Self::Playlist,
+        Self::MusicFolder,
+    ];
+
+    fn present(self, library: &Library, raw_id: &str) -> bool {
+        match self {
+            Self::Album => library
+                .album(&AlbumId::new(jellyfin_id("album", raw_id)))
+                .ok()
+                .flatten()
+                .is_some(),
+            Self::Track => library
+                .track(&TrackId::new(jellyfin_id("track", raw_id)))
+                .ok()
+                .flatten()
+                .is_some(),
+            Self::Artist => library
+                .artist(&ArtistId::new(jellyfin_id("artist", raw_id)))
+                .ok()
+                .flatten()
+                .is_some(),
+            Self::Genre => library
+                .genre(&GenreId::new(jellyfin_id("genre", raw_id)))
+                .ok()
+                .flatten()
+                .is_some(),
+            Self::Playlist => library
+                .contains_playlist(&PlaylistId::new(jellyfin_id("playlist", raw_id)))
+                .unwrap_or(false),
+            Self::MusicFolder => library
+                .contains_music_folder(&MusicFolderId::new(jellyfin_id("music-folder", raw_id)))
+                .unwrap_or(false),
+        }
+    }
+}
+
+fn accepted_kinds(library: &Library, raw_id: &str) -> Vec<AcceptedKind> {
+    AcceptedKind::ALL
+        .into_iter()
+        .filter(|kind| kind.present(library, raw_id))
+        .collect()
 }
 
 fn new_or_only(known: &[AcceptedKind], kind: AcceptedKind) -> bool {
@@ -475,7 +484,7 @@ fn raw_entity_id<'a>(item_id: &'a str, kind: &str) -> Option<&'a str> {
 }
 
 async fn emit_pages<F, Fut, C>(
-    emitter: &mut BatchEmitter<'_>,
+    emitter: &BatchEmitter,
     mut fetch: F,
     mut transform: C,
     progress: &(dyn Fn(SourceReadProgress) + Send + Sync),
@@ -522,25 +531,23 @@ impl PageState {
         reported_total: Option<usize>,
     ) -> SourceResult<bool> {
         if let Some(reported_total) = reported_total {
-            if self.total.is_some_and(|total| total != reported_total) {
-                return Err(unstable_page());
-            }
             self.total = Some(reported_total);
         }
 
-        self.offset = self.offset.checked_add(count).ok_or_else(unstable_page)?;
-        match self.total {
-            Some(total) if self.offset > total => Err(unstable_page()),
-            Some(total) if self.offset == total => Ok(true),
-            Some(_) if count == 0 => Err(unstable_page()),
-            Some(_) => Ok(false),
-            None => Ok(count == 0),
+        if count == 0 {
+            return match self.total {
+                Some(total) if self.offset < total => Err(incomplete_page()),
+                _ => Ok(true),
+            };
         }
+
+        self.offset = self.offset.checked_add(count).ok_or_else(incomplete_page)?;
+        Ok(self.total.is_some_and(|total| self.offset >= total))
     }
 }
 
-fn unstable_page() -> SourceError {
-    SourceError::Other("Jellyfin returned an unstable page".to_string())
+fn incomplete_page() -> SourceError {
+    SourceError::Other("Jellyfin returned an incomplete page".to_string())
 }
 
 fn stage(stage: SourceReadStage, completed: usize, total: Option<usize>) -> SourceReadProgress {
@@ -582,11 +589,13 @@ mod paging_tests {
     }
 
     #[test]
-    fn a_changed_declared_total_is_rejected() {
+    fn the_latest_declared_total_controls_completion() {
         let mut pages = PageState::default();
 
         assert!(!pages.advance(1, Some(2)).expect("first page"));
-        assert!(pages.advance(1, Some(3)).is_err());
+        assert!(!pages.advance(1, Some(3)).expect("larger total"));
+        assert!(pages.advance(1, Some(3)).expect("last page"));
+        assert_eq!(pages.total(), Some(3));
     }
 
     #[test]
@@ -600,10 +609,11 @@ mod paging_tests {
     }
 
     #[test]
-    fn items_beyond_the_declared_total_are_rejected() {
+    fn a_stale_smaller_total_does_not_discard_returned_items() {
         let mut pages = PageState::default();
 
-        assert!(pages.advance(2, Some(1)).is_err());
+        assert!(pages.advance(2, Some(1)).expect("returned items"));
+        assert_eq!(pages.offset(), 2);
     }
 
     #[test]

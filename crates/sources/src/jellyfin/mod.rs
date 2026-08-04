@@ -1,10 +1,9 @@
 use crate::config::{decode_provider_payload, require_payload_version};
+use crate::policy::{raw_item_id, stable_hash};
 use crate::{
-    ConnectedSource, CredentialHostInput, GeneratedTracksRequest, ImageBytes,
-    JellyfinSettingsInput, JellyfinSetupInput, LyricsSearch, NativeLyricLine, NativeLyrics,
-    NativeLyricsDocument, NativeLyricsOrigin, NativeLyricsRole, PlaybackReport, PlaybackReportKind,
-    PlayedFilter, RandomTrackRequest, SourceConfiguration, SourceEditResult, SourceError,
-    SourceResult, StreamDescriptor, StreamRequest,
+    ConnectedSource, CredentialHostInput, ImageBytes, JellyfinSettingsInput, JellyfinSetupInput,
+    LyricsSearch, NativeLyricLine, NativeLyrics, NativeLyricsDocument, NativeLyricsRole,
+    SourceConfiguration, SourceEditResult, SourceError, SourceResult,
 };
 pub use discovery::{DiscoveredJellyfinServer, discover_jellyfin_servers};
 use item::{
@@ -14,9 +13,11 @@ use item::{
 };
 use library::{
     AlbumId, FavoriteItemId, Folder, FolderId, HomeItemId, ImageRef, MusicFolder, MusicFolderId,
-    Playlist, PlaylistEntry, PlaylistId, PlaylistSnapshot, SourceHomeSection,
-    SourceHomeSectionKind, SourceId, Track, TrackId,
+    PlayedFilter, Playlist, PlaylistEntry, PlaylistId, PlaylistSnapshot, RadioSeed, RandomCriteria,
+    ResolvedStream, SourceHomeSection, SourceHomeSectionKind, SourceId, StreamRequest, Track,
+    TrackId,
 };
+use playback::{RepeatMode, SourceReportFact, SourceReportPhase};
 use reqwest::{Client, Url, header};
 use serde::Deserialize;
 use std::sync::Arc;
@@ -31,7 +32,7 @@ mod metadata;
 mod refresh;
 
 use client::*;
-pub(crate) use client::{jellyfin_id, normalize_base_url, stable_hash};
+pub(crate) use client::{jellyfin_id, normalize_base_url};
 
 #[cfg(test)]
 mod tests;
@@ -188,15 +189,14 @@ pub(crate) async fn edit(
         })
         .await?;
         let next = JellyfinSourceConfig::from_configuration(&authenticated.configuration)?;
-        return if saved.same_account(&next)? {
-            Ok(SourceEditResult::SameAccount(
-                authenticated.connected(Some(current.source_id)),
-            ))
+        let source_id = if saved.same_account(&next)? {
+            Some(current.source_id)
         } else {
-            Ok(SourceEditResult::DifferentAccount(
-                authenticated.connected(None),
-            ))
+            None
         };
+        return Ok(SourceEditResult::Connected(Box::new(
+            authenticated.connected(source_id),
+        )));
     }
 
     let reopen = credentials.trust_invalid_cert != saved.trust_invalid_cert
@@ -222,10 +222,8 @@ pub(crate) async fn edit(
         return Ok(SourceEditResult::ConfigurationOnly(configuration));
     }
     let source = open(&configuration, current_credential, device_id)?;
-    Ok(SourceEditResult::SameAccount(ConnectedSource::jellyfin(
-        configuration,
-        source,
-        None,
+    Ok(SourceEditResult::Connected(Box::new(
+        ConnectedSource::jellyfin(configuration, source, None),
     )))
 }
 

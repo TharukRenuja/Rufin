@@ -8,6 +8,7 @@ use library::{
     MetadataScope, MetadataValues,
 };
 use localization::{msgid, tr, trn_with};
+use tracing::warn;
 
 use crate::layout::{large_popup_content_height, large_popup_content_width};
 use crate::preferences::dialogs::popup::present_light_dismiss_dialog;
@@ -47,10 +48,7 @@ fn present_metadata_dialog_for_selected(
     if !still_selected {
         return;
     }
-    let receiver = shell
-        .products
-        .source
-        .metadata(selected.metadata_request(item_id.clone()));
+    let receiver = selected.operations.metadata(item_id.clone());
     let shell = Rc::clone(shell);
     gtk::glib::spawn_future_local(async move {
         match receiver.recv().await {
@@ -112,7 +110,8 @@ fn present_local_access_recovery(
     let fields = crate::preferences::source::local_access::metadata_local_access_recovery_form(
         shell,
         source_path,
-        selected.metadata_request(item_id),
+        &selected,
+        item_id,
         on_success,
     );
     toolbar.set_content(Some(&fields));
@@ -272,8 +271,8 @@ fn build_dialog(
     });
     connect_field_changes(&state);
     connect_cancel(&state);
-    connect_identify(shell, selected.clone(), &state);
-    connect_save(shell, selected, &state);
+    connect_identify(selected.clone(), &state);
+    connect_save(selected, &state);
     refresh_save_state(&state);
     present_light_dismiss_dialog(&dialog, &shell.chrome.window);
 }
@@ -590,6 +589,11 @@ fn refresh_identify_undo(state: &EditorState) {
             .get(&row.field)
             .is_some_and(|edit| edit.identified != edit.original);
         row.undo.set_visible(visible);
+        if visible {
+            row.entry.add_css_class("metadata-identified-change");
+        } else {
+            row.entry.remove_css_class("metadata-identified-change");
+        }
     }
 }
 
@@ -607,11 +611,15 @@ fn refresh_identify_undo_field(state: &EditorState, field: MetadataField) {
     {
         identified.remove(&field);
     }
-    row.undo.set_visible(
-        identified
-            .get(&field)
-            .is_some_and(|edit| edit.identified != edit.original),
-    );
+    let visible = identified
+        .get(&field)
+        .is_some_and(|edit| edit.identified != edit.original);
+    row.undo.set_visible(visible);
+    if visible {
+        row.entry.add_css_class("metadata-identified-change");
+    } else {
+        row.entry.remove_css_class("metadata-identified-change");
+    }
 }
 
 fn connect_cancel(state: &Rc<EditorState>) {
@@ -623,12 +631,8 @@ fn connect_cancel(state: &Rc<EditorState>) {
     });
 }
 
-fn connect_save(
-    shell: &Rc<Shell>,
-    selected: crate::runtime::SelectedLibrary,
-    state: &Rc<EditorState>,
-) {
-    let source = shell.products.source.clone();
+fn connect_save(selected: crate::runtime::SelectedLibrary, state: &Rc<EditorState>) {
+    let source = selected.operations.clone();
     let state_for_save = Rc::clone(state);
     state.save.connect_clicked(move |_| {
         let edit = match metadata_edit(&state_for_save.draft, &state_for_save.rows) {
@@ -646,8 +650,8 @@ fn connect_save(
         state_for_save
             .rows
             .set_sensitive(false, &state_for_save.draft.editing);
-        state_for_save.save.set_label(&tr("Saving…"));
-        let receiver = source.edit_metadata(selected.metadata_edit_request(edit));
+        state_for_save.save.set_label(&tr("Saving..."));
+        let receiver = source.edit_metadata(edit);
         let state = Rc::clone(&state_for_save);
         gtk::glib::spawn_future_local(async move {
             match receiver.recv().await {
@@ -664,12 +668,8 @@ fn connect_save(
     });
 }
 
-fn connect_identify(
-    shell: &Rc<Shell>,
-    selected: crate::runtime::SelectedLibrary,
-    state: &Rc<EditorState>,
-) {
-    let source = shell.products.source.clone();
+fn connect_identify(selected: crate::runtime::SelectedLibrary, state: &Rc<EditorState>) {
+    let source = selected.operations.clone();
     let state_for_identify = Rc::clone(state);
     state.identify.connect_clicked(move |_| {
         let values = identification_values(&state_for_identify);
@@ -686,34 +686,31 @@ fn connect_identify(
         state_for_identify.identifying.set(true);
         state_for_identify.identify.set_sensitive(false);
         state_for_identify.save.set_sensitive(false);
-        state_for_identify.identify.set_label(&tr("Identifying…"));
+        state_for_identify.identify.set_label(&tr("Identifying..."));
         state_for_identify
             .rows
             .set_sensitive(false, &state_for_identify.draft.editing);
-        let receiver = source.identify_metadata(selected.metadata_identification_request(
+        let receiver = source.identify_metadata(
             state_for_identify.draft.item_id.clone(),
             state_for_identify.draft.editing.clone(),
             values,
-        ));
+        );
         let state = Rc::clone(&state_for_identify);
         gtk::glib::spawn_future_local(async move {
-            let error = match receiver.recv().await {
+            match receiver.recv().await {
                 Ok(Ok(Some(values))) => {
                     apply_identification(&state.rows, &state.draft.editing, &values);
                     remember_identified_changes(&state, &before, &touched_before);
-                    None
                 }
-                Ok(Ok(None)) | Err(_) => None,
-                Ok(Err(error)) => Some(error),
-            };
+                Ok(Ok(None)) => {}
+                Ok(Err(error)) => warn!(%error, "metadata identification failed"),
+                Err(error) => warn!(%error, "metadata identification ended before completion"),
+            }
             state.identifying.set(false);
             state.rows.set_sensitive(true, &state.draft.editing);
             state.identify.set_label(&tr("Identify"));
             refresh_identify_undo(&state);
             refresh_save_state(&state);
-            if let Some(error) = error {
-                show_error(&state, &error);
-            }
         });
     });
 }
@@ -906,7 +903,7 @@ fn metadata_change(
     if field == MetadataField::Title {
         let value = row.text().trim().to_string();
         if value.is_empty() {
-            return Err(tr("Title cannot be empty."));
+            return Err(tr("Add a title"));
         }
         return Ok((force || value != original.title).then_some(MetadataChange::Title(value)));
     }
@@ -922,7 +919,7 @@ fn metadata_change(
                     .parse::<u16>()
                     .ok()
                     .filter(|value| *value > 0)
-                    .ok_or_else(|| tr("Enter a positive number."))?,
+                    .ok_or_else(|| tr("Use a number above zero"))?,
             )
         };
         let previous = field_value(original, field).and_then(|value| value.parse().ok());

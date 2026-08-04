@@ -3,7 +3,7 @@
 //! Lyrics owns selection and provider policy. Library owns only cache identity,
 //! input compatibility, durable payloads, and the global size bound.
 
-use crate::{Library, LibraryError, LibraryResult, SourceId, TrackId};
+use crate::{Libraries, LibraryError, LibraryResult, SourceId, TrackId};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum LyricsCacheAuthority {
@@ -67,7 +67,7 @@ pub struct LyricsCacheTrim {
     pub bytes_removed: u64,
 }
 
-impl Library {
+impl Libraries {
     pub fn cached_lyrics(
         &self,
         key: LyricsCacheKey,

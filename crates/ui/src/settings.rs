@@ -4,21 +4,19 @@ mod layout;
 mod persistence;
 mod sidebar;
 
-pub use app::{
-    DownloadRules, Settings, SettingsHandle, SettingsPort, SourceDownloadSettings,
-    default_home_blocks,
-};
+pub use app::{Settings, SettingsHandle, SettingsPort, default_home_blocks};
 pub use context_menu::{ContextMenuItem, ContextMenuItemSettings, ContextMenuSettings};
 pub use downloads::DownloadRule;
+pub use downloads::{DownloadRules, SourceDownloadSettings};
 pub use layout::{
-    DEFAULT_LEFT_SIDEBAR_WIDTH, DEFAULT_RIGHT_SIDEBAR_WIDTH, DEFAULT_WINDOW_HEIGHT,
-    DEFAULT_WINDOW_WIDTH, FolderViewSettings, LayoutProfile, LayoutSettings, LeftSidebarMode,
-    LibraryColumnWidth, LibraryField, LibraryLayout, LibraryListKey, LibraryListSettings,
-    LibraryListSettingsEntry, MAX_LEFT_SIDEBAR_WIDTH, MAX_NARROW_LAYOUT_THRESHOLD,
-    MAX_RESTORED_WINDOW_HEIGHT, MAX_RESTORED_WINDOW_WIDTH, MAX_RIGHT_SIDEBAR_WIDTH,
-    MAX_TABLE_COLUMN_WIDTH, MIN_LEFT_SIDEBAR_WIDTH, MIN_NARROW_LAYOUT_THRESHOLD,
-    MIN_RIGHT_SIDEBAR_WIDTH, MIN_TABLE_COLUMN_WIDTH, RightSidebarMode, SidebarPin,
-    SidebarRouteItem, SidebarRouteItemSettings, SidebarSettings, ThemePreference,
+    AccentPreference, DEFAULT_LEFT_SIDEBAR_WIDTH, DEFAULT_RIGHT_SIDEBAR_WIDTH,
+    DEFAULT_WINDOW_HEIGHT, DEFAULT_WINDOW_WIDTH, FolderViewSettings, LayoutProfile, LayoutSettings,
+    LeftSidebarMode, LibraryColumnWidth, LibraryField, LibraryLayout, LibraryListKey,
+    LibraryListSettings, LibraryListSettingsEntry, MAX_LEFT_SIDEBAR_WIDTH,
+    MAX_NARROW_LAYOUT_THRESHOLD, MAX_RESTORED_WINDOW_HEIGHT, MAX_RESTORED_WINDOW_WIDTH,
+    MAX_RIGHT_SIDEBAR_WIDTH, MAX_TABLE_COLUMN_WIDTH, MIN_LEFT_SIDEBAR_WIDTH,
+    MIN_NARROW_LAYOUT_THRESHOLD, MIN_RIGHT_SIDEBAR_WIDTH, MIN_TABLE_COLUMN_WIDTH, RightSidebarMode,
+    SidebarPin, SidebarRouteItem, SidebarRouteItemSettings, SidebarSettings, ThemePreference,
     available_grid_fields, available_row_fields, default_library_list_settings,
 };
 pub(crate) use persistence::SettingsState;

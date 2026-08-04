@@ -1,4 +1,5 @@
 use crate::{EqualizerSettings, PlaybackSettings, ReplayGainMode};
+use library::ResolvedStream;
 use thiserror::Error;
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -20,119 +21,9 @@ impl std::fmt::Display for RunId {
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct SourceWindow {
-    pub start_millis: u64,
-    pub end_millis: u64,
-}
-
-#[derive(Clone, Eq, PartialEq)]
-pub struct PreparedStream {
-    uri: String,
-    redacted_uri: String,
-    trust_invalid_certificate: bool,
-    window: Option<SourceWindow>,
-}
-
-impl PreparedStream {
-    pub fn new(uri: impl Into<String>) -> Self {
-        let uri = uri.into();
-        Self {
-            redacted_uri: redact_sensitive_uri(&uri),
-            uri,
-            trust_invalid_certificate: false,
-            window: None,
-        }
-    }
-
-    pub fn with_redacted(uri: impl Into<String>, redacted_uri: impl Into<String>) -> Self {
-        Self {
-            uri: uri.into(),
-            redacted_uri: redacted_uri.into(),
-            trust_invalid_certificate: false,
-            window: None,
-        }
-    }
-
-    pub fn with_trust_invalid_certificate(mut self, trust: bool) -> Self {
-        self.trust_invalid_certificate = trust;
-        self
-    }
-
-    pub fn with_source_window(mut self, start_millis: u64, end_millis: u64) -> Self {
-        if end_millis > start_millis {
-            self.window = Some(SourceWindow {
-                start_millis,
-                end_millis,
-            });
-        }
-        self
-    }
-
-    pub fn uri(&self) -> &str {
-        &self.uri
-    }
-
-    pub fn redacted_uri(&self) -> &str {
-        &self.redacted_uri
-    }
-
-    pub fn trust_invalid_certificate(&self) -> bool {
-        self.trust_invalid_certificate
-    }
-
-    pub fn source_start_millis(&self) -> u64 {
-        self.window
-            .as_ref()
-            .map(|window| window.start_millis)
-            .unwrap_or(0)
-    }
-
-    pub fn source_end_millis(&self) -> Option<u64> {
-        self.window.as_ref().map(|window| window.end_millis)
-    }
-
-    pub fn source_window(&self) -> Option<&SourceWindow> {
-        self.window.as_ref()
-    }
-}
-
-impl std::fmt::Debug for PreparedStream {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter
-            .debug_struct("PreparedStream")
-            .field("uri", &self.redacted_uri)
-            .field("window", &self.window)
-            .finish()
-    }
-}
-
-fn redact_sensitive_uri(uri: &str) -> String {
-    let Some((base, query)) = uri.split_once('?') else {
-        return uri.to_string();
-    };
-    let query = query
-        .split('&')
-        .map(|pair| {
-            let Some((key, value)) = pair.split_once('=') else {
-                return pair.to_string();
-            };
-            let lower = key.to_ascii_lowercase();
-            if lower.contains("token") || lower.contains("key") {
-                format!("{key}=<redacted>")
-            } else {
-                format!("{key}={value}")
-            }
-        })
-        .collect::<Vec<_>>()
-        .join("&");
-    format!("{base}?{query}")
-}
-
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum NextTransition {
     #[default]
-    Default,
     Gapless,
     Crossfade {
         duration_millis: u64,
@@ -142,12 +33,12 @@ pub enum NextTransition {
 #[derive(Clone, Debug, PartialEq)]
 pub struct PreparedNext {
     pub run: RunId,
-    pub stream: PreparedStream,
+    pub stream: ResolvedStream,
     pub transition: NextTransition,
 }
 
 impl PreparedNext {
-    pub fn new(run: RunId, stream: PreparedStream, transition: NextTransition) -> Self {
+    pub fn new(run: RunId, stream: ResolvedStream, transition: NextTransition) -> Self {
         Self {
             run,
             stream,
@@ -198,7 +89,7 @@ pub enum BackendState {
 pub enum BackendCommand {
     Start {
         run: RunId,
-        current: PreparedStream,
+        current: ResolvedStream,
         next: Option<PreparedNext>,
         start_position_millis: u64,
     },
@@ -273,7 +164,7 @@ pub enum BackendEvent {
     NextNeeded {
         run: RunId,
     },
-    NextUnavailable {
+    NextPreparationFailed {
         current_run: RunId,
         next_run: RunId,
         error: BackendFailure,
@@ -328,21 +219,5 @@ pub trait PlaybackBackend: Send {
 
     fn shutdown(&mut self) -> Result<(), BackendError> {
         Ok(())
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn prepared_stream_debug_uses_redacted_uri() {
-        let stream = PreparedStream::with_redacted(
-            "https://music.test/audio?token=secret",
-            "https://music.test/audio?token=<redacted>",
-        );
-        let debug = format!("{stream:?}");
-        assert!(!debug.contains("secret"));
-        assert!(debug.contains("<redacted>"));
     }
 }

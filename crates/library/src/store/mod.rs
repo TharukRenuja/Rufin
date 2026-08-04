@@ -1,6 +1,6 @@
 //! Private SQLite connection lane.
 //!
-//! One worker thread owns one connection. Public Library operations send typed
+//! One worker thread owns one connection. Public library operations send typed
 //! work to this lane; callers never receive a connection, SQL closure, Store
 //! handle, or route query interface.
 
@@ -18,10 +18,10 @@ use crate::{
     ActivityItem, ActivityItemId, ActivityPeriod, ActivitySummary, ActivityWrite, Album, AlbumId,
     AlbumRelations, AlbumReleaseCandidate, AlbumReleaseResult, Artist, ArtistId, CandidateBatch,
     CandidateChange, CandidateFinish, CandidateHeader, CueSegment, FavoriteItemId, Genre, GenreId,
-    HomeFacts, ImageRef, LoadedLibraryInput, LocalAccessFile, LocalArtworkRef, LocalFile,
-    LocalFileKind, LocalImport, LocalReadState, LyricsCacheAuthority, LyricsCacheInput,
-    LyricsCacheKey, LyricsCacheTrim, LyricsCacheWrite, MusicFolder, MusicFolderId, NewScrobble,
-    PendingScrobble, PendingScrobbleId, PlaybackCheckpoint, PlaybackLoad, PlaybackOccurrenceId,
+    HomeFacts, ImageRef, LibraryInput, LocalAccessFile, LocalArtworkRef, LocalFile, LocalFileKind,
+    LocalImport, LocalReadState, LyricsCacheAuthority, LyricsCacheInput, LyricsCacheKey,
+    LyricsCacheTrim, LyricsCacheWrite, MusicFolder, MusicFolderId, NewScrobble, PendingScrobble,
+    PendingScrobbleId, PlaybackCheckpoint, PlaybackLoad, PlaybackOccurrenceId,
     PlaybackProgressUpdate, PlaybackQueueSnapshot, PlaybackState, PlaybackStateUpdate,
     PlaybackWriteOutcome, Playlist, PlaylistEntry, PlaylistId, PlaylistSnapshot, ProviderFreshness,
     RecentPlay, ScrobbleService, SmartPlaylistBuiltin, SmartPlaylistId, SmartPlaylistRecord,
@@ -82,6 +82,8 @@ pub(crate) type StoreResult<T> = Result<T, StoreError>;
 pub(crate) struct StoreCommit {
     pub freshness: Option<ProviderFreshness>,
     pub home: HomeFacts,
+    pub activity: Vec<TrackActivity>,
+    pub recent_plays: Vec<RecentPlay>,
 }
 
 pub(crate) struct PreparedStoreCandidate {
@@ -108,7 +110,7 @@ impl PreparedStoreCandidate {
 
 pub(crate) struct StoreCandidatePreparation {
     pub prepared: PreparedStoreCandidate,
-    pub input: Option<LoadedLibraryInput>,
+    pub input: Option<LibraryInput>,
 }
 
 pub(crate) struct StoredSourceUpdate {
@@ -150,6 +152,10 @@ impl Drop for StoreLaneInner {
 }
 
 impl StoreLane {
+    pub(crate) fn same_lane(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.inner, &other.inner)
+    }
+
     pub(crate) fn open(path: impl Into<PathBuf>) -> StoreResult<Self> {
         Self::spawn(StoreLocation::Path(path.into()))
     }
@@ -242,10 +248,7 @@ impl StoreLane {
         self.schedule(move |worker| worker.queue_cleanup(library_id));
     }
 
-    pub(crate) fn load_current(
-        &self,
-        source_id: SourceId,
-    ) -> StoreResult<Option<LoadedLibraryInput>> {
+    pub(crate) fn load_current(&self, source_id: SourceId) -> StoreResult<Option<LibraryInput>> {
         self.execute(move |worker| {
             worker
                 .current_library_id(&source_id)
@@ -828,7 +831,12 @@ impl Worker {
             )?;
             transaction.commit()?;
             self.queue_cleanup(candidate_library_id);
-            return Ok(StoreCommit { freshness, home });
+            return Ok(StoreCommit {
+                freshness,
+                home,
+                activity: Vec::new(),
+                recent_plays: Vec::new(),
+            });
         }
 
         let old_ids = self
@@ -858,11 +866,18 @@ impl Worker {
             insert_local_imports(&transaction, &source_id, candidate_library_id, accepted_at)?;
         }
         prune_album_release_info(&transaction, &source_id, candidate_library_id)?;
+        let activity = load_track_activity(&transaction, &source_id)?;
+        let recent_plays = load_recent_plays(&transaction, &source_id)?;
         transaction.commit()?;
         for old_id in old_ids {
             self.queue_cleanup(old_id);
         }
-        Ok(StoreCommit { freshness, home })
+        Ok(StoreCommit {
+            freshness,
+            home,
+            activity,
+            recent_plays,
+        })
     }
 
     fn require_unaccepted(&self, library_id: i64) -> StoreResult<SourceId> {
@@ -1083,7 +1098,7 @@ impl Worker {
         })
     }
 
-    fn load_library(&self, library_id: i64) -> StoreResult<LoadedLibraryInput> {
+    fn load_library(&self, library_id: i64) -> StoreResult<LibraryInput> {
         let (
             source_id,
             input_version,
@@ -1139,7 +1154,7 @@ impl Worker {
                 });
             }
         };
-        let mut input = LoadedLibraryInput::new(
+        let mut input = LibraryInput::new(
             source_id.clone(),
             library_id,
             input_version,
@@ -1173,7 +1188,7 @@ impl Worker {
         freshness: Option<ProviderFreshness>,
         home: HomeFacts,
         accepted_at: i64,
-    ) -> StoreResult<LoadedLibraryInput> {
+    ) -> StoreResult<LibraryInput> {
         self.require_unaccepted(library_id)?;
         let input_version = u32::try_from(input_version).map_err(|_| StoreError::InvalidValue {
             kind: "source input version",
@@ -1185,7 +1200,7 @@ impl Worker {
                 value: format!("{} bytes", value.len()),
             })?;
         let rufin_defined_home = home.is_rufin_defined();
-        let mut input = LoadedLibraryInput::new(
+        let mut input = LibraryInput::new(
             source_id.clone(),
             library_id,
             input_version,
@@ -3478,10 +3493,10 @@ fn load_candidate_local_imports(
 
 fn complete_loaded_input(
     connection: &Connection,
-    mut input: LoadedLibraryInput,
+    mut input: LibraryInput,
     source_id: &SourceId,
     home: HomeFacts,
-) -> StoreResult<LoadedLibraryInput> {
+) -> StoreResult<LibraryInput> {
     input.local_access = load_current_local_access(connection, source_id)?;
     input
         .playlists

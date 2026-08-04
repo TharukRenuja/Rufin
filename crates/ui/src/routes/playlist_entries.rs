@@ -710,7 +710,7 @@ fn playlist_entry_download_badge(shell: &Rc<Shell>, state: &PlaylistEntryCellSta
     let badge = shell.download_badge(false, move |selected| {
         current.borrow().as_ref().is_some_and(|state| {
             selected
-                .loaded
+                .library
                 .is_downloaded(&state.track.id)
                 .unwrap_or(false)
         })
@@ -753,7 +753,7 @@ fn setup_playlist_entry_cell_actions(
     install_dynamic_playlist_entry_context_menu(target, shell, Rc::clone(&state.menu));
 
     let drop_target = gtk::DropTarget::new(String::static_type(), gtk::gdk::DragAction::MOVE);
-    let source = shell.products.source.clone();
+    let source = shell.selected_source_operations();
     let target = target.as_ref().clone();
     let target_for_drop = target.downgrade();
     let row_state = Rc::clone(&state.row);
@@ -765,6 +765,9 @@ fn setup_playlist_entry_cell_actions(
             return false;
         };
         let Some(target) = target_for_drop.upgrade() else {
+            return false;
+        };
+        let Some(source) = source.as_ref() else {
             return false;
         };
         let after = y > f64::from(target.height()) / 2.0;
@@ -1410,9 +1413,11 @@ pub(crate) fn confirm_remove_playlist_entry(
     dialog.add_response("cancel", &tr("Cancel"));
     dialog.add_response("remove", &tr("Remove"));
     dialog.set_response_appearance("remove", adw::ResponseAppearance::Destructive);
-    let source = shell.products.source.clone();
+    let source = shell.selected_source_operations();
     dialog.connect_response(None, move |_, response| {
-        if response == "remove" {
+        if response == "remove"
+            && let Some(source) = source.as_ref()
+        {
             source.edit_playlist(PlaylistEdit::RemoveEntries {
                 playlist_id: playlist_id.clone(),
                 occurrence_ids: vec![occurrence_id.clone()],

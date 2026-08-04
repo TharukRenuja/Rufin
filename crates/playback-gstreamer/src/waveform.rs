@@ -5,7 +5,8 @@ use super::{ensure_gstreamer_initialized, lock_recover};
 use gst::prelude::*;
 use gstreamer as gst;
 use gstreamer_audio as gst_audio;
-use playback::{BackendEvent, PreparedStream, RunId};
+use library::ResolvedStream;
+use playback::{BackendEvent, RunId};
 use rustfft::{Fft, FftPlanner, num_complex::Complex};
 use std::collections::VecDeque;
 use std::sync::mpsc::{Receiver, SyncSender, TrySendError, sync_channel};
@@ -24,7 +25,7 @@ const WAVEFORM_GENERATION_TIMEOUT: Duration = Duration::from_secs(180);
 const WAVEFORM_BUS_POLL: gst::ClockTime = gst::ClockTime::from_mseconds(250);
 
 pub fn generate_waveform_peaks_cancellable(
-    stream: &PreparedStream,
+    stream: &ResolvedStream,
     cancelled: impl Fn() -> bool,
 ) -> Result<Vec<(f64, f64)>, String> {
     ensure_gstreamer_initialized()?;
@@ -57,7 +58,7 @@ pub fn generate_waveform_peaks_cancellable(
 
     let started = Instant::now();
     let result = (|| {
-        let startup_state = if stream.source_window().is_some() {
+        let startup_state = if stream.window().is_some() {
             gst::State::Paused
         } else {
             gst::State::Playing
@@ -66,7 +67,7 @@ pub fn generate_waveform_peaks_cancellable(
             .set_state(startup_state)
             .map_err(|error| error.to_string())?;
 
-        if let Some(window) = stream.source_window() {
+        if let Some(window) = stream.window() {
             wait_for_preroll(&bus, &cancelled, started)?;
             pipeline
                 .seek(
@@ -156,12 +157,12 @@ mod tests {
     use std::io::Write;
 
     #[test]
-    fn waveform_decode_is_bounded_to_the_prepared_source_window() {
+    fn waveform_decode_is_bounded_to_the_prepared_stream_window() {
         let directory = tempfile::tempdir().expect("waveform fixture directory");
         let path = directory.path().join("window.wav");
         write_stereo_wave(&path);
         let uri = gst::glib::filename_to_uri(&path, None).expect("waveform fixture URI");
-        let stream = PreparedStream::new(uri.as_str()).with_source_window(1_000, 1_500);
+        let stream = ResolvedStream::new(uri.as_str()).with_window(1_000, 1_500);
 
         let peaks = generate_waveform_peaks_cancellable(&stream, || false)
             .expect("decode waveform source window");

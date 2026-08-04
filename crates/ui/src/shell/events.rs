@@ -26,6 +26,8 @@ pub(crate) fn install_product_event_receivers(shell: &Rc<Shell>, receivers: Prod
     let ProductReceivers {
         source,
         source_discovery,
+        downloads,
+        playback,
         waveform,
         lyrics,
         release_updates,
@@ -42,6 +44,20 @@ pub(crate) fn install_product_event_receivers(shell: &Rc<Shell>, receivers: Prod
     glib::spawn_future_local(async move {
         while let Ok(update) = source_discovery.recv().await {
             apply_source_discovery(&event_shell, update);
+        }
+    });
+
+    let event_shell = Rc::clone(shell);
+    glib::spawn_future_local(async move {
+        while let Ok(event) = downloads.recv().await {
+            event_shell.apply_download_event(event);
+        }
+    });
+
+    let event_shell = Rc::clone(shell);
+    glib::spawn_future_local(async move {
+        while let Ok(publication) = playback.recv().await {
+            apply_playback_publication(&event_shell, publication);
         }
     });
 
@@ -75,32 +91,13 @@ fn apply_source_event(shell: &Rc<Shell>, event: SourceEvent) {
             selected,
             playback,
         } => {
-            apply_selected_source(shell, configured, selected, playback);
+            apply_selected_source(shell, configured, selected, *playback);
         }
         SourceEvent::LibraryReplaced {
             configured,
             selected,
         } => {
             apply_selected_library_replacement(shell, configured, selected);
-        }
-        SourceEvent::Playback {
-            source_id,
-            source_session_epoch,
-            projection,
-        } => {
-            let matches_selected =
-                shell
-                    .library
-                    .selected
-                    .borrow()
-                    .as_ref()
-                    .is_some_and(|selected| {
-                        selected.source_id == source_id
-                            && selected.source_session_epoch == source_session_epoch
-                    });
-            if matches_selected {
-                apply_playback_projection(shell, projection);
-            }
         }
         SourceEvent::Operation(operation) => apply_source_operation(shell, operation),
         SourceEvent::Home(publication) => apply_home_publication(shell, publication),
@@ -111,11 +108,25 @@ fn apply_source_event(shell: &Rc<Shell>, event: SourceEvent) {
         } => apply_home_replacement(shell, source_id, source_session_epoch, home),
         SourceEvent::LibraryUpdate(update) => apply_selected_library_update(shell, update),
         SourceEvent::FavoriteFailure(failure) => apply_favorite_failure(shell, failure),
-        SourceEvent::Downloads(event) => shell.apply_download_event(event),
         SourceEvent::ReleaseSelected { acknowledged } => {
             release_selected_source(shell);
             let _ = acknowledged.try_send(());
         }
+    }
+}
+
+fn apply_playback_publication(shell: &Rc<Shell>, publication: crate::runtime::PlaybackPublication) {
+    let matches_selected = shell
+        .library
+        .selected
+        .borrow()
+        .as_ref()
+        .is_some_and(|selected| {
+            selected.source_id == publication.source_id
+                && selected.source_session_epoch == publication.source_session_epoch
+        });
+    if matches_selected {
+        apply_playback_projection(shell, publication.projection);
     }
 }
 
@@ -233,11 +244,11 @@ fn finish_source_assignment(
     let previous_loaded = previous
         .selected
         .as_ref()
-        .map(|selected| Arc::clone(&selected.loaded));
+        .map(|selected| Arc::clone(&selected.library));
     let next_loaded = next
         .selected
         .as_ref()
-        .map(|selected| Arc::clone(&selected.loaded));
+        .map(|selected| Arc::clone(&selected.library));
     let source_changed = previous_source_id != next_source_id;
     let session_changed = previous_epoch != next_epoch;
     let scope_changed = previous_scope != next_scope;

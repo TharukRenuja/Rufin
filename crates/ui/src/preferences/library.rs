@@ -1,14 +1,17 @@
 use std::path::Path;
 use std::rc::Rc;
+use std::sync::Arc;
 
 use adw::prelude::*;
-use downloads::{DownloadQuality, DownloadQueueState, DownloadRule};
+use downloads::{DownloadQueueState, DownloadRule};
 use gtk::gio;
+use library::StreamQuality;
 
 use localization::{msgid, tr};
 
 use super::{
     PreferencesNavigationControls,
+    general::{stream_quality_from_index, stream_quality_index},
     layout::button_row,
     selection_row,
     source::{
@@ -22,8 +25,7 @@ use localization::{album_count_text, track_count_text};
 
 const SERVER_PROVIDER_ICON_SIZE: i32 = 28;
 const DOWNLOAD_JOB_DRAG_PREFIX: &str = "rufin-download-job:";
-const DEFAULT_DOWNLOAD_DIRECTORY_SUBTITLE: &str =
-    msgid("By default, this uses Rufin's own cache directory.");
+const DEFAULT_DOWNLOAD_DIRECTORY_SUBTITLE: &str = msgid("Rufin data folder");
 
 pub(super) fn library_page(
     shell: &Rc<Shell>,
@@ -78,15 +80,12 @@ fn library_sources_page(
 
     let servers_group = adw::PreferencesGroup::builder()
         .title(tr("Servers"))
-        .description(tr("Configure saved music sources and local file access."))
         .build();
 
     if remote_sources.is_empty() {
         let row = adw::ActionRow::builder()
             .title(tr("No remote sources configured"))
-            .subtitle(tr(
-                "Add a server to use Jellyfin, Navidrome, or OpenSubsonic.",
-            ))
+            .subtitle(tr("Jellyfin, Navidrome, or OpenSubsonic"))
             .build();
         servers_group.add(&row);
     } else {
@@ -182,7 +181,7 @@ fn library_sources_page(
         let downloads_group = adw::PreferencesGroup::builder()
             .title(tr("Downloads"))
             .description(tr(
-                "Keep music from the selected server available without a connection. Folder changes apply to new downloads.",
+                "Keep music available offline. Folder changes only affect new downloads",
             ))
             .build();
         let folder = adw::ActionRow::builder()
@@ -279,12 +278,12 @@ fn library_sources_page(
                 tr("192 kbps"),
                 tr("128 kbps"),
             ],
-            download_quality_index(download_settings.quality),
+            stream_quality_index(download_settings.quality),
             move |selected| {
                 quality_shell.update_app_settings("download quality", |settings| {
                     settings.set_download_quality(
                         quality_source_id.clone(),
-                        download_quality_from_index(selected),
+                        stream_quality_from_index(selected),
                     )
                 });
             },
@@ -341,13 +340,12 @@ fn library_sources_page(
     let local_group = adw::PreferencesGroup::builder()
         .title(tr("Local Folders"))
         .description(tr(
-            "These folders are combined into the Local source and shown through folder browsing.",
+            "These folders are combined into the Local source and shown through folder browsing",
         ))
         .build();
     if configured.local_folders.is_empty() {
         let row = adw::ActionRow::builder()
             .title(tr("No local folders configured"))
-            .subtitle(tr("Add folders to use the Local source."))
             .build();
         local_group.add(&row);
     } else {
@@ -566,10 +564,17 @@ fn remove_download_rule(
         })
         .is_some();
     if removed {
+        let loaded = shell
+            .library
+            .selected
+            .borrow()
+            .as_ref()
+            .filter(|selected| selected.source_id == source_id)
+            .map(|selected| Arc::clone(&selected.library));
         shell
             .products
-            .source
-            .remove_download_rule(source_id, rule, delete_downloads);
+            .downloads
+            .remove_rule(source_id, loaded, rule, delete_downloads);
         row.set_visible(false);
     }
 }
@@ -584,7 +589,7 @@ fn confirm_remove_download_rule(
     let dialog = adw::AlertDialog::builder()
         .heading(tr("Remove Rule and Downloads"))
         .body(tr(
-            "Tracks used only by this rule will be deleted. Downloads shared with another rule or manual download will be kept.",
+            "Only downloads from this rule will be deleted. Shared and manual downloads stay",
         ))
         .build();
     dialog.add_response("cancel", &tr("Cancel"));
@@ -615,14 +620,12 @@ fn download_rule_title(rule: DownloadRule) -> &'static str {
 
 fn download_rule_subtitle(rule: DownloadRule) -> &'static str {
     match rule {
-        DownloadRule::EntireLibrary => msgid("Download every track, including tracks added later."),
+        DownloadRule::EntireLibrary => msgid("Everything, including new tracks"),
         DownloadRule::Favorites => {
-            msgid("Download favorite tracks and tracks from favorite albums and artists.")
+            msgid("Favorite tracks, plus tracks from favorite albums and artists")
         }
-        DownloadRule::AllPlaylists => msgid("Download tracks from every playlist."),
-        DownloadRule::LatestFiveAlbums => {
-            msgid("Keep tracks from the five most recently added albums downloaded.")
-        }
+        DownloadRule::AllPlaylists => msgid("Tracks from every playlist"),
+        DownloadRule::LatestFiveAlbums => msgid("Tracks from your five latest albums"),
     }
 }
 
@@ -632,27 +635,6 @@ fn download_rule_action_name(rule: DownloadRule) -> &'static str {
         DownloadRule::Favorites => "add-favorites",
         DownloadRule::AllPlaylists => "add-all-playlists",
         DownloadRule::LatestFiveAlbums => "add-latest-five-albums",
-    }
-}
-
-fn download_quality_index(quality: DownloadQuality) -> u32 {
-    match quality {
-        DownloadQuality::Original => 0,
-        DownloadQuality::MaxBitrateKbps(320) => 1,
-        DownloadQuality::MaxBitrateKbps(256) => 2,
-        DownloadQuality::MaxBitrateKbps(192) => 3,
-        DownloadQuality::MaxBitrateKbps(128) => 4,
-        DownloadQuality::MaxBitrateKbps(_) => 0,
-    }
-}
-
-fn download_quality_from_index(index: u32) -> DownloadQuality {
-    match index {
-        1 => DownloadQuality::MaxBitrateKbps(320),
-        2 => DownloadQuality::MaxBitrateKbps(256),
-        3 => DownloadQuality::MaxBitrateKbps(192),
-        4 => DownloadQuality::MaxBitrateKbps(128),
-        _ => DownloadQuality::Original,
     }
 }
 
@@ -667,7 +649,7 @@ fn add_download_queue(
     let weak_shell = Rc::downgrade(shell);
     let weak_queue = queue.downgrade();
     let source_id = source_id.clone();
-    let pause_source = shell.products.source.clone();
+    let downloads = shell.products.downloads.clone();
     let pause_shell = Rc::downgrade(shell);
     let pause_source_id = source_id.clone();
     pause_downloads.connect_clicked(move |_| {
@@ -680,7 +662,7 @@ fn add_download_queue(
             .borrow()
             .get(&pause_source_id)
             .is_some_and(|snapshot| snapshot.paused);
-        pause_source.set_downloads_paused(!paused);
+        downloads.set_paused(!paused);
     });
     let weak_pause_downloads = pause_downloads.downgrade();
     let refresh: Rc<dyn Fn()> = Rc::new(move || {
@@ -777,11 +759,11 @@ fn add_download_queue(
             cancel.add_css_class("flat");
             cancel.set_valign(gtk::Align::Center);
             cancel.set_tooltip_text(Some(&tr("Cancel download")));
-            let source = shell.products.source.clone();
+            let downloads = shell.products.downloads.clone();
             let job_source_id = job.source_id.clone();
             let job_id = job.id.clone();
             cancel.connect_clicked(move |_| {
-                source.cancel_download(job_source_id.clone(), job_id.clone());
+                downloads.cancel(job_source_id.clone(), job_id.clone());
             });
             row.add_suffix(&cancel);
             let clear = gtk::Button::from_icon_name("user-trash-symbolic");
@@ -789,11 +771,11 @@ fn add_download_queue(
             clear.add_css_class("destructive-action");
             clear.set_valign(gtk::Align::Center);
             clear.set_tooltip_text(Some(&tr("Cancel download and clear downloaded items")));
-            let source = shell.products.source.clone();
+            let downloads = shell.products.downloads.clone();
             let job_source_id = job.source_id.clone();
             let job_id = job.id.clone();
             clear.connect_clicked(move |_| {
-                source.clear_download_job(job_source_id.clone(), job_id.clone());
+                downloads.clear_job(job_source_id.clone(), job_id.clone());
             });
             row.add_suffix(&clear);
 
@@ -861,8 +843,8 @@ fn download_queue_item_subtitle(job: &downloads::DownloadQueueItem) -> String {
         DownloadQueueState::NeedsAttention => tr("Needs attention"),
     };
     let quality = match job.quality {
-        DownloadQuality::Original => tr("Original"),
-        DownloadQuality::MaxBitrateKbps(value) => format!("{value} kbps"),
+        StreamQuality::Original => tr("Original"),
+        StreamQuality::MaxBitrateKbps(value) => format!("{value} kbps"),
     };
     format!("{state} · {progress} · {quality}")
 }
@@ -875,7 +857,7 @@ fn confirm_remove_all_downloads(
     let dialog = adw::AlertDialog::builder()
         .heading(tr("Remove All Downloads"))
         .body(tr(
-            "Downloaded music from this server will no longer be available offline. Automatic download rules will also be turned off.",
+            "Downloads from this server will be removed, and automatic rules will be turned off",
         ))
         .build();
     dialog.add_response("cancel", &tr("Cancel"));
@@ -883,7 +865,6 @@ fn confirm_remove_all_downloads(
     dialog.set_default_response(Some("cancel"));
     dialog.set_close_response("cancel");
     dialog.set_response_appearance("remove", adw::ResponseAppearance::Destructive);
-    let source = shell.products.source.clone();
     let shell = Rc::clone(shell);
     let window = shell.chrome.window.clone();
     let preferences_dialog = preferences_dialog.downgrade();
@@ -903,7 +884,17 @@ fn confirm_remove_all_downloads(
                     })
                     .is_some();
             if rules_disabled {
-                source.clear_downloads(source_id.clone());
+                let loaded = shell
+                    .library
+                    .selected
+                    .borrow()
+                    .as_ref()
+                    .filter(|selected| selected.source_id == source_id)
+                    .map(|selected| Arc::clone(&selected.library));
+                shell
+                    .products
+                    .downloads
+                    .clear(source_id.clone(), loaded, true);
                 if let Some(preferences_dialog) = preferences_dialog.upgrade() {
                     preferences_dialog.close();
                 }
@@ -977,11 +968,7 @@ fn download_queue_header() -> (adw::PreferencesRow, gtk::Button) {
 fn confirm_remove_local_folder(shell: &Rc<Shell>, path: String, row: adw::ActionRow) {
     let dialog = adw::AlertDialog::builder()
         .heading(tr("Remove Local Folder"))
-        .body(format!(
-            "{}\n{}",
-            tr("This removes the folder from the Local source."),
-            path
-        ))
+        .body(path.clone())
         .build();
     let cancel = tr("Cancel");
     let remove = tr("Remove");
@@ -1058,7 +1045,7 @@ fn local_mapping_status(summary: Option<&SourceLocalAccessSummary>) -> String {
     }
     let status = &summary.status;
     if status.total_track_count == 0 {
-        return tr("Local file mapping saved. Sync to preview matches.");
+        return tr("Saved, sync to preview matches");
     }
     format!(
         "{}: {} direct, {} prefix, {} metadata, {} unmatched",

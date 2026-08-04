@@ -1,8 +1,8 @@
 use super::{
-    ContextMenuItem, ContextMenuItemSettings, DownloadRule, DownloadRules, LibraryField,
-    LibraryLayout, LibraryListKey, MAX_RESTORED_WINDOW_HEIGHT, MAX_RESTORED_WINDOW_WIDTH, Settings,
-    SidebarPin, SidebarRouteItem, available_detail_track_fields, available_sort_fields,
-    sanitized_window_size,
+    AccentPreference, ContextMenuItem, ContextMenuItemSettings, DownloadRule, DownloadRules,
+    LibraryField, LibraryLayout, LibraryListKey, MAX_RESTORED_WINDOW_HEIGHT,
+    MAX_RESTORED_WINDOW_WIDTH, Settings, SidebarPin, SidebarRouteItem,
+    available_detail_track_fields, available_sort_fields, sanitized_window_size,
 };
 use library::{AlbumId, GenreId, PlaylistId, SourceId};
 
@@ -39,6 +39,27 @@ fn automatic_updates_are_opt_in_and_persisted() {
         .expect("restore automatic update setting");
         assert_eq!(settings.automatic_updates_enabled, enabled);
     }
+}
+
+#[test]
+fn accent_preference_defaults_for_older_settings_and_persists() {
+    let mut legacy = serde_json::to_value(Settings::default()).expect("serialize settings");
+    legacy
+        .as_object_mut()
+        .expect("settings object")
+        .remove("accent_preference");
+    let restored = serde_json::from_value::<Settings>(legacy).expect("restore older settings");
+    assert_eq!(restored.accent_preference, AccentPreference::System);
+
+    let mut settings = Settings {
+        accent_preference: AccentPreference::Purple,
+        ..Settings::default()
+    };
+    settings = serde_json::from_value::<Settings>(
+        serde_json::to_value(settings).expect("serialize accent setting"),
+    )
+    .expect("restore accent setting");
+    assert_eq!(settings.accent_preference, AccentPreference::Purple);
 }
 
 #[test]
@@ -262,21 +283,21 @@ fn download_rules_are_independent_addable_entries() {
 }
 
 #[test]
-fn native_download_quality_is_the_source_default() {
+fn original_download_quality_is_the_source_default() {
     let mut settings = Settings::default();
     let source_id = SourceId::new("jellyfin:quality");
 
     assert_eq!(
         settings.download_quality(&source_id),
-        downloads::DownloadQuality::Original
+        library::StreamQuality::Original
     );
     assert!(settings.set_download_quality(
         source_id.clone(),
-        downloads::DownloadQuality::MaxBitrateKbps(192)
+        library::StreamQuality::MaxBitrateKbps(192)
     ));
     assert_eq!(
         settings.download_quality(&source_id),
-        downloads::DownloadQuality::MaxBitrateKbps(192)
+        library::StreamQuality::MaxBitrateKbps(192)
     );
 }
 
