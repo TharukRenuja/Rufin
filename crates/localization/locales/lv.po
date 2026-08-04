@@ -170,6 +170,9 @@ msgstr "API atslēgas"
 msgid "About Rufin"
 msgstr "Par Rufin"
 
+msgid "Accent color"
+msgstr ""
+
 msgid "Add Rule"
 msgstr "Pievienot noteikumu"
 
@@ -265,6 +268,11 @@ msgstr "Jebkurš žanrs"
 msgid "App settings"
 msgstr "Iestatījumi"
 
+#, fuzzy
+#| msgid "Appears On"
+msgid "Appearance"
+msgstr "Parādās ierakstos"
+
 msgid "Appears On"
 msgstr "Parādās ierakstos"
 
@@ -323,6 +331,9 @@ msgstr ""
 
 msgid "Back"
 msgstr "Atpakaļ"
+
+msgid "Blue"
+msgstr ""
 
 msgid "Cached"
 msgstr "Kešots"
@@ -416,6 +427,9 @@ msgstr "Kolekcija"
 msgid "Collections"
 msgstr "Kolekcijas"
 
+msgid "Color scheme"
+msgstr ""
+
 msgid "Columns"
 msgstr "Kolonnas"
 
@@ -486,6 +500,9 @@ msgstr "Pielāgot displeju"
 msgid "Dance"
 msgstr "Dejas"
 
+msgid "Dark"
+msgstr ""
+
 msgid "Date added"
 msgstr "Pievienošanas datums"
 
@@ -502,9 +519,6 @@ msgstr "Noklusējuma kreisais sānu panelis"
 
 msgid "Default right sidebar"
 msgstr "Noklusējuma labais sānu panelis"
-
-msgid "Default"
-msgstr "Noklusējums"
 
 msgid "Delete Playlist"
 msgstr "Dzēst atskaņošanas sarakstu"
@@ -741,6 +755,9 @@ msgstr "Pāriet uz albumu"
 msgid "Go to Artist"
 msgstr "Pāriet uz Izpildītāju"
 
+msgid "Green"
+msgstr ""
+
 msgid "Grid labels"
 msgstr "Režģa uzraksti"
 
@@ -803,9 +820,6 @@ msgstr "Uzstādīts"
 msgid "Instrumental"
 msgstr ""
 
-msgid "Interface"
-msgstr "Saskarne"
-
 msgid "JACK"
 msgstr ""
 
@@ -867,6 +881,9 @@ msgstr "Libre.fm skroblēšana"
 
 msgid "Libre.fm"
 msgstr "Libre.fm"
+
+msgid "Light"
+msgstr ""
 
 msgid "Limit"
 msgstr "Ierobežojums"
@@ -1247,6 +1264,11 @@ msgstr "Atver Last.fm autorizāciju…"
 msgid "Opening Libre.fm authorization..."
 msgstr "Atver Libre.fm autorizāciju…"
 
+#, fuzzy
+#| msgid "range"
+msgid "Orange"
+msgstr "diapazons"
+
 msgid "Original"
 msgstr "Oriģināls"
 
@@ -1261,6 +1283,9 @@ msgstr "Parole"
 
 msgid "Pause"
 msgstr "Pauzēt"
+
+msgid "Pink"
+msgstr ""
 
 msgid "Pins"
 msgstr ""
@@ -1413,6 +1438,9 @@ msgstr "Savienojums"
 msgid "PulseAudio"
 msgstr "Skaņa"
 
+msgid "Purple"
+msgstr ""
+
 msgid "Queue a track to begin"
 msgstr "Pievienojiet dziesmu rindai, lai sāktu"
 
@@ -1449,6 +1477,11 @@ msgstr "Nesen izdotie"
 
 msgid "Reconnect"
 msgstr "Atjaunot savienojumu"
+
+#, fuzzy
+#| msgid "Ready"
+msgid "Red"
+msgstr "Gatavs"
 
 msgid "Refresh section"
 msgstr "Atsvaidzināt sadaļu"
@@ -1840,6 +1873,9 @@ msgstr "Izlaišanas skaits"
 msgid "Skip same-album crossfade"
 msgstr "Izlaist pāreju starp dziesmām no viena un tā paša albuma"
 
+msgid "Slate"
+msgstr ""
+
 msgid "Smart Playlist"
 msgstr "Viedais atskaņošanas saraksts"
 
@@ -1893,11 +1929,22 @@ msgstr "Sinhronizēti teksti"
 msgid "System default"
 msgstr "Sistēmas noklusējums"
 
+#, fuzzy
+#| msgid "System default"
+msgid "System"
+msgstr "Sistēmas noklusējums"
+
+msgid "Teal"
+msgstr ""
+
 msgid "Techno"
 msgstr "Tehno"
 
 msgid "Text"
 msgstr "Teksts"
+
+msgid "Theme"
+msgstr ""
 
 msgid "This isn't available"
 msgstr ""
@@ -2031,6 +2078,9 @@ msgstr "Viļņa formas meklēšanas josla"
 msgid "Year"
 msgstr "Gads"
 
+msgid "Yellow"
+msgstr ""
+
 msgid "Yes"
 msgstr "Jā"
 
@@ -2138,6 +2188,12 @@ msgid_plural "{count} years ago"
 msgstr[0] "pirms {count} gadiem"
 msgstr[1] "pirms {count} gada"
 msgstr[2] "pirms {count} gadiem"
+
+#~ msgid "Default"
+#~ msgstr "Noklusējums"
+
+#~ msgid "Interface"
+#~ msgstr "Saskarne"
 
 #, fuzzy
 #~| msgid "Loading…"

@@ -163,6 +163,9 @@ msgstr "API võtmed"
 msgid "About Rufin"
 msgstr "Rakenduse teave: Rufin"
 
+msgid "Accent color"
+msgstr ""
+
 msgid "Add Rule"
 msgstr "Lisa reegel"
 
@@ -258,6 +261,11 @@ msgstr "Iga žanr"
 msgid "App settings"
 msgstr "Seadistused"
 
+#, fuzzy
+#| msgid "Appears On"
+msgid "Appearance"
+msgstr "Esineb"
+
 msgid "Appears On"
 msgstr "Esineb"
 
@@ -316,6 +324,9 @@ msgstr ""
 
 msgid "Back"
 msgstr "Tagasi"
+
+msgid "Blue"
+msgstr ""
 
 msgid "Cached"
 msgstr "Puhverdatud"
@@ -408,6 +419,9 @@ msgstr "Kogu"
 msgid "Collections"
 msgstr "Kogud"
 
+msgid "Color scheme"
+msgstr ""
+
 msgid "Columns"
 msgstr "Veerud"
 
@@ -478,6 +492,9 @@ msgstr "Kohanda ekraanivaadet"
 msgid "Dance"
 msgstr "Tantsumuusika"
 
+msgid "Dark"
+msgstr ""
+
 msgid "Date added"
 msgstr "Lisamise kuupäev"
 
@@ -494,9 +511,6 @@ msgstr "Vaikimisi vasak külgpaan"
 
 msgid "Default right sidebar"
 msgstr "Vaikimisi parem külgpaan"
-
-msgid "Default"
-msgstr "Vaikimisi"
 
 msgid "Delete Playlist"
 msgstr "Kustuta esitusloend"
@@ -733,6 +747,9 @@ msgstr "Vaata albumit"
 msgid "Go to Artist"
 msgstr "Suundu esitaja juurde"
 
+msgid "Green"
+msgstr ""
+
 msgid "Grid labels"
 msgstr "Ruudustikuvaate sildid"
 
@@ -797,9 +814,6 @@ msgstr "Paigaldatud"
 msgid "Instrumental"
 msgstr ""
 
-msgid "Interface"
-msgstr "Kasutajaliides"
-
 msgid "JACK"
 msgstr ""
 
@@ -860,6 +874,9 @@ msgstr "Kraasimine Libre.fm-teenuses"
 
 msgid "Libre.fm"
 msgstr "Libre.fm"
+
+msgid "Light"
+msgstr ""
 
 msgid "Limit"
 msgstr "Piirang"
@@ -1238,6 +1255,11 @@ msgstr "Avan Last.fm-i autentimisvaadet…"
 msgid "Opening Libre.fm authorization..."
 msgstr "Avan Libre.fm-i autentimisvaadet…"
 
+#, fuzzy
+#| msgid "range"
+msgid "Orange"
+msgstr "vahemik on"
+
 msgid "Original"
 msgstr "Algne"
 
@@ -1252,6 +1274,9 @@ msgstr "Salasõna"
 
 msgid "Pause"
 msgstr "Peata esitus"
+
+msgid "Pink"
+msgstr ""
 
 msgid "Pins"
 msgstr ""
@@ -1404,6 +1429,9 @@ msgstr "Ühendus"
 msgid "PulseAudio"
 msgstr "Heli"
 
+msgid "Purple"
+msgstr ""
+
 msgid "Queue a track to begin"
 msgstr "Alustamiseks lisa midagi esitusjärjekorda"
 
@@ -1440,6 +1468,11 @@ msgstr "Hiljuti avaldatud"
 
 msgid "Reconnect"
 msgstr "Ühenda uuesti"
+
+#, fuzzy
+#| msgid "Ready"
+msgid "Red"
+msgstr "Valmis"
 
 msgid "Refresh section"
 msgstr "Uuenda ploki andmeid"
@@ -1832,6 +1865,9 @@ msgstr "Vahelejätmiste arv"
 msgid "Skip same-album crossfade"
 msgstr "Jäta vahele ristsulatus sama albumi lugude vahel"
 
+msgid "Slate"
+msgstr ""
+
 msgid "Smart Playlist"
 msgstr "Nutikas esitusloend"
 
@@ -1885,11 +1921,22 @@ msgstr "Sünkroonitud laulusõnad"
 msgid "System default"
 msgstr "Süsteemi vaikeseadistus"
 
+#, fuzzy
+#| msgid "System default"
+msgid "System"
+msgstr "Süsteemi vaikeseadistus"
+
+msgid "Teal"
+msgstr ""
+
 msgid "Techno"
 msgstr "Teknomuusika"
 
 msgid "Text"
 msgstr "Tekst"
+
+msgid "Theme"
+msgstr ""
 
 msgid "This isn't available"
 msgstr ""
@@ -2024,6 +2071,9 @@ msgstr "Helilainega kerimisriba"
 msgid "Year"
 msgstr "Aasta"
 
+msgid "Yellow"
+msgstr ""
+
 msgid "Yes"
 msgstr "Jah"
 
@@ -2123,6 +2173,12 @@ msgid "{count} year ago"
 msgid_plural "{count} years ago"
 msgstr[0] "{count} aasta tagasi"
 msgstr[1] "{count} aastat tagasi"
+
+#~ msgid "Default"
+#~ msgstr "Vaikimisi"
+
+#~ msgid "Interface"
+#~ msgstr "Kasutajaliides"
 
 #, fuzzy
 #~| msgid "Loading…"
