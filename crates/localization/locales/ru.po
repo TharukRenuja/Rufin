@@ -172,6 +172,9 @@ msgstr "Ключи API"
 msgid "About Rufin"
 msgstr "О программе Rufin"
 
+msgid "Accent color"
+msgstr ""
+
 msgid "Add Rule"
 msgstr "Добавить правило"
 
@@ -268,6 +271,11 @@ msgstr "Любой жанр"
 msgid "App settings"
 msgstr "Настройки"
 
+#, fuzzy
+#| msgid "Appears On"
+msgid "Appearance"
+msgstr "Появляется в"
+
 msgid "Appears On"
 msgstr "Появляется в"
 
@@ -326,6 +334,9 @@ msgstr ""
 
 msgid "Back"
 msgstr "Назад"
+
+msgid "Blue"
+msgstr ""
 
 msgid "Cached"
 msgstr "Кэшировано"
@@ -419,6 +430,9 @@ msgstr "Коллекция"
 msgid "Collections"
 msgstr "Коллекции"
 
+msgid "Color scheme"
+msgstr ""
+
 msgid "Columns"
 msgstr "Столбцы"
 
@@ -488,6 +502,9 @@ msgstr "Настроить отображение"
 
 msgid "Dance"
 msgstr "Танцевальная"
+
+msgid "Dark"
+msgstr ""
 
 msgid "Date added"
 msgstr "Дата добавления"
@@ -745,6 +762,9 @@ msgstr "Перейти к альбому"
 msgid "Go to Artist"
 msgstr "Перейти к исполнителю"
 
+msgid "Green"
+msgstr ""
+
 msgid "Grid labels"
 msgstr "Метки сетки"
 
@@ -809,9 +829,6 @@ msgstr "Установлено"
 msgid "Instrumental"
 msgstr ""
 
-msgid "Interface"
-msgstr "Интерфейс"
-
 msgid "JACK"
 msgstr ""
 
@@ -872,6 +889,9 @@ msgstr "Отправка данных в Libre.fm"
 
 msgid "Libre.fm"
 msgstr "Libre.fm"
+
+msgid "Light"
+msgstr ""
 
 msgid "Limit"
 msgstr "Ограничение"
@@ -1252,6 +1272,11 @@ msgstr "Запуск авторизации в Last.fm…"
 msgid "Opening Libre.fm authorization..."
 msgstr "Открытие окна авторизации Libre.fm…"
 
+#, fuzzy
+#| msgid "range"
+msgid "Orange"
+msgstr "диапазон"
+
 msgid "Original"
 msgstr "Оригинал"
 
@@ -1266,6 +1291,9 @@ msgstr "Пароль"
 
 msgid "Pause"
 msgstr "Приостановить"
+
+msgid "Pink"
+msgstr ""
 
 msgid "Pins"
 msgstr ""
@@ -1418,6 +1446,9 @@ msgstr "Соединение"
 msgid "PulseAudio"
 msgstr "Аудио"
 
+msgid "Purple"
+msgstr ""
+
 msgid "Queue a track to begin"
 msgstr "Добавьте трек в очередь, чтобы начать воспроизведение"
 
@@ -1454,6 +1485,11 @@ msgstr "Недавно выпущенные"
 
 msgid "Reconnect"
 msgstr "Повторное подключение"
+
+#, fuzzy
+#| msgid "Ready"
+msgid "Red"
+msgstr "Готово"
 
 msgid "Refresh section"
 msgstr "Обновить раздел"
@@ -1847,6 +1883,9 @@ msgstr "Количество пропусков"
 msgid "Skip same-album crossfade"
 msgstr "Пропускать плавный переход между треками одного альбома"
 
+msgid "Slate"
+msgstr ""
+
 msgid "Smart Playlist"
 msgstr "Умный плейлист"
 
@@ -1900,11 +1939,22 @@ msgstr "Синхронизированные тексты песен"
 msgid "System default"
 msgstr "Системные настройки по умолчанию"
 
+#, fuzzy
+#| msgid "System default"
+msgid "System"
+msgstr "Системные настройки по умолчанию"
+
+msgid "Teal"
+msgstr ""
+
 msgid "Techno"
 msgstr "Техно"
 
 msgid "Text"
 msgstr "Текст"
+
+msgid "Theme"
+msgstr ""
 
 msgid "This isn't available"
 msgstr ""
@@ -2040,6 +2090,9 @@ msgstr "Индикатор прогресса воспроизведения в 
 msgid "Year"
 msgstr "Год"
 
+msgid "Yellow"
+msgstr ""
+
 msgid "Yes"
 msgstr "Да"
 
@@ -2147,6 +2200,9 @@ msgid_plural "{count} years ago"
 msgstr[0] "{count} год назад"
 msgstr[1] "{count} года назад"
 msgstr[2] "{count} лет назад"
+
+#~ msgid "Interface"
+#~ msgstr "Интерфейс"
 
 #, fuzzy
 #~| msgid "Loading…"
