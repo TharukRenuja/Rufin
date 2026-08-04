@@ -231,16 +231,10 @@ pub(crate) fn install_main_menu_shortcut(shell: &Rc<Shell>) {
         if key == gtk::gdk::Key::F10 && !state.contains(gtk::gdk::ModifierType::SHIFT_MASK) {
             match shortcut_shell.left_sidebar_mode() {
                 ResolvedLeftSidebarMode::Compact => {
-                    navigation::popup_primary_menu(
-                        &shortcut_shell,
-                        &shortcut_shell.navigation_view.compact_main_menu.popover,
-                    );
+                    navigation::popup_compact_primary_menu(&shortcut_shell);
                 }
                 _ => {
-                    navigation::popup_primary_menu(
-                        &shortcut_shell,
-                        &shortcut_shell.navigation_view.normal_main_menu.popover,
-                    );
+                    navigation::popup_normal_primary_menu(&shortcut_shell);
                 }
             }
             glib::Propagation::Stop

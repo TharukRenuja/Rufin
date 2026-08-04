@@ -227,7 +227,7 @@ button.release-note-update:hover {
 }
 
 .wide-sidebar {
-  padding-top: 14px;
+  padding-top: 0;
 }
 
 .compact-rail {
@@ -558,10 +558,6 @@ row:focus {
   padding: 0;
 }
 
-.nav-button.sidebar-pin-row:hover {
-  background: transparent;
-}
-
 .sidebar-pin-activate {
   min-width: 0;
   padding: 4px;
@@ -599,7 +595,7 @@ row:focus {
   min-height: 40px;
   padding-left: 4px;
   border-radius: 7px;
-  background: var(--sidebar-bg-color);
+  background: color-mix(in srgb, currentColor 8%, var(--sidebar-bg-color));
 }
 
 .icon-button.sidebar-pin-control {

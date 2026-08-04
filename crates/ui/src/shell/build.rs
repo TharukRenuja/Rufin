@@ -49,8 +49,8 @@ use super::layout::{
 };
 use super::localization::LocalizationState;
 use super::navigation::{
-    NavigationState, NavigationWidgets, PrimaryMenuWidgets, build_compact_navigation,
-    build_normal_navigation,
+    NavigationState, NavigationWidgets, NormalPrimaryMenuWidgets, PrimaryMenuWidgets,
+    build_compact_navigation, build_normal_navigation,
 };
 use super::route::{RouteStack, RouteViewport};
 use super::startup::StartupState;
@@ -261,7 +261,7 @@ pub fn build(app: &adw::Application, inputs: RuntimeInputs) {
     let compact_nav_slot = sidebar_scroll_slot(COMPACT_RAIL_WIDTH, &compact_nav_handle);
     compact_nav_slot.add_css_class("sidebar-pane");
     compact_nav_slot.add_css_class("compact-rail-slot");
-    let normal_main_menu = gtk::Button::new();
+    let normal_main_menu = gtk::MenuButton::new();
     let compact_main_menu = gtk::Button::new();
 
     let main_area_parts = build_main_area();
@@ -418,11 +418,9 @@ pub fn build(app: &adw::Application, inputs: RuntimeInputs) {
         tiny_nav_button,
         normal_nav,
         compact_nav,
-        normal_main_menu: PrimaryMenuWidgets {
+        normal_main_menu: NormalPrimaryMenuWidgets {
             button: normal_main_menu,
             popover: RefCell::new(None),
-            click_handler: RefCell::new(None),
-            unmap_handler: RefCell::new(None),
         },
         compact_main_menu: PrimaryMenuWidgets {
             button: compact_main_menu,

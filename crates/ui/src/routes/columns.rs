@@ -1973,6 +1973,17 @@ pub(crate) fn artist_favorite_column(shell: &Rc<Shell>) -> gtk::ColumnViewColumn
     column
 }
 pub(crate) fn track_favorite_column(shell: &Rc<Shell>) -> gtk::ColumnViewColumn {
+    mapped_track_favorite_column(shell, |track: &Track| Some(track.clone()))
+}
+
+pub(crate) fn mapped_track_favorite_column<T, TrackValue>(
+    shell: &Rc<Shell>,
+    track_value: TrackValue,
+) -> gtk::ColumnViewColumn
+where
+    T: Clone + 'static,
+    TrackValue: Fn(&T) -> Option<Track> + 'static,
+{
     let factory = gtk::SignalListItemFactory::new();
     let shell = Rc::clone(shell);
 
@@ -2020,24 +2031,32 @@ pub(crate) fn track_favorite_column(shell: &Rc<Shell>) -> gtk::ColumnViewColumn 
         });
     });
 
+    let bind_shell = Rc::clone(&shell);
     factory.connect_bind(move |_, item| {
         let Some(item) = item.downcast_ref::<gtk::ListItem>() else {
             return;
         };
-        let Some(track) = item_at_from_item::<Track>(item) else {
+        let Some(value) = item_at_from_item::<T>(item) else {
             return;
         };
         let Some(cell) = track_favorite_cell(item) else {
             return;
         };
-        set_favorite_button_active(&cell.button, track.favorite);
-        *cell.current_track.borrow_mut() = Some(track);
+        let track = track_value(&value);
+        let favorite = track
+            .as_ref()
+            .is_some_and(|track| bind_shell.projected_track_favorite(&track.id, track.favorite));
+        set_favorite_button_active(&cell.button, favorite);
+        cell.button.set_sensitive(track.is_some());
+        *cell.current_track.borrow_mut() = track;
     });
 
     factory.connect_unbind(|_, item| {
         if let Some(item) = item.downcast_ref::<gtk::ListItem>()
             && let Some(cell) = track_favorite_cell(item)
         {
+            cell.button.set_sensitive(false);
+            set_favorite_button_active(&cell.button, false);
             *cell.current_track.borrow_mut() = None;
         }
     });

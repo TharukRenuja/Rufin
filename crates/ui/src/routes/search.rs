@@ -7,9 +7,18 @@ use std::time::Duration;
 use adw::prelude::*;
 use artwork::{ArtworkBinding, ArtworkBindings};
 use gtk::{gio, glib};
-use library::{Album, Artist, Library, SearchResults, Track, TrackId};
+use library::{
+    Album, AlbumSummary, Artist, ArtistSummary, FavoriteItemId, Library, MusicFolderId,
+    SearchResults, Track, TrackId,
+};
 use localization::{msgid, tr};
+use playback::QueuePlacement;
 
+use crate::favorites::{
+    album_favorite_key, artist_favorite_key, favorite_button_is_active, set_favorite_button_active,
+    track_favorite_key,
+};
+use crate::interactions::install_context_menu_openers;
 use crate::layout::width_allocation_owner;
 use crate::localization::{bind_search_placeholder, localized_label};
 use crate::runtime::{SelectedLibrary, SelectedSourceHandle};
@@ -20,14 +29,17 @@ use crate::shell::route::{MountedRoute, MountedRouteItemNavigation};
 use crate::{LibraryField, LibraryLayout, LibraryListKey, LibraryListSettings};
 
 use super::cards;
+use super::collection_context::{
+    present_album_context_menu, present_artist_context_menu, present_track_context_menu,
+};
 use super::collections::{
     CollectionTableProjection, LibraryCollectionProjection, LibraryPresentationProjection,
     dynamic_collection_table, library_route_inset,
 };
 use super::columns::{
-    TrackMergedColumnValues, TrackRowPlayingIndicator, row_index_column_with_width, text_column,
-    track_column_fit_width, track_column_width, track_merged_column,
-    track_row_index_column_with_width,
+    TrackMergedColumnValues, TrackRowPlayingIndicator, mapped_track_favorite_column,
+    row_index_column_with_width, text_column, track_column_fit_width, track_column_width,
+    track_merged_column, track_row_index_column_with_width,
 };
 use super::grid_cells::{
     CollectionGridCardCell, ReusableCollectionGridCell, collection_grid_cover_shell,
@@ -125,20 +137,21 @@ impl SearchCategory {
 struct SearchAlbum {
     album: Album,
     artwork: ArtworkBinding,
-    navigable: bool,
+    summary: Option<AlbumSummary>,
 }
 
 #[derive(Clone)]
 struct SearchArtist {
     artist: Artist,
     artwork: ArtworkBinding,
-    navigable: bool,
+    summary: Option<ArtistSummary>,
 }
 
 #[derive(Clone)]
 struct SearchTrack {
     track: Track,
     artwork: ArtworkBinding,
+    library_backed: bool,
 }
 
 struct PreparedSearchResults {
@@ -155,6 +168,15 @@ trait SearchGridItem: Clone + 'static {
     fn seed(&self) -> u32;
     fn field(&self, field: LibraryField) -> String;
     fn route(&self) -> Option<Route>;
+    fn play(&self, shell: &Rc<Shell>, placement: QueuePlacement);
+    fn present_context_menu(
+        &self,
+        target: &gtk::Widget,
+        shell: &Rc<Shell>,
+        position: Option<(f64, f64)>,
+    );
+    fn has_context_menu(&self) -> bool;
+    fn favorite_item(&self) -> Option<(FavoriteItemId, bool)>;
 
     fn activate(&self, shell: &Rc<Shell>) {
         if let Some(route) = self.route() {
@@ -164,6 +186,10 @@ trait SearchGridItem: Clone + 'static {
 
     fn activatable(&self) -> bool {
         self.route().is_some()
+    }
+
+    fn can_play(&self) -> bool {
+        self.has_context_menu()
     }
 }
 
@@ -189,8 +215,43 @@ impl SearchGridItem for SearchAlbum {
     }
 
     fn route(&self) -> Option<Route> {
-        self.navigable
+        self.summary
+            .is_some()
             .then(|| Route::AlbumDetail(self.album.id.clone()))
+    }
+
+    fn play(&self, shell: &Rc<Shell>, placement: QueuePlacement) {
+        if self.summary.is_some() {
+            play_search_target(
+                shell,
+                super::collections::PlaybackTarget::Album(self.album.id.clone()),
+                placement,
+            );
+        }
+    }
+
+    fn present_context_menu(
+        &self,
+        target: &gtk::Widget,
+        shell: &Rc<Shell>,
+        position: Option<(f64, f64)>,
+    ) {
+        if let Some(summary) = self.summary.as_ref() {
+            present_album_context_menu(target, shell, summary.clone(), None, None, position);
+        }
+    }
+
+    fn has_context_menu(&self) -> bool {
+        self.summary.is_some()
+    }
+
+    fn favorite_item(&self) -> Option<(FavoriteItemId, bool)> {
+        self.summary.as_ref().map(|summary| {
+            (
+                FavoriteItemId::Album(summary.album.id.clone()),
+                summary.album.favorite,
+            )
+        })
     }
 }
 
@@ -216,8 +277,43 @@ impl SearchGridItem for SearchArtist {
     }
 
     fn route(&self) -> Option<Route> {
-        self.navigable
+        self.summary
+            .is_some()
             .then(|| Route::ArtistDetail(self.artist.id.clone()))
+    }
+
+    fn play(&self, shell: &Rc<Shell>, placement: QueuePlacement) {
+        if self.summary.is_some() {
+            play_search_target(
+                shell,
+                super::collections::PlaybackTarget::Artist(self.artist.id.clone()),
+                placement,
+            );
+        }
+    }
+
+    fn present_context_menu(
+        &self,
+        target: &gtk::Widget,
+        shell: &Rc<Shell>,
+        position: Option<(f64, f64)>,
+    ) {
+        if let Some(summary) = self.summary.as_ref() {
+            present_artist_context_menu(target, shell, summary.clone(), None, position);
+        }
+    }
+
+    fn has_context_menu(&self) -> bool {
+        self.summary.is_some()
+    }
+
+    fn favorite_item(&self) -> Option<(FavoriteItemId, bool)> {
+        self.summary.as_ref().map(|summary| {
+            (
+                FavoriteItemId::Artist(summary.artist.id.clone()),
+                summary.artist.favorite,
+            )
+        })
     }
 }
 
@@ -247,17 +343,58 @@ impl SearchGridItem for SearchTrack {
     }
 
     fn activate(&self, shell: &Rc<Shell>) {
-        if let Some(selected) = shell.library.selected.borrow().as_ref() {
-            shell
-                .products
-                .playback
-                .queue
-                .play_loaded(selected.one_track(self.track.clone(), playback::QueuePlacement::Now));
-        }
+        self.play(shell, QueuePlacement::Now);
     }
 
     fn activatable(&self) -> bool {
         true
+    }
+
+    fn play(&self, shell: &Rc<Shell>, placement: QueuePlacement) {
+        play_search_track(shell, self.track.clone(), placement);
+    }
+
+    fn present_context_menu(
+        &self,
+        target: &gtk::Widget,
+        shell: &Rc<Shell>,
+        position: Option<(f64, f64)>,
+    ) {
+        present_track_context_menu(target, shell, self.track.clone(), position);
+    }
+
+    fn has_context_menu(&self) -> bool {
+        true
+    }
+
+    fn favorite_item(&self) -> Option<(FavoriteItemId, bool)> {
+        self.library_backed.then(|| {
+            (
+                FavoriteItemId::Track(self.track.id.clone()),
+                self.track.favorite,
+            )
+        })
+    }
+}
+
+fn play_search_track(shell: &Rc<Shell>, track: Track, placement: QueuePlacement) {
+    let Some(selected) = shell.library.selected.borrow().as_ref().cloned() else {
+        return;
+    };
+    shell
+        .products
+        .playback
+        .queue
+        .play_loaded(selected.one_track(track, placement));
+}
+
+fn play_search_target(
+    shell: &Rc<Shell>,
+    target: super::collections::PlaybackTarget,
+    placement: QueuePlacement,
+) {
+    if let Some(request) = target.play_request(shell, placement, placement == QueuePlacement::Now) {
+        shell.products.playback.queue.play_loaded(request);
     }
 }
 
@@ -267,6 +404,7 @@ struct SearchGridCell<T: SearchGridItem> {
     cover: ArtworkTile,
     cover_button: gtk::Button,
     current: Rc<RefCell<Option<T>>>,
+    controls: cards::CoverHoverControls,
     cover_size: i32,
 }
 
@@ -276,6 +414,8 @@ impl<T: SearchGridItem> SearchGridCell<T> {
         let cover_button = collection_grid_cover_shell();
         let cover = ArtworkTile::new_elastic_square(0);
         cover_button.set_child(Some(&cover.widget()));
+        let overlay = cards::elastic_cover_overlay();
+        overlay.set_child(Some(&cover_button));
         let open_shell = Rc::clone(&shell);
         let open_item = Rc::clone(&current);
         cover_button.connect_clicked(move |_| {
@@ -283,15 +423,92 @@ impl<T: SearchGridItem> SearchGridCell<T> {
                 item.activate(&open_shell);
             }
         });
-        let transport = gtk::Box::new(gtk::Orientation::Horizontal, 0);
-        let cover_frame = cards::square_cover_frame(&cover_button, &transport);
+
+        let (mut controls, favorite) =
+            cards::cover_hover_controls_with_favorite(0, msgid("Play"), false);
+        let favorite_key_item = Rc::clone(&current);
+        shell.favorites.register_dynamic_button(
+            Rc::new(move || {
+                favorite_key_item
+                    .borrow()
+                    .as_ref()
+                    .and_then(SearchGridItem::favorite_item)
+                    .map(|(item, _)| match item {
+                        FavoriteItemId::Album(id) => album_favorite_key(&id),
+                        FavoriteItemId::Artist(id) => artist_favorite_key(&id),
+                        FavoriteItemId::Track(id) => track_favorite_key(&id),
+                    })
+            }),
+            &favorite,
+        );
+        let favorite_shell = Rc::clone(&shell);
+        let favorite_item = Rc::clone(&current);
+        favorite.connect_clicked(move |button| {
+            let Some((item, _)) = favorite_item
+                .borrow()
+                .as_ref()
+                .and_then(SearchGridItem::favorite_item)
+            else {
+                return;
+            };
+            favorite_shell.set_favorite_with_feedback(
+                item,
+                !favorite_button_is_active(button),
+                Some(button),
+            );
+        });
+        let menu = controls.add_context_button();
+        let menu_shell = Rc::clone(&shell);
+        let menu_item = Rc::clone(&current);
+        let menu_target = overlay.downgrade();
+        menu.connect_clicked(move |_| {
+            let Some(item) = menu_item.borrow().as_ref().cloned() else {
+                return;
+            };
+            let Some(target) = menu_target.upgrade() else {
+                return;
+            };
+            item.present_context_menu(
+                target.upcast_ref(),
+                &menu_shell,
+                cards::elastic_cover_context_point(&target),
+            );
+        });
+        for (button, placement) in [
+            (&controls.play, QueuePlacement::Now),
+            (&controls.play_next, QueuePlacement::Next),
+            (&controls.play_last, QueuePlacement::Last),
+        ] {
+            let play_shell = Rc::clone(&shell);
+            let play_item = Rc::clone(&current);
+            button.connect_clicked(move |_| {
+                if let Some(item) = play_item.borrow().as_ref() {
+                    item.play(&play_shell, placement);
+                }
+            });
+        }
+        controls.add_to_overlay(&overlay);
+        controls.connect_hover(&overlay);
+
+        let cover_frame = cards::square_cover_frame(&overlay, &controls.transport);
         let body = CollectionGridCardCell::new(&shell, fields, cover_frame.upcast());
+        let context_shell = Rc::clone(&shell);
+        let context_item = Rc::clone(&current);
+        install_context_menu_openers(
+            &body.card,
+            Rc::new(move |target, position| {
+                if let Some(item) = context_item.borrow().as_ref() {
+                    item.present_context_menu(target, &context_shell, position);
+                }
+            }),
+        );
         Self {
             body,
             shell,
             cover,
             cover_button,
             current,
+            controls,
             cover_size,
         }
     }
@@ -319,6 +536,34 @@ impl<T: SearchGridItem> ReusableCollectionGridCell<T> for SearchGridCell<T> {
         let activatable = item.activatable();
         self.cover_button.set_can_target(activatable);
         self.cover_button.set_focusable(activatable);
+        let can_play = item.can_play();
+        self.controls.play.set_sensitive(can_play);
+        self.controls.play_next.set_sensitive(can_play);
+        self.controls.play_last.set_sensitive(can_play);
+        self.controls
+            .transport
+            .set_opacity(if can_play { 1.0 } else { 0.0 });
+        let has_context_menu = item.has_context_menu();
+        if let Some(menu) = self.controls.menu.as_ref() {
+            menu.set_sensitive(has_context_menu);
+            menu.set_opacity(if has_context_menu { 1.0 } else { 0.0 });
+        }
+        self.controls
+            .shade
+            .set_opacity(if can_play || has_context_menu {
+                1.0
+            } else {
+                0.0
+            });
+        if let Some(favorite) = self.controls.favorite.as_ref() {
+            let favorite_item = item.favorite_item();
+            let active = favorite_item.as_ref().is_some_and(|(item, fallback)| {
+                self.shell.projected_item_favorite(item, *fallback)
+            });
+            set_favorite_button_active(favorite, active);
+            favorite.set_sensitive(favorite_item.is_some());
+            favorite.set_opacity(if favorite_item.is_some() { 1.0 } else { 0.0 });
+        }
         *self.current.borrow_mut() = Some(item);
     }
 
@@ -327,6 +572,17 @@ impl<T: SearchGridItem> ReusableCollectionGridCell<T> for SearchGridCell<T> {
         self.body.clear();
         self.cover_button.set_can_target(false);
         self.cover_button.set_focusable(false);
+        self.controls.transport.set_opacity(0.0);
+        self.controls.shade.set_opacity(0.0);
+        if let Some(menu) = self.controls.menu.as_ref() {
+            menu.set_opacity(0.0);
+            menu.set_sensitive(false);
+        }
+        if let Some(favorite) = self.controls.favorite.as_ref() {
+            favorite.set_opacity(0.0);
+            favorite.set_sensitive(false);
+            set_favorite_button_active(favorite, false);
+        }
         self.current.borrow_mut().take();
     }
 
@@ -346,6 +602,7 @@ struct SearchRouteProjection {
     source_session_epoch: playback::SourceSessionEpoch,
     source: SelectedSourceHandle,
     library: Arc<Library>,
+    music_folder_id: Option<MusicFolderId>,
     search: gtk::SearchEntry,
     toolbar_controls: gtk::Box,
     status: gtk::Stack,
@@ -494,6 +751,7 @@ impl SearchRouteProjection {
             source_session_epoch: selected.source_session_epoch,
             source: selected.operations.clone(),
             library: Arc::clone(&selected.library),
+            music_folder_id: selected.music_folder_id.clone(),
             search,
             toolbar_controls: controls,
             status,
@@ -558,6 +816,7 @@ impl SearchRouteProjection {
         let request = library::SearchRequest::new(query);
         let receiver = self.source.search(request.clone());
         let library = Arc::clone(&self.library);
+        let music_folder_id = self.music_folder_id.clone();
         let fallback_library = Arc::clone(&library);
         let projection = Rc::downgrade(self);
         glib::spawn_future_local(async move {
@@ -577,11 +836,11 @@ impl SearchRouteProjection {
                 }
             };
             let result = match result {
-                Ok(results) => {
-                    gio::spawn_blocking(move || prepare_search_results(&library, results))
-                        .await
-                        .map_err(|_| "the Search result preparation stopped".to_string())
-                }
+                Ok(results) => gio::spawn_blocking(move || {
+                    prepare_search_results(&library, music_folder_id.as_ref(), results)
+                })
+                .await
+                .map_err(|_| "the Search result preparation stopped".to_string()),
                 Err(error) => Err(error),
             };
             let Some(projection) = projection.upgrade() else {
@@ -684,15 +943,23 @@ fn offline_search_result(
     offline.map_err(|_| live_error)
 }
 
-fn prepare_search_results(library: &Library, results: SearchResults) -> PreparedSearchResults {
+fn prepare_search_results(
+    library: &Library,
+    music_folder_id: Option<&MusicFolderId>,
+    results: SearchResults,
+) -> PreparedSearchResults {
     let counts = SearchCategory::ALL.map(|category| category.result_count(&results));
     let bindings = ArtworkBindings::new(library);
     let tracks = results
         .tracks
         .into_iter()
-        .map(|track| SearchTrack {
-            artwork: bindings.track(&track).into_binding(),
-            track,
+        .map(|track| {
+            let bound = bindings.track(&track);
+            SearchTrack {
+                library_backed: bound.is_library_item(),
+                artwork: bound.into_binding(),
+                track,
+            }
         })
         .collect();
     let albums = results
@@ -702,7 +969,10 @@ fn prepare_search_results(library: &Library, results: SearchResults) -> Prepared
             let bound = bindings.album(&album);
             SearchAlbum {
                 artwork: bound.binding().clone(),
-                navigable: bound.is_library_item(),
+                summary: library
+                    .album_summary(&album.id, music_folder_id)
+                    .ok()
+                    .flatten(),
                 album,
             }
         })
@@ -714,7 +984,10 @@ fn prepare_search_results(library: &Library, results: SearchResults) -> Prepared
             let bound = bindings.artist(&artist);
             SearchArtist {
                 artwork: bound.binding().clone(),
-                navigable: bound.is_library_item(),
+                summary: library
+                    .artist_summary(&artist.id, music_folder_id)
+                    .ok()
+                    .flatten(),
                 artist,
             }
         })
@@ -911,9 +1184,12 @@ fn search_track_column(
                 seed: |track: &SearchTrack| stable_seed(track.track.id.as_str()),
                 subtitle_route: |_: &SearchTrack| None,
                 subtitle_link: false,
-                context_menu: false,
+                context_menu: true,
             },
         ),
+        LibraryField::Favorite => mapped_track_favorite_column(shell, |track: &SearchTrack| {
+            track.library_backed.then(|| track.track.clone())
+        }),
         _ => text_column(field.title(), width, move |track: &SearchTrack| {
             track_field(&track.track, field)
         }),
@@ -1255,28 +1531,47 @@ mod tests {
             Vec::new(),
         );
         let results = SearchResults {
-            tracks: vec![live_track],
-            albums: vec![live_album],
-            artists: vec![Artist {
-                id: artist_id,
-                name: "Live artist label".to_string(),
-                favorite: false,
-                last_played: None,
-                play_count: None,
-                user_rating: None,
-                musicbrainz_artist_id: None,
-                image_ref: None,
-                local_artwork: None,
-            }],
+            tracks: vec![live_track, crate::test_support::track(9, "External track")],
+            albums: vec![live_album, crate::test_support::album(9, "External album")],
+            artists: vec![
+                Artist {
+                    id: artist_id,
+                    name: "Live artist label".to_string(),
+                    favorite: false,
+                    last_played: None,
+                    play_count: None,
+                    user_rating: None,
+                    musicbrainz_artist_id: None,
+                    image_ref: None,
+                    local_artwork: None,
+                },
+                Artist {
+                    id: ArtistId::fake(9),
+                    name: "External artist".to_string(),
+                    favorite: false,
+                    last_played: None,
+                    play_count: None,
+                    user_rating: None,
+                    musicbrainz_artist_id: None,
+                    image_ref: None,
+                    local_artwork: None,
+                },
+            ],
         };
-        let prepared = prepare_search_results(&fixture.library, results);
+        let prepared = prepare_search_results(&fixture.library, None, results);
 
         assert_eq!(prepared.tracks[0].track.title, "Live track label");
         assert!(!prepared.tracks[0].artwork.is_empty());
+        assert!(prepared.tracks[0].library_backed);
         assert_eq!(prepared.albums[0].album.title, "Live album label");
         assert!(!prepared.albums[0].artwork.is_empty());
+        assert!(prepared.albums[0].summary.is_some());
         assert_eq!(prepared.artists[0].artist.name, "Live artist label");
         assert!(!prepared.artists[0].artwork.is_empty());
+        assert!(prepared.artists[0].summary.is_some());
+        assert!(!prepared.tracks[1].library_backed);
+        assert!(prepared.albums[1].summary.is_none());
+        assert!(prepared.artists[1].summary.is_none());
     }
 
     #[test]
@@ -1302,12 +1597,12 @@ mod tests {
             SearchAlbum {
                 album: crate::test_support::album(1, "Zulu"),
                 artwork: ArtworkBinding::new(),
-                navigable: false,
+                summary: None,
             },
             SearchAlbum {
                 album: crate::test_support::album(2, "Alpha"),
                 artwork: ArtworkBinding::new(),
-                navigable: false,
+                summary: None,
             },
         ];
         let mut settings = LibraryListSettings::for_key(LibraryListKey::Albums);

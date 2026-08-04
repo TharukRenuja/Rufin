@@ -118,7 +118,7 @@ impl Default for Settings {
             prefer_server_playlist_covers: false,
             show_downloaded_badges: true,
             downloads: Vec::new(),
-            seekbar_waveform_enabled: true,
+            seekbar_waveform_enabled: false,
             tray_enabled: false,
             exit_to_tray: false,
             start_minimized: false,
