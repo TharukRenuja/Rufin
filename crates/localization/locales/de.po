@@ -165,6 +165,9 @@ msgstr "API-Schlüssel"
 msgid "About Rufin"
 msgstr "Über Rufin"
 
+msgid "Accent color"
+msgstr ""
+
 msgid "Add Rule"
 msgstr "Regel hinzufügen"
 
@@ -258,6 +261,11 @@ msgstr "Beliebiges Genre"
 msgid "App settings"
 msgstr ""
 
+#, fuzzy
+#| msgid "Appears On"
+msgid "Appearance"
+msgstr "Erscheint auf"
+
 msgid "Appears On"
 msgstr "Erscheint auf"
 
@@ -316,6 +324,9 @@ msgstr ""
 
 msgid "Back"
 msgstr "Zurück"
+
+msgid "Blue"
+msgstr ""
 
 msgid "Cached"
 msgstr "Zwischengespeichert"
@@ -408,6 +419,9 @@ msgstr "Sammlung"
 msgid "Collections"
 msgstr "Sammlungen"
 
+msgid "Color scheme"
+msgstr ""
+
 msgid "Columns"
 msgstr "Spalten"
 
@@ -476,6 +490,9 @@ msgstr "Ansicht anpassen"
 msgid "Dance"
 msgstr "Dance"
 
+msgid "Dark"
+msgstr ""
+
 msgid "Date added"
 msgstr "Hinzugefügt am"
 
@@ -492,9 +509,6 @@ msgstr "Standard-Seitenleiste links"
 
 msgid "Default right sidebar"
 msgstr "Standard-Seitenleiste rechts"
-
-msgid "Default"
-msgstr "Standard"
 
 msgid "Delete Playlist"
 msgstr "Playlist löschen"
@@ -732,6 +746,9 @@ msgstr "Zum Album gehen"
 msgid "Go to Artist"
 msgstr "Zum Künstler springen"
 
+msgid "Green"
+msgstr ""
+
 msgid "Grid labels"
 msgstr "Rasterbeschriftung"
 
@@ -795,9 +812,6 @@ msgstr "Installiert"
 msgid "Instrumental"
 msgstr ""
 
-msgid "Interface"
-msgstr "Benutzeroberfläche"
-
 msgid "JACK"
 msgstr ""
 
@@ -858,6 +872,9 @@ msgstr "Libre.fm scrobbling"
 
 msgid "Libre.fm"
 msgstr "Libre.fm"
+
+msgid "Light"
+msgstr ""
 
 msgid "Limit"
 msgstr "Begrenzung"
@@ -1237,6 +1254,11 @@ msgstr "Last.fm-Autorisierung wird geöffnet..."
 msgid "Opening Libre.fm authorization..."
 msgstr "Libre.fm-Autorisierung wird geöffnet..."
 
+#, fuzzy
+#| msgid "range"
+msgid "Orange"
+msgstr "Bereich"
+
 msgid "Original"
 msgstr "Original"
 
@@ -1251,6 +1273,9 @@ msgstr "Passwort"
 
 msgid "Pause"
 msgstr "Pause"
+
+msgid "Pink"
+msgstr ""
 
 msgid "Pins"
 msgstr ""
@@ -1403,6 +1428,9 @@ msgstr "Verbindung"
 msgid "PulseAudio"
 msgstr "Audio"
 
+msgid "Purple"
+msgstr ""
+
 msgid "Queue a track to begin"
 msgstr "Titel einreihen zum Starten"
 
@@ -1439,6 +1467,11 @@ msgstr "Zuletzt veröffentlicht"
 
 msgid "Reconnect"
 msgstr "Erneut verbinden"
+
+#, fuzzy
+#| msgid "Ready"
+msgid "Red"
+msgstr "Bereit"
 
 msgid "Refresh section"
 msgstr "Bereich aktualisieren"
@@ -1831,6 +1864,9 @@ msgstr "Überspringungszähler"
 msgid "Skip same-album crossfade"
 msgstr "Überblendung bei gleichem Album überspringen"
 
+msgid "Slate"
+msgstr ""
+
 msgid "Smart Playlist"
 msgstr "Smart-Playlist"
 
@@ -1886,11 +1922,22 @@ msgstr "Synchronisierte Songtexte"
 msgid "System default"
 msgstr "Standardeinstellungen"
 
+#, fuzzy
+#| msgid "System default"
+msgid "System"
+msgstr "Standardeinstellungen"
+
+msgid "Teal"
+msgstr ""
+
 msgid "Techno"
 msgstr "Techno"
 
 msgid "Text"
 msgstr "Text"
+
+msgid "Theme"
+msgstr ""
 
 msgid "This isn't available"
 msgstr ""
@@ -2024,6 +2071,9 @@ msgstr "Wellenform-Fortschrittsbalken"
 msgid "Year"
 msgstr "Jahr"
 
+msgid "Yellow"
+msgstr ""
+
 msgid "Yes"
 msgstr "Ja"
 
@@ -2123,6 +2173,12 @@ msgid "{count} year ago"
 msgid_plural "{count} years ago"
 msgstr[0] "vor {count} Jahr"
 msgstr[1] "vor {count} Jahren"
+
+#~ msgid "Default"
+#~ msgstr "Standard"
+
+#~ msgid "Interface"
+#~ msgstr "Benutzeroberfläche"
 
 #~ msgid "Activity links and MusicBrainz covers"
 #~ msgstr "Aktivitäts-Links und MusicBrainz-Cover"
