@@ -512,9 +512,6 @@ msgstr "Vaikimisi vasak külgpaan"
 msgid "Default right sidebar"
 msgstr "Vaikimisi parem külgpaan"
 
-msgid "Default"
-msgstr "Vaikimisi"
-
 msgid "Delete Playlist"
 msgstr "Kustuta esitusloend"
 
@@ -2176,6 +2173,9 @@ msgid "{count} year ago"
 msgid_plural "{count} years ago"
 msgstr[0] "{count} aasta tagasi"
 msgstr[1] "{count} aastat tagasi"
+
+#~ msgid "Default"
+#~ msgstr "Vaikimisi"
 
 #~ msgid "Interface"
 #~ msgstr "Kasutajaliides"

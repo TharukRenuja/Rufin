@@ -426,9 +426,6 @@ msgstr ""
 msgid "Default right sidebar"
 msgstr ""
 
-msgid "Default"
-msgstr ""
-
 msgid "Delete Playlist"
 msgstr ""
 

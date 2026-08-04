@@ -523,9 +523,6 @@ msgstr "Левая боковая панель по умолчанию"
 msgid "Default right sidebar"
 msgstr "Правая боковая панель по умолчанию"
 
-msgid "Default"
-msgstr "По умолчанию"
-
 msgid "Delete Playlist"
 msgstr "Удалить плейлист"
 
@@ -2200,6 +2197,9 @@ msgid_plural "{count} years ago"
 msgstr[0] "{count} год назад"
 msgstr[1] "{count} года назад"
 msgstr[2] "{count} лет назад"
+
+#~ msgid "Default"
+#~ msgstr "По умолчанию"
 
 #~ msgid "Interface"
 #~ msgstr "Интерфейс"

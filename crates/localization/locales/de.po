@@ -510,9 +510,6 @@ msgstr "Standard-Seitenleiste links"
 msgid "Default right sidebar"
 msgstr "Standard-Seitenleiste rechts"
 
-msgid "Default"
-msgstr "Standard"
-
 msgid "Delete Playlist"
 msgstr "Playlist löschen"
 
@@ -2176,6 +2173,9 @@ msgid "{count} year ago"
 msgid_plural "{count} years ago"
 msgstr[0] "vor {count} Jahr"
 msgstr[1] "vor {count} Jahren"
+
+#~ msgid "Default"
+#~ msgstr "Standard"
 
 #~ msgid "Interface"
 #~ msgstr "Benutzeroberfläche"

@@ -520,9 +520,6 @@ msgstr "Noklusējuma kreisais sānu panelis"
 msgid "Default right sidebar"
 msgstr "Noklusējuma labais sānu panelis"
 
-msgid "Default"
-msgstr "Noklusējums"
-
 msgid "Delete Playlist"
 msgstr "Dzēst atskaņošanas sarakstu"
 
@@ -2191,6 +2188,9 @@ msgid_plural "{count} years ago"
 msgstr[0] "pirms {count} gadiem"
 msgstr[1] "pirms {count} gada"
 msgstr[2] "pirms {count} gadiem"
+
+#~ msgid "Default"
+#~ msgstr "Noklusējums"
 
 #~ msgid "Interface"
 #~ msgstr "Saskarne"
