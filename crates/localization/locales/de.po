@@ -1730,6 +1730,11 @@ msgid "Seek playback"
 msgstr "Spulen"
 
 #, fuzzy
+#| msgid "Seek Forward"
+msgid "Seekbar"
+msgstr "Vorspulen"
+
+#, fuzzy
 #| msgid "Select Music Folder"
 msgid "Select Download Folder"
 msgstr "Musikordner auswählen"

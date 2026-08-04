@@ -1539,6 +1539,9 @@ msgstr ""
 msgid "Seek playback"
 msgstr ""
 
+msgid "Seekbar"
+msgstr ""
+
 msgid "Select Download Folder"
 msgstr ""
 

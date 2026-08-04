@@ -1738,6 +1738,9 @@ msgstr "Pārtīt uz priekšu"
 msgid "Seek playback"
 msgstr "Meklēt atskaņošanā"
 
+msgid "Seekbar"
+msgstr "Pozīcijas josla"
+
 #, fuzzy
 #| msgid "Select Music Folder"
 msgid "Select Download Folder"
@@ -2615,9 +2618,6 @@ msgstr[2] "pirms {count} gadiem"
 
 #~ msgid "Search server lyrics before external providers"
 #~ msgstr "Meklēt servera tekstus pirms ārējiem pakalpojuma sniedzējiem"
-
-#~ msgid "Seekbar"
-#~ msgstr "Pozīcijas josla"
 
 #~ msgid "Server selector"
 #~ msgstr "Servera izvēlētājs"

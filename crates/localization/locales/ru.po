@@ -18,6 +18,107 @@ msgstr ""
 "n%10<=4 && (n%100<10 || n%100>=20) ? 1 : 2);\n"
 "X-Generator: Weblate 2026.8.dev0\n"
 
+msgid ""
+"Downloads from this server will be removed, and automatic rules will be "
+"turned off"
+msgstr ""
+"Загрузки с этого сервера будут удалены, и автоматические правила будут "
+"отключены"
+
+msgid ""
+"Logs have secrets and absolute folder paths redacted, but you may still want "
+"to review the logs before sharing them"
+msgstr ""
+"В журналах конфиденциальные данные и абсолютные пути к папкам удалены, но "
+"перед отправкой их всё равно стоит просмотреть"
+
+msgid "No results ¯\\_(°╭╮°)_/¯"
+msgstr "Результатов не найдено ¯\\_(°╭╮°)_/¯"
+
+msgid ""
+"Only downloads from this rule will be deleted. Shared and manual downloads "
+"stay"
+msgstr ""
+"Будут удалены только загрузки, соответствующие этому правилу. Общие и ручные "
+"загрузки останутся"
+
+msgid ""
+"Saved mapping. {direct} direct, {prefix} prefix, {metadata} metadata, "
+"{unmatched} unmatched of {total} track"
+msgid_plural ""
+"Saved mapping. {direct} direct, {prefix} prefix, {metadata} metadata, "
+"{unmatched} unmatched of {total} tracks"
+msgstr[0] ""
+"Сопоставление сохранено. {direct} прямое, {prefix} по префиксу, {metadata} "
+"по метаданным, {unmatched} не найдено. Всего: {total} трек"
+msgstr[1] ""
+"Сопоставление сохранено. {direct} прямое, {prefix} по префиксу, {metadata} "
+"по метаданным, {unmatched} не найдено. Всего: {total} трека"
+msgstr[2] ""
+"Сопоставление сохранено. {direct} прямое, {prefix} по префиксу, {metadata} "
+"по метаданным, {unmatched} не найдено. Всего: {total} треков"
+
+msgid ""
+"Tap to the entry to load the lyrics and save in the app cache, click save "
+"only if you also want to save it in your music folder"
+msgstr ""
+"Нажмите на запись, чтобы загрузить текст песни и сохранить его в кэше "
+"приложения. Нажмите «Сохранить», только если вы также хотите сохранить его в "
+"папке с музыкой"
+
+msgid ""
+"Thank you for trying out Rufin! If you have problems or suggestions, please "
+"open an issue in Github."
+msgstr ""
+"Спасибо, что попробовали Rufin! Если у вас возникли проблемы или есть "
+"предложения, пожалуйста, создайте запрос в Github."
+
+msgid ""
+"These folders are combined into the Local source and shown through folder "
+"browsing"
+msgstr ""
+"Эти папки объединены в локальный источник и отображаются при просмотре "
+"содержимого папок"
+
+msgid ""
+"This removes the server, cached library metadata, queue snapshot, and saved "
+"token for"
+msgstr ""
+"Это удаляет сервер, кэшированные метаданные библиотеки, снимок очереди и "
+"сохраненный токен для"
+
+msgid ""
+"This uses Jellyfin API for play radio, necessary if you want recommendation "
+"plugins to work"
+msgstr ""
+"Для работы функции радио используется API Jellyfin, что необходимо для "
+"работы плагинов рекомендаций"
+
+#, fuzzy
+msgid ""
+"This will log you out and clear your secrets including API ones. Your app "
+"cache is not touched."
+msgstr ""
+"Изменение секретного ключа приводит к удалению устаревших конфигурационных "
+"данных и завершению всех сеансов, включая ключи доступа к API. Кэш "
+"приложения не затрагивается."
+
+msgid ""
+"Unsaved changes. {direct} direct, {prefix} prefix, {metadata} metadata, "
+"{unmatched} unmatched of {total} track"
+msgid_plural ""
+"Unsaved changes. {direct} direct, {prefix} prefix, {metadata} metadata, "
+"{unmatched} unmatched of {total} tracks"
+msgstr[0] ""
+"Несохраненные изменения. {direct} прямое, {prefix} по префиксу, {metadata} "
+"по метаданным, {unmatched} не найдено. Всего несохраненных: {total} трек"
+msgstr[1] ""
+"Несохраненные изменения. {direct} прямое, {prefix} по префиксу, {metadata} "
+"по метаданным, {unmatched} не найдено. Всего несохраненных: {total} трека"
+msgstr[2] ""
+"Несохраненные изменения. {direct} прямое, {prefix} по префиксу, {metadata} "
+"по метаданным, {unmatched} не найдено. Всего несохраненных: {total} треков"
+
 msgid ". You only need to fill email and an application name parts"
 msgstr ""
 ". Вам нужно заполнить только поля с адресом электронной почты и названием "
@@ -53,9 +154,6 @@ msgstr "О программе Rufin"
 msgid "Accent color"
 msgstr "Акцентный цвет"
 
-msgid "Add"
-msgstr "Добавить"
-
 msgid "Add Rule"
 msgstr "Добавить правило"
 
@@ -90,14 +188,14 @@ msgid "Add tracks when fewer than this many remain"
 msgstr ""
 "Добавлять треки, когда их количество опустится ниже указанного значения"
 
-msgid "Added to"
-msgstr "Добавлено в"
+msgid "Add"
+msgstr "Добавить"
 
 msgid "Added to favorites"
 msgstr "Добавлено в избранное"
 
-msgid "Album"
-msgstr "Альбом"
+msgid "Added to"
+msgstr "Добавлено в"
 
 msgid "Album Artists"
 msgstr "Авторы альбома"
@@ -116,6 +214,9 @@ msgstr "Название альбома"
 
 msgid "Album tracks"
 msgstr "Треки альбома"
+
+msgid "Album"
+msgstr "Альбом"
 
 msgid "Albums"
 msgstr "Альбомы"
@@ -145,9 +246,6 @@ msgstr "Появляется в"
 msgid "Application name"
 msgstr "Название приложения"
 
-msgid "Artist"
-msgstr "Исполнитель"
-
 msgid "Artist / Album"
 msgstr "Исполнитель / Альбом"
 
@@ -163,11 +261,11 @@ msgstr "Радио по исполнителю"
 msgid "Artist tracks"
 msgstr "Треки исполнителя"
 
+msgid "Artist"
+msgstr "Исполнитель"
+
 msgid "Artists"
 msgstr "Исполнители"
-
-msgid "Audio"
-msgstr "Аудио"
 
 msgid "Audio fade on play/pause"
 msgstr "Плавное затухание звука при воспроизведении/паузе"
@@ -175,8 +273,8 @@ msgstr "Плавное затухание звука при воспроизве
 msgid "Audio output"
 msgstr "Аудиовыход"
 
-msgid "Auto DJ"
-msgstr "Авто-DJ"
+msgid "Audio"
+msgstr "Аудио"
 
 msgid "Auto DJ off"
 msgstr "Авто-DJ выключен"
@@ -186,6 +284,9 @@ msgstr "Авто-DJ включен"
 
 msgid "Auto DJ refill threshold"
 msgstr "Порог автоматического пополнения плейлиста \"Авто-DJ\""
+
+msgid "Auto DJ"
+msgstr "Авто-DJ"
 
 msgid "Automatic updates"
 msgstr "Автоматические обновления"
@@ -208,22 +309,21 @@ msgstr "Кэширование библиотеки"
 msgid "Caching local library..."
 msgstr "Кэширование локальной библиотеки…"
 
-msgid "Cancel"
-msgstr "Отмена"
+msgid "Cancel download and clear downloaded items"
+msgstr "Отменить загрузку и удалить загруженные файлы"
 
 msgid "Cancel download"
 msgstr "Отмена загрузки"
 
-msgid "Cancel download and clear downloaded items"
-msgstr "Отменить загрузку и удалить загруженные файлы"
-
-msgid "Change"
-msgstr "Изменить"
+msgid "Cancel"
+msgstr "Отмена"
 
 msgid "Change Secret Storage"
 msgstr "Изменить секретное хранилище"
 
-#, rust-format
+msgid "Change"
+msgstr "Изменить"
+
 msgid "Changes apply to {count} track"
 msgid_plural "Changes apply to {count} tracks"
 msgstr[0] "Изменения применяются к {count} треку"
@@ -233,9 +333,6 @@ msgstr[2] "Изменения применяются к {count} трекам"
 #, fuzzy
 msgid "Checking..."
 msgstr "Выполняется поиск..."
-
-msgid "Choose"
-msgstr "Выбрать"
 
 msgid "Choose a local music folder"
 msgstr "Выбрать локальную папку с музыкой"
@@ -251,6 +348,9 @@ msgstr ""
 "Выберите одну или несколько папок для сканирования и воспроизведения файлов "
 "непосредственно с этого компьютера"
 
+msgid "Choose"
+msgstr "Выбрать"
+
 msgid "Classical"
 msgstr "Классическая"
 
@@ -263,14 +363,14 @@ msgstr "Удалить загруженные тексты песен для э�
 msgid "Clear queue"
 msgstr "Очистить очередь"
 
-msgid "Close"
-msgstr "Закрыть"
-
 msgid "Close app window"
 msgstr "Закрыть окно приложения"
 
 msgid "Close fullscreen player"
 msgstr "Закрыть полноэкранный плеер"
+
+msgid "Close"
+msgstr "Закрыть"
 
 msgid "Club"
 msgstr "Клубная"
@@ -290,11 +390,11 @@ msgstr "Цветовая схема"
 msgid "Columns"
 msgstr "Столбцы"
 
-msgid "Comment"
-msgstr "Комментарий"
-
 msgid "Comment text"
 msgstr "Текст комментария"
+
+msgid "Comment"
+msgstr "Комментарий"
 
 msgid "Compact"
 msgstr "Компактный"
@@ -302,12 +402,11 @@ msgstr "Компактный"
 msgid "Connect"
 msgstr "Подключить"
 
-msgid "Connected"
-msgstr "Подключено"
-
-#, rust-format
 msgid "Connected as {username}"
 msgstr "Вы вошли как {username}"
+
+msgid "Connected"
+msgstr "Подключено"
 
 msgid "Connecting to music server..."
 msgstr "Подключение к музыкальному серверу…"
@@ -327,7 +426,6 @@ msgstr "Управление уведомлениями"
 msgid "Could not save diagnostic log"
 msgstr "Не удалось сохранить диагностический журнал"
 
-#, rust-format
 msgid "Couldn't connect to {service}"
 msgstr "Подключиться к {service}"
 
@@ -340,11 +438,11 @@ msgstr "Не удалось найти текст песни"
 msgid "Create"
 msgstr "Создать"
 
-msgid "Crossfade"
-msgstr "Плавный между треками"
-
 msgid "Crossfade duration"
 msgstr "Длительность плавного перехода между треками"
+
+msgid "Crossfade"
+msgstr "Плавный между треками"
 
 msgid "Custom"
 msgstr "Настраиваемый"
@@ -373,26 +471,26 @@ msgstr "Левая боковая панель по умолчанию"
 msgid "Default right sidebar"
 msgstr "Правая боковая панель по умолчанию"
 
-msgid "Delete"
-msgstr "Удалить"
-
 msgid "Delete Playlist"
 msgstr "Удалить плейлист"
+
+msgid "Delete"
+msgstr "Удалить"
 
 msgid "Descending"
 msgstr "По убыванию"
 
-msgid "Detail"
-msgstr "Подробности"
-
 msgid "Detail track columns"
 msgstr "Подробные колонки треков"
 
-msgid "Diagnostic log"
-msgstr "Журнал диагностики"
+msgid "Detail"
+msgstr "Подробности"
 
 msgid "Diagnostic log saved"
 msgstr "Журнал диагностики сохранен"
+
+msgid "Diagnostic log"
+msgstr "Журнал диагностики"
 
 msgid "DirectSound"
 msgstr "DirectSound"
@@ -400,11 +498,11 @@ msgstr "DirectSound"
 msgid "Disable private mode"
 msgstr "Отключить приватный режим"
 
-msgid "Disc"
-msgstr "Диск"
-
 msgid "Disc number"
 msgstr "Номер диска"
+
+msgid "Disc"
+msgstr "Диск"
 
 msgid "Discography"
 msgstr "Дискография"
@@ -414,9 +512,6 @@ msgstr "Discord"
 
 msgid "Don't duplicate"
 msgstr "Не дублировать"
-
-msgid "Download"
-msgstr "Загрузить"
 
 msgid "Download Folder"
 msgstr "Локальная папка"
@@ -433,6 +528,9 @@ msgstr "Загрузка добавлена в очередь"
 msgid "Download started"
 msgstr "Загрузка началась"
 
+msgid "Download"
+msgstr "Загрузить"
+
 msgid "Downloaded"
 msgstr "Загружено"
 
@@ -441,13 +539,6 @@ msgstr "Загрузка"
 
 msgid "Downloads"
 msgstr "Загрузки"
-
-msgid ""
-"Downloads from this server will be removed, and automatic rules will be "
-"turned off"
-msgstr ""
-"Загрузки с этого сервера будут удалены, и автоматические правила будут "
-"отключены"
 
 msgid "Drag to reorder"
 msgstr "Перетащите, чтобы изменить порядок"
@@ -494,11 +585,11 @@ msgstr "Развернуть боковую панель"
 msgid "Explore"
 msgstr "Изучить"
 
-msgid "External lyric lookup"
-msgstr "Поиск текста песни в интернете"
-
 msgid "External lyric lookup is off"
 msgstr "Поиск текста песни в интернете отключен"
+
+msgid "External lyric lookup"
+msgstr "Поиск текста песни в интернете"
 
 msgid "External metadata lookup"
 msgstr "Поиск метаданных в интернете"
@@ -510,15 +601,15 @@ msgid "Fade audio when playback is paused or resumed"
 msgstr ""
 "Плавное затухание звука при приостановке или возобновлении воспроизведения"
 
-msgid "Favorite"
-msgstr "Избранное"
-
 msgid "Favorite tracks"
 msgstr "Любимые треки"
 
 msgid "Favorite tracks, plus tracks from favorite albums and artists"
 msgstr ""
 "Любимые треки, а также треки из любимых альбомов и от любимых исполнителей"
+
+msgid "Favorite"
+msgstr "Избранное"
 
 msgid "Favorites"
 msgstr "Избранные"
@@ -558,14 +649,14 @@ msgstr "Вперед"
 msgid "Found Servers"
 msgstr "Найденные серверы"
 
-msgid "Full"
-msgstr "Полный"
-
 msgid "Full Bass"
 msgstr "Максимальные басы"
 
 msgid "Full Treble"
 msgstr "Максимальные высокие частоты"
+
+msgid "Full"
+msgstr "Полный"
 
 msgid "Furigana"
 msgstr "Фуригана"
@@ -582,14 +673,14 @@ msgstr "Создать и сохранить в кэше визуализаци�
 msgid "Genius"
 msgstr "Genius"
 
-msgid "Genre"
-msgstr "Жанр"
-
 msgid "Genre radio"
 msgstr "Радио по жанру"
 
 msgid "Genre tracks"
 msgstr "Треки по жанрам"
+
+msgid "Genre"
+msgstr "Жанр"
 
 msgid "Genres"
 msgstr "Жанры"
@@ -606,11 +697,11 @@ msgstr "Перейти к исполнителю"
 msgid "Green"
 msgstr "Зелёный"
 
-msgid "Grid"
-msgstr "Сетка"
-
 msgid "Grid labels"
 msgstr "Метки сетки"
+
+msgid "Grid"
+msgstr "Сетка"
 
 msgid "Hidden"
 msgstr "Скрыт"
@@ -627,11 +718,11 @@ msgstr "История"
 msgid "Hold and drag to resize"
 msgstr "Удерживайте и перетаскивайте для изменения размера"
 
-msgid "Home"
-msgstr "Главная"
-
 msgid "Home Blocks"
 msgstr "Основные блоки"
+
+msgid "Home"
+msgstr "Главная"
 
 msgid "Identify"
 msgstr "Идентифицировать"
@@ -694,11 +785,11 @@ msgstr "Сочетания Клавиш"
 msgid "LRCLIB"
 msgstr "LRCLIB"
 
-msgid "Language"
-msgstr "Язык"
-
 msgid "Language and readings"
 msgstr "Язык и чтение"
+
+msgid "Language"
+msgstr "Язык"
 
 msgid "Laptop/Headphones"
 msgstr "Ноутбук/Наушники"
@@ -706,11 +797,11 @@ msgstr "Ноутбук/Наушники"
 msgid "Last played"
 msgstr "Посл. прослушано"
 
-msgid "Last.fm"
-msgstr "Last.fm"
-
 msgid "Last.fm scrobbling"
 msgstr "Отправка данных в Last.fm"
+
+msgid "Last.fm"
+msgstr "Last.fm"
 
 msgid "Layout"
 msgstr "Макет"
@@ -721,11 +812,11 @@ msgstr "Устаревшая версия"
 msgid "Library"
 msgstr "Библиотека"
 
-msgid "Libre.fm"
-msgstr "Libre.fm"
-
 msgid "Libre.fm scrobbling"
 msgstr "Отправка данных в Libre.fm"
+
+msgid "Libre.fm"
+msgstr "Libre.fm"
 
 msgid "Light"
 msgstr "Светлый"
@@ -733,17 +824,14 @@ msgstr "Светлый"
 msgid "Limit"
 msgstr "Ограничение"
 
-msgid "ListenBrainz"
-msgstr "ListenBrainz"
-
 msgid "ListenBrainz scrobbling"
 msgstr "Отправка данных о прослушивании в ListenBrainz"
 
+msgid "ListenBrainz"
+msgstr "ListenBrainz"
+
 msgid "Loading folders..."
 msgstr "Загрузка папок…"
-
-msgid "Local"
-msgstr "Локальный источник"
 
 msgid "Local File Access"
 msgstr "Доступ к локальным файлам"
@@ -760,11 +848,11 @@ msgstr "Префикс для Локального Источника"
 msgid "Local file access configured"
 msgstr "Доступ к локальным файлам настроен"
 
-msgid "Local file mapping"
-msgstr "Сопоставление локальных файлов"
-
 msgid "Local file mapping is no longer available"
 msgstr "Сопоставление локальных файлов больше не доступно"
+
+msgid "Local file mapping"
+msgstr "Сопоставление локальных файлов"
 
 msgid "Local library"
 msgstr "Локальная библиотека"
@@ -772,18 +860,11 @@ msgstr "Локальная библиотека"
 msgid "Local music folder"
 msgstr "Локальная папка с музыкой"
 
+msgid "Local"
+msgstr "Локальный источник"
+
 msgid "Lock metadata"
 msgstr "Заблокировать метаданные"
-
-msgid ""
-"Logs have secrets and absolute folder paths redacted, but you may still want "
-"to review the logs before sharing them"
-msgstr ""
-"В журналах конфиденциальные данные и абсолютные пути к папкам удалены, но "
-"перед отправкой их всё равно стоит просмотреть"
-
-msgid "Lyrics"
-msgstr "Текст песни"
 
 msgid "Lyrics loaded"
 msgstr "Текст песни загружен"
@@ -793,6 +874,9 @@ msgstr "Смещение текста (мс)"
 
 msgid "Lyrics settings"
 msgstr "Настройки текстов"
+
+msgid "Lyrics"
+msgstr "Текст песни"
 
 msgid "Manage"
 msgstr "Управление"
@@ -806,23 +890,23 @@ msgstr "Максимальный год"
 msgid "Menu"
 msgstr "Меню"
 
-msgid "Metadata"
-msgstr "Метаданные"
-
 msgid "Metadata editing is no longer available"
 msgstr "Редактирование метаданных больше недоступно"
 
 msgid "Metadata source"
 msgstr "Источник метаданных"
 
+msgid "Metadata"
+msgstr "Метаданные"
+
 msgid "Minimum year"
 msgstr "Минимальный год"
 
-msgid "Mood"
-msgstr "Настроение"
-
 msgid "Mood tracks"
 msgstr "Треки по настроениям"
+
+msgid "Mood"
+msgstr "Настроение"
 
 msgid "Moods"
 msgstr "Настроения"
@@ -857,9 +941,6 @@ msgstr "Несколько значений"
 msgid "Music Folder"
 msgstr "Папка с музыкой"
 
-msgid "MusicBrainz"
-msgstr "MusicBrainz"
-
 msgid "MusicBrainz + Last.fm"
 msgstr "MusicBrainz и Last.fm"
 
@@ -877,6 +958,9 @@ msgstr "MusicBrainz ID релизной группы"
 
 msgid "MusicBrainz release track ID"
 msgstr "MusicBrainz ID трека релиза"
+
+msgid "MusicBrainz"
+msgstr "MusicBrainz"
 
 msgid "Mute"
 msgstr "Отключить звук"
@@ -923,17 +1007,14 @@ msgstr "Новое правило загрузки"
 msgid "Newly added"
 msgstr "Недавно добавленные"
 
-msgid "Next"
-msgstr "Следующий"
-
 msgid "Next Track"
 msgstr "Следующий трек"
 
 msgid "Next page"
 msgstr "Следующая страница"
 
-msgid "No"
-msgstr "Нет"
+msgid "Next"
+msgstr "Следующий"
 
 msgid "No Servers Found"
 msgstr "Серверы не найдены"
@@ -974,9 +1055,6 @@ msgstr "Пока нет музыки от этого исполнителя"
 msgid "No remote sources configured"
 msgstr "Не настроено ни одного удаленного источника"
 
-msgid "No results ¯\\_(°╭╮°)_/¯"
-msgstr "Результатов не найдено ¯\\_(°╭╮°)_/¯"
-
 msgid "No servers found, add one manually or try again"
 msgstr "Не найдено серверов, добавьте вручную или попробуйте еще раз"
 
@@ -991,6 +1069,9 @@ msgstr "Не настроено ни одного источника"
 
 msgid "No tracks here yet"
 msgstr "Здесь пока нет ни одного трека"
+
+msgid "No"
+msgstr "Нет"
 
 msgid "None"
 msgstr "Нет"
@@ -1025,18 +1106,11 @@ msgstr "Обновление информации о текущем воспро
 msgid "Number of songs"
 msgstr "Количество песен"
 
-msgid "Off"
-msgstr "Выкл."
-
 msgid "Off only for a server you control"
 msgstr "Отключайте только для сервера, которым вы управляете"
 
-msgid ""
-"Only downloads from this rule will be deleted. Shared and manual downloads "
-"stay"
-msgstr ""
-"Будут удалены только загрузки, соответствующие этому правилу. Общие и ручные "
-"загрузки останутся"
+msgid "Off"
+msgstr "Выкл."
 
 msgid "Only played tracks"
 msgstr "Только проигранные треки"
@@ -1102,9 +1176,6 @@ msgstr "PipeWire"
 msgid "Plain lyrics"
 msgstr "Обычный текст песен"
 
-msgid "Play"
-msgstr "Воспроизвести"
-
 msgid "Play Later"
 msgstr "Воспроизвести позже"
 
@@ -1144,6 +1215,9 @@ msgstr "Воспроизвести умный плейлист"
 msgid "Play track"
 msgstr "Воспроизвести трек"
 
+msgid "Play"
+msgstr "Воспроизвести"
+
 msgid "Play/Pause"
 msgstr "Воспроизвести/Приостановить"
 
@@ -1152,9 +1226,6 @@ msgstr "Плеер"
 
 msgid "Played"
 msgstr "Воспроизведено"
-
-msgid "Playlist"
-msgstr "Плейлист"
 
 msgid "Playlist name"
 msgstr "Название плейлиста"
@@ -1167,6 +1238,9 @@ msgstr "Радио по плейлисту"
 
 msgid "Playlist tracks"
 msgstr "Треки плейлиста"
+
+msgid "Playlist"
+msgstr "Плейлист"
 
 msgid "Playlists"
 msgstr "Плейлисты"
@@ -1203,26 +1277,26 @@ msgstr ""
 "Запретить автоматическое обновление метаданных, чтобы не перезаписывать эти "
 "значения"
 
-msgid "Previous"
-msgstr "Предыдущий"
-
 msgid "Previous Track"
 msgstr "Предыдущий трек"
 
 msgid "Previous page"
 msgstr "Предыдущая страница"
 
+msgid "Previous"
+msgstr "Предыдущий"
+
 msgid "Privacy and Security"
 msgstr "Конфиденциальность и безопасность"
-
-msgid "Private mode"
-msgstr "Приватный режим"
 
 msgid "Private mode is off"
 msgstr "Приватный режим выключен"
 
 msgid "Private mode is on"
 msgstr "Приватный режим включен"
+
+msgid "Private mode"
+msgstr "Приватный режим"
 
 msgid "Pronunciation"
 msgstr "Произношение"
@@ -1233,23 +1307,23 @@ msgstr "PulseAudio"
 msgid "Purple"
 msgstr "Фиолетовый"
 
-msgid "Queue"
-msgstr "Очередь"
-
 msgid "Queue a track to begin"
 msgstr "Добавьте трек в очередь, чтобы начать воспроизведение"
 
 msgid "Queue and transitions"
 msgstr "Очередь и переходы"
 
+msgid "Queue"
+msgstr "Очередь"
+
 msgid "Queued"
 msgstr "В очереди"
 
-msgid "Quit"
-msgstr "Выход"
-
 msgid "Quit Rufin"
 msgstr "Закрыть Rufin"
+
+msgid "Quit"
+msgstr "Выход"
 
 msgid "Rating"
 msgstr "Оценка"
@@ -1270,14 +1344,11 @@ msgstr "Повторное подключение"
 msgid "Red"
 msgstr "Готово"
 
-msgid "Refresh"
-msgstr "Обновить"
-
 msgid "Refresh section"
 msgstr "Обновить раздел"
 
-msgid "Release"
-msgstr "Выпуск"
+msgid "Refresh"
+msgstr "Обновить"
 
 msgid "Release date"
 msgstr "Дата выпуска"
@@ -1285,11 +1356,11 @@ msgstr "Дата выпуска"
 msgid "Release notifications"
 msgstr "Уведомления о новых версиях"
 
+msgid "Release"
+msgstr "Выпуск"
+
 msgid "Remote lyrics"
 msgstr "Удалённые тексты песен"
-
-msgid "Remove"
-msgstr "Удалить"
 
 msgid "Remove All Downloads"
 msgstr "Удалить все загрузки"
@@ -1339,17 +1410,17 @@ msgstr "Удалить префикс"
 msgid "Remove rule"
 msgstr "Удалить правило"
 
+msgid "Remove"
+msgstr "Удалить"
+
 msgid "Removed from favorites"
 msgstr "Удалено из избранного"
-
-msgid "Rename"
-msgstr "Переименовать"
 
 msgid "Rename Playlist"
 msgstr "Переименовать плейлист"
 
-msgid "Repeat"
-msgstr "Повтор"
+msgid "Rename"
+msgstr "Переименовать"
 
 msgid "Repeat all"
 msgstr "Повторять все"
@@ -1360,14 +1431,14 @@ msgstr "Повтор выключен"
 msgid "Repeat one"
 msgstr "Повторять один"
 
+msgid "Repeat"
+msgstr "Повтор"
+
 msgid "ReplayGain"
 msgstr "Нормализация громкости"
 
 msgid "Requires OpenSubsonic songLyrics v2"
 msgstr "Требуется OpenSubsonic songLyrics V2"
-
-msgid "Reset"
-msgstr "Сбросить"
 
 msgid "Reset equalizer"
 msgstr "Сбросить настройки эквалайзера"
@@ -1375,11 +1446,14 @@ msgstr "Сбросить настройки эквалайзера"
 msgid "Reset to defaults"
 msgstr "Восстановить настройки по умолчанию"
 
-msgid "Restore"
-msgstr "Восстановить"
+msgid "Reset"
+msgstr "Сбросить"
 
 msgid "Restore Default"
 msgstr "Восстановить настройки по умолчанию"
+
+msgid "Restore"
+msgstr "Восстановить"
 
 msgid "Resume"
 msgstr "Возобновить"
@@ -1405,9 +1479,6 @@ msgstr "Rufin работает в системном трее"
 msgid "Rule actions"
 msgstr "Действия с правилами"
 
-msgid "Save"
-msgstr "Сохранить"
-
 msgid "Save Diagnostic Log"
 msgstr "Сохранить диагностический журнал"
 
@@ -1423,31 +1494,17 @@ msgstr "Сохранить Настройки Сервера"
 msgid "Save to rescan"
 msgstr "Сохранить для повторного сканирования"
 
-msgid "Saved"
-msgstr "Сохранено"
+msgid "Save"
+msgstr "Сохранить"
 
 msgid "Saved Sources"
 msgstr "Сохраненные источники"
 
-#, rust-format
-msgid ""
-"Saved mapping. {direct} direct, {prefix} prefix, {metadata} metadata, "
-"{unmatched} unmatched of {total} track"
-msgid_plural ""
-"Saved mapping. {direct} direct, {prefix} prefix, {metadata} metadata, "
-"{unmatched} unmatched of {total} tracks"
-msgstr[0] ""
-"Сопоставление сохранено. {direct} прямое, {prefix} по префиксу, {metadata} "
-"по метаданным, {unmatched} не найдено. Всего: {total} трек"
-msgstr[1] ""
-"Сопоставление сохранено. {direct} прямое, {prefix} по префиксу, {metadata} "
-"по метаданным, {unmatched} не найдено. Всего: {total} трека"
-msgstr[2] ""
-"Сопоставление сохранено. {direct} прямое, {prefix} по префиксу, {metadata} "
-"по метаданным, {unmatched} не найдено. Всего: {total} треков"
-
 msgid "Saved to"
 msgstr "Сохранено в"
+
+msgid "Saved"
+msgstr "Сохранено"
 
 msgid "Saved, sync to preview matches"
 msgstr "Сохранено, синхронизируйте для предварительного просмотра соответствий"
@@ -1458,9 +1515,6 @@ msgstr "Выполняется поиск..."
 
 msgid "Scrobbling"
 msgstr "Скробблинг"
-
-msgid "Search"
-msgstr "Поиск"
 
 msgid "Search Again"
 msgstr "Повторить поиск"
@@ -1476,6 +1530,9 @@ msgstr "Параметры поиска"
 
 msgid "Search queue"
 msgstr "Поиск в очереди воспроизведения"
+
+msgid "Search"
+msgstr "Поиск"
 
 msgid "Searching Local Network"
 msgstr "Поиск в локальной сети"
@@ -1525,9 +1582,6 @@ msgstr "Выбранное устройство"
 msgid "Selection"
 msgstr "Выбор"
 
-msgid "Server"
-msgstr "Сервер"
-
 msgid "Server Actions"
 msgstr "Действия на сервере"
 
@@ -1546,7 +1600,6 @@ msgstr "Пример Сервера"
 msgid "Server Settings"
 msgstr "Настройки Сервера"
 
-#, rust-format
 msgid "Server discovery failed: {error}"
 msgstr "Не удалось выполнить поиск сервера: {error}"
 
@@ -1558,6 +1611,9 @@ msgstr "Путь к серверу"
 
 msgid "Server prefix doesn't match"
 msgstr "Префикс сервера не совпадает"
+
+msgid "Server"
+msgstr "Сервер"
 
 msgid "Servers"
 msgstr "Серверы"
@@ -1605,14 +1661,14 @@ msgstr "Показать/скрыть правую боковую панель"
 msgid "Showcase"
 msgstr "Демонстрация"
 
-msgid "Shuffle"
-msgstr "Перемешать"
-
 msgid "Shuffle off"
 msgstr "Перемешивание Выкл"
 
 msgid "Shuffle on"
 msgstr "Перемешивание Вкл"
+
+msgid "Shuffle"
+msgstr "Перемешать"
 
 msgid "Sidebar Items"
 msgstr "Элементы боковой панели"
@@ -1650,17 +1706,17 @@ msgstr "Треки умного плейлиста"
 msgid "Smart playlists"
 msgstr "Умные плейлисты"
 
-msgid "Song"
-msgstr "Песня"
-
 msgid "Song title"
 msgstr "Название песни"
 
-msgid "Sort"
-msgstr "Сортировать"
+msgid "Song"
+msgstr "Песня"
 
 msgid "Sort title"
 msgstr "Сортировать по названию"
+
+msgid "Sort"
+msgstr "Сортировать"
 
 msgid "Source to use for cover images and song/artist links"
 msgstr "Источник для обложек и ссылок на песни/исполнителей"
@@ -1686,20 +1742,12 @@ msgstr "Переключение библиотеки…"
 msgid "Synced lyrics"
 msgstr "Синхронизированные тексты песен"
 
-#, fuzzy
-msgid "System"
-msgstr "Системные настройки по умолчанию"
-
 msgid "System default"
 msgstr "Системные настройки по умолчанию"
 
-msgid ""
-"Tap to the entry to load the lyrics and save in the app cache, click save "
-"only if you also want to save it in your music folder"
-msgstr ""
-"Нажмите на запись, чтобы загрузить текст песни и сохранить его в кэше "
-"приложения. Нажмите «Сохранить», только если вы также хотите сохранить его в "
-"папке с музыкой"
+#, fuzzy
+msgid "System"
+msgstr "Системные настройки по умолчанию"
 
 msgid "Teal"
 msgstr "Цвет морской волны"
@@ -1710,63 +1758,23 @@ msgstr "Техно"
 msgid "Text"
 msgstr "Текст"
 
-msgid ""
-"Thank you for trying out Rufin! If you have problems or suggestions, please "
-"open an issue in Github."
-msgstr ""
-"Спасибо, что попробовали Rufin! Если у вас возникли проблемы или есть "
-"предложения, пожалуйста, создайте запрос в Github."
-
 msgid "Theme"
 msgstr "Тема"
-
-msgid ""
-"These folders are combined into the Local source and shown through folder "
-"browsing"
-msgstr ""
-"Эти папки объединены в локальный источник и отображаются при просмотре "
-"содержимого папок"
 
 msgid "This isn't available"
 msgstr "Это недоступно"
 
-msgid ""
-"This removes the server, cached library metadata, queue snapshot, and saved "
-"token for"
-msgstr ""
-"Это удаляет сервер, кэшированные метаданные библиотеки, снимок очереди и "
-"сохраненный токен для"
-
 msgid "This source cannot edit this field"
 msgstr "Этот источник не может редактировать это поле"
-
-msgid ""
-"This uses Jellyfin API for play radio, necessary if you want recommendation "
-"plugins to work"
-msgstr ""
-"Для работы функции радио используется API Jellyfin, что необходимо для "
-"работы плагинов рекомендаций"
-
-#, fuzzy
-msgid ""
-"This will log you out and clear your secrets including API ones. Your app "
-"cache is not touched."
-msgstr ""
-"Изменение секретного ключа приводит к удалению устаревших конфигурационных "
-"данных и завершению всех сеансов, включая ключи доступа к API. Кэш "
-"приложения не затрагивается."
-
-msgid "Title"
-msgstr "Название"
 
 msgid "Title (merged)"
 msgstr "Название (объединено)"
 
+msgid "Title"
+msgstr "Название"
+
 msgid "Toggle Fullscreen"
 msgstr "Переключить полноэкранный режим"
-
-msgid "Track"
-msgstr "Трек"
 
 msgid "Track number"
 msgstr "Номер трека"
@@ -1774,14 +1782,17 @@ msgstr "Номер трека"
 msgid "Track radio"
 msgstr "Радио по треку"
 
-msgid "Tracks"
-msgstr "Треки"
+msgid "Track"
+msgstr "Трек"
 
 msgid "Tracks from every playlist"
 msgstr "Треки из каждого плейлиста"
 
 msgid "Tracks from your five latest albums"
 msgstr "Треки из ваших пяти последних альбомов"
+
+msgid "Tracks"
+msgstr "Треки"
 
 msgid "Transition mode"
 msgstr "Режим перехода"
@@ -1801,34 +1812,17 @@ msgstr "Выключить приватный режим"
 msgid "Turn on private mode"
 msgstr "Включить приватный режим"
 
-msgid "Type to search"
-msgstr "Введите текст для поиска"
-
 msgid "Type to search or create a new playlist"
 msgstr "Введите текст для поиска или создания нового плейлиста"
+
+msgid "Type to search"
+msgstr "Введите текст для поиска"
 
 msgid "Undo identified value"
 msgstr "Отменить изменение значения"
 
 msgid "Unmuted"
 msgstr "Звук включен"
-
-#, rust-format
-msgid ""
-"Unsaved changes. {direct} direct, {prefix} prefix, {metadata} metadata, "
-"{unmatched} unmatched of {total} track"
-msgid_plural ""
-"Unsaved changes. {direct} direct, {prefix} prefix, {metadata} metadata, "
-"{unmatched} unmatched of {total} tracks"
-msgstr[0] ""
-"Несохраненные изменения. {direct} прямое, {prefix} по префиксу, {metadata} "
-"по метаданным, {unmatched} не найдено. Всего несохраненных: {total} трек"
-msgstr[1] ""
-"Несохраненные изменения. {direct} прямое, {prefix} по префиксу, {metadata} "
-"по метаданным, {unmatched} не найдено. Всего несохраненных: {total} трека"
-msgstr[2] ""
-"Несохраненные изменения. {direct} прямое, {prefix} по префиксу, {metadata} "
-"по метаданным, {unmatched} не найдено. Всего несохраненных: {total} треков"
 
 msgid "Update"
 msgstr "Обновить"
@@ -1855,11 +1849,11 @@ msgstr ""
 "Использовать локальные файлы для воспроизведения, текстов песен и "
 "редактирования поддерживаемых метаданных"
 
-msgid "User"
-msgstr "Пользователь"
-
 msgid "User token"
 msgstr "Токен пользователя"
+
+msgid "User"
+msgstr "Пользователь"
 
 msgid "Username"
 msgstr "Имя пользователя"
@@ -1933,17 +1927,17 @@ msgstr "исключает"
 msgid "here"
 msgstr "здесь"
 
-msgid "is"
-msgstr "является"
-
 msgid "is empty"
 msgstr "пуст"
+
+msgid "is not empty"
+msgstr "не пустой"
 
 msgid "is not"
 msgstr "не является"
 
-msgid "is not empty"
-msgstr "не пустой"
+msgid "is"
+msgstr "является"
 
 msgid "macOS"
 msgstr "macOS"
@@ -1960,56 +1954,48 @@ msgstr "сегодня"
 msgid "yesterday"
 msgstr "вчера"
 
-#, rust-format
 msgid "{count} album"
 msgid_plural "{count} albums"
 msgstr[0] "{count} альбом"
 msgstr[1] "{count} альбома"
 msgstr[2] "{count} альбомов"
 
-#, rust-format
 msgid "{count} day ago"
 msgid_plural "{count} days ago"
 msgstr[0] "{count} день назад"
 msgstr[1] "{count} дня назад"
 msgstr[2] "{count} дней назад"
 
-#, rust-format
 msgid "{count} folder selected"
 msgid_plural "{count} folders selected"
 msgstr[0] "{count} папка выбрана"
 msgstr[1] "{count} папки выбрано"
 msgstr[2] "{count} папок выбрано"
 
-#, rust-format
 msgid "{count} month ago"
 msgid_plural "{count} months ago"
 msgstr[0] "{count} месяц назад"
 msgstr[1] "{count} месяца назад"
 msgstr[2] "{count} месяцев назад"
 
-#, rust-format
 msgid "{count} result"
 msgid_plural "{count} results"
 msgstr[0] "{count} результат"
 msgstr[1] "{count} результата"
 msgstr[2] "{count} результатов"
 
-#, rust-format
 msgid "{count} track"
 msgid_plural "{count} tracks"
 msgstr[0] "{count} трек"
 msgstr[1] "{count} трека"
 msgstr[2] "{count} треков"
 
-#, rust-format
 msgid "{count} week ago"
 msgid_plural "{count} weeks ago"
 msgstr[0] "{count} неделю назад"
 msgstr[1] "{count} недели назад"
 msgstr[2] "{count} недель назад"
 
-#, rust-format
 msgid "{count} year ago"
 msgid_plural "{count} years ago"
 msgstr[0] "{count} год назад"

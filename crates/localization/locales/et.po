@@ -1730,6 +1730,9 @@ msgstr "Keri edasi"
 msgid "Seek playback"
 msgstr "Keri taasesituses"
 
+msgid "Seekbar"
+msgstr "Kerimisriba"
+
 #, fuzzy
 #| msgid "Select Music Folder"
 msgid "Select Download Folder"
@@ -2591,9 +2594,6 @@ msgstr[1] "{count} aastat tagasi"
 #~ msgid "Search server lyrics before external providers"
 #~ msgstr ""
 #~ "Enne välisest teenusest otsimist vaata, kas laulusõnad on serveris olemas"
-
-#~ msgid "Seekbar"
-#~ msgstr "Kerimisriba"
 
 #~ msgid "Server selector"
 #~ msgstr "Serverivalija"
