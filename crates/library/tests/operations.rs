@@ -138,6 +138,117 @@ fn accepted_library_search_matches_substrings_across_item_fields() {
 }
 
 #[test]
+fn artist_artwork_binding_is_reused_until_an_accepted_artwork_change() {
+    let directory = tempfile::tempdir().expect("temporary Store directory");
+    let path = directory.path().join("library.db");
+    let libraries = Libraries::open(&path).expect("open Library");
+    let source_id = SourceId::new("local:server:artwork-binding");
+    let track = track();
+    let artist = artist_for_track(&track);
+    let artist_id = artist.id.clone();
+    let mut album = album_for_track(&track, 0);
+    album.image_ref = Some(ImageRef::new("album-cover-one", None));
+
+    let mut candidate = libraries
+        .begin_source_candidate(CandidateHeader {
+            source_id: source_id.clone(),
+            input_version: 1,
+            input_digest: digest(101),
+        })
+        .expect("begin artwork candidate");
+    candidate
+        .write(CandidateBatch::Albums(vec![album.clone()]))
+        .expect("write Album");
+    candidate
+        .write(CandidateBatch::Artists(vec![artist]))
+        .expect("write Artist");
+    candidate
+        .write(CandidateBatch::Tracks(vec![track]))
+        .expect("write Track");
+    let accepted = candidate
+        .finish(
+            CandidateFinish {
+                freshness: None,
+                home: HomeFacts::RufinDefined,
+                accepted_at: 1,
+            },
+            None,
+        )
+        .and_then(|prepared| prepared.accept())
+        .expect("accept artwork candidate");
+
+    let first = accepted
+        .library
+        .artist_artwork(&artist_id)
+        .expect("read Artist artwork")
+        .expect("bound Artist artwork");
+    let unchanged = accepted
+        .library
+        .artist_artwork(&artist_id)
+        .expect("read Artist artwork again")
+        .expect("bound Artist artwork");
+    assert!(Arc::ptr_eq(
+        &first.representative_albums,
+        &unchanged.representative_albums
+    ));
+    assert_eq!(
+        first.representative_albums[0]
+            .album
+            .image_ref
+            .as_ref()
+            .map(|image| image.item_id.as_str()),
+        Some("album-cover-one")
+    );
+
+    album.image_ref = Some(ImageRef::new("album-cover-two", None));
+    accepted
+        .library
+        .accept_source_update(SourceLibraryUpdate {
+            albums: vec![album],
+            ..SourceLibraryUpdate::default()
+        })
+        .expect("accept artwork update")
+        .expect("artwork update changed the Library");
+    let changed = accepted
+        .library
+        .artist_artwork(&artist_id)
+        .expect("read changed Artist artwork")
+        .expect("changed Artist artwork remains bound");
+    assert!(!Arc::ptr_eq(
+        &first.representative_albums,
+        &changed.representative_albums
+    ));
+    assert_eq!(
+        changed.representative_albums[0]
+            .album
+            .image_ref
+            .as_ref()
+            .map(|image| image.item_id.as_str()),
+        Some("album-cover-two")
+    );
+
+    drop(accepted);
+    drop(libraries);
+    let reopened = Libraries::open(path)
+        .expect("reopen Library")
+        .load_source(&source_id)
+        .expect("load artwork source")
+        .expect("reopened artwork source");
+    let restored = reopened
+        .artist_artwork(&artist_id)
+        .expect("read reopened Artist artwork")
+        .expect("reopened Artist artwork remains bound");
+    assert_eq!(
+        restored.representative_albums[0]
+            .album
+            .image_ref
+            .as_ref()
+            .map(|image| image.item_id.as_str()),
+        Some("album-cover-two")
+    );
+}
+
+#[test]
 fn source_artwork_uses_album_images_and_keeps_orphan_track_images() {
     let directory = tempfile::tempdir().expect("temporary Store directory");
     let library = Libraries::open(directory.path().join("library.db")).expect("open Library");
@@ -4443,7 +4554,7 @@ fn source_item_replacement_survives_removal_and_reattaches_dormant_consumers() {
     assert_eq!(scoped_artists[0].track_count, 1);
     assert_eq!(scoped_artists[0].duration_seconds, 240);
     assert_eq!(
-        scoped_artists[0].representative_albums[0].album.id,
+        scoped_artists[0].artwork.representative_albums[0].album.id,
         new_album_id
     );
     let scoped_genres = loaded

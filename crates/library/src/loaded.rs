@@ -15,12 +15,12 @@ use std::sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard};
 use thiserror::Error;
 
 use crate::{
-    AcceptedLibraryChange, AcceptedTrackReplacement, Album, AlbumArtworkFacts, AlbumId,
-    AlbumRelations, Artist, ArtistCredit, ArtistId, FavoriteAcknowledgement, FavoriteItemId,
-    Folder, FolderId, Genre, GenreCredit, GenreId, HomeFacts, LocalAccessFile, LocalAccessMapping,
-    LocalFile, LocalFileKind, LocalImport, Mood, MoodId, MusicFolder, MusicFolderId, Playlist,
-    PlaylistEntry, PlaylistId, PlaylistSnapshot, RecentPlay, SmartPlaylistId, SmartPlaylistRecord,
-    SourceArtwork, SourceId, Track, TrackActivity, TrackId,
+    AcceptedLibraryChange, AcceptedTrackReplacement, Album, AlbumArtwork, AlbumArtworkFacts,
+    AlbumId, AlbumRelations, Artist, ArtistCredit, ArtistId, FavoriteAcknowledgement,
+    FavoriteItemId, Folder, FolderId, Genre, GenreCredit, GenreId, HomeFacts, LocalAccessFile,
+    LocalAccessMapping, LocalFile, LocalFileKind, LocalImport, Mood, MoodId, MusicFolder,
+    MusicFolderId, Playlist, PlaylistEntry, PlaylistId, PlaylistSnapshot, RecentPlay,
+    SmartPlaylistId, SmartPlaylistRecord, SourceArtwork, SourceId, Track, TrackActivity, TrackId,
     activity::apply_track_activity_value,
     items::color_seed,
     local_playback::{LocalMatchKey, index_local_access},
@@ -306,6 +306,7 @@ pub(crate) type TrackSlot = ItemSlot<TrackId>;
 #[derive(Clone, Debug)]
 pub(crate) struct LoadedAlbum {
     pub(crate) album: Arc<Album>,
+    pub(crate) artwork: AlbumArtwork,
     pub(crate) source_provided: bool,
     pub(crate) tracks: Vec<TrackSlot>,
 }
@@ -318,9 +319,31 @@ impl Deref for LoadedAlbum {
     }
 }
 
+impl LoadedAlbum {
+    fn new(album: Album, source_provided: bool) -> Self {
+        let album = Arc::new(album);
+        Self {
+            artwork: AlbumArtwork {
+                album: Arc::clone(&album),
+                representative_track: None,
+            },
+            album,
+            source_provided,
+            tracks: Vec::new(),
+        }
+    }
+
+    fn replace(&mut self, album: Album) {
+        let album = Arc::new(album);
+        self.album = Arc::clone(&album);
+        self.artwork.album = album;
+    }
+}
+
 #[derive(Clone, Debug)]
 pub(crate) struct LoadedArtist {
     pub(crate) artist: Arc<Artist>,
+    pub(crate) artwork: crate::ArtistArtwork,
     pub(crate) source_provided: bool,
     /// Tracks that name this Artist directly. Album-level tracks are composed
     /// only when a projection asks for them.
@@ -335,6 +358,28 @@ impl Deref for LoadedArtist {
 
     fn deref(&self) -> &Self::Target {
         &self.artist
+    }
+}
+
+impl LoadedArtist {
+    fn new(artist: Artist, source_provided: bool) -> Self {
+        let artist = Arc::new(artist);
+        Self {
+            artwork: crate::ArtistArtwork {
+                artist: Arc::clone(&artist),
+                representative_albums: Arc::default(),
+            },
+            artist,
+            source_provided,
+            tracks: Vec::new(),
+            albums: Vec::new(),
+        }
+    }
+
+    fn replace(&mut self, artist: Artist) {
+        let artist = Arc::new(artist);
+        self.artist = Arc::clone(&artist);
+        self.artwork.artist = artist;
     }
 }
 
@@ -547,15 +592,9 @@ impl Library {
             unresolved_album_releases: input.unresolved_album_releases.into_iter().collect(),
         };
         for artist in artists.drain().map(|(_, artist)| artist) {
-            state.artists.insert(
-                artist.id.clone(),
-                LoadedArtist {
-                    artist: Arc::new(artist),
-                    source_provided: true,
-                    tracks: Vec::new(),
-                    albums: Vec::new(),
-                },
-            );
+            state
+                .artists
+                .insert(artist.id.clone(), LoadedArtist::new(artist, true));
         }
         for genre in genres.drain().map(|(_, genre)| genre) {
             state.genres.insert(
@@ -570,16 +609,9 @@ impl Library {
         }
         for album in albums.drain().map(|(_, album)| album) {
             let id = album.id.clone();
-            let album = Arc::new(album);
-            state.albums.insert(
-                id,
-                LoadedAlbum {
-                    album: Arc::clone(&album),
-                    source_provided: true,
-                    tracks: Vec::new(),
-                },
-            );
-            add_album_to_indexes(&mut state, album.as_ref());
+            let album_for_indexes = album.clone();
+            state.albums.insert(id, LoadedAlbum::new(album, true));
+            add_album_to_indexes(&mut state, &album_for_indexes);
         }
         for mut track in tracks.drain().map(|(_, track)| track) {
             ensure_track_rows(&mut state, &track);
@@ -617,6 +649,9 @@ impl Library {
             }
         }
         relink_tracks_to_albums(&mut state, &sparse_album_ids, &mut HashSet::new());
+        let artwork_albums = state.albums.iter().map(|(id, _)| id.clone()).collect();
+        let artwork_artists = state.artists.iter().map(|(id, _)| id.clone()).collect();
+        crate::browse::organize_artwork_bindings(&mut state, &artwork_albums, &artwork_artists);
         for import in input.local_imports {
             if let Some(slot) = state.tracks.slot(&import.track_id) {
                 state.local_imports.insert(slot, import.first_seen_at);
@@ -1610,18 +1645,12 @@ fn apply_item_replacement(
     }
     for artist in artists {
         if let Some(row) = state.artists.get_mut(&artist.id) {
-            row.artist = Arc::new(artist);
+            row.replace(artist);
             row.source_provided = true;
         } else {
-            state.artists.insert(
-                artist.id.clone(),
-                LoadedArtist {
-                    artist: Arc::new(artist),
-                    source_provided: true,
-                    tracks: Vec::new(),
-                    albums: Vec::new(),
-                },
-            );
+            state
+                .artists
+                .insert(artist.id.clone(), LoadedArtist::new(artist, true));
         }
     }
     for genre in genres {
@@ -1643,17 +1672,12 @@ fn apply_item_replacement(
     for mut album in albums {
         album.color_seed = color_seed(album.id.as_str());
         if let Some(row) = state.albums.get_mut(&album.id) {
-            row.album = Arc::new(album);
+            row.replace(album);
             row.source_provided = true;
         } else {
-            state.albums.insert(
-                album.id.clone(),
-                LoadedAlbum {
-                    album: Arc::new(album),
-                    source_provided: true,
-                    tracks: Vec::new(),
-                },
-            );
+            state
+                .albums
+                .insert(album.id.clone(), LoadedAlbum::new(album, true));
         }
     }
     let mut album_artwork = HashMap::<AlbumId, Arc<AlbumArtworkFacts>>::new();
@@ -1705,6 +1729,7 @@ fn apply_item_replacement(
     }
     add_current_artwork_items(state, &affected_albums, &affected_artists);
     relink_tracks_to_albums(state, &affected_albums, &mut published_track_ids);
+    crate::browse::organize_artwork_bindings(state, &affected_albums, &affected_artists);
 
     let published_playlists = affected_playlists(state, &changed_track_ids);
     let affected_smart_playlists = crate::smart_playlists::changed_by_tracks(
@@ -2517,26 +2542,16 @@ fn ensure_track_rows(state: &mut LoadedState, track: &Track) {
         && !state.albums.contains_key(album_id)
     {
         let album = album_from_track(album_id, track);
-        state.albums.insert(
-            album_id.clone(),
-            LoadedAlbum {
-                album: Arc::new(album.clone()),
-                source_provided: false,
-                tracks: Vec::new(),
-            },
-        );
+        state
+            .albums
+            .insert(album_id.clone(), LoadedAlbum::new(album.clone(), false));
         add_album_to_indexes(state, &album);
     }
     for credit in distinct_artist_credits(track) {
         if !state.artists.contains_key(&credit.id) {
             state.artists.insert(
                 credit.id.clone(),
-                LoadedArtist {
-                    artist: Arc::new(artist_from_credit(credit)),
-                    source_provided: false,
-                    tracks: Vec::new(),
-                    albums: Vec::new(),
-                },
+                LoadedArtist::new(artist_from_credit(credit), false),
             );
         }
     }
@@ -2574,12 +2589,7 @@ fn add_album_to_indexes(state: &mut LoadedState, album: &Album) {
         if !state.artists.contains_key(&credit.id) {
             state.artists.insert(
                 credit.id.clone(),
-                LoadedArtist {
-                    artist: Arc::new(artist_from_credit(credit)),
-                    source_provided: false,
-                    tracks: Vec::new(),
-                    albums: Vec::new(),
-                },
+                LoadedArtist::new(artist_from_credit(credit), false),
             );
         }
     }

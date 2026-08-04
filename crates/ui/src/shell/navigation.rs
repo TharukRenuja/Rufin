@@ -751,10 +751,7 @@ impl SidebarPinItem {
     fn artwork(&self, prefer_server_playlist_covers: bool) -> Vec<ArtworkBinding> {
         match self {
             Self::Album(album) => vec![ArtworkBinding::album_artwork(&album.artwork)],
-            Self::Artist(artist) => vec![ArtworkBinding::artist(
-                &artist.artist,
-                &artist.representative_albums,
-            )],
+            Self::Artist(artist) => vec![ArtworkBinding::artist(&artist.artwork)],
             Self::Genre(genre) => {
                 ArtworkBinding::genre_slots(&genre.genre, &genre.representative_albums)
             }

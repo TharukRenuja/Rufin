@@ -329,9 +329,14 @@ pub(crate) fn track_column_for_key(
             width,
             playing.clone(),
             TrackMergedColumnValues {
+                track: Clone::clone,
+                artwork: ArtworkBinding::track,
                 title: |track: &Track| track.title.clone(),
                 subtitle: |track: &Track| track.artist.clone(),
                 seed: |track: &Track| stable_seed(track.id.as_str()),
+                subtitle_route: track_artist_route,
+                subtitle_link: true,
+                context_menu: true,
             },
         ),
         LibraryField::Title => {
@@ -532,7 +537,7 @@ pub(crate) fn row_index_column_with_width(width: i32) -> gtk::ColumnViewColumn {
     column
 }
 
-fn track_row_index_column_with_width(
+pub(crate) fn track_row_index_column_with_width(
     width: i32,
     playing: TrackRowPlayingIndicator,
 ) -> gtk::ColumnViewColumn {
@@ -1237,7 +1242,7 @@ pub(crate) fn artist_image_column(shell: &Rc<Shell>) -> gtk::ColumnViewColumn {
         };
         bind_shell.bind_artwork_tile(
             &cell.cover,
-            ArtworkBinding::artist(&artist.artist, &artist.representative_albums),
+            ArtworkBinding::artist(&artist.artwork),
             stable_seed(artist.artist.id.as_str()),
             48,
             THUMB_COVER_SIZE,
@@ -1630,34 +1635,52 @@ where
     column
 }
 
-pub(crate) struct TrackMergedColumnValues<Title, Subtitle, Seed> {
+pub(crate) struct TrackMergedColumnValues<ItemTrack, Artwork, Title, Subtitle, Seed, SubtitleRoute>
+{
+    pub(crate) track: ItemTrack,
+    pub(crate) artwork: Artwork,
     pub(crate) title: Title,
     pub(crate) subtitle: Subtitle,
     pub(crate) seed: Seed,
+    pub(crate) subtitle_route: SubtitleRoute,
+    pub(crate) subtitle_link: bool,
+    pub(crate) context_menu: bool,
 }
 
-pub(crate) fn track_merged_column<Title, Subtitle, Seed>(
+pub(crate) fn track_merged_column<T, ItemTrack, Artwork, Title, Subtitle, Seed, SubtitleRoute>(
     shell: &Rc<Shell>,
     title: &'static str,
     width: i32,
     playing: TrackRowPlayingIndicator,
-    values: TrackMergedColumnValues<Title, Subtitle, Seed>,
+    values: TrackMergedColumnValues<ItemTrack, Artwork, Title, Subtitle, Seed, SubtitleRoute>,
 ) -> gtk::ColumnViewColumn
 where
-    Title: Fn(&Track) -> String + 'static,
-    Subtitle: Fn(&Track) -> String + 'static,
-    Seed: Fn(&Track) -> u32 + 'static,
+    T: Clone + 'static,
+    ItemTrack: Fn(&T) -> Track + 'static,
+    Artwork: Fn(&T) -> ArtworkBinding + 'static,
+    Title: Fn(&T) -> String + 'static,
+    Subtitle: Fn(&T) -> String + 'static,
+    Seed: Fn(&T) -> u32 + 'static,
+    SubtitleRoute: Fn(&T) -> Option<Route> + 'static,
 {
     let factory = gtk::SignalListItemFactory::new();
     let shell = Rc::clone(shell);
     let TrackMergedColumnValues {
+        track: item_track,
+        artwork: artwork_value,
         title: title_value,
         subtitle: subtitle_value,
         seed,
+        subtitle_route,
+        subtitle_link,
+        context_menu,
     } = values;
     let title_value = Rc::new(title_value);
+    let item_track = Rc::new(item_track);
+    let artwork_value = Rc::new(artwork_value);
     let subtitle_value = Rc::new(subtitle_value);
     let seed = Rc::new(seed);
+    let subtitle_route = Rc::new(subtitle_route);
 
     let setup_shell = Rc::clone(&shell);
     factory.connect_setup(move |_, item| {
@@ -1703,21 +1726,27 @@ where
         subtitle.set_width_chars(1);
         subtitle.set_max_width_chars(28);
         subtitle.set_visible(false);
-        subtitle.set_cursor_from_name(Some("pointer"));
-        add_dynamic_link_hover(subtitle.upcast_ref(), &subtitle);
+        if subtitle_link {
+            subtitle.set_cursor_from_name(Some("pointer"));
+            add_dynamic_link_hover(subtitle.upcast_ref(), &subtitle);
+        }
         labels.append(&subtitle);
 
-        let click_shell = Rc::clone(&setup_shell);
-        let route_for_click = Rc::clone(&subtitle_route);
-        add_label_click(&subtitle, move || {
-            let route = route_for_click.borrow().clone();
-            if let Some(route) = route {
-                click_shell.navigate(route);
-            }
-        });
+        if subtitle_link {
+            let click_shell = Rc::clone(&setup_shell);
+            let route_for_click = Rc::clone(&subtitle_route);
+            add_label_click(&subtitle, move || {
+                let route = route_for_click.borrow().clone();
+                if let Some(route) = route {
+                    click_shell.navigate(route);
+                }
+            });
+        }
 
         row.append(&labels);
-        install_track_cell_context_menu(&row, &setup_shell, Rc::clone(&current_track));
+        if context_menu {
+            install_track_cell_context_menu(&row, &setup_shell, Rc::clone(&current_track));
+        }
         item.set_child(Some(&row));
         let key = library_list_item_storage_key(item);
         LIBRARY_TRACK_MERGED_CELLS.with(|cells| {
@@ -1741,19 +1770,18 @@ where
         let Some(item) = item.downcast_ref::<gtk::ListItem>() else {
             return;
         };
-        let Some(track) = item_at_from_item::<Track>(item) else {
+        let Some(value) = item_at_from_item::<T>(item) else {
             return;
         };
-        let Some(artwork) = track_artwork_at_from_item(item) else {
-            return;
-        };
+        let track = item_track(&value);
+        let artwork = artwork_value(&value);
         let Some(cell) = track_merged_cell(item) else {
             return;
         };
-        bind_shell.bind_artwork_tile(&cell.cover, artwork, seed(&track), 48, THUMB_COVER_SIZE);
-        cell.title.set_text(&title_value(&track));
-        let subtitle = subtitle_value(&track);
-        let subtitle_route = track_artist_route(&track);
+        bind_shell.bind_artwork_tile(&cell.cover, artwork, seed(&value), 48, THUMB_COVER_SIZE);
+        cell.title.set_text(&title_value(&value));
+        let subtitle = subtitle_value(&value);
+        let subtitle_route = subtitle_route(&value);
         bind_shell
             .set_download_badge_visible(&cell.downloaded, track_is_downloaded(&bind_shell, &track));
         bind_playing.bind(cell.title.upcast_ref(), item.position());

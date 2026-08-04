@@ -733,7 +733,7 @@ fn source_thumbnail_bindings(
         if !push_source_thumbnail_binding(
             &mut bindings,
             &mut seen,
-            ArtworkBinding::artist(&artist.artist, &artist.representative_albums),
+            ArtworkBinding::artist(&artist.artwork),
             limit,
         ) {
             return Ok(bindings.into());

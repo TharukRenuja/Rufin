@@ -25,8 +25,9 @@ use localization::{msgid, tr};
 
 use super::collections::library_route_inset;
 use super::library_fields::{
-    layout_button_content, layout_icon, layout_title, next_layout, populate_library_field_rows,
-    supported_layouts, sync_layout_buttons,
+    field_set_for_layout, layout_button_content, layout_icon, layout_title, next_layout,
+    populate_library_field_rows, populate_library_field_rows_for_set, supported_layouts,
+    sync_layout_buttons,
 };
 use super::route_layout::ROUTE_TOP_MARGIN;
 
@@ -41,6 +42,11 @@ const LIBRARY_TOOLBAR_SORT_MIN_WIDTH: i32 = 112;
 const LIBRARY_TOOLBAR_SORT_CHAR_WIDTH: i32 = 8;
 const LIBRARY_TOOLBAR_SORT_HORIZONTAL_PADDING: i32 = 44;
 const LIBRARY_TOOLBAR_COMPACT_COMMAND_WIDTH: i32 = 760;
+const PRIMARY_LIBRARY_SORT_KEYS: [LibraryListKey; 3] = [
+    LibraryListKey::Tracks,
+    LibraryListKey::Albums,
+    LibraryListKey::Artists,
+];
 const LIBRARY_TOOLBAR_WINDOW_CONTROLS_RESERVE: i32 =
     WINDOW_CHROME_MARGIN_END + LIBRARY_TOOLBAR_CLOSE_VISIBLE_SIZE + LIBRARY_TOOLBAR_CONTROL_SPACING;
 
@@ -108,6 +114,8 @@ pub(crate) struct LibraryToolbarProjection {
     layout: gtk::Button,
     layout_mode: Rc<Cell<LibraryLayout>>,
     syncing: Rc<Cell<bool>>,
+    include_detail: bool,
+    sort_fields: &'static [LibraryField],
 }
 
 impl LibraryToolbarProjection {
@@ -119,21 +127,33 @@ impl LibraryToolbarProjection {
         self.layout.set_visible(visible);
     }
 
+    pub(crate) fn detach_controls(&self) -> gtk::Widget {
+        if let Some(parent) = self
+            .controls
+            .parent()
+            .and_then(|parent| parent.downcast::<gtk::Box>().ok())
+        {
+            parent.remove(&self.controls);
+        }
+        self.controls.clone().upcast()
+    }
+
     pub(crate) fn apply(&self, key: LibraryListKey, settings: &LibraryListSettings) {
         if key != self.key {
             return;
         }
         self.syncing.set(true);
         self.sort_dropdown.set_selected(
-            available_sort_fields(key)
+            self.sort_fields
                 .iter()
                 .position(|field| *field == settings.sort_key)
                 .unwrap_or(0) as u32,
         );
         self.direction
             .set_icon_name(sort_order_icon(settings.descending));
-        self.layout.set_icon_name(layout_icon(settings.layout));
-        self.layout_mode.set(settings.layout);
+        let layout = toolbar_layout(settings.layout, self.include_detail);
+        self.layout.set_icon_name(layout_icon(layout));
+        self.layout_mode.set(layout);
         self.syncing.set(false);
     }
 }
@@ -315,6 +335,39 @@ impl Shell {
         key: LibraryListKey,
         search: gtk::SearchEntry,
     ) -> LibraryToolbarProjection {
+        self.library_toolbar_projection_with_detail(key, search, true)
+    }
+
+    pub(crate) fn library_toolbar_projection_without_detail(
+        self: &Rc<Self>,
+        key: LibraryListKey,
+        search: gtk::SearchEntry,
+        sort_fields: &'static [LibraryField],
+    ) -> LibraryToolbarProjection {
+        self.library_toolbar_projection_with_options(key, search, false, sort_fields)
+    }
+
+    fn library_toolbar_projection_with_detail(
+        self: &Rc<Self>,
+        key: LibraryListKey,
+        search: gtk::SearchEntry,
+        include_detail: bool,
+    ) -> LibraryToolbarProjection {
+        self.library_toolbar_projection_with_options(
+            key,
+            search,
+            include_detail,
+            available_sort_fields(key),
+        )
+    }
+
+    fn library_toolbar_projection_with_options(
+        self: &Rc<Self>,
+        key: LibraryListKey,
+        search: gtk::SearchEntry,
+        include_detail: bool,
+        sort_fields: &'static [LibraryField],
+    ) -> LibraryToolbarProjection {
         let toolbar = gtk::Box::new(
             gtk::Orientation::Horizontal,
             LIBRARY_TOOLBAR_CONTROL_SPACING,
@@ -353,21 +406,21 @@ impl Shell {
         };
 
         let settings = self.settings.current.borrow().library_list(key);
-        let sort_messages = available_sort_fields(key)
+        let sort_messages = sort_fields
             .iter()
             .map(|field| library_sort_title(key, *field))
             .collect::<Vec<_>>();
         let sort_options = gtk::StringList::new(&[]);
         let sort_dropdown = gtk::DropDown::new(Some(sort_options), None::<gtk::Expression>);
         bind_drop_down_options(&sort_dropdown, sort_messages, |labels| {
-            toolbar_sort_width_for_labels(labels.iter().map(String::as_str))
+            library_toolbar_sort_width_for_labels(labels.iter().map(String::as_str))
         });
-        sort_dropdown.set_sensitive(available_sort_fields(key).len() > 1);
+        sort_dropdown.set_sensitive(sort_fields.len() > 1);
         sort_dropdown.set_hexpand(false);
         sort_dropdown.set_halign(gtk::Align::End);
         let syncing = Rc::new(Cell::new(false));
         sort_dropdown.set_selected(
-            available_sort_fields(key)
+            sort_fields
                 .iter()
                 .position(|field| *field == settings.sort_key)
                 .unwrap_or(0) as u32,
@@ -379,7 +432,7 @@ impl Shell {
                 if syncing.get() {
                     return;
                 }
-                let sort_key = available_sort_fields(key)
+                let sort_key = sort_fields
                     .get(dropdown.selected() as usize)
                     .copied()
                     .unwrap_or(LibraryField::Title);
@@ -407,9 +460,10 @@ impl Shell {
         }
         controls.append(&direction);
 
-        let layout = gtk::Button::from_icon_name(layout_icon(settings.layout));
+        let current_layout = toolbar_layout(settings.layout, include_detail);
+        let layout = gtk::Button::from_icon_name(layout_icon(current_layout));
         configure_library_toolbar_icon_button(&layout, "Layout");
-        let layout_mode = Rc::new(Cell::new(settings.layout));
+        let layout_mode = Rc::new(Cell::new(current_layout));
         let layout_mode_for_locale = Rc::clone(&layout_mode);
         bind_widget_tooltip_with(&layout, move || {
             format!(
@@ -427,7 +481,11 @@ impl Shell {
                     return;
                 }
                 shell.update_library_list_settings(key, |settings| {
-                    settings.layout = next_layout(key, settings.layout);
+                    settings.layout = if include_detail {
+                        next_layout(key, settings.layout)
+                    } else {
+                        next_row_grid_layout(settings.layout)
+                    };
                     layout_mode.set(settings.layout);
                 });
             });
@@ -439,7 +497,7 @@ impl Shell {
         {
             let shell = Rc::clone(self);
             configure.connect_clicked(move |_| {
-                shell.present_library_config_dialog(key);
+                shell.present_library_config_dialog_with_detail(key, include_detail);
             });
         }
         controls.append(&configure);
@@ -463,6 +521,8 @@ impl Shell {
             layout,
             layout_mode,
             syncing,
+            include_detail,
+            sort_fields,
         }
     }
     pub(crate) fn sync_library_toolbar_end_margin(&self) {
@@ -478,13 +538,17 @@ impl Shell {
         let margin = library_toolbar_end_margin(self.right_sidebar_visible());
         controls.set_margin_end(margin);
     }
-    fn set_current_library_toolbar_controls(&self, controls: &gtk::Box) {
+    pub(crate) fn set_current_library_toolbar_controls(&self, controls: &gtk::Box) {
         self.route_viewport
             .current_library_toolbar_controls
             .replace(Some(controls.downgrade()));
         self.sync_library_toolbar_end_margin();
     }
-    pub(crate) fn present_library_config_dialog(self: &Rc<Self>, key: LibraryListKey) {
+    fn present_library_config_dialog_with_detail(
+        self: &Rc<Self>,
+        key: LibraryListKey,
+        include_detail: bool,
+    ) {
         let toolbar = adw::ToolbarView::new();
         let header = adw::HeaderBar::new();
         let title = adw::WindowTitle::new(&tr("Customize display"), &tr(key.title()));
@@ -513,7 +577,14 @@ impl Shell {
         layout_box.add_css_class("preference-selection-buttons");
         layout_box.set_valign(gtk::Align::Center);
         let mut first_button: Option<gtk::ToggleButton> = None;
-        for layout in supported_layouts(key) {
+        let current_layout = toolbar_layout(
+            self.settings.current.borrow().library_list(key).layout,
+            include_detail,
+        );
+        for layout in supported_layouts(key)
+            .into_iter()
+            .filter(|layout| include_detail || *layout != LibraryLayout::Detail)
+        {
             let button = gtk::ToggleButton::new();
             button.add_css_class("preference-selection-button");
             button.set_child(Some(&layout_button_content(layout)));
@@ -523,7 +594,7 @@ impl Shell {
             } else {
                 first_button = Some(button.clone());
             }
-            button.set_active(layout == self.settings.current.borrow().library_list(key).layout);
+            button.set_active(layout == current_layout);
             layout_box.append(&button);
             layout_buttons.borrow_mut().push((layout, button));
         }
@@ -572,7 +643,17 @@ impl Shell {
             });
         }
 
-        populate_library_field_rows(self, key, &fields_group, &rows);
+        if include_detail {
+            populate_library_field_rows(self, key, &fields_group, &rows);
+        } else {
+            populate_library_field_rows_for_set(
+                self,
+                key,
+                field_set_for_layout(current_layout),
+                &fields_group,
+                &rows,
+            );
+        }
 
         let scroller = gtk::ScrolledWindow::new();
         configure_fill_width_clip(&scroller, gtk::PolicyType::Automatic);
@@ -598,6 +679,21 @@ fn library_page_child(source_empty: bool, query: &str, has_visible_results: bool
         "search-empty"
     } else {
         "content"
+    }
+}
+
+fn toolbar_layout(layout: LibraryLayout, include_detail: bool) -> LibraryLayout {
+    if !include_detail && layout == LibraryLayout::Detail {
+        LibraryLayout::Grid
+    } else {
+        layout
+    }
+}
+
+fn next_row_grid_layout(layout: LibraryLayout) -> LibraryLayout {
+    match layout {
+        LibraryLayout::Row => LibraryLayout::Grid,
+        LibraryLayout::Grid | LibraryLayout::Detail => LibraryLayout::Row,
     }
 }
 
@@ -723,6 +819,19 @@ pub(crate) fn toolbar_sort_width_for_labels<'a>(labels: impl IntoIterator<Item =
         .unwrap_or(LIBRARY_TOOLBAR_SORT_MIN_WIDTH)
 }
 
+pub(crate) fn library_toolbar_sort_width_for_labels<'a>(
+    labels: impl IntoIterator<Item = &'a str>,
+) -> i32 {
+    let route_width = toolbar_sort_width_for_labels(labels);
+    let primary_library_width = PRIMARY_LIBRARY_SORT_KEYS
+        .into_iter()
+        .flat_map(available_sort_fields)
+        .map(|field| toolbar_sort_label_width(&tr(field.title())))
+        .max()
+        .unwrap_or(LIBRARY_TOOLBAR_SORT_MIN_WIDTH);
+    route_width.max(primary_library_width)
+}
+
 fn toolbar_sort_label_width(label: &str) -> i32 {
     (label.chars().count() as i32 * LIBRARY_TOOLBAR_SORT_CHAR_WIDTH
         + LIBRARY_TOOLBAR_SORT_HORIZONTAL_PADDING)
@@ -803,7 +912,8 @@ mod tests {
 
     use adw::prelude::*;
 
-    use super::weak_target_callback;
+    use super::{next_row_grid_layout, toolbar_layout, weak_target_callback};
+    use crate::LibraryLayout;
 
     #[test]
     fn weak_target_callback_does_not_retain_its_target() {
@@ -825,5 +935,25 @@ mod tests {
             "the callback must not retain its target"
         );
         assert_eq!(calls.get(), 1);
+    }
+
+    #[test]
+    fn search_toolbar_cycles_only_presentable_row_and_grid_layouts() {
+        assert_eq!(
+            toolbar_layout(LibraryLayout::Detail, false),
+            LibraryLayout::Grid
+        );
+        assert_eq!(
+            next_row_grid_layout(LibraryLayout::Detail),
+            LibraryLayout::Row
+        );
+        assert_eq!(
+            next_row_grid_layout(LibraryLayout::Row),
+            LibraryLayout::Grid
+        );
+        assert_eq!(
+            next_row_grid_layout(LibraryLayout::Grid),
+            LibraryLayout::Row
+        );
     }
 }

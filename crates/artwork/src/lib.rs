@@ -23,7 +23,7 @@ mod selection;
 mod tests;
 
 pub use decode::{DecodedImage, RgbaImage, decode_rgba, square_thumbnail_png};
-pub use selection::ArtworkBinding;
+pub use selection::{ArtworkBinding, ArtworkBindings, BoundArtwork};
 
 #[derive(Clone)]
 pub struct SourceImages {
