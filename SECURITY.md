@@ -2,7 +2,7 @@
 
 ## Security Stance
 
-Rufin is a desktop music client, directly built for Flatpak, Fedora, nixpkgs and AUR. Data security is taken seriously within the expectations of a music client. If you find a security or privacy issue, you can email to `screwygit@proton.me` [(PGP for funsies)](https://raw.githubusercontent.com/screwys/screwys/refs/heads/main/screwygit-pgp-key.asc).
+Rufin is a desktop music client, officially supported as Flatpak, Fedora RPM, nixpkgs/scoop/brew/AUR packages, and Windows/MacOS executables. Data security is taken seriously within the expectations of a music client. If you find a security or privacy issue, you can email to `screwygit@proton.me` [(PGP)](https://raw.githubusercontent.com/screwys/screwys/refs/heads/main/screwygit-pgp-key.asc).
 
 Memory unsafe code is strictly forbidden, and Rufin does not compile it. Rust dependencies are checked with cargo-deny, including advisories, license policy and source policy. Dependency updates are held for 7 days before our own Renovate bot opens them, generated Flatpak and Nix dependency artifacts are checked when dependencies change.
 
@@ -70,4 +70,4 @@ Rufin itself does not have any way to collect telemetry. The services it talks t
 
 ## Logs
 
-If you include your full logs for an issue, some of the extensive logs will have IDs or paths for tracks. If these are from a music server, these likely can not be used to identify the exact tracks (unless such a modification exists). Since local folders will have direct file paths and you probably have tracks saved with their name in an artist subfolder, you may want to hide them.
+Logs are privacy-conscious by default, you may still want to review them before sharing. They stay on-device, and are not uploaded to somewhere automatically. 
