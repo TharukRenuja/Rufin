@@ -120,6 +120,9 @@ update when the app starts. Alternatively, you can click `Update` button in Vers
 
 ## macOS
 
+> [!WARNING]
+> Experimental, not ready yet! 
+
 Homebrew Cask is the primary macOS installation:
 
 ```bash
