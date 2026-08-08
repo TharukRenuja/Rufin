@@ -45,7 +45,7 @@ pub(super) struct ArtistReleaseRoutePreamble {
 
 #[derive(Clone)]
 pub(super) struct ArtistReleaseProjections {
-    sections: Rc<Vec<ArtistAlbumProjection>>,
+    sections: Rc<Vec<Rc<ArtistAlbumProjection>>>,
     surface: gtk::Widget,
     layout: Rc<Cell<LibraryLayout>>,
     favorite: Option<gtk::Widget>,
@@ -56,21 +56,20 @@ pub(super) struct ArtistReleaseProjections {
     empty: gtk::Widget,
 }
 
-#[derive(Clone)]
 struct ArtistAlbumProjection {
-    source: Rc<RefCell<Arc<Vec<AlbumSummary>>>>,
-    visible: Rc<RefCell<Arc<Vec<AlbumSummary>>>>,
+    source: RefCell<Arc<Vec<AlbumSummary>>>,
+    visible: RefCell<Arc<Vec<AlbumSummary>>>,
     search: gtk::SearchEntry,
     header: gtk::Widget,
     toolbar: LibraryToolbarProjection,
     rows: gio::ListStore,
     row_model: gio::ListStore,
-    row_table: Rc<RefCell<Option<CollectionTableProjection>>>,
-    row_surface: Rc<RefCell<Option<gtk::Widget>>>,
-    body_layout: Rc<Cell<Option<LibraryLayout>>>,
+    row_table: RefCell<Option<CollectionTableProjection>>,
+    row_surface: RefCell<Option<gtk::Widget>>,
+    body_layout: Cell<Option<LibraryLayout>>,
     layout: Rc<Cell<LibraryLayout>>,
     columns: Rc<Cell<usize>>,
-    applied_settings: Rc<RefCell<LibraryListSettings>>,
+    applied_settings: RefCell<LibraryListSettings>,
     shell: Rc<Shell>,
     playback_context: String,
 }
@@ -115,7 +114,7 @@ impl ArtistAlbumProjection {
         layout: Rc<Cell<LibraryLayout>>,
         columns: Rc<Cell<usize>>,
         playback_context: String,
-    ) -> Self {
+    ) -> Rc<Self> {
         let key = LibraryListKey::ArtistAlbums;
         let search = gtk::SearchEntry::new();
         bind_search_placeholder(&search, "Search");
@@ -132,15 +131,15 @@ impl ArtistAlbumProjection {
 
         let settings = shell.settings.current.borrow().library_list(key);
         let albums = Arc::new(albums);
-        let source = Rc::new(RefCell::new(Arc::clone(&albums)));
-        let visible = Rc::new(RefCell::new(albums));
+        let source = RefCell::new(Arc::clone(&albums));
+        let visible = RefCell::new(albums);
         let rows = gio::ListStore::new::<glib::BoxedAnyObject>();
         let header: gtk::Widget = header.upcast();
         rows.append(&glib::BoxedAnyObject::new(ArtistRouteRow::Static {
             widget: header.clone(),
         }));
         let row_model = gio::ListStore::new::<glib::BoxedAnyObject>();
-        let projection = Self {
+        let projection = Rc::new(Self {
             source,
             visible,
             search: search.clone(),
@@ -148,17 +147,21 @@ impl ArtistAlbumProjection {
             toolbar,
             rows,
             row_model,
-            row_table: Rc::new(RefCell::new(None)),
-            row_surface: Rc::new(RefCell::new(None)),
-            body_layout: Rc::new(Cell::new(None)),
+            row_table: RefCell::new(None),
+            row_surface: RefCell::new(None),
+            body_layout: Cell::new(None),
             layout,
             columns,
-            applied_settings: Rc::new(RefCell::new(settings)),
+            applied_settings: RefCell::new(settings),
             shell: Rc::clone(shell),
             playback_context,
-        };
-        let changed_projection = projection.clone();
-        search.connect_search_changed(move |_| changed_projection.recompute());
+        });
+        let changed_projection = Rc::downgrade(&projection);
+        search.connect_search_changed(move |_| {
+            if let Some(projection) = changed_projection.upgrade() {
+                projection.recompute();
+            }
+        });
         projection.recompute();
         projection
     }
@@ -357,13 +360,13 @@ impl ArtistReleaseProjections {
             });
 
         empty.set_visible(
-            !favorite_present && sections.iter().all(ArtistAlbumProjection::source_is_empty),
+            !favorite_present && sections.iter().all(|section| section.source_is_empty()),
         );
         let empty_rows = static_artist_route_model(empty.clone());
         let mut section_models = Vec::with_capacity(ARTIST_RELEASE_SECTION_COUNT + 3);
         section_models.push(header_rows);
         section_models.push(favorite_rows);
-        section_models.extend(sections.iter().map(ArtistAlbumProjection::rows));
+        section_models.extend(sections.iter().map(|section| section.rows()));
         section_models.push(empty_rows);
         let section_models = Rc::new(section_models);
         let model_sections = gio::ListStore::new::<gio::ListStore>();
@@ -466,7 +469,7 @@ impl ArtistReleaseProjections {
                 && self
                     .sections
                     .iter()
-                    .all(ArtistAlbumProjection::source_is_empty),
+                    .all(|section| section.source_is_empty()),
         );
     }
 

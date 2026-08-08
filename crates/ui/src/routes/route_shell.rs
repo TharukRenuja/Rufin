@@ -92,10 +92,6 @@ impl LibraryPageShell {
 
     pub(crate) fn set_empty(&self, empty: bool) {
         self.source_empty.set(empty);
-        self.sync_content_state();
-    }
-
-    fn sync_content_state(&self) {
         self.contents.set_visible_child_name(library_page_child(
             self.source_empty.get(),
             self.search.text().as_str(),
@@ -202,19 +198,27 @@ impl Shell {
         wrapper.append(&stack);
 
         let source_empty = Rc::new(Cell::new(empty));
-        let page_shell = LibraryPageShell {
+        let search_contents = weak_target_callback(&stack, {
+            let source_empty = Rc::clone(&source_empty);
+            let has_visible_results = Rc::clone(&has_visible_results);
+            move |contents, query: glib::GString| {
+                contents.set_visible_child_name(library_page_child(
+                    source_empty.get(),
+                    query.as_str(),
+                    has_visible_results(),
+                ));
+            }
+        });
+        search.connect_search_changed(move |search| search_contents(search.text()));
+
+        LibraryPageShell {
             widget: wrapper.upcast(),
             contents: stack,
             toolbar,
             search: search.clone(),
             has_visible_results,
             source_empty,
-        };
-        let search_shell = page_shell.clone();
-        search.connect_search_changed(move |_| {
-            search_shell.sync_content_state();
-        });
-        page_shell
+        }
     }
 
     pub(crate) fn set_route_search(&self, search: Option<gtk::SearchEntry>) {
@@ -727,19 +731,22 @@ pub(super) fn restore_single_click_activation_on_primary_press<T>(
     let pointer = gtk::GestureClick::new();
     pointer.set_button(gtk::gdk::BUTTON_PRIMARY);
     pointer.set_propagation_phase(gtk::PropagationPhase::Capture);
-    let restore = weak_target_callback(target, restore);
-    pointer.connect_pressed(move |_, _, _, _| restore());
+    let restore = weak_target_callback(target, move |target, ()| restore(target));
+    pointer.connect_pressed(move |_, _, _, _| restore(()));
     target.add_controller(pointer);
 }
 
-fn weak_target_callback<T>(target: &T, callback: impl Fn(&T) + 'static) -> impl Fn() + 'static
+fn weak_target_callback<T, A>(
+    target: &T,
+    callback: impl Fn(&T, A) + 'static,
+) -> impl Fn(A) + 'static
 where
     T: glib::object::ObjectType,
 {
     let weak_target = target.downgrade();
-    move || {
+    move |argument| {
         if let Some(target) = weak_target.upgrade() {
-            callback(&target);
+            callback(&target, argument);
         }
     }
 }
@@ -916,25 +923,33 @@ mod tests {
     use crate::LibraryLayout;
 
     #[test]
-    fn weak_target_callback_does_not_retain_its_target() {
+    fn signal_callback_does_not_retain_its_source_or_target() {
+        let source = gtk::gio::SimpleAction::new("source", None);
+        let weak_source = source.downgrade();
         let target = gtk::gio::SimpleAction::new("target", None);
         let weak_target = target.downgrade();
         let calls = Rc::new(Cell::new(0));
         let callback_calls = Rc::clone(&calls);
-        let callback = weak_target_callback(&target, move |_| {
+        let callback = weak_target_callback(&target, move |_, ()| {
             callback_calls.set(callback_calls.get() + 1);
         });
+        source.connect_activate(move |_, _| callback(()));
 
-        callback();
+        source.activate(None);
         assert_eq!(calls.get(), 1);
         drop(target);
-        callback();
+        source.activate(None);
 
         assert!(
             weak_target.upgrade().is_none(),
             "the callback must not retain its target"
         );
         assert_eq!(calls.get(), 1);
+        drop(source);
+        assert!(
+            weak_source.upgrade().is_none(),
+            "the callback must not retain its signal source"
+        );
     }
 
     #[test]
