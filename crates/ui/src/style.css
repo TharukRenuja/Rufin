@@ -61,6 +61,10 @@ toastoverlay toast {
   background: color-mix(in srgb, var(--window-bg-color) 86%, var(--card-bg-color) 14%);
 }
 
+.operation-feedback.operation-feedback-notice {
+  min-width: 0;
+}
+
 .operation-feedback > box {
   min-width: 0;
 }
