@@ -350,6 +350,9 @@ msgstr ""
 msgid "Clear queue"
 msgstr ""
 
+msgid "Close Window"
+msgstr ""
+
 msgid "Close app window"
 msgstr ""
 
@@ -687,6 +690,9 @@ msgid "Grid labels"
 msgstr ""
 
 msgid "Grid"
+msgstr ""
+
+msgid "Help"
 msgstr ""
 
 msgid "Hidden"
@@ -1878,6 +1884,9 @@ msgid "Waiting for connection"
 msgstr ""
 
 msgid "Waveform seekbar"
+msgstr ""
+
+msgid "Window"
 msgstr ""
 
 msgid "Year"

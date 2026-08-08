@@ -411,6 +411,11 @@ msgstr "Notīrīt rindu"
 
 #, fuzzy
 #| msgid "App window"
+msgid "Close Window"
+msgstr "Lietotnes logs"
+
+#, fuzzy
+#| msgid "App window"
 msgid "Close app window"
 msgstr "Lietotnes logs"
 
@@ -771,6 +776,9 @@ msgstr "Režģa uzraksti"
 
 msgid "Grid"
 msgstr "Režģis"
+
+msgid "Help"
+msgstr ""
 
 msgid "Hidden"
 msgstr "Paslēpts"
@@ -2104,6 +2112,9 @@ msgstr ""
 
 msgid "Waveform seekbar"
 msgstr "Viļņa formas meklēšanas josla"
+
+msgid "Window"
+msgstr ""
 
 msgid "Year"
 msgstr "Gads"
