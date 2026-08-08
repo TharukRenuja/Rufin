@@ -66,9 +66,9 @@ mod imp {
                     minimum = minimum.saturating_add(super::ROW_SPACING);
                     natural = natural.saturating_add(super::ROW_SPACING);
                 }
-                let (row_minimum, row_natural) = row_height(&children, &widths, range);
-                minimum = minimum.saturating_add(row_minimum);
-                natural = natural.saturating_add(row_natural);
+                let row = row_measure(&children, &widths, range);
+                minimum = minimum.saturating_add(row.minimum_height);
+                natural = natural.saturating_add(row.natural_height);
             }
             (minimum, natural, -1, -1)
         }
@@ -85,19 +85,29 @@ mod imp {
                     .iter()
                     .copied()
                     .fold(0_i32, i32::saturating_add);
-                let (_, row_height) = row_height(&children, &widths, range.clone());
+                let child_measures = range
+                    .clone()
+                    .map(|index| children[index].measure(gtk::Orientation::Vertical, widths[index]))
+                    .collect::<Vec<_>>();
+                let row = row_measure_from(&child_measures);
                 let mut x = (width.saturating_sub(row_width) / 2).max(0);
-                for index in range {
+                for (position, index) in range.enumerate() {
                     let child_width = widths[index];
-                    let (_, child_height, _, _) =
-                        children[index].measure(gtk::Orientation::Vertical, child_width);
+                    let (_, child_height, _, child_baseline) = child_measures[position];
+                    let child_y =
+                        y.saturating_add(baseline_offset(row.natural_baseline, child_baseline));
                     let transform = gtk::gsk::Transform::new()
-                        .translate(&gtk::graphene::Point::new(x as f32, y as f32));
-                    children[index].allocate(child_width, child_height, -1, Some(transform));
+                        .translate(&gtk::graphene::Point::new(x as f32, child_y as f32));
+                    children[index].allocate(
+                        child_width,
+                        child_height,
+                        child_baseline,
+                        Some(transform),
+                    );
                     x = x.saturating_add(child_width);
                 }
                 y = y
-                    .saturating_add(row_height)
+                    .saturating_add(row.natural_height)
                     .saturating_add(super::ROW_SPACING);
             }
         }
@@ -116,19 +126,69 @@ mod imp {
             .collect()
     }
 
-    fn row_height(children: &[gtk::Widget], widths: &[i32], range: Range<usize>) -> (i32, i32) {
-        range
-            .map(|index| {
-                let (minimum, natural, _, _) =
-                    children[index].measure(gtk::Orientation::Vertical, widths[index]);
-                (minimum, natural)
-            })
-            .fold(
-                (0, 0),
-                |(min_height, natural_height), (minimum, natural)| {
-                    (min_height.max(minimum), natural_height.max(natural))
-                },
-            )
+    fn row_measure(children: &[gtk::Widget], widths: &[i32], range: Range<usize>) -> RowMeasure {
+        let measures = range
+            .map(|index| children[index].measure(gtk::Orientation::Vertical, widths[index]))
+            .collect::<Vec<_>>();
+        row_measure_from(&measures)
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct RowMeasure {
+    minimum_height: i32,
+    natural_height: i32,
+    natural_baseline: i32,
+}
+
+fn row_measure_from(measures: &[(i32, i32, i32, i32)]) -> RowMeasure {
+    let (minimum_height, _) = aligned_height_and_baseline(
+        measures
+            .iter()
+            .map(|(height, _, baseline, _)| (*height, *baseline)),
+    );
+    let (natural_height, natural_baseline) = aligned_height_and_baseline(
+        measures
+            .iter()
+            .map(|(_, height, _, baseline)| (*height, *baseline)),
+    );
+    RowMeasure {
+        minimum_height,
+        natural_height,
+        natural_baseline,
+    }
+}
+
+fn aligned_height_and_baseline(measures: impl Iterator<Item = (i32, i32)>) -> (i32, i32) {
+    let mut height_without_baseline = 0;
+    let mut height_above_baseline = 0;
+    let mut height_below_baseline = 0;
+    let mut has_baseline = false;
+    for (height, baseline) in measures {
+        if baseline >= 0 {
+            has_baseline = true;
+            height_above_baseline = height_above_baseline.max(baseline);
+            height_below_baseline = height_below_baseline.max(height.saturating_sub(baseline));
+        } else {
+            height_without_baseline = height_without_baseline.max(height);
+        }
+    }
+    if has_baseline {
+        let baseline_height = height_above_baseline.saturating_add(height_below_baseline);
+        (
+            baseline_height.max(height_without_baseline),
+            height_above_baseline,
+        )
+    } else {
+        (height_without_baseline, -1)
+    }
+}
+
+fn baseline_offset(row_baseline: i32, child_baseline: i32) -> i32 {
+    if row_baseline >= 0 && child_baseline >= 0 {
+        row_baseline.saturating_sub(child_baseline)
+    } else {
+        0
     }
 }
 
@@ -178,11 +238,22 @@ fn wrapped_row_ranges(widths: &[i32], available_width: i32) -> Vec<Range<usize>>
 
 #[cfg(test)]
 mod tests {
-    use super::wrapped_row_ranges;
+    use super::{baseline_offset, row_measure_from, wrapped_row_ranges};
 
     #[test]
     fn wrapping_keeps_each_reading_with_its_native_token() {
         assert_eq!(wrapped_row_ranges(&[30, 20, 40, 10], 60), vec![0..2, 2..4]);
         assert_eq!(wrapped_row_ranges(&[80, 10], 60), vec![0..1, 1..2]);
+    }
+
+    #[test]
+    fn wrapping_aligns_mixed_font_baselines_without_growing_the_row() {
+        let row = row_measure_from(&[(42, 42, 37, 37), (41, 41, 36, 36), (39, 39, 35, 35)]);
+
+        assert_eq!(row.natural_height, 42);
+        assert_eq!(row.natural_baseline, 37);
+        assert_eq!(baseline_offset(row.natural_baseline, 37), 0);
+        assert_eq!(baseline_offset(row.natural_baseline, 36), 1);
+        assert_eq!(baseline_offset(row.natural_baseline, 35), 2);
     }
 }

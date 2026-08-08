@@ -665,6 +665,7 @@ fn lyrics_reading_unit(text: &str, show_furigana: bool, language: Option<&str>) 
         && let Some(reading) = japanese_reading_for_language_options(text, language, true, false)
     {
         let phrase = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+        phrase.set_valign(gtk::Align::Baseline);
         for segment in &reading.segments {
             phrase.append(&ruby_segment(segment));
         }
@@ -676,6 +677,8 @@ fn lyrics_reading_unit(text: &str, show_furigana: bool, language: Option<&str>) 
 fn ruby_segment(segment: &JapaneseReadingSegment) -> gtk::Box {
     let segment_box = gtk::Box::new(gtk::Orientation::Vertical, 0);
     segment_box.set_halign(gtk::Align::Center);
+    segment_box.set_valign(gtk::Align::Baseline);
+    segment_box.set_baseline_child(1);
     if segment.furigana.is_some() {
         segment_box.add_css_class("lyrics-ruby-annotated");
     }

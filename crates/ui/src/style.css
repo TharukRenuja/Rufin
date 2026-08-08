@@ -1789,7 +1789,7 @@ listview.queue-list row {
   color: var(--dim-label-color);
 }
 
-.lyrics-ruby-annotated > .lyrics-reading-surface {
+.lyrics-reading-surface {
   transform: translateY(-1px);
 }
 
