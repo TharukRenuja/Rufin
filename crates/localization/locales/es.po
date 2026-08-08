@@ -17,6 +17,11 @@ msgstr ""
 "Plural-Forms: nplurals=2; plural=n != 1;\n"
 "X-Generator: Weblate 2026.8.dev0\n"
 
+msgid ""
+"Balance loudness levels. Track adjusts each song; Album applies one "
+"adjustment album-wide"
+msgstr ""
+
 #, fuzzy
 #| msgid ""
 #| "Downloaded music from this server will no longer be available offline. "
@@ -807,6 +812,9 @@ msgstr ""
 msgid "Limit"
 msgstr ""
 
+msgid "Linear"
+msgstr ""
+
 msgid "ListenBrainz scrobbling"
 msgstr ""
 
@@ -1144,6 +1152,12 @@ msgid "Password"
 msgstr ""
 
 msgid "Pause"
+msgstr ""
+
+msgid "Perceptual for a finer control at low volume; Linear for a direct scale"
+msgstr ""
+
+msgid "Perceptual"
 msgstr ""
 
 msgid "Pink"
@@ -1852,6 +1866,9 @@ msgid "Volume Down"
 msgstr ""
 
 msgid "Volume Up"
+msgstr ""
+
+msgid "Volume scale"
 msgstr ""
 
 msgid "WASAPI"

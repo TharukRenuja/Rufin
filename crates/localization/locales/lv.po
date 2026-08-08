@@ -19,6 +19,11 @@ msgstr ""
 "X-Generator: Weblate 2026.7.dev0\n"
 
 msgid ""
+"Balance loudness levels. Track adjusts each song; Album applies one "
+"adjustment album-wide"
+msgstr ""
+
+msgid ""
 "Downloads from this server will be removed, and automatic rules will be "
 "turned off"
 msgstr ""
@@ -891,6 +896,9 @@ msgstr ""
 msgid "Limit"
 msgstr "Ierobežojums"
 
+msgid "Linear"
+msgstr ""
+
 msgid "ListenBrainz scrobbling"
 msgstr "ListenBrainz skroblēšana"
 
@@ -1286,6 +1294,12 @@ msgstr "Parole"
 
 msgid "Pause"
 msgstr "Pauzēt"
+
+msgid "Perceptual for a finer control at low volume; Linear for a direct scale"
+msgstr ""
+
+msgid "Perceptual"
+msgstr ""
 
 msgid "Pink"
 msgstr ""
@@ -2075,6 +2089,11 @@ msgid "Volume Down"
 msgstr "Skaļuma samazināšana"
 
 msgid "Volume Up"
+msgstr "Skaļuma palielināšana"
+
+#, fuzzy
+#| msgid "Volume Up"
+msgid "Volume scale"
 msgstr "Skaļuma palielināšana"
 
 msgid "WASAPI"

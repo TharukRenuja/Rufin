@@ -17,6 +17,11 @@ msgstr ""
 "Plural-Forms: nplurals=2; plural=n > 1;\n"
 
 msgid ""
+"Balance loudness levels. Track adjusts each song; Album applies one "
+"adjustment album-wide"
+msgstr ""
+
+msgid ""
 "Downloads from this server will be removed, and automatic rules will be "
 "turned off"
 msgstr ""
@@ -774,6 +779,9 @@ msgstr ""
 msgid "Limit"
 msgstr ""
 
+msgid "Linear"
+msgstr ""
+
 msgid "ListenBrainz scrobbling"
 msgstr ""
 
@@ -1111,6 +1119,12 @@ msgid "Password"
 msgstr ""
 
 msgid "Pause"
+msgstr ""
+
+msgid "Perceptual for a finer control at low volume; Linear for a direct scale"
+msgstr ""
+
+msgid "Perceptual"
 msgstr ""
 
 msgid "Pink"
@@ -1819,6 +1833,9 @@ msgid "Volume Down"
 msgstr ""
 
 msgid "Volume Up"
+msgstr ""
+
+msgid "Volume scale"
 msgstr ""
 
 msgid "WASAPI"
