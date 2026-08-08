@@ -19,11 +19,6 @@ msgstr ""
 "X-Generator: Weblate 2026.7.dev0\n"
 
 msgid ""
-"Balance loudness levels. Track adjusts each song; Album applies one "
-"adjustment album-wide"
-msgstr ""
-
-msgid ""
 "Downloads from this server will be removed, and automatic rules will be "
 "turned off"
 msgstr ""
@@ -119,6 +114,11 @@ msgstr ""
 "Mainot konfidenciālo aizkulises iestatījumu, tiks dzēstas vecās "
 "konfigurācijas slepenās atslēgas un jūs tiksiet izrakstīts no visām sesijām, "
 "ieskaitot API atslēgas. Lietojumprogrammas kešatmiņa netiks skarta."
+
+msgid ""
+"Track evens out every song, while Album preserves the intended differences "
+"within each album"
+msgstr ""
 
 #, fuzzy
 #| msgid ""
@@ -955,6 +955,9 @@ msgstr "Lokāls"
 msgid "Lock metadata"
 msgstr "Metadati"
 
+msgid "Loudness normalization"
+msgstr ""
+
 #, fuzzy
 #| msgid "Lyrics"
 msgid "Lyrics loaded"
@@ -1606,9 +1609,6 @@ msgstr "Atkārtot vienu"
 msgid "Repeat"
 msgstr "Atkārtot"
 
-msgid "ReplayGain"
-msgstr "ReplayGain"
-
 msgid "Requires OpenSubsonic songLyrics v2"
 msgstr ""
 
@@ -2218,6 +2218,9 @@ msgid_plural "{count} years ago"
 msgstr[0] "pirms {count} gadiem"
 msgstr[1] "pirms {count} gada"
 msgstr[2] "pirms {count} gadiem"
+
+#~ msgid "ReplayGain"
+#~ msgstr "ReplayGain"
 
 #~ msgid "Default"
 #~ msgstr "Noklusējums"

@@ -17,11 +17,6 @@ msgstr ""
 "Plural-Forms: nplurals=2; plural=n > 1;\n"
 
 msgid ""
-"Balance loudness levels. Track adjusts each song; Album applies one "
-"adjustment album-wide"
-msgstr ""
-
-msgid ""
 "Downloads from this server will be removed, and automatic rules will be "
 "turned off"
 msgstr ""
@@ -76,6 +71,11 @@ msgstr ""
 msgid ""
 "This will log you out and clear your secrets including API ones. Your app "
 "cache is not touched."
+msgstr ""
+
+msgid ""
+"Track evens out every song, while Album preserves the intended differences "
+"within each album"
 msgstr ""
 
 msgid ""
@@ -824,6 +824,9 @@ msgstr ""
 msgid "Lock metadata"
 msgstr ""
 
+msgid "Loudness normalization"
+msgstr ""
+
 msgid "Lyrics loaded"
 msgstr ""
 
@@ -1392,9 +1395,6 @@ msgid "Repeat one"
 msgstr ""
 
 msgid "Repeat"
-msgstr ""
-
-msgid "ReplayGain"
 msgstr ""
 
 msgid "Requires OpenSubsonic songLyrics v2"

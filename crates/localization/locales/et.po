@@ -18,11 +18,6 @@ msgstr ""
 "X-Generator: Weblate 2026.7.1.dev0\n"
 
 msgid ""
-"Balance loudness levels. Track adjusts each song; Album applies one "
-"adjustment album-wide"
-msgstr ""
-
-msgid ""
 "Downloads from this server will be removed, and automatic rules will be "
 "turned off"
 msgstr ""
@@ -115,6 +110,11 @@ msgstr ""
 "Saladuste salvestamise taustateenuse muutmine eemaldab vanad seadistuste "
 "saladused/salasõnad ja logib sind kõikjalt välja, sealhulgas ka API-"
 "saladuste puhul. Rakenduse vahemälu see ei mõjuta."
+
+msgid ""
+"Track evens out every song, while Album preserves the intended differences "
+"within each album"
+msgstr ""
 
 #, fuzzy
 #| msgid ""
@@ -947,6 +947,9 @@ msgstr "Kohalik andmekogu"
 msgid "Lock metadata"
 msgstr "Metateave"
 
+msgid "Loudness normalization"
+msgstr ""
+
 #, fuzzy
 #| msgid "Lyrics"
 msgid "Lyrics loaded"
@@ -1597,9 +1600,6 @@ msgstr "Korda üht lugu"
 msgid "Repeat"
 msgstr "Korda"
 
-msgid "ReplayGain"
-msgstr "Esitusvaljuse tundlikkus"
-
 msgid "Requires OpenSubsonic songLyrics v2"
 msgstr ""
 
@@ -2203,6 +2203,9 @@ msgid "{count} year ago"
 msgid_plural "{count} years ago"
 msgstr[0] "{count} aasta tagasi"
 msgstr[1] "{count} aastat tagasi"
+
+#~ msgid "ReplayGain"
+#~ msgstr "Esitusvaljuse tundlikkus"
 
 #~ msgid "Default"
 #~ msgstr "Vaikimisi"
