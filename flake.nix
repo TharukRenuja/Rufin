@@ -34,6 +34,7 @@
                 ./README.md
                 ./crates
                 ./data/icons/hicolor
+                ./data/icons/rufin-icons.gresource.xml
                 ./data/japanese-readings.dic
                 ./data/japanese-readings.LICENSE
                 ./data/io.github.screwys.Rufin.desktop
