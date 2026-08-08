@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::ffi::OsString;
 use std::fs;
 use std::io::{ErrorKind, Write as _};
@@ -143,6 +144,20 @@ impl StoredSettings {
                 .iter()
                 .any(|source| source.configuration.source_id == download.source_id)
         });
+        let configured_source_ids = self
+            .sources
+            .configured
+            .iter()
+            .map(|source| source.configuration.source_id.clone())
+            .collect::<HashSet<_>>();
+        self.ui
+            .sidebar
+            .pins
+            .retain(|pin| configured_source_ids.contains(pin.source_id()));
+        self.ui
+            .sidebar
+            .playlist_pin_imported_sources
+            .retain(|source_id| configured_source_ids.contains(source_id));
         for download in &mut self.ui.downloads {
             let limit = self
                 .sources
@@ -711,7 +726,7 @@ mod tests {
 
     use ::ui::{
         LeftSidebarMode, LibraryField, LibraryLayout, LibraryListKey, LibraryListSettings,
-        RightSidebarMode, SettingsPort as _,
+        RightSidebarMode, SettingsPort as _, SidebarPin,
     };
     use desktop_integration::Settings as RichPresenceSettings;
     use localization::SYSTEM_LANGUAGE_PREFERENCE;
@@ -1420,7 +1435,7 @@ mod tests {
     }
 
     #[test]
-    fn download_rules_follow_their_configured_source() {
+    fn source_scoped_ui_settings_follow_their_configured_source() {
         let source_id = SourceId::new("jellyfin:configured");
         let removed_id = SourceId::new("jellyfin:removed");
         let mut stored = StoredSettings {
@@ -1454,11 +1469,26 @@ mod tests {
                 ..::ui::DownloadRules::default()
             },
         );
+        stored.ui.sidebar.pins = vec![
+            SidebarPin::Playlist {
+                source_id: source_id.clone(),
+                playlist_id: library::PlaylistId::new("retained"),
+            },
+            SidebarPin::SmartPlaylist {
+                source_id: removed_id.clone(),
+                playlist_id: library::SmartPlaylistId::new("removed"),
+            },
+        ];
+        stored.ui.sidebar.playlist_pin_imported_sources =
+            vec![source_id.clone(), removed_id.clone()];
 
         stored.migrate_defaults();
 
         assert!(stored.ui.download_rules(&source_id).entire_library);
         assert!(stored.ui.download_rules(&removed_id).is_empty());
+        assert_eq!(stored.ui.sidebar.pins.len(), 1);
+        assert_eq!(stored.ui.sidebar.pins[0].source_id(), &source_id);
+        assert_eq!(stored.ui.sidebar.playlist_pin_imported_sources, [source_id]);
     }
 
     #[test]

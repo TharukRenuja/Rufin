@@ -812,6 +812,10 @@ impl Actor {
                 loaded,
                 notify,
             } => {
+                if let Some(settings) = self.settings.get_mut(&source_id) {
+                    settings.rules = DownloadRules::default();
+                }
+                self.reconcile_all_rules(&source_id);
                 self.abort_matching(active, false, |download| download.source_id == source_id)
                     .await;
                 self.clear(&source_id, loaded.as_ref(), notify).await;

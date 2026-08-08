@@ -375,6 +375,8 @@ pub struct SidebarSettings {
     pub pins_visible: bool,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub pins: Vec<SidebarPin>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub playlist_pin_imported_sources: Vec<SourceId>,
     #[serde(default = "default_true")]
     pub server_visible: bool,
 }
@@ -384,6 +386,7 @@ impl Default for SidebarSettings {
             route_items: default_sidebar_route_items(),
             pins_visible: true,
             pins: Vec::new(),
+            playlist_pin_imported_sources: Vec::new(),
             server_visible: true,
         }
     }
@@ -422,6 +425,9 @@ impl SidebarSettings {
         self.route_items = sanitized;
         let mut seen = HashSet::new();
         self.pins.retain(|pin| seen.insert(pin.clone()));
+        let mut seen = HashSet::new();
+        self.playlist_pin_imported_sources
+            .retain(|source_id| seen.insert(source_id.clone()));
     }
 
     pub fn is_pinned(&self, pin: &SidebarPin) -> bool {
@@ -439,6 +445,27 @@ impl SidebarSettings {
         let previous_len = self.pins.len();
         self.pins.retain(|stored| stored != &pin);
         self.pins.len() != previous_len
+    }
+
+    pub fn import_playlist_pins_once(
+        &mut self,
+        source_id: SourceId,
+        playlist_ids: impl IntoIterator<Item = PlaylistId>,
+    ) -> bool {
+        if self.playlist_pin_imported_sources.contains(&source_id) {
+            return false;
+        }
+        for playlist_id in playlist_ids {
+            self.set_pinned(
+                SidebarPin::Playlist {
+                    source_id: source_id.clone(),
+                    playlist_id,
+                },
+                true,
+            );
+        }
+        self.playlist_pin_imported_sources.push(source_id);
+        true
     }
 }
 fn insert_sidebar_route_item_in_default_order(

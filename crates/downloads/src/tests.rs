@@ -140,6 +140,73 @@ fn rule_reconciliation_follows_the_changed_collection_facts() {
     );
 }
 
+#[tokio::test]
+async fn remove_all_disables_rules_before_clearing_downloads() {
+    let directory = tempfile::tempdir().expect("temporary downloads");
+    let library_root = tempfile::tempdir().expect("temporary Library");
+    let source_id = SourceId::fake(1);
+    let track_id = TrackId::fake(1);
+    let (loaded, _) = accepted_track(library_root.path(), source_id.clone(), track_id.clone());
+    let rules = DownloadRules {
+        favorites: true,
+        ..DownloadRules::default()
+    };
+    let mut actor = test_actor(directory.path());
+    actor.settings.insert(
+        source_id.clone(),
+        SourceDownloadSettings {
+            source_id: source_id.clone(),
+            rules,
+            quality: StreamQuality::Original,
+            directory: None,
+        },
+    );
+    actor.attached.insert(
+        source_id.clone(),
+        AttachedSource {
+            source: None,
+            loaded: Arc::downgrade(&loaded),
+            music_folder_id: None,
+            directory: None,
+        },
+    );
+    actor.selected = Some(Arc::downgrade(&loaded));
+    actor.running_rules = Some(RuleIntent {
+        loaded: Arc::clone(&loaded),
+        music_folder_id: None,
+        rules,
+    });
+    let mut active = Vec::new();
+
+    actor
+        .apply(
+            Command::Clear {
+                source_id: source_id.clone(),
+                loaded: Some(Arc::downgrade(&loaded)),
+                notify: false,
+            },
+            &mut active,
+        )
+        .await;
+
+    assert!(actor.settings_for(&source_id).rules.is_empty());
+    assert!(
+        actor
+            .pending_rules
+            .as_ref()
+            .is_some_and(|intent| intent.rules.is_empty())
+    );
+    actor
+        .apply_prepared_rules(
+            Ok(vec![(DownloadRule::Favorites, vec![track_id])]),
+            &mut active,
+        )
+        .await;
+    assert!(actor.jobs.get(&source_id).is_none_or(Vec::is_empty));
+    assert!(actor.running_rules.is_none());
+    assert!(actor.pending_rules.is_none());
+}
+
 #[test]
 fn selected_commands_require_the_exact_attached_library() {
     let actor_root = tempfile::tempdir().expect("actor root");

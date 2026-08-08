@@ -186,9 +186,11 @@ fn sidebar_pins_restore_in_order_and_migrate_from_older_settings() {
         .expect("sidebar settings object");
     sidebar.remove("pins_visible");
     sidebar.remove("pins");
+    sidebar.remove("playlist_pin_imported_sources");
     let restored = serde_json::from_value::<Settings>(legacy).expect("restore older settings");
     assert!(restored.sidebar.pins_visible);
     assert!(restored.sidebar.pins.is_empty());
+    assert!(restored.sidebar.playlist_pin_imported_sources.is_empty());
 
     let source_id = SourceId::new("jellyfin:main");
     let album = SidebarPin::Album {
@@ -222,6 +224,86 @@ fn sidebar_pins_restore_in_order_and_migrate_from_older_settings() {
     assert_eq!(restored.sidebar.pins, [album.clone(), genre, playlist]);
     assert!(restored.sidebar.set_pinned(album.clone(), false));
     assert!(!restored.sidebar.is_pinned(&album));
+}
+
+#[test]
+fn remote_playlist_pins_are_imported_once_per_source() {
+    let source_id = SourceId::new("jellyfin:main");
+    let other_source_id = SourceId::new("subsonic:main");
+    let first_playlist_id = PlaylistId::new("first");
+    let second_playlist_id = PlaylistId::new("second");
+    let later_playlist_id = PlaylistId::new("later");
+    let existing_pin = SidebarPin::Album {
+        source_id: source_id.clone(),
+        album_id: AlbumId::new("album"),
+    };
+    let first_playlist_pin = SidebarPin::Playlist {
+        source_id: source_id.clone(),
+        playlist_id: first_playlist_id.clone(),
+    };
+    let second_playlist_pin = SidebarPin::Playlist {
+        source_id: source_id.clone(),
+        playlist_id: second_playlist_id.clone(),
+    };
+    let mut settings = Settings::default();
+    assert!(settings.sidebar.set_pinned(existing_pin.clone(), true));
+
+    assert!(settings.sidebar.import_playlist_pins_once(
+        source_id.clone(),
+        [first_playlist_id.clone(), second_playlist_id]
+    ));
+    assert_eq!(
+        settings.sidebar.pins,
+        [
+            existing_pin,
+            first_playlist_pin.clone(),
+            second_playlist_pin
+        ]
+    );
+
+    assert!(
+        settings
+            .sidebar
+            .set_pinned(first_playlist_pin.clone(), false)
+    );
+    let mut settings = serde_json::from_value::<Settings>(
+        serde_json::to_value(settings).expect("serialize imported playlist Pins"),
+    )
+    .expect("restore imported playlist Pins");
+    assert!(
+        !settings
+            .sidebar
+            .import_playlist_pins_once(source_id, [first_playlist_id.clone(), later_playlist_id])
+    );
+    assert!(!settings.sidebar.is_pinned(&first_playlist_pin));
+
+    assert!(
+        settings
+            .sidebar
+            .import_playlist_pins_once(other_source_id.clone(), [first_playlist_id.clone()])
+    );
+    assert!(settings.sidebar.is_pinned(&SidebarPin::Playlist {
+        source_id: other_source_id,
+        playlist_id: first_playlist_id,
+    }));
+}
+
+#[test]
+fn empty_remote_playlist_import_is_still_complete() {
+    let source_id = SourceId::new("jellyfin:empty");
+    let mut settings = Settings::default();
+
+    assert!(
+        settings
+            .sidebar
+            .import_playlist_pins_once(source_id.clone(), [])
+    );
+    assert!(
+        !settings
+            .sidebar
+            .import_playlist_pins_once(source_id, [PlaylistId::new("later")])
+    );
+    assert!(settings.sidebar.pins.is_empty());
 }
 
 #[test]
