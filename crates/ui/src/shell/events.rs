@@ -274,7 +274,12 @@ fn finish_source_assignment(
 
     refresh_context_playlist_picker(shell);
     shell.sync_bottom_player_favorite();
-    let rebuild_sidebar = source_changed || session_changed || scope_changed || library_changed;
+    let imported_playlist_pins = shell.import_remote_playlist_pins_once();
+    let rebuild_sidebar = source_changed
+        || session_changed
+        || scope_changed
+        || library_changed
+        || imported_playlist_pins;
 
     if next.selected.is_none() {
         if rebuild_sidebar {
@@ -450,6 +455,7 @@ fn apply_source_notice(shell: &Rc<Shell>, notice: SourceNotice) {
 fn apply_source_operation(shell: &Rc<Shell>, operation: SourceOperation) {
     let previous_operation = shell.source.operation.borrow().clone();
     let previously_blocked = previous_operation.blocks_library();
+    let started_blocking = source_operation_started_blocking(&previous_operation, &operation);
     let completed_add = source_add_completed(&previous_operation, &operation);
     *shell.source.operation.borrow_mut() = operation.clone();
 
@@ -464,7 +470,9 @@ fn apply_source_operation(shell: &Rc<Shell>, operation: SourceOperation) {
                 }
                 shell.update_add_server_dialog();
             } else {
-                shell.close_preferences_dialog();
+                if started_blocking {
+                    shell.close_preferences_dialog();
+                }
                 if !shell.startup.route_revealed.get() {
                     shell.render_startup_loading_view();
                 } else {
@@ -473,7 +481,9 @@ fn apply_source_operation(shell: &Rc<Shell>, operation: SourceOperation) {
             }
         }
         SourceOperation::Switching { .. } => {
-            shell.close_preferences_dialog();
+            if started_blocking {
+                shell.close_preferences_dialog();
+            }
             shell.startup.route_revealed.set(false);
             if previously_blocked {
                 shell.render_startup_loading_view();
@@ -521,6 +531,10 @@ fn apply_source_operation(shell: &Rc<Shell>, operation: SourceOperation) {
             }
         }
     }
+}
+
+fn source_operation_started_blocking(previous: &SourceOperation, next: &SourceOperation) -> bool {
+    !previous.blocks_library() && next.blocks_library()
 }
 
 fn source_add_completed(previous: &SourceOperation, next: &SourceOperation) -> bool {
@@ -784,7 +798,7 @@ mod tests {
 
     use super::{
         bottom_player_can_update_position_only, media_controls_static_state_changed,
-        queue_panel_refresh_needed, source_add_completed,
+        queue_panel_refresh_needed, source_add_completed, source_operation_started_blocking,
     };
     use crate::runtime::source::{SourceOperation, SourceProgress, SourceProgressStage};
 
@@ -809,6 +823,26 @@ mod tests {
             }
         ));
         assert!(source_add_completed(&adding(), &SourceOperation::Idle));
+    }
+
+    #[test]
+    fn source_progress_does_not_restart_the_blocking_transition() {
+        assert!(source_operation_started_blocking(
+            &SourceOperation::Idle,
+            &adding()
+        ));
+        assert!(!source_operation_started_blocking(&adding(), &adding()));
+        assert!(source_operation_started_blocking(
+            &SourceOperation::Idle,
+            &SourceOperation::Switching {
+                target: SourceId::new("target"),
+                progress: SourceProgress {
+                    stage: SourceProgressStage::Connecting,
+                    completed: 0,
+                    total: None,
+                },
+            }
+        ));
     }
 
     #[test]

@@ -866,6 +866,9 @@ impl SourceOwner {
     }
 
     pub(super) async fn remove_replaced_source_data(&self, source_id: SourceId) {
+        self.shared
+            .downloads
+            .settings_changed(self.shared.settings.load().ui.downloads);
         let library = self
             .shared
             .selected()

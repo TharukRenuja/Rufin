@@ -22,6 +22,7 @@ use library::{
     SmartPlaylistSummary,
 };
 use playback::QueuePlacement;
+use tracing::warn;
 
 use super::{
     Shell,
@@ -165,11 +166,6 @@ pub(super) fn build_normal_navigation(shell: &Rc<Shell>) {
     }
     shell.navigation_view.normal_nav_routes.append(section);
     append_sidebar_pins(shell);
-
-    shell
-        .navigation_view
-        .normal_nav_pins
-        .append(&sidebar_spacer());
 }
 
 pub(super) fn build_compact_navigation(shell: &Rc<Shell>) {
@@ -209,6 +205,48 @@ impl Shell {
     pub(crate) fn rebuild_sidebar_navigation(self: &Rc<Self>) {
         rebuild_navigation(self);
         self.update_layout();
+    }
+
+    pub(crate) fn import_remote_playlist_pins_once(&self) -> bool {
+        let Some(selected) = self.library.selected.borrow().clone() else {
+            return false;
+        };
+        let remote = self
+            .source
+            .configured
+            .borrow()
+            .sources
+            .iter()
+            .any(|source| source.id == selected.source_id && source.kind != "local");
+        if !remote
+            || self
+                .settings
+                .current
+                .borrow()
+                .sidebar
+                .playlist_pin_imported_sources
+                .contains(&selected.source_id)
+        {
+            return false;
+        }
+        let playlists = match selected.library.playlists() {
+            Ok(playlists) => playlists,
+            Err(error) => {
+                warn!(%error, "failed to read remote playlists for Pins import");
+                return false;
+            }
+        };
+        let playlist_ids = playlists
+            .iter()
+            .map(|playlist| playlist.playlist.id.clone())
+            .collect::<Vec<_>>();
+
+        self.update_app_settings("remote playlist Pins import", |settings| {
+            settings
+                .sidebar
+                .import_playlist_pins_once(selected.source_id, playlist_ids)
+        })
+        .is_some()
     }
 
     pub(crate) fn sidebar_pins_changed(&self, change: &AcceptedLibraryChange) -> bool {

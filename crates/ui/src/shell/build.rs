@@ -245,7 +245,7 @@ pub fn build(app: &adw::Application, inputs: RuntimeInputs) {
     normal_nav_routes.set_mode(adw::SidebarMode::Sidebar);
     normal_nav_routes.set_vexpand(false);
     let normal_nav_pins = gtk::Box::new(gtk::Orientation::Vertical, 4);
-    normal_nav_pins.set_vexpand(true);
+    normal_nav_pins.set_vexpand(false);
     normal_nav.append(&normal_nav_routes);
     normal_nav.append(&normal_nav_pins);
     let normal_nav_handle = window_drag_handle_with_child("sidebar-drag-handle", &normal_nav);
