@@ -1,3 +1,4 @@
+use super::audio::{SharedLoudnessTags, apply_shared_loudness};
 use super::pipeline::{AboutToFinishAction, PlayerPipeline, SourceClock};
 #[cfg(test)]
 use super::waveform::visualizer_pipeline_is_live;
@@ -161,7 +162,7 @@ pub(super) struct PipelineId(pub(super) u64);
 #[derive(Clone, Debug, PartialEq)]
 pub(super) struct PreparedRun {
     pub(super) run: RunId,
-    pub(super) stream: ResolvedStream,
+    pub(super) stream: PreparedStream,
 }
 
 impl PreparedRun {
@@ -596,7 +597,8 @@ impl GstEngine {
                 NextTransition::Crossfade { .. } => true,
                 NextTransition::Gapless => {
                     next.stream.window().is_some()
-                        && !streams_are_adjacent_windows(&current.stream, &next.stream)
+                        && (!adjacent_window_can_reuse_pipeline(&shared.settings)
+                            || !streams_are_adjacent_windows(&current.stream, &next.stream))
                 }
             };
             should_prepare.then(|| {
@@ -1395,7 +1397,7 @@ impl GstEngine {
                 uri = %item.stream.redacted_uri(),
                 "preloading late gapless next stream"
             );
-            if let Err(error) = self.active_pipeline().set_stream(&item.stream) {
+            if let Err(error) = self.active_pipeline_mut().set_stream(&item.stream) {
                 let _ = cancel_gapless_pending(&mut lock_recover(&self.shared));
                 self.report_next_preparation_failure(item.run, error);
             }
@@ -1411,7 +1413,7 @@ impl GstEngine {
                 run = %current.run,
                 "cleared pending gapless next stream"
             );
-            if let Err(error) = self.pipeline_for_slot(slot).set_stream(&current.stream) {
+            if let Err(error) = self.pipeline_for_slot_mut(slot).set_stream(&current.stream) {
                 warn!(
                     %error,
                     run = %current.run,
@@ -1838,7 +1840,7 @@ impl GstEngine {
         self.handle_stream_started_run(started);
     }
 
-    fn handle_stream_started_run(&mut self, started: Option<(RunId, RunId, ResolvedStream)>) {
+    fn handle_stream_started_run(&mut self, started: Option<(RunId, RunId, PreparedStream)>) {
         let Some((old_run, new_run, stream)) = started else {
             return;
         };
@@ -2298,6 +2300,9 @@ impl GstEngine {
         let candidate = (|| {
             let shared = lock_recover(&self.shared);
             let current = shared.current.as_ref()?;
+            if !adjacent_window_can_reuse_pipeline(&shared.settings) {
+                return None;
+            }
             let boundary = current.stream.end_millis()?;
             let next = shared.next.as_ref()?;
             if next.transition != NextTransition::Gapless
@@ -2621,6 +2626,11 @@ impl GstEngine {
         self.pipeline_for_slot(self.active_slot())
     }
 
+    fn active_pipeline_mut(&mut self) -> &mut PlayerPipeline {
+        let slot = self.active_slot();
+        self.pipeline_for_slot_mut(slot)
+    }
+
     fn pipeline_for_slot(&self, slot: Slot) -> &PlayerPipeline {
         match slot {
             Slot::Primary => &self.primary,
@@ -2728,6 +2738,7 @@ fn run_gstreamer_thread(
 pub(super) fn handle_about_to_finish(
     pipeline: &gst::Element,
     shared: &Arc<Mutex<SharedBackendState>>,
+    loudness_tags: &SharedLoudnessTags,
     trust_invalid_certificate: &AtomicBool,
     slot: Slot,
     id: PipelineId,
@@ -2741,6 +2752,7 @@ pub(super) fn handle_about_to_finish(
                 uri = %next.stream.redacted_uri(),
                 "preloading gapless next stream"
             );
+            apply_shared_loudness(loudness_tags, &next.stream.loudness);
             trust_invalid_certificate
                 .store(next.stream.trust_invalid_certificate(), Ordering::SeqCst);
             pipeline.set_property("uri", next.stream.uri());
@@ -2839,6 +2851,10 @@ fn streams_are_adjacent_windows(current: &ResolvedStream, next: &ResolvedStream)
         .end_millis()
         .is_some_and(|boundary| current.uri() == next.uri() && next.start_millis() == boundary)
 }
+
+fn adjacent_window_can_reuse_pipeline(settings: &BackendAudioSettings) -> bool {
+    settings.loudness_normalization == LoudnessNormalizationMode::Off
+}
 pub(super) fn push_event(events: &Arc<Mutex<EventMailbox>>, event: BackendEvent) {
     lock_recover(events).push(event);
 }
@@ -2920,7 +2936,7 @@ mod tests {
                 let mut shared = lock_recover(&engine.shared);
                 shared.current = Some(PreparedRun {
                     run: old_run,
-                    stream: current_stream,
+                    stream: current_stream.into(),
                 });
                 shared.next = Some(next.clone());
                 shared.active = Slot::Primary;
@@ -2958,7 +2974,9 @@ mod tests {
                 let mut shared = lock_recover(&engine.shared);
                 shared.current = Some(PreparedRun {
                     run: old_run,
-                    stream: ResolvedStream::new("file:///music/cue.flac").with_window(0, 30_000),
+                    stream: ResolvedStream::new("file:///music/cue.flac")
+                        .with_window(0, 30_000)
+                        .into(),
                 });
                 shared.next = Some(next.clone());
                 shared.active = Slot::Primary;
@@ -3006,6 +3024,18 @@ mod tests {
         fn drain(&self) -> Vec<BackendEvent> {
             lock_recover(&self.events).drain()
         }
+    }
+
+    #[test]
+    fn normalized_cue_tracks_use_fresh_gain_state() {
+        let mut settings = BackendAudioSettings::default();
+        assert!(adjacent_window_can_reuse_pipeline(&settings));
+
+        settings.loudness_normalization = LoudnessNormalizationMode::Track;
+        assert!(!adjacent_window_can_reuse_pipeline(&settings));
+
+        settings.loudness_normalization = LoudnessNormalizationMode::Album;
+        assert!(!adjacent_window_can_reuse_pipeline(&settings));
     }
 
     #[test]
@@ -3476,7 +3506,7 @@ mod tests {
         let new_run = RunId::new(2);
         let current = PreparedRun {
             run: old_run,
-            stream: ResolvedStream::new(uri.as_str()),
+            stream: ResolvedStream::new(uri.as_str()).into(),
         };
         let next = PreparedNext::new(
             new_run,
@@ -3660,7 +3690,7 @@ mod tests {
             let mut shared = lock_recover(&engine.shared);
             shared.current = Some(PreparedRun {
                 run: current_run,
-                stream: ResolvedStream::new("https://music.example/current.flac"),
+                stream: ResolvedStream::new("https://music.example/current.flac").into(),
             });
             shared.next = Some(next.clone());
             shared.set_pipeline_id(Slot::Secondary, Some(incoming_id));
@@ -3714,7 +3744,7 @@ mod tests {
             let mut shared = lock_recover(&engine.shared);
             shared.current = Some(PreparedRun {
                 run: current_run,
-                stream: ResolvedStream::new("https://music.example/current.flac"),
+                stream: ResolvedStream::new("https://music.example/current.flac").into(),
             });
             shared.set_pipeline_id(Slot::Primary, Some(current_pipeline));
             shared.settings.audio_output = Some("rufin-test-missing-output".to_string());
@@ -3764,7 +3794,7 @@ mod tests {
             let mut shared = lock_recover(&engine.shared);
             shared.current = Some(PreparedRun {
                 run: current_run,
-                stream: ResolvedStream::new("https://music.example/current.flac"),
+                stream: ResolvedStream::new("https://music.example/current.flac").into(),
             });
             shared.gapless_pending = Some(next.clone());
             shared.set_pipeline_id(Slot::Primary, Some(current_pipeline));
@@ -3824,7 +3854,7 @@ mod tests {
         shared.active = Slot::Primary;
         shared.current = Some(PreparedRun {
             run: current_run,
-            stream: ResolvedStream::new("file:///music/current.flac"),
+            stream: ResolvedStream::new("file:///music/current.flac").into(),
         });
         shared.next = Some(next.clone());
         shared.visualizer_enabled = true;

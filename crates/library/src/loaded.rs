@@ -20,7 +20,8 @@ use crate::{
     FavoriteItemId, Folder, FolderId, Genre, GenreCredit, GenreId, HomeFacts, LocalAccessFile,
     LocalAccessMapping, LocalFile, LocalFileKind, LocalImport, Mood, MoodId, MusicFolder,
     MusicFolderId, Playlist, PlaylistEntry, PlaylistId, PlaylistSnapshot, RecentPlay,
-    SmartPlaylistId, SmartPlaylistRecord, SourceArtwork, SourceId, Track, TrackActivity, TrackId,
+    SmartPlaylistId, SmartPlaylistRecord, SourceArtwork, SourceId, StoredLoudnessMeasurement,
+    Track, TrackActivity, TrackId,
     activity::apply_track_activity_value,
     items::color_seed,
     local_playback::{LocalMatchKey, index_local_access},
@@ -60,6 +61,7 @@ pub(crate) struct LibraryInput {
     pub(crate) local_imports: Vec<LocalImport>,
     pub(crate) local_favorites: Vec<FavoriteItemId>,
     pub(crate) unresolved_album_releases: Vec<AlbumId>,
+    pub(crate) loudness: Vec<crate::LoudnessMeasurementWrite>,
 }
 
 #[derive(Debug, Default)]
@@ -128,6 +130,7 @@ impl LibraryInput {
             local_imports: Vec::new(),
             local_favorites: Vec::new(),
             unresolved_album_releases: Vec::new(),
+            loudness: Vec::new(),
         }
     }
 }
@@ -449,6 +452,8 @@ pub(crate) struct LoadedState {
     pub(crate) recent_plays: Vec<RecentPlay>,
     pub(crate) local_imports: HashMap<TrackSlot, i64>,
     pub(crate) unresolved_album_releases: HashSet<AlbumId>,
+    pub(crate) track_loudness: HashMap<TrackId, StoredLoudnessMeasurement>,
+    pub(crate) album_loudness: HashMap<AlbumId, StoredLoudnessMeasurement>,
 }
 
 /// One accepted source-scoped library.
@@ -590,6 +595,8 @@ impl Library {
             recent_plays: input.recent_plays,
             local_imports: HashMap::new(),
             unresolved_album_releases: input.unresolved_album_releases.into_iter().collect(),
+            track_loudness: HashMap::new(),
+            album_loudness: HashMap::new(),
         };
         for artist in artists.drain().map(|(_, artist)| artist) {
             state
@@ -660,6 +667,7 @@ impl Library {
         state.artwork_items = index_local_artwork(&state.albums, &state.tracks, &state.artists);
         apply_sparse_favorites(&mut state, local_favorites);
         crate::download_coverage::rebuild_download_coverage(&mut state);
+        hydrate_loudness(&mut state, input.loudness);
         Ok(Arc::new(Self {
             store,
             home_sessions,
@@ -836,6 +844,113 @@ impl Library {
 
     pub fn track(&self, id: &TrackId) -> LibraryQueryResult<Option<Track>> {
         Ok(self.read()?.tracks.get(id).cloned())
+    }
+
+    pub fn loudness_for_track(&self, id: &TrackId) -> LibraryQueryResult<crate::TrackLoudness> {
+        let state = self.read()?;
+        let Some(track) = state.tracks.get(id) else {
+            return Ok(crate::TrackLoudness::default());
+        };
+        let track_loudness = state
+            .track_loudness
+            .get(id)
+            .map(|stored| stored.measurement);
+        let album_loudness = match track.album_id.as_ref() {
+            Some(album_id) => state
+                .album_loudness
+                .get(album_id)
+                .map(|stored| stored.measurement),
+            None => track_loudness,
+        };
+        Ok(crate::TrackLoudness {
+            track: track_loudness,
+            album: album_loudness,
+        })
+    }
+
+    pub fn loudness_analysis_snapshot(
+        &self,
+    ) -> LibraryQueryResult<crate::LoudnessAnalysisSnapshot> {
+        let state = self.read()?;
+        let mut tracks = state.tracks.values().cloned().collect::<Vec<_>>();
+        tracks.sort_by(|left, right| {
+            left.album_id
+                .cmp(&right.album_id)
+                .then_with(|| left.disc_number.cmp(&right.disc_number))
+                .then_with(|| left.track_number.cmp(&right.track_number))
+                .then_with(|| left.id.cmp(&right.id))
+        });
+        let tracks = tracks
+            .into_iter()
+            .map(|track| crate::LoudnessTrackInput {
+                analysis_key: loudness_track_key(&state, &track),
+                current: state
+                    .track_loudness
+                    .get(&track.id)
+                    .map(|stored| stored.measurement),
+                track,
+            })
+            .collect::<Vec<_>>();
+
+        let mut album_ids = state
+            .albums
+            .iter()
+            .filter(|(_, album)| !album.tracks.is_empty())
+            .map(|(id, _)| id.clone())
+            .collect::<Vec<_>>();
+        album_ids.sort();
+        let albums = album_ids
+            .into_iter()
+            .filter_map(|album_id| {
+                let (analysis_key, track_ids) = loudness_album_key(&state, &album_id)?;
+                Some(crate::LoudnessAlbumInput {
+                    current: state
+                        .album_loudness
+                        .get(&album_id)
+                        .map(|stored| stored.measurement),
+                    album_id,
+                    analysis_key,
+                    track_ids: track_ids.into(),
+                })
+            })
+            .collect::<Vec<_>>();
+
+        Ok(crate::LoudnessAnalysisSnapshot {
+            tracks: tracks.into(),
+            albums: albums.into(),
+        })
+    }
+
+    pub fn store_loudness(
+        &self,
+        writes: Vec<crate::LoudnessMeasurementWrite>,
+    ) -> crate::LibraryResult<()> {
+        self.store
+            .replace_loudness(self.source_id.clone(), self.library_id, writes.clone())?;
+        let mut state = self.write()?;
+        for write in writes {
+            let stored = StoredLoudnessMeasurement {
+                analysis_key: write.analysis_key,
+                measurement: write.measurement,
+            };
+            match write.item {
+                crate::LoudnessItemId::Track(track_id) => {
+                    if state.tracks.get(&track_id).is_some_and(|track| {
+                        loudness_track_key(&state, track) == write.analysis_key
+                    }) {
+                        state.track_loudness.insert(track_id, stored);
+                    }
+                }
+                crate::LoudnessItemId::Album(album_id) => {
+                    if loudness_album_key(&state, &album_id)
+                        .is_some_and(|(key, _)| key == write.analysis_key)
+                    {
+                        state.album_loudness.insert(album_id, stored);
+                    }
+                }
+            }
+        }
+        Ok(())
     }
 
     pub fn artist(&self, id: &ArtistId) -> LibraryQueryResult<Option<Arc<Artist>>> {
@@ -1739,6 +1854,7 @@ fn apply_item_replacement(
         &state.tracks,
         &state.activity,
     );
+    refresh_loudness_validity(state, &changed_track_ids, &affected_albums);
     for album_id in touched_album_ids {
         state.unresolved_album_releases.remove(&album_id);
     }
@@ -3347,6 +3463,145 @@ fn add_playlist_membership(
             playlists.push(playlist_slot);
         }
     }
+}
+
+fn hydrate_loudness(state: &mut LoadedState, writes: Vec<crate::LoudnessMeasurementWrite>) {
+    for write in writes {
+        let stored = StoredLoudnessMeasurement {
+            analysis_key: write.analysis_key,
+            measurement: write.measurement,
+        };
+        match write.item {
+            crate::LoudnessItemId::Track(track_id) => {
+                if state
+                    .tracks
+                    .get(&track_id)
+                    .is_some_and(|track| loudness_track_key(state, track) == write.analysis_key)
+                {
+                    state.track_loudness.insert(track_id, stored);
+                }
+            }
+            crate::LoudnessItemId::Album(album_id) => {
+                if loudness_album_key(state, &album_id)
+                    .is_some_and(|(key, _)| key == write.analysis_key)
+                {
+                    state.album_loudness.insert(album_id, stored);
+                }
+            }
+        }
+    }
+}
+
+fn refresh_loudness_validity(
+    state: &mut LoadedState,
+    track_ids: &HashSet<TrackId>,
+    album_ids: &HashSet<AlbumId>,
+) {
+    for track_id in track_ids {
+        let current_key = state
+            .tracks
+            .get(track_id)
+            .map(|track| loudness_track_key(state, track));
+        if state
+            .track_loudness
+            .get(track_id)
+            .is_some_and(|stored| Some(stored.analysis_key) != current_key)
+        {
+            state.track_loudness.remove(track_id);
+        }
+    }
+    for album_id in album_ids {
+        let current_key = loudness_album_key(state, album_id).map(|(key, _)| key);
+        if state
+            .album_loudness
+            .get(album_id)
+            .is_some_and(|stored| Some(stored.analysis_key) != current_key)
+        {
+            state.album_loudness.remove(album_id);
+        }
+    }
+}
+
+fn loudness_track_key(state: &LoadedState, track: &Track) -> [u8; 32] {
+    let mut digest = blake3::Hasher::new();
+    hash_loudness_bytes(&mut digest, b"rufin-loudness-track");
+    hash_loudness_bytes(&mut digest, &crate::LOUDNESS_ANALYSIS_VERSION.to_le_bytes());
+    hash_loudness_bytes(&mut digest, track.id.as_str().as_bytes());
+    hash_loudness_bytes(&mut digest, &track.duration_seconds.to_le_bytes());
+    hash_loudness_optional(&mut digest, track.source_format.as_deref());
+    hash_loudness_optional(&mut digest, track.source_path.as_deref());
+    match &track.cue {
+        Some(cue) => {
+            digest.update(&[1]);
+            hash_loudness_bytes(&mut digest, cue.cue_path.as_bytes());
+            hash_loudness_bytes(&mut digest, &cue.start_millis.to_le_bytes());
+            hash_loudness_bytes(&mut digest, &cue.end_millis.to_le_bytes());
+        }
+        None => {
+            digest.update(&[0]);
+        }
+    }
+    if let Some(file) = track
+        .source_path
+        .as_ref()
+        .and_then(|path| state.local_files.get(path))
+    {
+        digest.update(&[1]);
+        hash_loudness_bytes(
+            &mut digest,
+            &file.size_bytes.unwrap_or_default().to_le_bytes(),
+        );
+        hash_loudness_bytes(&mut digest, &file.mtime_ns.to_le_bytes());
+        hash_loudness_bytes(
+            &mut digest,
+            &file.device_id.unwrap_or_default().to_le_bytes(),
+        );
+        hash_loudness_bytes(&mut digest, &file.inode.unwrap_or_default().to_le_bytes());
+    } else {
+        digest.update(&[0]);
+    }
+    *digest.finalize().as_bytes()
+}
+
+fn loudness_album_key(state: &LoadedState, album_id: &AlbumId) -> Option<([u8; 32], Vec<TrackId>)> {
+    let album = state.albums.get(album_id)?;
+    let mut tracks = album
+        .tracks
+        .iter()
+        .filter_map(|slot| state.tracks.get_slot(*slot))
+        .collect::<Vec<_>>();
+    if tracks.is_empty() {
+        return None;
+    }
+    tracks.sort_by(|left, right| compare_album_tracks(left, right));
+    let mut digest = blake3::Hasher::new();
+    hash_loudness_bytes(&mut digest, b"rufin-loudness-album");
+    hash_loudness_bytes(&mut digest, &crate::LOUDNESS_ANALYSIS_VERSION.to_le_bytes());
+    hash_loudness_bytes(&mut digest, album_id.as_str().as_bytes());
+    let mut track_ids = Vec::with_capacity(tracks.len());
+    for track in tracks {
+        hash_loudness_bytes(&mut digest, track.id.as_str().as_bytes());
+        hash_loudness_bytes(&mut digest, &loudness_track_key(state, track));
+        track_ids.push(track.id.clone());
+    }
+    Some((*digest.finalize().as_bytes(), track_ids))
+}
+
+fn hash_loudness_optional(digest: &mut blake3::Hasher, value: Option<&str>) {
+    match value {
+        Some(value) => {
+            digest.update(&[1]);
+            hash_loudness_bytes(digest, value.as_bytes());
+        }
+        None => {
+            digest.update(&[0]);
+        }
+    }
+}
+
+fn hash_loudness_bytes(digest: &mut blake3::Hasher, value: &[u8]) {
+    digest.update(&(value.len() as u64).to_le_bytes());
+    digest.update(value);
 }
 
 fn remove_playlist_membership(

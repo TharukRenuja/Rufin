@@ -1,4 +1,4 @@
-use super::audio::AudioGraph;
+use super::audio::{AudioGraph, SharedLoudnessTags};
 use super::engine::{PipelineId, PreparedRun, SharedBackendState, Slot, handle_about_to_finish};
 use super::waveform::VisualizerTap;
 use super::*;
@@ -69,7 +69,9 @@ struct PipelineSession {
     trust_invalid_certificate: Arc<AtomicBool>,
     about_to_finish_id: Option<glib::SignalHandlerId>,
     audio_graph: Option<AudioGraph>,
+    loudness_tags: SharedLoudnessTags,
     visualizer_probe: Option<gst::PadProbeId>,
+    current_stream: PreparedStream,
 }
 impl PlayerPipeline {
     pub(super) fn new(name: &str, shared: Arc<Mutex<SharedBackendState>>) -> Self {
@@ -202,7 +204,7 @@ impl PlayerPipeline {
 
     pub(super) fn rearm_stream_window(
         &mut self,
-        stream: &ResolvedStream,
+        stream: &PreparedStream,
     ) -> Result<gst::Seqnum, String> {
         let Some(session) = self.session.as_mut() else {
             return Err(format!("GStreamer session {} is not active", self.name));
@@ -228,8 +230,8 @@ impl PlayerPipeline {
             .and_then(PipelineSession::audio_output_factory)
     }
 
-    pub(super) fn set_stream(&self, stream: &ResolvedStream) -> Result<(), String> {
-        let Some(session) = self.session.as_ref() else {
+    pub(super) fn set_stream(&mut self, stream: &PreparedStream) -> Result<(), String> {
+        let Some(session) = self.session.as_mut() else {
             return Err("GStreamer session is not active".to_string());
         };
         session.set_stream(stream);
@@ -256,7 +258,7 @@ impl PipelineSession {
         id: PipelineId,
         slot: Slot,
         shared: Arc<Mutex<SharedBackendState>>,
-        stream: &ResolvedStream,
+        stream: &PreparedStream,
     ) -> Result<Self, String> {
         let pipeline = make_playbin(name)?;
         let bus = pipeline
@@ -277,11 +279,14 @@ impl PipelineSession {
 
         let pipeline_for_signal = pipeline.clone();
         let shared_for_signal = Arc::clone(&shared);
+        let loudness_tags = Arc::new(Mutex::new(None));
+        let loudness_tags_for_signal = Arc::clone(&loudness_tags);
         let certificate_policy_for_signal = Arc::clone(&trust_invalid_certificate);
         let about_to_finish_id = pipeline.connect("about-to-finish", false, move |_| {
             handle_about_to_finish(
                 &pipeline_for_signal,
                 &shared_for_signal,
+                &loudness_tags_for_signal,
                 &certificate_policy_for_signal,
                 slot,
                 id,
@@ -297,7 +302,9 @@ impl PipelineSession {
             trust_invalid_certificate,
             about_to_finish_id: Some(about_to_finish_id),
             audio_graph: None,
+            loudness_tags,
             visualizer_probe: None,
+            current_stream: stream.clone(),
         })
     }
 
@@ -312,12 +319,21 @@ impl PipelineSession {
         }
         self.clear_visualizer_tap();
         let graph = AudioGraph::new(settings)?;
+        graph.apply_loudness(&self.current_stream.loudness);
+        *self
+            .loudness_tags
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = graph.loudness_tags();
         self.pipeline.set_property("audio-sink", graph.root());
         self.audio_graph = Some(graph);
         Ok(())
     }
 
-    fn set_stream(&self, stream: &ResolvedStream) {
+    fn set_stream(&mut self, stream: &PreparedStream) {
+        if let Some(graph) = self.audio_graph.as_ref() {
+            graph.apply_loudness(&stream.loudness);
+        }
+        self.current_stream = stream.clone();
         self.trust_invalid_certificate
             .store(stream.trust_invalid_certificate(), Ordering::SeqCst);
         self.pipeline.set_property("uri", stream.uri());
@@ -364,6 +380,10 @@ impl PipelineSession {
             self.pipeline.disconnect(handler_id);
         }
         self.clear_visualizer_tap();
+        self.loudness_tags
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .take();
         let _ = self.pipeline.set_state(gst::State::Null);
     }
 
@@ -389,7 +409,11 @@ impl PipelineSession {
         result.map_err(|error| error.to_string())
     }
 
-    fn rearm_stream_window(&mut self, stream: &ResolvedStream) -> Result<gst::Seqnum, String> {
+    fn rearm_stream_window(&mut self, stream: &PreparedStream) -> Result<gst::Seqnum, String> {
+        if let Some(graph) = self.audio_graph.as_ref() {
+            graph.apply_loudness(&stream.loudness);
+        }
+        self.current_stream = stream.clone();
         let clock = SourceClock::from_stream(stream);
         let start_millis = clock.physical_seek(0);
         let end_millis = clock

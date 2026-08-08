@@ -2,6 +2,7 @@ use library::StreamQuality;
 use serde::{Deserialize, Serialize};
 
 pub const EQUALIZER_BAND_COUNT: usize = 10;
+pub const LOUDNESS_NORMALIZATION_TARGET_LUFS: f64 = -18.0;
 pub const MIN_CROSSFADE_SECONDS: u8 = 1;
 pub const MAX_CROSSFADE_SECONDS: u8 = 30;
 pub const DEFAULT_AUTO_DJ_REFILL_THRESHOLD: u8 = 1;
@@ -17,10 +18,10 @@ pub enum PlaybackTransitionMode {
 }
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
-pub enum ReplayGainMode {
+pub enum LoudnessNormalizationMode {
+    #[default]
     Off,
     Track,
-    #[default]
     Album,
 }
 
@@ -84,7 +85,7 @@ pub struct PlaybackSettings {
     pub crossfade_seconds: u8,
     pub skip_same_album_crossfade: bool,
     pub audio_fade_on_status_change: bool,
-    pub replay_gain: ReplayGainMode,
+    pub loudness_normalization: LoudnessNormalizationMode,
     pub stream_quality: StreamQuality,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub audio_output: Option<String>,
@@ -105,7 +106,9 @@ struct SavedPlaybackSettings {
     #[serde(default = "default_true")]
     audio_fade_on_status_change: bool,
     #[serde(default)]
-    replay_gain: ReplayGainMode,
+    loudness_normalization: Option<LoudnessNormalizationMode>,
+    #[serde(default, rename = "replay_gain")]
+    _legacy_replay_gain: Option<LoudnessNormalizationMode>,
     #[serde(default)]
     stream_quality: StreamQuality,
     #[serde(default)]
@@ -139,7 +142,7 @@ impl<'de> Deserialize<'de> for PlaybackSettings {
             crossfade_seconds: saved.crossfade_seconds,
             skip_same_album_crossfade: saved.skip_same_album_crossfade,
             audio_fade_on_status_change: saved.audio_fade_on_status_change,
-            replay_gain: saved.replay_gain,
+            loudness_normalization: saved.loudness_normalization.unwrap_or_default(),
             stream_quality: saved.stream_quality,
             audio_output: saved.audio_output,
             equalizer: saved.equalizer,
@@ -157,7 +160,7 @@ impl Default for PlaybackSettings {
             crossfade_seconds: default_crossfade_seconds(),
             skip_same_album_crossfade: false,
             audio_fade_on_status_change: true,
-            replay_gain: ReplayGainMode::Album,
+            loudness_normalization: LoudnessNormalizationMode::Off,
             stream_quality: StreamQuality::Original,
             audio_output: None,
             equalizer: EqualizerSettings::default(),
@@ -269,16 +272,47 @@ mod tests {
     }
 
     #[test]
-    fn replay_gain_defaults_to_album() {
-        assert_eq!(ReplayGainMode::default(), ReplayGainMode::Album);
+    fn loudness_normalization_is_opt_in() {
         assert_eq!(
-            PlaybackSettings::default().replay_gain,
-            ReplayGainMode::Album
+            LoudnessNormalizationMode::default(),
+            LoudnessNormalizationMode::Off
+        );
+        assert_eq!(
+            PlaybackSettings::default().loudness_normalization,
+            LoudnessNormalizationMode::Off
         );
 
         let restored = serde_json::from_str::<PlaybackSettings>("{}")
-            .expect("restore playback settings without ReplayGain");
-        assert_eq!(restored.replay_gain, ReplayGainMode::Album);
+            .expect("restore playback settings without loudness normalization");
+        assert_eq!(
+            restored.loudness_normalization,
+            LoudnessNormalizationMode::Off
+        );
+    }
+
+    #[test]
+    fn legacy_replay_gain_does_not_opt_in_to_analysis() {
+        let restored = serde_json::from_str::<PlaybackSettings>(r#"{"replay_gain":"Track"}"#)
+            .expect("restore legacy ReplayGain setting");
+        assert_eq!(
+            restored.loudness_normalization,
+            LoudnessNormalizationMode::Off
+        );
+
+        let saved = serde_json::to_value(restored).expect("serialize loudness normalization");
+        assert_eq!(saved["loudness_normalization"], "Off");
+        assert!(saved.get("replay_gain").is_none());
+    }
+
+    #[test]
+    fn explicit_loudness_normalization_setting_is_preserved() {
+        let restored =
+            serde_json::from_str::<PlaybackSettings>(r#"{"loudness_normalization":"Album"}"#)
+                .expect("restore loudness normalization setting");
+        assert_eq!(
+            restored.loudness_normalization,
+            LoudnessNormalizationMode::Album
+        );
     }
 
     #[test]

@@ -1,14 +1,14 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
-use library::{ResolvedStream, SourceId, StreamRequest, Track, TrackId};
+use library::{SourceId, StreamRequest, Track, TrackId};
 
 use crate::{
     BackendCommand, BackendEvent, BackendState, Batch, BatchItem, ListeningFact, ListeningOutcome,
     ListeningTrack, NextTransition, OccurrenceId, Placement, PlaybackSettings,
-    PlaybackTransitionMode, PreparedNext, Provenance, RepeatMode, RunEndReason, RunId, Sequence,
-    SequenceEntry, SequenceError, external_scrobble_threshold_millis, manual_end_is_skip,
-    qualified_play_threshold_millis,
+    PlaybackTransitionMode, PreparedNext, PreparedStream, Provenance, RepeatMode, RunEndReason,
+    RunId, Sequence, SequenceEntry, SequenceError, external_scrobble_threshold_millis,
+    manual_end_is_skip, qualified_play_threshold_millis,
 };
 
 const AUTO_DJ_HISTORY_LIMIT: usize = 10;
@@ -215,7 +215,7 @@ struct RunContext {
     external_scrobble_emitted: bool,
     last_progress_bucket: Option<u64>,
     desired_playing: bool,
-    resolved_stream: Option<ResolvedStream>,
+    resolved_stream: Option<PreparedStream>,
 }
 
 impl RunContext {
@@ -255,7 +255,7 @@ impl RunContext {
 #[derive(Clone, Debug)]
 enum NextResolution {
     Resolving,
-    Ready(ResolvedStream),
+    Ready(PreparedStream),
 }
 
 #[derive(Clone, Debug)]
@@ -535,7 +535,12 @@ impl PlaybackSession {
         }
     }
 
-    pub fn stream_resolved(&mut self, run: RunId, stream: ResolvedStream) -> SessionUpdate {
+    pub fn stream_resolved(
+        &mut self,
+        run: RunId,
+        stream: impl Into<PreparedStream>,
+    ) -> SessionUpdate {
+        let stream = stream.into();
         if self.current_run.as_ref().is_some_and(|current| {
             current.id == run && current.status == TransportStatus::Resolving
         }) {
@@ -1277,7 +1282,8 @@ impl PlaybackSession {
         let output_changed = settings.volume != self.settings.volume
             || settings.volume_scale != self.settings.volume_scale
             || settings.muted != self.settings.muted;
-        let audio_configuration_changed = settings.replay_gain != self.settings.replay_gain
+        let audio_configuration_changed = settings.loudness_normalization
+            != self.settings.loudness_normalization
             || settings.audio_output != self.settings.audio_output
             || settings.equalizer != self.settings.equalizer
             || settings.audio_fade_on_status_change != self.settings.audio_fade_on_status_change;
@@ -1331,7 +1337,7 @@ impl PlaybackSession {
         update
     }
 
-    fn current_stream_resolved(&mut self, run: RunId, stream: ResolvedStream) -> SessionUpdate {
+    fn current_stream_resolved(&mut self, run: RunId, stream: PreparedStream) -> SessionUpdate {
         let Some(current) = self
             .current_run
             .as_mut()
@@ -2037,7 +2043,7 @@ fn decided_transition(
 
 #[cfg(test)]
 mod tests {
-    use library::{AlbumId, Track};
+    use library::{AlbumId, LoudnessMeasurement, ResolvedStream, Track, TrackLoudness};
 
     use super::*;
     use crate::{BatchItem, Provenance, VolumeScale};
@@ -3055,6 +3061,30 @@ mod tests {
         assert!(resumed.effects.iter().any(|effect| matches!(
             effect,
             SessionEffect::Backend(BackendCommand::Start { run: started, .. }) if *started == run
+        )));
+    }
+
+    #[test]
+    fn resolved_stream_carries_loudness_facts_to_the_backend() {
+        let mut session = session(&[1]);
+        session
+            .handle_command(SessionCommand::Play, &sample(0))
+            .expect("start resolving");
+        let run = session.current_run().expect("run");
+        let loudness = TrackLoudness {
+            track: LoudnessMeasurement::new(Some(-21.0), 0.7).ok(),
+            album: LoudnessMeasurement::new(Some(-19.0), 0.8).ok(),
+        };
+
+        let resolved = session.stream_resolved(
+            run,
+            PreparedStream::new(ResolvedStream::new("file:///track.flac"), loudness),
+        );
+
+        assert!(resolved.effects.iter().any(|effect| matches!(
+            effect,
+            SessionEffect::Backend(BackendCommand::Start { current, .. })
+                if current.loudness == loudness
         )));
     }
 

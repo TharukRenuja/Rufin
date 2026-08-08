@@ -6,13 +6,14 @@ use library::{
     CueSegment, FavoriteAcceptance, FavoriteItemId, FolderId, Genre, GenreCredit, GenreId,
     HomeFacts, HomeItemId, HomeSectionKind, ImageRef, Libraries, LoadedHomeItem, LocalArtworkRef,
     LocalComponentReplacement, LocalComponentSeed, LocalFile, LocalFileKind, LocalFileSeed,
-    LocalReadState, MoodCredit, MoodId, MusicFolder, MusicFolderId, NewScrobble, PendingScrobbleId,
-    PlayedFilter, Playlist, PlaylistAcceptance, PlaylistEdit, PlaylistEntry, PlaylistId,
-    PlaylistSnapshot, RadioComposition, RadioSeed, RandomComposition, RandomCriteria,
-    ScrobbleService, SearchRequest, SmartPlaylistDefinition, SmartPlaylistId, SmartPlaylistRule,
-    SmartPlaylistRuleField, SmartPlaylistRuleOperator, SmartPlaylistRuleValue,
-    SmartPlaylistSortField, SourceArtwork, SourceHomeSection, SourceHomeSectionKind, SourceId,
-    SourceLibraryUpdate, Track, TrackData, TrackRelations, TrackSort,
+    LocalReadState, LoudnessItemId, LoudnessMeasurement, LoudnessMeasurementWrite, MoodCredit,
+    MoodId, MusicFolder, MusicFolderId, NewScrobble, PendingScrobbleId, PlayedFilter, Playlist,
+    PlaylistAcceptance, PlaylistEdit, PlaylistEntry, PlaylistId, PlaylistSnapshot,
+    RadioComposition, RadioSeed, RandomComposition, RandomCriteria, ScrobbleService, SearchRequest,
+    SmartPlaylistDefinition, SmartPlaylistId, SmartPlaylistRule, SmartPlaylistRuleField,
+    SmartPlaylistRuleOperator, SmartPlaylistRuleValue, SmartPlaylistSortField, SourceArtwork,
+    SourceHomeSection, SourceHomeSectionKind, SourceId, SourceLibraryUpdate, Track, TrackData,
+    TrackRelations, TrackSort,
 };
 
 fn created_smart_playlist_id(change: Option<AcceptedLibraryChange>) -> SmartPlaylistId {
@@ -134,6 +135,79 @@ fn accepted_library_search_matches_substrings_across_item_fields() {
             .expect("search removed Track")
             .tracks
             .is_empty()
+    );
+}
+
+#[test]
+fn loudness_measurements_survive_reopen_and_invalidate_with_audio_facts() {
+    let directory = tempfile::tempdir().expect("temporary Store directory");
+    let path = directory.path().join("library.db");
+    let libraries = Libraries::open(&path).expect("open Library");
+    let source_id = SourceId::new("local:server:loudness");
+    let accepted = accept_track(&libraries, source_id.clone(), digest(111), track(), None, 1);
+    let snapshot = accepted
+        .library
+        .loudness_analysis_snapshot()
+        .expect("prepare loudness analysis");
+    let track_input = snapshot.tracks.first().expect("analysis Track");
+    let album_input = snapshot.albums.first().expect("analysis Album");
+    let track_measurement = LoudnessMeasurement::new(Some(-20.0), 0.8).expect("Track loudness");
+    let album_measurement = LoudnessMeasurement::new(Some(-19.0), 0.9).expect("Album loudness");
+    accepted
+        .library
+        .store_loudness(vec![
+            LoudnessMeasurementWrite {
+                item: LoudnessItemId::Track(track_input.track.id.clone()),
+                analysis_key: track_input.analysis_key,
+                measurement: track_measurement,
+            },
+            LoudnessMeasurementWrite {
+                item: LoudnessItemId::Album(album_input.album_id.clone()),
+                analysis_key: album_input.analysis_key,
+                measurement: album_measurement,
+            },
+        ])
+        .expect("store loudness measurements");
+    assert_eq!(
+        accepted
+            .library
+            .loudness_for_track(&track_input.track.id)
+            .expect("read loudness"),
+        library::TrackLoudness {
+            track: Some(track_measurement),
+            album: Some(album_measurement),
+        }
+    );
+
+    drop(accepted);
+    drop(libraries);
+    let libraries = Libraries::open(&path).expect("reopen Library");
+    let reopened = libraries
+        .load_source(&source_id)
+        .expect("load source")
+        .expect("accepted source");
+    let track_id = library::TrackId::new("local:track:one");
+    assert_eq!(
+        reopened
+            .loudness_for_track(&track_id)
+            .expect("read reopened loudness")
+            .album,
+        Some(album_measurement)
+    );
+
+    let mut changed = track();
+    changed.duration_seconds += 1;
+    reopened
+        .accept_source_update(SourceLibraryUpdate {
+            tracks: vec![changed],
+            ..SourceLibraryUpdate::default()
+        })
+        .expect("accept changed audio facts");
+    assert_eq!(
+        reopened
+            .loudness_for_track(&track_id)
+            .expect("read invalidated loudness"),
+        library::TrackLoudness::default()
     );
 }
 

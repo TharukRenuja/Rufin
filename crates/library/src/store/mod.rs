@@ -19,13 +19,14 @@ use crate::{
     AlbumRelations, AlbumReleaseCandidate, AlbumReleaseResult, Artist, ArtistId, CandidateBatch,
     CandidateChange, CandidateFinish, CandidateHeader, CueSegment, FavoriteItemId, Genre, GenreId,
     HomeFacts, ImageRef, LibraryInput, LocalAccessFile, LocalArtworkRef, LocalFile, LocalFileKind,
-    LocalImport, LocalReadState, LyricsCacheAuthority, LyricsCacheInput, LyricsCacheKey,
-    LyricsCacheTrim, LyricsCacheWrite, MusicFolder, MusicFolderId, NewScrobble, PendingFavorite,
-    PendingScrobble, PendingScrobbleId, PlaybackCheckpoint, PlaybackLoad, PlaybackOccurrenceId,
-    PlaybackProgressUpdate, PlaybackQueueSnapshot, PlaybackState, PlaybackStateUpdate,
-    PlaybackWriteOutcome, Playlist, PlaylistEntry, PlaylistId, PlaylistSnapshot, ProviderFreshness,
-    RecentPlay, ScrobbleService, SmartPlaylistBuiltin, SmartPlaylistId, SmartPlaylistRecord,
-    SourceId, Track, TrackActivity, TrackData, TrackId, TrackRelations,
+    LocalImport, LocalReadState, LoudnessItemId, LoudnessMeasurement, LoudnessMeasurementWrite,
+    LyricsCacheAuthority, LyricsCacheInput, LyricsCacheKey, LyricsCacheTrim, LyricsCacheWrite,
+    MusicFolder, MusicFolderId, NewScrobble, PendingFavorite, PendingScrobble, PendingScrobbleId,
+    PlaybackCheckpoint, PlaybackLoad, PlaybackOccurrenceId, PlaybackProgressUpdate,
+    PlaybackQueueSnapshot, PlaybackState, PlaybackStateUpdate, PlaybackWriteOutcome, Playlist,
+    PlaylistEntry, PlaylistId, PlaylistSnapshot, ProviderFreshness, RecentPlay, ScrobbleService,
+    SmartPlaylistBuiltin, SmartPlaylistId, SmartPlaylistRecord, SourceId, Track, TrackActivity,
+    TrackData, TrackId, TrackRelations,
     favorites::FavoriteValue,
     items::color_seed,
     loaded::{ItemReplacement, LocalFavoriteTransfer, LocalFavoriteUpdate},
@@ -262,6 +263,15 @@ impl StoreLane {
 
     pub(crate) fn remove_source_data(&self, source_id: SourceId) -> StoreResult<()> {
         self.execute(move |worker| worker.remove_source_data(&source_id))
+    }
+
+    pub(crate) fn replace_loudness(
+        &self,
+        source_id: SourceId,
+        library_id: i64,
+        writes: Vec<LoudnessMeasurementWrite>,
+    ) -> StoreResult<()> {
+        self.execute(move |worker| worker.replace_loudness(&source_id, library_id, &writes))
     }
 
     pub(crate) fn replace_source_update(
@@ -1003,6 +1013,7 @@ impl Worker {
         for table in [
             "local_favorites",
             "pending_favorites",
+            "loudness_measurements",
             "smart_playlists",
             "local_imports",
             "listening_aggregates",
@@ -1020,6 +1031,43 @@ impl Worker {
         let removed = library_ids.into_iter().collect::<HashSet<_>>();
         self.cleanup.retain(|target| !removed.contains(target));
         self.cleanup_set.retain(|target| !removed.contains(target));
+        Ok(())
+    }
+
+    fn replace_loudness(
+        &mut self,
+        source_id: &SourceId,
+        library_id: i64,
+        writes: &[LoudnessMeasurementWrite],
+    ) -> StoreResult<()> {
+        if self.current_library_id(source_id)? != Some(library_id) {
+            return Err(StoreError::WrongCurrentLibrary {
+                source_id: source_id.clone(),
+                library_id,
+            });
+        }
+        let transaction = self.connection.transaction()?;
+        for write in writes {
+            transaction.execute(
+                "INSERT INTO loudness_measurements(
+                     source_id, scope, item_id, analysis_key,
+                     integrated_lufs, true_peak
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+                 ON CONFLICT(source_id, scope, item_id) DO UPDATE SET
+                     analysis_key = excluded.analysis_key,
+                     integrated_lufs = excluded.integrated_lufs,
+                     true_peak = excluded.true_peak",
+                params![
+                    source_id.as_str(),
+                    write.item.scope(),
+                    write.item.as_str(),
+                    write.analysis_key.as_slice(),
+                    write.measurement.integrated_lufs,
+                    write.measurement.true_peak_ratio,
+                ],
+            )?;
+        }
+        transaction.commit()?;
         Ok(())
     }
 
@@ -3794,11 +3842,67 @@ fn complete_loaded_input(
         apply_album_release_info(connection, source_id, &mut input.albums)?;
     input.activity = load_track_activity(connection, source_id)?;
     input.recent_plays = load_recent_plays(connection, source_id)?;
+    input.loudness = load_loudness(connection, source_id)?;
     if matches!(home, HomeFacts::RufinDefined) {
         input.local_imports = load_local_imports(connection, source_id, input.library_id)?;
     }
     input.home = Some(home);
     Ok(input)
+}
+
+fn load_loudness(
+    connection: &Connection,
+    source_id: &SourceId,
+) -> StoreResult<Vec<LoudnessMeasurementWrite>> {
+    let mut statement = connection.prepare(
+        "SELECT scope, item_id, analysis_key, integrated_lufs, true_peak
+         FROM loudness_measurements
+         WHERE source_id = ?1
+         ORDER BY scope, item_id",
+    )?;
+    let rows = statement
+        .query_map([source_id.as_str()], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, Vec<u8>>(2)?,
+                row.get::<_, Option<f64>>(3)?,
+                row.get::<_, f64>(4)?,
+            ))
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    rows.into_iter()
+        .map(
+            |(scope, item_id, analysis_key, integrated_lufs, true_peak_ratio)| {
+                let item = match scope.as_str() {
+                    "track" => LoudnessItemId::Track(TrackId::new(item_id)),
+                    "album" => LoudnessItemId::Album(AlbumId::new(item_id)),
+                    _ => {
+                        return Err(StoreError::InvalidValue {
+                            kind: "loudness scope",
+                            value: scope,
+                        });
+                    }
+                };
+                let analysis_key = <[u8; 32]>::try_from(analysis_key).map_err(|value| {
+                    StoreError::InvalidValue {
+                        kind: "loudness analysis key",
+                        value: format!("{} bytes", value.len()),
+                    }
+                })?;
+                let measurement = LoudnessMeasurement::new(integrated_lufs, true_peak_ratio)
+                    .map_err(|value| StoreError::InvalidValue {
+                        kind: "loudness measurement",
+                        value,
+                    })?;
+                Ok(LoudnessMeasurementWrite {
+                    item,
+                    analysis_key,
+                    measurement,
+                })
+            },
+        )
+        .collect()
 }
 
 fn apply_pending_favorites(

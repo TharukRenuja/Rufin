@@ -21,9 +21,9 @@ use adw::prelude::*;
 use library::StreamQuality;
 use localization::{tr, tr_with};
 use playback::{
-    EQUALIZER_BAND_COUNT, MAX_AUTO_DJ_REFILL_THRESHOLD, MAX_CROSSFADE_SECONDS,
-    MIN_AUTO_DJ_REFILL_THRESHOLD, MIN_CROSSFADE_SECONDS, PlaybackTransitionMode, ReplayGainMode,
-    VolumeScale,
+    EQUALIZER_BAND_COUNT, LoudnessNormalizationMode, MAX_AUTO_DJ_REFILL_THRESHOLD,
+    MAX_CROSSFADE_SECONDS, MIN_AUTO_DJ_REFILL_THRESHOLD, MIN_CROSSFADE_SECONDS,
+    PlaybackTransitionMode, VolumeScale,
 };
 
 pub(crate) fn scrobbling_page(shell: &Rc<Shell>) -> adw::PreferencesPage {
@@ -516,21 +516,21 @@ pub(crate) fn playback_page(shell: &Rc<Shell>) -> adw::PreferencesPage {
     page.add(&transition_group);
 
     let audio_group = adw::PreferencesGroup::builder().title(tr("Audio")).build();
-    let replay_gain_shell = Rc::clone(shell);
-    let replay_gain_row = selection_row(
-        &tr("ReplayGain"),
+    let loudness_normalization_shell = Rc::clone(shell);
+    let loudness_normalization_row = selection_row(
+        &tr("Loudness normalization"),
         &[tr("Off"), tr("Track"), tr("Album")],
-        replay_gain_index(settings.replay_gain),
+        loudness_normalization_index(settings.loudness_normalization),
         move |selected| {
-            replay_gain_shell.update_playback_settings(|settings| {
-                settings.replay_gain = replay_gain_from_index(selected);
+            loudness_normalization_shell.update_playback_settings(|settings| {
+                settings.loudness_normalization = loudness_normalization_from_index(selected);
             });
         },
     );
-    replay_gain_row.set_subtitle(&tr(
-        "Balance loudness levels. Track adjusts each song; Album applies one adjustment album-wide",
+    loudness_normalization_row.set_subtitle(&tr(
+        "Track evens out every song, while Album preserves the intended differences within each album",
     ));
-    audio_group.add(&replay_gain_row);
+    audio_group.add(&loudness_normalization_row);
 
     let volume_scale_shell = Rc::clone(shell);
     let volume_scale_row = selection_row(
@@ -872,18 +872,18 @@ pub(crate) fn transition_from_index(index: u32) -> PlaybackTransitionMode {
         _ => PlaybackTransitionMode::Gapless,
     }
 }
-pub(crate) fn replay_gain_index(mode: ReplayGainMode) -> u32 {
+pub(crate) fn loudness_normalization_index(mode: LoudnessNormalizationMode) -> u32 {
     match mode {
-        ReplayGainMode::Off => 0,
-        ReplayGainMode::Track => 1,
-        ReplayGainMode::Album => 2,
+        LoudnessNormalizationMode::Off => 0,
+        LoudnessNormalizationMode::Track => 1,
+        LoudnessNormalizationMode::Album => 2,
     }
 }
-pub(crate) fn replay_gain_from_index(index: u32) -> ReplayGainMode {
+pub(crate) fn loudness_normalization_from_index(index: u32) -> LoudnessNormalizationMode {
     match index {
-        1 => ReplayGainMode::Track,
-        2 => ReplayGainMode::Album,
-        _ => ReplayGainMode::Off,
+        1 => LoudnessNormalizationMode::Track,
+        2 => LoudnessNormalizationMode::Album,
+        _ => LoudnessNormalizationMode::Off,
     }
 }
 pub(crate) fn volume_scale_index(scale: VolumeScale) -> u32 {

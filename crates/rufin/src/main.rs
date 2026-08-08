@@ -3,6 +3,7 @@
 mod album_release;
 mod app;
 mod diagnostics;
+mod loudness;
 mod paths;
 mod playback;
 mod radio;
