@@ -50,7 +50,8 @@ use super::layout::{
 use super::localization::LocalizationState;
 use super::navigation::{
     NavigationState, NavigationWidgets, NormalPrimaryMenuWidgets, PrimaryMenuWidgets,
-    build_compact_navigation, build_normal_navigation, normal_sidebar_header,
+    build_compact_navigation, build_normal_navigation, install_normal_navigation_activation,
+    normal_sidebar_header,
 };
 use super::route::{RouteStack, RouteViewport};
 use super::startup::StartupState;
@@ -240,6 +241,13 @@ pub fn build(app: &adw::Application, inputs: RuntimeInputs) {
     normal_nav.set_hexpand(true);
     normal_nav.set_vexpand(true);
     normal_nav.set_width_request(1);
+    let normal_nav_routes = adw::Sidebar::new();
+    normal_nav_routes.set_mode(adw::SidebarMode::Sidebar);
+    normal_nav_routes.set_vexpand(false);
+    let normal_nav_pins = gtk::Box::new(gtk::Orientation::Vertical, 4);
+    normal_nav_pins.set_vexpand(true);
+    normal_nav.append(&normal_nav_routes);
+    normal_nav.append(&normal_nav_pins);
     let normal_nav_handle = window_drag_handle_with_child("sidebar-drag-handle", &normal_nav);
     normal_nav_handle.set_vexpand(true);
     normal_nav_handle.set_valign(gtk::Align::Fill);
@@ -420,7 +428,8 @@ pub fn build(app: &adw::Application, inputs: RuntimeInputs) {
         normal_nav_panel,
         compact_nav_slot,
         tiny_nav_button,
-        normal_nav,
+        normal_nav_routes,
+        normal_nav_pins,
         compact_nav,
         normal_main_menu: NormalPrimaryMenuWidgets {
             button: normal_main_menu,
@@ -499,6 +508,7 @@ pub fn build(app: &adw::Application, inputs: RuntimeInputs) {
         .navigation_view
         .normal_nav_panel
         .prepend(&normal_sidebar_header(&shell));
+    install_normal_navigation_activation(&shell);
     build_normal_navigation(&shell);
     build_compact_navigation(&shell);
     shell.install_locale_bindings();

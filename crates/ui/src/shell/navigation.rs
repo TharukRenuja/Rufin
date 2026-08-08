@@ -149,25 +149,27 @@ pub(crate) struct NavigationWidgets {
     pub(super) normal_nav_panel: gtk::Box,
     pub(super) compact_nav_slot: gtk::ScrolledWindow,
     pub(super) tiny_nav_button: gtk::Button,
-    pub(super) normal_nav: gtk::Box,
+    pub(super) normal_nav_routes: adw::Sidebar,
+    pub(super) normal_nav_pins: gtk::Box,
     pub(super) compact_nav: gtk::Box,
     pub(super) normal_main_menu: NormalPrimaryMenuWidgets,
     pub(super) compact_main_menu: PrimaryMenuWidgets,
 }
 
 pub(super) fn build_normal_navigation(shell: &Rc<Shell>) {
+    let section = adw::SidebarSection::new();
     for item in nav_items(shell) {
-        shell.navigation_view.normal_nav.append(&nav_button(
-            shell,
-            item.icon_name,
-            item.label,
-            item.route.clone(),
-            false,
-        ));
+        let sidebar_item = adw::SidebarItem::new(&tr(item.label));
+        sidebar_item.set_icon_name(Some(item.icon_name));
+        section.append(sidebar_item);
     }
+    shell.navigation_view.normal_nav_routes.append(section);
     append_sidebar_pins(shell);
 
-    shell.navigation_view.normal_nav.append(&sidebar_spacer());
+    shell
+        .navigation_view
+        .normal_nav_pins
+        .append(&sidebar_spacer());
 }
 
 pub(super) fn build_compact_navigation(shell: &Rc<Shell>) {
@@ -194,7 +196,8 @@ pub(super) fn build_compact_navigation(shell: &Rc<Shell>) {
 }
 
 pub(super) fn rebuild_navigation(shell: &Rc<Shell>) {
-    clear_box(&shell.navigation_view.normal_nav);
+    shell.navigation_view.normal_nav_routes.remove_all();
+    clear_box(&shell.navigation_view.normal_nav_pins);
     clear_box(&shell.navigation_view.compact_nav);
     build_normal_navigation(shell);
     build_compact_navigation(shell);
@@ -255,8 +258,10 @@ fn sidebar_pin_changed(pin: &SidebarPin, change: &AcceptedLibraryChange) -> bool
 
 pub(super) fn update_navigation_selection(shell: &Shell) {
     let active_route = shell.navigation.routes.borrow().current().clone();
-    update_navigation_selection_in(&shell.navigation_view.normal_nav, &active_route);
-    update_navigation_selection_in(&shell.navigation_view.compact_nav, &active_route);
+    let pin_is_selected =
+        update_pin_selection(&shell.navigation_view.normal_nav_pins, &active_route);
+    update_native_route_selection(shell, &active_route, pin_is_selected);
+    update_button_navigation_selection(&shell.navigation_view.compact_nav, &active_route);
 }
 
 pub(crate) fn update_sidebar_pin_playback(shell: &Shell) {
@@ -275,7 +280,7 @@ pub(crate) fn update_sidebar_pin_playback(shell: &Shell) {
         .map(|context| context.context_id.as_str());
 
     let mut pin_rows = Vec::new();
-    let mut child = shell.navigation_view.normal_nav.first_child();
+    let mut child = shell.navigation_view.normal_nav_pins.first_child();
     while let Some(widget) = child {
         child = widget.next_sibling();
         if !widget.has_css_class(SIDEBAR_PIN_ROW_CLASS) {
@@ -383,39 +388,93 @@ pub(super) fn normal_sidebar_header(shell: &Rc<Shell>) -> adw::HeaderBar {
     header
 }
 
-fn update_navigation_selection_in(container: &gtk::Box, active_route: &Route) {
-    let active_route_class = nav_route_class(active_route);
+fn update_pin_selection(container: &gtk::Box, active_route: &Route) -> bool {
     let active_pin_key = sidebar_pin_route_key(active_route);
-    let pin_is_visible = active_pin_key.as_ref().is_some_and(|active_pin_key| {
-        let mut child = container.first_child();
-        while let Some(widget) = child {
-            child = widget.next_sibling();
-            if widget.has_css_class(SIDEBAR_PIN_ROW_CLASS)
-                && widget.widget_name().as_str() == active_pin_key
-            {
-                return true;
-            }
-        }
-        false
-    });
+    let mut selected = false;
     let mut child = container.first_child();
     while let Some(widget) = child {
         child = widget.next_sibling();
+        if !widget.has_css_class(SIDEBAR_PIN_ROW_CLASS) {
+            continue;
+        }
+        let row_selected = active_pin_key
+            .as_ref()
+            .is_some_and(|key| widget.widget_name().as_str() == key);
+        if row_selected {
+            widget.add_css_class(NAV_SELECTED_CLASS);
+            selected = true;
+        } else {
+            widget.remove_css_class(NAV_SELECTED_CLASS);
+        }
+    }
+    selected
+}
 
+fn update_native_route_selection(shell: &Shell, active_route: &Route, pin_is_selected: bool) {
+    let active_route_class = nav_route_class(active_route);
+    let items = nav_items(shell);
+    let selected_index = if pin_is_selected {
+        None
+    } else {
+        items
+            .iter()
+            .position(|item| {
+                active_route_class
+                    .is_some_and(|active| nav_route_class(&item.route) == Some(active))
+            })
+            .map(|index| index as u32)
+    };
+    for (index, nav_item) in items.iter().enumerate() {
+        if let Some(item) = shell.navigation_view.normal_nav_routes.item(index as u32) {
+            let icon_name = nav_route_class(&nav_item.route)
+                .and_then(|route_class| {
+                    NAV_ROUTE_ICONS.iter().find_map(
+                        |(class, normal_icon_name, selected_icon_name)| {
+                            (*class == route_class).then_some(
+                                if selected_index == Some(index as u32) {
+                                    *selected_icon_name
+                                } else {
+                                    *normal_icon_name
+                                },
+                            )
+                        },
+                    )
+                })
+                .unwrap_or(nav_item.icon_name);
+            item.set_icon_name(Some(icon_name));
+        }
+    }
+    shell
+        .navigation_view
+        .normal_nav_routes
+        .set_selected(selected_index.unwrap_or(gtk::INVALID_LIST_POSITION));
+}
+
+pub(super) fn install_normal_navigation_activation(shell: &Rc<Shell>) {
+    let weak_shell = Rc::downgrade(shell);
+    shell
+        .navigation_view
+        .normal_nav_routes
+        .connect_activated(move |_, index| {
+            let Some(shell) = weak_shell.upgrade() else {
+                return;
+            };
+            if let Some(route) = sidebar_route_at_position(&shell, index as usize + 1) {
+                shell.navigate(route);
+            }
+        });
+}
+
+fn update_button_navigation_selection(container: &gtk::Box, active_route: &Route) {
+    let active_route_class = nav_route_class(active_route);
+    let mut child = container.first_child();
+    while let Some(widget) = child {
+        child = widget.next_sibling();
         if !widget.has_css_class("nav-button") {
             continue;
         }
-
-        let selected = if widget.has_css_class(SIDEBAR_PIN_ROW_CLASS) {
-            active_pin_key
-                .as_ref()
-                .is_some_and(|key| widget.widget_name().as_str() == key)
-        } else {
-            !pin_is_visible
-                && active_route_class
-                    .map(|route_class| widget.has_css_class(route_class))
-                    .unwrap_or(false)
-        };
+        let selected =
+            active_route_class.is_some_and(|route_class| widget.has_css_class(route_class));
         if selected {
             widget.add_css_class(NAV_SELECTED_CLASS);
         } else {
@@ -871,7 +930,7 @@ fn append_sidebar_pins(shell: &Rc<Shell>) {
     let heading = gtk::Label::new(Some(&tr("Pins")));
     heading.add_css_class("sidebar-pins-heading");
     heading.set_xalign(0.0);
-    shell.navigation_view.normal_nav.append(&heading);
+    shell.navigation_view.normal_nav_pins.append(&heading);
 
     let prefer_server_playlist_covers = shell
         .settings
@@ -879,11 +938,10 @@ fn append_sidebar_pins(shell: &Rc<Shell>) {
         .borrow()
         .prefer_server_playlist_covers;
     for pin in pins {
-        shell.navigation_view.normal_nav.append(&sidebar_pin_row(
-            shell,
-            pin,
-            prefer_server_playlist_covers,
-        ));
+        shell
+            .navigation_view
+            .normal_nav_pins
+            .append(&sidebar_pin_row(shell, pin, prefer_server_playlist_covers));
     }
 }
 
@@ -1205,43 +1263,20 @@ fn nav_item(item: SidebarRouteItem) -> NavItem {
     }
 }
 
-fn nav_button(
-    shell: &Rc<Shell>,
-    icon_name: &str,
-    label: &str,
-    route: Route,
-    compact: bool,
-) -> gtk::Button {
+fn rail_button(shell: &Rc<Shell>, icon_name: &str, label: &str, route: Route) -> gtk::Button {
     let button = gtk::Button::new();
     button.add_css_class("nav-button");
     button.add_css_class("flat");
     if let Some(route_class) = nav_route_class(&route) {
         button.add_css_class(route_class);
     }
-    if compact {
-        button.add_css_class("rail-button");
-    }
+    button.add_css_class("rail-button");
     let accessible_label = tr(label);
     button.update_property(&[gtk::accessible::Property::Label(&accessible_label)]);
 
-    let content = gtk::Box::new(
-        if compact {
-            gtk::Orientation::Vertical
-        } else {
-            gtk::Orientation::Horizontal
-        },
-        8,
-    );
-    content.set_halign(if compact {
-        gtk::Align::Center
-    } else {
-        gtk::Align::Start
-    });
-    let icon_size = if compact {
-        COMPACT_NAV_ICON_SIZE
-    } else {
-        NORMAL_NAV_ICON_SIZE
-    };
+    let content = gtk::Box::new(gtk::Orientation::Vertical, 8);
+    content.set_halign(gtk::Align::Center);
+    let icon_size = COMPACT_NAV_ICON_SIZE;
     let icon = gtk::Image::from_icon_name(icon_name);
     icon.add_css_class("nav-icon");
     icon.set_pixel_size(icon_size);
@@ -1249,15 +1284,9 @@ fn nav_button(
     icon.set_halign(gtk::Align::Center);
     icon.set_valign(gtk::Align::Center);
     content.append(&icon);
-    if compact {
-        let text = gtk::Label::new(Some(&compact_sidebar_label_text(label)));
-        configure_rail_label(&text);
-        content.append(&text);
-    } else {
-        let text = gtk::Label::new(Some(&tr(label)));
-        configure_sidebar_entry_label(&text);
-        content.append(&text);
-    }
+    let text = gtk::Label::new(Some(&compact_sidebar_label_text(label)));
+    configure_rail_label(&text);
+    content.append(&text);
     button.set_child(Some(&content));
 
     let shell = Rc::clone(shell);
@@ -1301,10 +1330,6 @@ fn configure_sidebar_entry_label(label: &gtk::Label) {
     label.add_css_class("sidebar-entry-label");
     label.set_xalign(0.0);
     label.set_ellipsize(gtk::pango::EllipsizeMode::End);
-}
-
-fn rail_button(shell: &Rc<Shell>, icon_name: &str, label: &str, route: Route) -> gtk::Button {
-    nav_button(shell, icon_name, label, route, true)
 }
 
 fn nav_route_class(route: &Route) -> Option<&'static str> {
