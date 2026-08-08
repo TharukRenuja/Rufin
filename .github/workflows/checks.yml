@@ -146,11 +146,17 @@ jobs:
                 crates/windows-updater/*)
                   add_jobs workspace windows
                   ;;
+                crates/xtask/src/install.rs)
+                  add_jobs workspace aur_bin aur_git flatpak nix rpm
+                  ;;
                 crates/xtask/src/verify.rs)
                   add_jobs workspace
                   ;;
-                .github/workflows/container-image.yml|justfile|scripts/container)
+                .github/workflows/container-image.yml|scripts/container)
                   add_jobs container
+                  ;;
+                justfile)
+                  add_jobs "${all_build_jobs[@]}"
                   ;;
                 .github/workflows/*.yml|.github/workflows/*.yaml)
                   ;;
@@ -181,7 +187,7 @@ jobs:
                 packaging/aur/rufin-git/PKGBUILD)
                   add_jobs aur_bin aur_git
                   ;;
-                packaging/aur/build|packaging/aur/rufin-git/*)
+                packaging/aur/rufin-git/*)
                   add_jobs aur_git
                   ;;
                 packaging/aur/*)
