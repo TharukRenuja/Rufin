@@ -122,10 +122,6 @@ impl TrackListProjection {
         self.model.source_is_empty()
     }
 
-    fn has_visible_results(&self) -> bool {
-        self.model.visible_count() != 0
-    }
-
     pub(crate) fn source_play_request(
         &self,
         placement: playback::QueuePlacement,
@@ -1082,13 +1078,13 @@ impl Shell {
         membership: TrackRouteMembership,
         reload_on_history_change: bool,
     ) -> MountedRoute {
-        let visible_projection = projection.clone();
+        let visible_model = projection.model.clone();
         let page_shell = self.library_page_shell(LibraryPageShellOptions {
             key,
             empty: projection.source_is_empty(),
             empty_body,
             search: projection.search(),
-            has_visible_results: Rc::new(move || visible_projection.has_visible_results()),
+            has_visible_results: Rc::new(move || visible_model.visible_count() != 0),
             content: projection.scrolling_widget(),
         });
         let apply = {
