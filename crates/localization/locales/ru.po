@@ -19,11 +19,6 @@ msgstr ""
 "X-Generator: Weblate 2026.8.dev0\n"
 
 msgid ""
-"Balance loudness levels. Track adjusts each song; Album applies one "
-"adjustment album-wide"
-msgstr ""
-
-msgid ""
 "Downloads from this server will be removed, and automatic rules will be "
 "turned off"
 msgstr ""
@@ -107,6 +102,11 @@ msgstr ""
 "Изменение секретного ключа приводит к удалению устаревших конфигурационных "
 "данных и завершению всех сеансов, включая ключи доступа к API. Кэш "
 "приложения не затрагивается."
+
+msgid ""
+"Track evens out every song, while Album preserves the intended differences "
+"within each album"
+msgstr ""
 
 msgid ""
 "Unsaved changes. {direct} direct, {prefix} prefix, {metadata} metadata, "
@@ -877,6 +877,9 @@ msgstr "Локальный источник"
 msgid "Lock metadata"
 msgstr "Заблокировать метаданные"
 
+msgid "Loudness normalization"
+msgstr ""
+
 msgid "Lyrics loaded"
 msgstr "Текст песни загружен"
 
@@ -1450,9 +1453,6 @@ msgstr "Повторять один"
 
 msgid "Repeat"
 msgstr "Повтор"
-
-msgid "ReplayGain"
-msgstr "Нормализация громкости"
 
 msgid "Requires OpenSubsonic songLyrics v2"
 msgstr "Требуется OpenSubsonic songLyrics V2"
@@ -2028,6 +2028,9 @@ msgid_plural "{count} years ago"
 msgstr[0] "{count} год назад"
 msgstr[1] "{count} года назад"
 msgstr[2] "{count} лет назад"
+
+#~ msgid "ReplayGain"
+#~ msgstr "Нормализация громкости"
 
 #~ msgid "Actions"
 #~ msgstr "Действия"
