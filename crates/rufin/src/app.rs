@@ -20,7 +20,10 @@ use crate::settings::{
 use crate::source::{SourceBootstrap, SourceOutputs, SourceOwner};
 use crate::waveform::WaveformOwner;
 
-pub(crate) fn runtime_inputs(diagnostics: DiagnosticsHandle) -> Result<RuntimeInputs, String> {
+pub(crate) fn runtime_inputs(
+    diagnostics: DiagnosticsHandle,
+    take_previous_update_result: bool,
+) -> Result<RuntimeInputs, String> {
     if let Err(error) = paths::prepare() {
         warn!(%error, "could not prepare every Rufin data directory");
     }
@@ -79,6 +82,7 @@ pub(crate) fn runtime_inputs(diagnostics: DiagnosticsHandle) -> Result<RuntimeIn
         runtime.clone(),
         release_update_events,
         paths::release_history_file(),
+        take_previous_update_result,
     );
     let release_history = release_updates.initial_history();
 

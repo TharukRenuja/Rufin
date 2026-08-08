@@ -1,0 +1,56 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<gresources>
+  <gresource prefix="/io/github/screwys/Rufin/icons">
+    <file>hicolor/512x512/apps/io.github.screwys.Rufin.png</file>
+    <file>hicolor/64x64/apps/io.github.screwys.Rufin.external.lastfm.png</file>
+    <file>hicolor/64x64/apps/io.github.screwys.Rufin.external.musicbrainz.png</file>
+    <file>hicolor/64x64/apps/io.github.screwys.Rufin.source.jellyfin.png</file>
+    <file>hicolor/64x64/apps/io.github.screwys.Rufin.source.navidrome.png</file>
+    <file>hicolor/64x64/apps/io.github.screwys.Rufin.source.opensubsonic.png</file>
+    <file>hicolor/scalable/actions/rufin-add-symbolic.svg</file>
+    <file>hicolor/scalable/actions/rufin-audio-radio-symbolic.svg</file>
+    <file>hicolor/scalable/actions/rufin-edit-symbolic.svg</file>
+    <file>hicolor/scalable/actions/rufin-favorite-add-symbolic.svg</file>
+    <file>hicolor/scalable/actions/rufin-favorite-remove-symbolic.svg</file>
+    <file>hicolor/scalable/actions/rufin-list-drag-handle-symbolic.svg</file>
+    <file>hicolor/scalable/actions/rufin-more-symbolic.svg</file>
+    <file>hicolor/scalable/actions/rufin-play-later-symbolic.svg</file>
+    <file>hicolor/scalable/actions/rufin-play-next-symbolic.svg</file>
+    <file>hicolor/scalable/actions/rufin-play-symbolic.svg</file>
+    <file>hicolor/scalable/actions/rufin-remove-symbolic.svg</file>
+    <file>hicolor/scalable/actions/rufin-route-album-artists-selected-symbolic.svg</file>
+    <file>hicolor/scalable/actions/rufin-route-album-artists-symbolic.svg</file>
+    <file>hicolor/scalable/actions/rufin-route-albums-selected-symbolic.svg</file>
+    <file>hicolor/scalable/actions/rufin-route-albums-symbolic.svg</file>
+    <file>hicolor/scalable/actions/rufin-route-artists-selected-symbolic.svg</file>
+    <file>hicolor/scalable/actions/rufin-route-artists-symbolic.svg</file>
+    <file>hicolor/scalable/actions/rufin-route-favorites-selected-symbolic.svg</file>
+    <file>hicolor/scalable/actions/rufin-route-favorites-symbolic.svg</file>
+    <file>hicolor/scalable/actions/rufin-route-folders-selected-symbolic.svg</file>
+    <file>hicolor/scalable/actions/rufin-route-folders-symbolic.svg</file>
+    <file>hicolor/scalable/actions/rufin-route-genres-selected-symbolic.svg</file>
+    <file>hicolor/scalable/actions/rufin-route-genres-symbolic.svg</file>
+    <file>hicolor/scalable/actions/rufin-route-history-selected-symbolic.svg</file>
+    <file>hicolor/scalable/actions/rufin-route-history-symbolic.svg</file>
+    <file>hicolor/scalable/actions/rufin-route-home-selected-symbolic.svg</file>
+    <file>hicolor/scalable/actions/rufin-route-home-symbolic.svg</file>
+    <file>hicolor/scalable/actions/rufin-route-moods-selected-symbolic.svg</file>
+    <file>hicolor/scalable/actions/rufin-route-moods-symbolic.svg</file>
+    <file>hicolor/scalable/actions/rufin-route-playlists-selected-symbolic.svg</file>
+    <file>hicolor/scalable/actions/rufin-route-playlists-symbolic.svg</file>
+    <file>hicolor/scalable/actions/rufin-route-search-selected-symbolic.svg</file>
+    <file>hicolor/scalable/actions/rufin-route-search-symbolic.svg</file>
+    <file>hicolor/scalable/actions/rufin-route-smart-playlists-selected-symbolic.svg</file>
+    <file>hicolor/scalable/actions/rufin-route-smart-playlists-symbolic.svg</file>
+    <file>hicolor/scalable/actions/rufin-route-tracks-selected-symbolic.svg</file>
+    <file>hicolor/scalable/actions/rufin-route-tracks-symbolic.svg</file>
+    <file>hicolor/scalable/actions/rufin-sidebar-hide-symbolic.svg</file>
+    <file>hicolor/scalable/actions/rufin-sort-name-descending-symbolic.svg</file>
+    <file>hicolor/scalable/actions/rufin-sort-name-symbolic.svg</file>
+    <file>hicolor/scalable/actions/rufin-view-list-details-symbolic.svg</file>
+    <file>hicolor/scalable/actions/rufin-view-list-ordered-symbolic.svg</file>
+    <file>hicolor/scalable/actions/rufin-view-list-symbolic.svg</file>
+    <file>hicolor/scalable/apps/io.github.screwys.Rufin.svg</file>
+    <file>hicolor/scalable/status/io.github.screwys.Rufin.scrobbling-symbolic.svg</file>
+  </gresource>
+</gresources>

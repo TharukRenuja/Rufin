@@ -41,6 +41,8 @@ pub(crate) struct ControlFeedbackState {
 
 pub(crate) fn connect_shell_actions(shell: &Rc<Shell>) {
     install_window_actions(shell);
+    install_application_actions(shell);
+    install_platform_menu(shell);
     navigation::install_mouse_history_buttons(shell);
     install_main_menu_shortcut(shell);
     layout::connect_shell_layout(shell);
@@ -58,11 +60,6 @@ pub(crate) fn install_window_actions(shell: &Rc<Shell>) {
     let go_forward_shell = Rc::clone(shell);
     go_forward.connect_activate(move |_, _| go_forward_shell.go_forward());
     shell.chrome.window.add_action(&go_forward);
-
-    let preferences = gio::SimpleAction::new("preferences", None);
-    let preferences_shell = Rc::clone(shell);
-    preferences.connect_activate(move |_, _| present_preferences_dialog(&preferences_shell));
-    shell.chrome.window.add_action(&preferences);
 
     let troubleshooting = gio::SimpleAction::new("troubleshooting", None);
     let troubleshooting_shell = Rc::clone(shell);
@@ -92,11 +89,6 @@ pub(crate) fn install_window_actions(shell: &Rc<Shell>) {
         }
     });
     shell.chrome.window.add_action(&toggle_private_mode);
-
-    let shortcuts = gio::SimpleAction::new("show-shortcuts", None);
-    let shortcuts_shell = Rc::clone(shell);
-    shortcuts.connect_activate(move |_, _| show_shortcuts_dialog(&shortcuts_shell));
-    shell.chrome.window.add_action(&shortcuts);
 
     let fullscreen = gio::SimpleAction::new("toggle-fullscreen", None);
     let fullscreen_shell = Rc::clone(shell);
@@ -130,6 +122,9 @@ pub(crate) fn install_window_actions(shell: &Rc<Shell>) {
     for position in 1..=9 {
         let target = (position as u32).to_variant();
         let action_name = gio::Action::print_detailed_name("win.navigate-sidebar", Some(&target));
+        #[cfg(target_os = "macos")]
+        let accelerator = format!("<Meta>{position}");
+        #[cfg(not(target_os = "macos"))]
         let accelerator = format!("<Control>{position}");
         shell
             .chrome
@@ -160,7 +155,11 @@ pub(crate) fn install_window_actions(shell: &Rc<Shell>) {
         let shell = Rc::clone(shell);
         move || cycle_repeat_shortcut(&shell)
     });
-    add_window_action(shell, "focus-search", &["<Control>f"], {
+    #[cfg(target_os = "macos")]
+    let search_accels = &["<Meta>f"][..];
+    #[cfg(not(target_os = "macos"))]
+    let search_accels = &["<Control>f"][..];
+    add_window_action(shell, "focus-search", search_accels, {
         let shell = Rc::clone(shell);
         move || shell.focus_current_route_search()
     });
@@ -192,37 +191,122 @@ pub(crate) fn install_window_actions(shell: &Rc<Shell>) {
         let shell = Rc::clone(shell);
         move || shell.toggle_lyrics_panel()
     });
-    let about = gio::SimpleAction::new("about", None);
-    let about_shell = Rc::clone(shell);
-    about.connect_activate(move |_, _| show_about_dialog(&about_shell));
-    shell.chrome.window.add_action(&about);
-
     let release_notes = gio::SimpleAction::new("show-release-notes", None);
     let release_notes_shell = Rc::clone(shell);
     release_notes.connect_activate(move |_, _| release_notes_shell.present_release_notes());
     shell.chrome.window.add_action(&release_notes);
 
-    shell
-        .chrome
-        .application
-        .set_accels_for_action("win.go-back", &["<Alt>Left"]);
-    shell
-        .chrome
-        .application
-        .set_accels_for_action("win.go-forward", &["<Alt>Right"]);
-    shell
-        .chrome
-        .application
-        .set_accels_for_action("win.preferences", &["<Control>comma"]);
-    shell
-        .chrome
-        .application
-        .set_accels_for_action("win.show-shortcuts", &["<Control>question"]);
-    shell
-        .chrome
-        .application
-        .set_accels_for_action("win.toggle-fullscreen", &["F11"]);
+    #[cfg(target_os = "macos")]
+    {
+        shell
+            .chrome
+            .application
+            .set_accels_for_action("win.go-back", &["<Meta>bracketleft"]);
+        shell
+            .chrome
+            .application
+            .set_accels_for_action("win.go-forward", &["<Meta>bracketright"]);
+        shell
+            .chrome
+            .application
+            .set_accels_for_action("win.toggle-fullscreen", &["<Control><Meta>f", "F11"]);
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        shell
+            .chrome
+            .application
+            .set_accels_for_action("win.go-back", &["<Alt>Left"]);
+        shell
+            .chrome
+            .application
+            .set_accels_for_action("win.go-forward", &["<Alt>Right"]);
+        shell
+            .chrome
+            .application
+            .set_accels_for_action("win.toggle-fullscreen", &["F11"]);
+    }
 }
+
+fn install_application_actions(shell: &Rc<Shell>) {
+    let preferences = gio::SimpleAction::new("preferences", None);
+    let preferences_shell = Rc::downgrade(shell);
+    preferences.connect_activate(move |_, _| {
+        if let Some(shell) = preferences_shell.upgrade() {
+            present_preferences_dialog(&shell);
+        }
+    });
+    shell.chrome.application.add_action(&preferences);
+
+    let shortcuts = gio::SimpleAction::new("show-shortcuts", None);
+    let shortcuts_shell = Rc::downgrade(shell);
+    shortcuts.connect_activate(move |_, _| {
+        if let Some(shell) = shortcuts_shell.upgrade() {
+            show_shortcuts_dialog(&shell);
+        }
+    });
+    shell.chrome.application.add_action(&shortcuts);
+
+    let about = gio::SimpleAction::new("about", None);
+    let about_shell = Rc::downgrade(shell);
+    about.connect_activate(move |_, _| {
+        if let Some(shell) = about_shell.upgrade() {
+            show_about_dialog(&shell);
+        }
+    });
+    shell.chrome.application.add_action(&about);
+
+    #[cfg(target_os = "macos")]
+    {
+        shell
+            .chrome
+            .application
+            .set_accels_for_action("app.preferences", &["<Meta>comma"]);
+        shell
+            .chrome
+            .application
+            .set_accels_for_action("app.show-shortcuts", &["<Meta>question"]);
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        shell
+            .chrome
+            .application
+            .set_accels_for_action("app.preferences", &["<Control>comma"]);
+        shell
+            .chrome
+            .application
+            .set_accels_for_action("app.show-shortcuts", &["<Control>question"]);
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn install_platform_menu(shell: &Shell) {
+    let menu = gio::Menu::new();
+
+    let application = gio::Menu::new();
+    application.append(Some(&tr("Preferences")), Some("app.preferences"));
+    application.append(Some(&tr("About Rufin")), Some("app.about"));
+    application.append(Some(&tr("Quit Rufin")), Some("app.quit"));
+    menu.append_submenu(Some("Rufin"), &application);
+
+    let window = gio::Menu::new();
+    window.append(Some(&tr("Close Window")), Some("window.close"));
+    window.append(
+        Some(&tr("Toggle Fullscreen")),
+        Some("win.toggle-fullscreen"),
+    );
+    menu.append_submenu(Some(&tr("Window")), &window);
+
+    let help = gio::Menu::new();
+    help.append(Some(&tr("Keyboard Shortcuts")), Some("app.show-shortcuts"));
+    menu.append_submenu(Some(&tr("Help")), &help);
+
+    shell.chrome.application.set_menubar(Some(&menu));
+}
+
+#[cfg(not(target_os = "macos"))]
+fn install_platform_menu(_shell: &Shell) {}
 
 pub(crate) fn install_main_menu_shortcut(shell: &Rc<Shell>) {
     let key_controller = gtk::EventControllerKey::new();
@@ -374,16 +458,34 @@ fn show_shortcuts_dialog(shell: &Shell) {
         .title(tr("Keyboard Shortcuts"))
         .build();
     let section = adw::ShortcutsSection::new(Some(&tr("General")));
-    section.add(adw::ShortcutsItem::new(&tr("Back"), "Back <Alt>Left"));
-    section.add(adw::ShortcutsItem::new(
-        &tr("Forward"),
-        "Forward <Alt>Right",
-    ));
+    #[cfg(target_os = "macos")]
+    {
+        section.add(adw::ShortcutsItem::new(
+            &tr("Back"),
+            "Back <Meta>bracketleft",
+        ));
+        section.add(adw::ShortcutsItem::new(
+            &tr("Forward"),
+            "Forward <Meta>bracketright",
+        ));
+        section.add(adw::ShortcutsItem::new(
+            &tr("Sidebar route by position"),
+            "<Meta>1...9",
+        ));
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        section.add(adw::ShortcutsItem::new(&tr("Back"), "Back <Alt>Left"));
+        section.add(adw::ShortcutsItem::new(
+            &tr("Forward"),
+            "Forward <Alt>Right",
+        ));
+        section.add(adw::ShortcutsItem::new(
+            &tr("Sidebar route by position"),
+            "<Control>1...9",
+        ));
+    }
     section.add(adw::ShortcutsItem::new(&tr("Menu"), "F10"));
-    section.add(adw::ShortcutsItem::new(
-        &tr("Sidebar route by position"),
-        "<Control>1...9",
-    ));
     section.add(adw::ShortcutsItem::new(
         &tr("Navigate page items"),
         "Up Down Left Right",
@@ -394,11 +496,11 @@ fn show_shortcuts_dialog(shell: &Shell) {
     ));
     section.add(adw::ShortcutsItem::from_action(
         &tr("Preferences"),
-        "win.preferences",
+        "app.preferences",
     ));
     section.add(adw::ShortcutsItem::from_action(
         &tr("Keyboard Shortcuts"),
-        "win.show-shortcuts",
+        "app.show-shortcuts",
     ));
     section.add(adw::ShortcutsItem::from_action(
         &tr("Toggle Fullscreen"),

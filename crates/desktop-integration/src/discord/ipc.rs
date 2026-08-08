@@ -89,6 +89,15 @@ mod transport {
                 "/run/user/1000/app/com.discordapp.Discord/discord-ipc-9"
             )));
         }
+
+        #[test]
+        fn paths_include_the_native_macos_temporary_directory() {
+            let root = PathBuf::from("/var/folders/ab/example/T");
+            let paths = paths_for(None, vec![root.clone()]);
+
+            assert!(paths.contains(&root.join("discord-ipc-0")));
+            assert!(paths.contains(&root.join("discord-ipc-9")));
+        }
     }
 }
 

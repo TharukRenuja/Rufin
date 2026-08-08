@@ -1757,6 +1757,19 @@
     {
         "type": "archive",
         "archive-type": "tar-gzip",
+        "url": "https://static.crates.io/crates/glib-build-tools/glib-build-tools-0.22.8.crate",
+        "sha256": "f9871f38b67853c358b8190f77b9f878eb27d933a950f1045b244c4559a9f5f0",
+        "dest": "cargo/vendor/glib-build-tools-0.22.8"
+    },
+    {
+        "type": "inline",
+        "contents": "{\"package\": \"f9871f38b67853c358b8190f77b9f878eb27d933a950f1045b244c4559a9f5f0\", \"files\": {}}",
+        "dest": "cargo/vendor/glib-build-tools-0.22.8",
+        "dest-filename": ".cargo-checksum.json"
+    },
+    {
+        "type": "archive",
+        "archive-type": "tar-gzip",
         "url": "https://static.crates.io/crates/glib-macros/glib-macros-0.22.6.crate",
         "sha256": "506d23499707c7142898429757e8d9a3871d965239a2cb66dfa05052be6d6f19",
         "dest": "cargo/vendor/glib-macros-0.22.6"

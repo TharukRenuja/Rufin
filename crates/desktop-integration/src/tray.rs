@@ -352,7 +352,6 @@ mod windows_macos {
 
     use localization::tr;
     use tray_icon::menu::{Menu, MenuEvent, MenuItem, PredefinedMenuItem};
-    #[cfg(target_os = "windows")]
     use tray_icon::{MouseButton, MouseButtonState};
     use tray_icon::{TrayIcon, TrayIconBuilder, TrayIconEvent};
 
@@ -414,9 +413,10 @@ mod windows_macos {
                 .with_id(APP_ID)
                 .with_tooltip(tr("Rufin is running in the tray"))
                 .with_menu(Box::new(menu))
-                .with_icon(build_tray_icon()?);
-            #[cfg(target_os = "windows")]
-            let builder = builder.with_menu_on_left_click(false);
+                .with_icon(build_tray_icon()?)
+                .with_menu_on_left_click(false);
+            #[cfg(target_os = "macos")]
+            let builder = builder.with_icon_as_template(true);
             let icon = builder
                 .build()
                 .map_err(|error| format!("failed to create the system tray icon: {error}"))?;
@@ -463,7 +463,6 @@ mod windows_macos {
                 }
             }));
             TrayIconEvent::set_event_handler(Some(|event: TrayIconEvent| {
-                #[cfg(target_os = "windows")]
                 if matches!(
                     event,
                     TrayIconEvent::Click {
@@ -474,8 +473,6 @@ mod windows_macos {
                 ) {
                     send_event(TrayIntent::Present);
                 }
-                #[cfg(target_os = "macos")]
-                let _ = event;
             }));
         });
     }

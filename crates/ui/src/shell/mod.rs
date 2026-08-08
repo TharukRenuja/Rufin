@@ -3,6 +3,8 @@ pub(crate) mod chrome;
 mod diagnostics;
 pub(crate) mod layout;
 pub(crate) mod navigation;
+use std::cell::Cell;
+
 use crate::downloads::DownloadsState;
 use crate::favorites::FavoriteState;
 use crate::player::PlayerDesktopWidgets;
@@ -55,6 +57,7 @@ impl Shell {
 }
 
 pub(crate) struct Shell {
+    pub(crate) quitting: Cell<bool>,
     pub(crate) diagnostics: DiagnosticsHandle,
     pub(crate) appearance: crate::application::style::ApplicationAppearance,
     pub(crate) settings: SettingsState,

@@ -158,6 +158,7 @@
                 libarchive
                 pacman
                 pkg-config
+                pulseaudio
                 rustc
                 rustfmt
                 wavpack

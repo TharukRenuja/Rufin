@@ -262,8 +262,6 @@ copy_directory "${brew_prefix}/share/icons/AdwaitaLegacy" \
     "$app_path/Contents/Resources/share/icons/AdwaitaLegacy"
 copy_directory "${brew_prefix}/share/icons/hicolor" \
     "$app_path/Contents/Resources/share/icons/hicolor"
-copy_directory "${repo_root}/data/icons/hicolor" \
-    "$app_path/Contents/Resources/share/icons/hicolor"
 copy_directory "${brew_prefix}/share/mime" \
     "$app_path/Contents/Resources/share/mime"
 

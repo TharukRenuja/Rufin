@@ -25,9 +25,74 @@ pub use loudness::{LoudnessAnalysis, album_loudness, analyze_loudness_cancellabl
 pub use waveform::generate_waveform_peaks_cancellable;
 
 pub fn verify_audio_file(path: &Path) -> Result<(), String> {
+    ensure_gstreamer_initialized()?;
     let uri = glib::filename_to_uri(path, None).map_err(|error| error.to_string())?;
-    let stream = ResolvedStream::new(uri.as_str());
-    generate_waveform_peaks_cancellable(&stream, || false).map(|_| ())
+    let pipeline = pipeline::make_playbin("rufin-media-verification")?;
+    let bus = pipeline
+        .bus()
+        .ok_or_else(|| "GStreamer media verification has no message bus".to_string())?;
+    let video_sink = gst::ElementFactory::make("fakesink")
+        .name("rufin-verification-video-output")
+        .build()
+        .map_err(|error| error.to_string())?;
+    let settings = BackendAudioSettings {
+        audio_output: Some("fakesink".to_string()),
+        ..BackendAudioSettings::default()
+    };
+    let audio_graph = audio::AudioGraph::new(&settings)?;
+    pipeline::configure_playbin_for_audio(&pipeline);
+    pipeline.set_property("video-sink", &video_sink);
+    pipeline.set_property("audio-sink", audio_graph.root());
+    pipeline.set_property("uri", uri.as_str());
+
+    let result = match pipeline.set_state(gst::State::Playing) {
+        Err(error) => Err(bus
+            .pop_filtered(&[gst::MessageType::Error])
+            .and_then(|message| {
+                gstreamer_error_details(&message, "media verification startup", Some("fakesink"))
+            })
+            .unwrap_or_else(|| format!("GStreamer media verification could not start: {error}"))),
+        Ok(_) => match bus.timed_pop_filtered(
+            gst::ClockTime::from_seconds(30),
+            &[gst::MessageType::Eos, gst::MessageType::Error],
+        ) {
+            Some(message) if matches!(message.view(), gst::MessageView::Eos(_)) => Ok(()),
+            Some(message) => {
+                Err(
+                    gstreamer_error_details(&message, "media verification", Some("fakesink"))
+                        .unwrap_or_else(|| "GStreamer media verification failed".to_string()),
+                )
+            }
+            None => {
+                Err("GStreamer media verification did not finish within 30 seconds".to_string())
+            }
+        },
+    };
+    let _ = pipeline.set_state(gst::State::Null);
+    result
+}
+
+fn gstreamer_error_details(
+    message: &gst::Message,
+    stage: &str,
+    audio_sink: Option<&str>,
+) -> Option<String> {
+    let gst::MessageView::Error(error) = message.view() else {
+        return None;
+    };
+    let source = message
+        .src()
+        .map(|source| source.path_string().to_string())
+        .unwrap_or_else(|| "unknown".to_string());
+    let debug = error
+        .debug()
+        .map(|debug| debug.to_string())
+        .unwrap_or_else(|| "unavailable".to_string());
+    let audio_sink = audio_sink.unwrap_or("unconfigured");
+    Some(format!(
+        "GStreamer {stage} failed; element={source}; audio_sink={audio_sink}; error={}; debug={debug}",
+        error.error()
+    ))
 }
 
 const SEEK_SETTLE_WINDOW: Duration = Duration::from_millis(1_000);

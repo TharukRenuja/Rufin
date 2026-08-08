@@ -37,6 +37,7 @@ gstreamer-audio = "0.25.2"
 gstreamer-pbutils = "0.25.2"
 gtk = { package = "gtk4", version = "0.11.3" }
 glib = "0.22.7"
+glib-build-tools = "0.22.8"
 httpdate = "1.0.3"
 image = { version = "0.25.10", default-features = false, features = ["bmp", "gif", "jpeg", "png", "tiff", "webp"] }
 if-addrs = "0.15.0"
@@ -80,7 +81,7 @@ wana_kana = { version = "=5.0.0", default-features = false }
 windows-native-keyring-store = { version = "1.1.0", default-features = false }
 windows-updater = { path = "crates/windows-updater" }
 windows = "0.62.2"
-winsafe = { version = "0.0.28", features = ["kernel", "ole", "shell"] }
+winsafe = { version = "0.0.28", features = ["kernel", "ole", "shell", "user"] }
 wiremock = "0.6.5"
 
 [workspace.lints.rust]

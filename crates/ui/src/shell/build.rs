@@ -9,7 +9,7 @@ use tracing::info;
 use crate::favorites::FavoriteState;
 use crate::interactions::connect_transient_entry_focus_dismissal;
 use crate::player::desktop::DesktopState;
-use crate::player::desktop::lifecycle::install_playback_shutdown;
+use crate::player::desktop::lifecycle::install_application_quit;
 use crate::player::lyrics::search::connect_lyrics_search_controls;
 use crate::player::lyrics::state::LyricsState;
 use crate::player::queue::QueueState;
@@ -88,7 +88,12 @@ fn sidebar_resize_handle() -> gtk::Box {
     handle
 }
 
-pub fn build(app: &adw::Application, inputs: RuntimeInputs) {
+pub fn build(
+    app: &adw::Application,
+    inputs: RuntimeInputs,
+    force_initial_presentation: bool,
+    presented: Option<Box<dyn FnOnce()>>,
+) {
     let appearance = crate::application::style::ApplicationAppearance::install();
 
     let loaded_at = std::time::Instant::now();
@@ -465,6 +470,7 @@ pub fn build(app: &adw::Application, inputs: RuntimeInputs) {
     };
 
     let shell = Rc::new(Shell {
+        quitting: Cell::new(false),
         diagnostics,
         appearance,
         settings: settings_state,
@@ -523,10 +529,7 @@ pub fn build(app: &adw::Application, inputs: RuntimeInputs) {
             .connect_clicked(move |_| split_view.set_show_sidebar(true));
     }
     connect_shell_actions(&shell);
-    install_playback_shutdown(
-        &shell.chrome.application,
-        &shell.products.playback.transport,
-    );
+    install_application_quit(&shell);
     install_window_state_persistence(&shell);
     install_tray(&shell);
     connect_queue_panel_controls(&shell);
@@ -557,7 +560,15 @@ pub fn build(app: &adw::Application, inputs: RuntimeInputs) {
     install_product_event_receivers(&shell, receivers);
 
     check_for_release_update(&shell);
-    present_initial_window(&shell);
+    if let Some(presented) = presented {
+        let presented = Rc::new(RefCell::new(Some(presented)));
+        shell.chrome.window.connect_map(move |_| {
+            if let Some(presented) = presented.borrow_mut().take() {
+                presented();
+            }
+        });
+    }
+    present_initial_window(&shell, force_initial_presentation);
     schedule_periodic_release_checks(&shell);
     if defer_initial_route && !shell.source.operation.borrow().blocks_library() {
         shell.schedule_startup_route_reveal();

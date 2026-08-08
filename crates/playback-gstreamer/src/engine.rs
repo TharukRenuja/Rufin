@@ -1589,7 +1589,14 @@ impl GstEngine {
         if self.pending_handoff_matches(slot, id) {
             match message.view() {
                 MessageView::Error(error) => {
-                    self.fail_handoff(slot, id, error.error().to_string());
+                    let output = self.pipeline_for_slot(slot).audio_output_factory();
+                    let details = gstreamer_error_details(
+                        message,
+                        "prepared playback handoff",
+                        output.as_deref(),
+                    )
+                    .unwrap_or_else(|| error.error().to_string());
+                    self.fail_handoff(slot, id, details);
                 }
                 MessageView::StateChanged(state)
                     if matches!(
@@ -1621,7 +1628,11 @@ impl GstEngine {
                 return;
             }
             MessageView::Error(error) if self.incoming_matches(slot, id) => {
-                self.fail_incoming(slot, id, error.error().to_string());
+                let output = self.pipeline_for_slot(slot).audio_output_factory();
+                let details =
+                    gstreamer_error_details(message, "prepared playback", output.as_deref())
+                        .unwrap_or_else(|| error.error().to_string());
+                self.fail_incoming(slot, id, details);
                 return;
             }
             _ => {}
@@ -1704,7 +1715,9 @@ impl GstEngine {
             MessageView::SegmentDone(_) => self.handle_end(slot, true),
             MessageView::Eos(_) => self.handle_end(slot, false),
             MessageView::Error(error_message) => {
-                let error = error_message.error().to_string();
+                let output = self.pipeline_for_slot(slot).audio_output_factory();
+                let error = gstreamer_error_details(message, "playback", output.as_deref())
+                    .unwrap_or_else(|| error_message.error().to_string());
                 let source = message
                     .src()
                     .map(|source| source.name().to_string())

@@ -269,7 +269,7 @@ $helperProcess = Start-Process `
     "--channel", "direct",
     "--target-version", $sentinelVersion,
     "--result-file", $helperResult,
-    "--relaunch", (Join-Path $env:SystemRoot "System32\where.exe"),
+    "--relaunch", $installedExe,
     "--installer", $helperInstaller
   ) `
   -WorkingDirectory $oldUpdaterRoot `
@@ -312,6 +312,12 @@ if ($helperProcess.ExitCode -ne 0) {
   if (Test-Path $helperError) { Get-Content $helperError }
   throw "Windows update helper exited with code $($helperProcess.ExitCode)"
 }
+$relaunchedRufin = @(Get-Process -Name "rufin" -ErrorAction SilentlyContinue)
+if ($relaunchedRufin.Count -ne 1) {
+  $relaunchedRufin | Stop-Process -Force -ErrorAction SilentlyContinue
+  throw "Windows update helper did not leave one reopened Rufin process"
+}
+$relaunchedRufin | Stop-Process -Force
 if (-not (Test-Path $helperResult)) {
   throw "Successful Windows helper update did not leave an installed result"
 }

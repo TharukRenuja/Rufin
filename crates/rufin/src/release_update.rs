@@ -56,6 +56,7 @@ impl ReleaseUpdateOwner {
         runtime: tokio::runtime::Handle,
         events: Sender<ReleaseUpdate>,
         cache_path: PathBuf,
+        take_previous_update_result: bool,
     ) -> Arc<Self> {
         let cache = match read_release_cache(&cache_path) {
             Ok(cache) => cache.unwrap_or_default(),
@@ -70,7 +71,9 @@ impl ReleaseUpdateOwner {
             .unwrap_or_default();
         let installer = ReleaseInstaller::detect(cache_dir);
         let installed_version = env!("CARGO_PKG_VERSION").to_string();
-        let previous_update_result = install::take_previous_update_result();
+        let previous_update_result = take_previous_update_result
+            .then(install::take_previous_update_result)
+            .flatten();
         let automatic_update_blocked_version = previous_update_result
             .as_ref()
             .filter(|result| previous_update_blocks_automatic(result, &installed_version))
@@ -370,6 +373,15 @@ fn previous_update_feedback(
     installed_version: &str,
 ) -> Option<ReleaseUpdate> {
     let target_version = result.version().to_string();
+    if let install::PreviousUpdateResult::Failed { version, message } = &result {
+        if release_version_is_newer(installed_version, version) {
+            return None;
+        }
+        return Some(ReleaseUpdate::Failed {
+            version: version.clone(),
+            error: message.clone(),
+        });
+    }
     if release_versions_equal(&target_version, installed_version) {
         return Some(ReleaseUpdate::Updated {
             version: target_version,
@@ -379,16 +391,13 @@ fn previous_update_feedback(
     if release_version_is_newer(installed_version, &target_version) {
         return None;
     }
-    match result {
-        install::PreviousUpdateResult::Installed { version } => Some(ReleaseUpdate::Failed {
-            error: format!("The update command finished, but Rufin {version} was not installed."),
-            version,
-        }),
-        install::PreviousUpdateResult::Failed { version, message } => Some(ReleaseUpdate::Failed {
-            version,
-            error: message,
-        }),
-    }
+    let install::PreviousUpdateResult::Installed { version } = result else {
+        unreachable!("failed update results return before version reconciliation")
+    };
+    Some(ReleaseUpdate::Failed {
+        error: format!("The update command finished, but Rufin {version} was not installed."),
+        version,
+    })
 }
 
 fn previous_update_blocks_automatic(
@@ -929,6 +938,18 @@ mod tests {
             ReleaseUpdate::Failed { version, .. } if version == "2.0.0"
         ));
         assert!(previous_update_blocks_automatic(&installed, "1.0.0"));
+
+        let failed_relaunch = PreviousUpdateResult::Failed {
+            version: "2.0.0".to_string(),
+            message: "Rufin did not present its updated window.".to_string(),
+        };
+        assert_eq!(
+            previous_update_feedback(failed_relaunch, "2.0.0"),
+            Some(ReleaseUpdate::Failed {
+                version: "2.0.0".to_string(),
+                error: "Rufin did not present its updated window.".to_string(),
+            })
+        );
 
         let superseded = PreviousUpdateResult::Failed {
             version: "1.5.0".to_string(),

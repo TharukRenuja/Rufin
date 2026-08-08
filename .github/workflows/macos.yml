@@ -46,7 +46,6 @@ jobs:
       ref: ${{ inputs.ref }}
       release_tag: ${{ inputs.upload_release_tag }}
       verify_signed_tag: ${{ inputs.upload_release_tag != '' }}
-      run_platform_checks: false
 
   upload:
     name: Upload macOS release assets

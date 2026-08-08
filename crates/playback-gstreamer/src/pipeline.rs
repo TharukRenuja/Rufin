@@ -370,9 +370,26 @@ impl PipelineSession {
     }
 
     pub(super) fn set_state(&self, state: gst::State) -> Result<gst::StateChangeSuccess, String> {
-        self.pipeline
-            .set_state(state)
-            .map_err(|error| error.to_string())
+        self.pipeline.set_state(state).map_err(|error| {
+            self.bus
+                .pop_filtered(&[gst::MessageType::Error])
+                .and_then(|message| {
+                    let output = self.audio_output_factory();
+                    gstreamer_error_details(
+                        &message,
+                        &format!("state change to {state:?}"),
+                        output.as_deref(),
+                    )
+                })
+                .unwrap_or_else(|| {
+                    let output = self
+                        .audio_output_factory()
+                        .unwrap_or_else(|| "unconfigured".to_string());
+                    format!(
+                        "GStreamer state change to {state:?} failed; audio_sink={output}; error={error}"
+                    )
+                })
+        })
     }
 
     pub(super) fn stop(&mut self) {
@@ -454,14 +471,14 @@ impl Drop for PipelineSession {
         self.stop();
     }
 }
-fn make_playbin(name: &str) -> Result<gst::Element, String> {
+pub(super) fn make_playbin(name: &str) -> Result<gst::Element, String> {
     gst::ElementFactory::make("playbin3")
         .name(name)
         .build()
         .or_else(|_| gst::ElementFactory::make("playbin").name(name).build())
         .map_err(|error| error.to_string())
 }
-fn configure_playbin_for_audio(pipeline: &gst::Element) {
+pub(super) fn configure_playbin_for_audio(pipeline: &gst::Element) {
     let current = pipeline.property_value("flags");
     let Some(flags_class) = glib::FlagsClass::with_type(current.type_()) else {
         return;

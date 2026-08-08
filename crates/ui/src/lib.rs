@@ -18,7 +18,11 @@ mod shell;
 #[cfg(test)]
 mod test_support;
 
-pub use application::run_application;
+pub use application::{run_application, run_application_after_update};
+
+pub fn verify_interface_resources() -> Result<(), String> {
+    application::verify_interface_resources()
+}
 
 pub use settings::{
     AccentPreference, DEFAULT_LEFT_SIDEBAR_WIDTH, DEFAULT_RIGHT_SIDEBAR_WIDTH,
