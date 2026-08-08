@@ -16,31 +16,59 @@
 
 # Features
 
-- Fast, powerful and modern user interface in GTK/libadwaita 
-- First-class Jellyfin, Navidrome/OpenSubsonic integration; you can download tracks, or set up rules to automatically download tracks, use your remote server offline with downloaded tracks and edit metadata
-- First-class local music library integration; you can combine multiple folders for a single listening session, fully enjoy built-in music server benefits like activity/history with your local library and edit metadata for supported formats
-- Supports server-owned recommendation API for artists/tracks/albums/playlists/genres radios, so your plugins work
-- Optimized for quick startup and navigation, smooth full library browsing
-- Automatic metadata, artwork and lyrics caching
-- Synchronized lyrics, built-in lyrics finder, adjustable offset, Furigana/Romaji overlay, and karaoke support
-- Local library support with multiple folders and CUE support with separate playable tracks
-- Moods tab, with ability to create smart playlists based on moods/BPM metadata for Navidrome, Subsonic and local libraries
-- Built-in Last.fm, Libre.fm, and ListenBrainz integration that can store offline scrobbles and retry when network is available
-- Discord Rich Presence support
-- Gapless playback, crossfade, ReplayGain, equalizer presets and fullscreen player with visualizer
-- Ability to change audio devices with a simple button
-- Fully usable in all window sizes, adjustable sidebar sizes that also support saving 2 different presets based on window sizes
-- A different layout for smaller window sizes up to 450 x 400
-- Rich keyboard shortcut catalog, with navigation covered as well
-- Rich customization while preserving GTK menus
-- Smart playlists that support nested rules
-- Light/Dark theme with accent customization
-- System tray integration
-- Secure storage by default for all server credentials and API secrets
-- Simple private mode for pausing external activity
-- Path matching with your music server and local folders, you can play from your local files while keeping server reporting
-- Automatic updates for Windows and MacOS builds
+## 🎵 Playback
 
+- True gapless playback and configurable equal-power crossfade mode 
+- Built-in EBU R128 loudness normalization, including true-peak measurement and ReplayGain tag support
+- 10-band equalizer with presets, perceptual/linear volume scale preference and fade on play/pause
+- Auto DJ that keeps the queue filled; server recommendations when available with a smart local fallback 
+- Random play with filters for track count, year range, genre and played/unplayed status
+- Optional waveform seekbar; waveforms are generated for the current track and cached
+- Fullscreen player with visualizer
+- CUE sheet support with separate playable tracks
+- Audio output device selection
+
+## 📚 Library
+
+- First-class Jellyfin, Navidrome/OpenSubsonic and local music library support
+- Combine multiple local folders in a single listening session
+- Download tracks manually or through automatic rules, then keep using the same remote library while offline
+- Path matching between music servers and local folders, allowing local playback while keeping server activity and history
+- Metadata editing for supported servers and local formats, with bulk editing and `Identify` available with auto-fill
+- Automatic metadata, artwork and lyrics caching
+- Normal browsing for large libraries with non-paginated pages
+- Broad local format support: AAC, AIFF, APE, FLAC, M4A/MP4, MP1/MP2/MP3, Musepack, Ogg Vorbis/Opus/Speex, WAV, WavPack, MKA and WMA/ASF[^codecs]
+
+[^codecs]: Some formats are dependent on available GStreamer plugins, which shouldn't be an issue for any of the currently supported packages except RPM. 
+
+## 🌍️ Discovery, playlists and lyrics
+
+- Server-provided artist, track, album, playlist and genre radios, including recommendations from server plugins
+- App owned smart playlists with custom sorting and limits; can use metadata, play/skip history or pre-defined dynamic lists
+- Dedicated Search, Folders and History pages
+- Moods browsing and mood/BPM-based smart playlists for Navidrome, Subsonic and local libraries
+- Synchronized lyrics with built-in search and adjustable offset
+- Furigana and Romaji lyrics overlays, translation preference and word-by-word karaoke support
+
+## 🔌 Integrations
+
+- Last.fm, Libre.fm and ListenBrainz scrobbling, with offline storage and automatic retries 
+- Discord Rich Presence
+- System tray integration
+- Private mode for temporarily pausing external activity
+- Secure storage for server credentials and API secrets by default
+
+## 🖥️ Interface
+
+- Fast GTK 4/libadwaita interface with light/dark themes and accent customization
+- Fully usable across different window sizes, including a separate compact layout 
+- Adjustable sidebars with separate presets for different window sizes
+- Configurable layouts, context menus and GTK menus
+- Keyboard shortcuts for playback, navigation and library browsing
+- Automatic updates for Windows and macOS builds
+- Easy built-in log viewing and exporting (privacy-conscious)
+- Type to search for routes
+- `Exit to tray` and `Start minimized` window options 
 
 # Screenshots
 
