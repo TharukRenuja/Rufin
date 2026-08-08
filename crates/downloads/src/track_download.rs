@@ -3,13 +3,15 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
-use library::{Library, SourceId, StreamQuality, StreamRequest, Track, TrackId};
+use library::{Library, ResolvedStream, SourceId, StreamRequest, Track, TrackId};
 use reqwest::header::{
     ACCEPT_ENCODING, CONTENT_ENCODING, CONTENT_LENGTH, CONTENT_RANGE, DATE, ETAG, IF_RANGE,
     LAST_MODIFIED, RANGE,
 };
 use serde::{Deserialize, Serialize};
-use sources::{NativeSourceResult, Source, SourceError, SourceResult};
+#[cfg(test)]
+use sources::{NativeSourceResult, Source};
+use sources::{SourceError, SourceResult};
 use tokio::io::AsyncWriteExt;
 use tokio::sync::oneshot;
 use tracing::warn;
@@ -77,26 +79,17 @@ pub(super) struct TransferClients {
 impl TransferClients {
     async fn download_cancellable(
         &self,
-        source: &Source,
-        request: &StreamRequest,
+        stream: &ResolvedStream,
+        representation: &str,
         paths: &DownloadPaths,
         cancellation: &mut oneshot::Receiver<()>,
-    ) -> SourceResult<NativeSourceResult<()>> {
-        let stream = tokio::select! {
-            biased;
-            result = source.stream(request) => result,
-            _ = &mut *cancellation => Err(SourceError::Cancelled),
-        }?;
-        let NativeSourceResult::Available(stream) = stream else {
-            return Ok(NativeSourceResult::Unavailable);
-        };
+    ) -> SourceResult<()> {
         let clients = if stream.trust_invalid_certificate() {
             &self.insecure
         } else {
             &self.strict
         };
         let trust_invalid_certificate = stream.trust_invalid_certificate();
-        let representation = representation_key(source.source_id(), request, stream.redacted_uri());
         let client = clients
             .get_or_try_init(|| async move {
                 reqwest::Client::builder()
@@ -106,11 +99,11 @@ impl TransferClients {
                     .map_err(download_request_error)
             })
             .await?;
-        let resume = read_checkpoint(paths, Some(&representation)).await?;
+        let resume = read_checkpoint(paths, Some(representation)).await?;
         let response = send_request(client, stream.uri(), resume.as_ref(), cancellation).await?;
         let status = response.status();
         if status == reqwest::StatusCode::OK {
-            return download_full(response, paths, &representation, cancellation).await;
+            return download_full(response, paths, representation, cancellation).await;
         }
         if status == reqwest::StatusCode::PARTIAL_CONTENT
             && let Some((checkpoint, offset)) = resume.as_ref()
@@ -123,13 +116,13 @@ impl TransferClients {
             && *offset == checkpoint.length
             && unsatisfied_total(&response) == Some(checkpoint.length)
         {
-            return Ok(NativeSourceResult::Available(()));
+            return Ok(());
         }
         if status == reqwest::StatusCode::RANGE_NOT_SATISFIABLE && resume.is_some() {
             discard_staging(paths).await?;
             let response = send_request(client, stream.uri(), None, cancellation).await?;
             if response.status() == reqwest::StatusCode::OK {
-                return download_full(response, paths, &representation, cancellation).await;
+                return download_full(response, paths, representation, cancellation).await;
             }
             if !response.status().is_success() {
                 return response_error(response.status(), paths).await;
@@ -154,8 +147,13 @@ impl TransferClients {
         paths: &DownloadPaths,
     ) -> SourceResult<NativeSourceResult<()>> {
         let (_cancellation, mut receiver) = oneshot::channel();
-        self.download_cancellable(source, request, paths, &mut receiver)
-            .await
+        let NativeSourceResult::Available(stream) = source.stream(request).await? else {
+            return Ok(NativeSourceResult::Unavailable);
+        };
+        let representation = representation_key(source.source_id(), request, stream.redacted_uri());
+        self.download_cancellable(&stream, &representation, paths, &mut receiver)
+            .await?;
+        Ok(NativeSourceResult::Available(()))
     }
 }
 
@@ -189,7 +187,7 @@ async fn download_full(
     paths: &DownloadPaths,
     representation: &str,
     cancellation: &mut oneshot::Receiver<()>,
-) -> SourceResult<NativeSourceResult<()>> {
+) -> SourceResult<()> {
     if !identity_response(&response) {
         discard_staging(paths).await?;
         return Err(SourceError::Other(
@@ -221,7 +219,7 @@ async fn download_full(
         cancellation,
     )
     .await?;
-    Ok(NativeSourceResult::Available(()))
+    Ok(())
 }
 
 async fn download_partial(
@@ -230,7 +228,7 @@ async fn download_partial(
     checkpoint: &TransferCheckpoint,
     offset: u64,
     cancellation: &mut oneshot::Receiver<()>,
-) -> SourceResult<NativeSourceResult<()>> {
+) -> SourceResult<()> {
     let file = tokio::fs::OpenOptions::new()
         .append(true)
         .open(&paths.audio_part)
@@ -246,7 +244,7 @@ async fn download_partial(
         cancellation,
     )
     .await?;
-    Ok(NativeSourceResult::Available(()))
+    Ok(())
 }
 
 async fn write_response(
@@ -556,13 +554,13 @@ fn download_request_error(error: reqwest::Error) -> SourceError {
 }
 
 pub(super) async fn run_transfer(
-    source: &Source,
-    track_id: TrackId,
-    quality: StreamQuality,
+    source_id: &SourceId,
+    request: &StreamRequest,
+    stream: &ResolvedStream,
     paths: &DownloadPaths,
     transfers: &TransferClients,
     mut cancellation: oneshot::Receiver<()>,
-) -> SourceResult<NativeSourceResult<()>> {
+) -> SourceResult<()> {
     for directory in [
         Some(paths.directory.as_path()),
         paths.audio.parent(),
@@ -580,14 +578,10 @@ pub(super) async fn run_transfer(
     remove_file_if_present(&paths.record_part)
         .await
         .map_err(SourceError::Other)?;
-    let request = StreamRequest::new(track_id, quality);
-    let NativeSourceResult::Available(()) = transfers
-        .download_cancellable(source, &request, paths, &mut cancellation)
-        .await?
-    else {
-        return Ok(NativeSourceResult::Unavailable);
-    };
-    Ok(NativeSourceResult::Available(()))
+    let representation = representation_key(source_id, request, stream.redacted_uri());
+    transfers
+        .download_cancellable(stream, &representation, paths, &mut cancellation)
+        .await
 }
 
 pub(super) async fn add_owner_to_existing_download(
@@ -875,7 +869,7 @@ pub(super) fn new_download_paths(
     source_id: &SourceId,
     track: &Track,
     directory: Option<&Path>,
-    quality: StreamQuality,
+    transcoded_extension: Option<&str>,
 ) -> DownloadPaths {
     let mut paths = staging_paths(root, source_id, &track.id, directory);
     let audio_root = directory
@@ -886,7 +880,7 @@ pub(super) fn new_download_paths(
     let title = safe_path_component(&track.title, "Untitled");
     let id = source_track_hash(source_id, &track.id);
     let short_id = id.chars().take(12).collect::<String>();
-    let extension = download_extension(track, quality);
+    let extension = download_extension(track, transcoded_extension);
     let file_name = format!(
         "{:02}-{:02} {title} [{}].{extension}",
         track.disc_number, track.track_number, short_id
@@ -972,13 +966,9 @@ fn safe_path_component(value: &str, fallback: &str) -> String {
     }
 }
 
-fn download_extension(track: &Track, quality: StreamQuality) -> String {
-    if matches!(quality, StreamQuality::MaxBitrateKbps(_)) {
-        return "mp3".to_string();
-    }
-    let extension = track
-        .source_format
-        .as_deref()
+fn download_extension(track: &Track, transcoded_extension: Option<&str>) -> String {
+    let extension = transcoded_extension
+        .or(track.source_format.as_deref())
         .unwrap_or(AUDIO_EXTENSION)
         .chars()
         .filter(|character| character.is_ascii_alphanumeric())
@@ -1246,13 +1236,22 @@ mod tests {
         let track_id = TrackId::new("jellyfin:track:one");
         let directory = tempfile::tempdir().expect("temporary downloads");
         let paths = download_paths(directory.path(), source.source_id(), &track_id);
+        let request = StreamRequest::original(track_id);
+        let NativeSourceResult::Available(stream) = source
+            .stream(&request)
+            .await
+            .expect("resolve download stream")
+        else {
+            panic!("remote source has no stream");
+        };
+        let source_id = source.source_id().clone();
         let task_paths = paths.clone();
         let (cancel, cancelled) = oneshot::channel();
         let transfer = tokio::spawn(async move {
             run_transfer(
-                &source,
-                track_id,
-                StreamQuality::Original,
+                &source_id,
+                &request,
+                &stream,
                 &task_paths,
                 &TransferClients::default(),
                 cancelled,

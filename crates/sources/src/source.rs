@@ -48,6 +48,33 @@ pub enum NativeSourceResult<T> {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ResolvedDownload {
+    stream: ResolvedStream,
+    transcoded_extension: Option<&'static str>,
+}
+
+impl ResolvedDownload {
+    pub(crate) fn new(stream: ResolvedStream, transcoded_extension: Option<&'static str>) -> Self {
+        Self {
+            stream,
+            transcoded_extension,
+        }
+    }
+
+    pub fn stream(&self) -> &ResolvedStream {
+        &self.stream
+    }
+
+    pub fn into_stream(self) -> ResolvedStream {
+        self.stream
+    }
+
+    pub fn transcoded_extension(&self) -> Option<&'static str> {
+        self.transcoded_extension
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum SourceImageRequest {
     Native { image_ref: ImageRef, size: u32 },
     Local(LocalArtworkRef),
@@ -721,6 +748,21 @@ impl Source {
             Implementation::OpenSubsonic(source) => source
                 .resolve_stream(request)
                 .await
+                .map(NativeSourceResult::Available),
+        }
+    }
+
+    pub fn resolve_download(
+        &self,
+        request: &StreamRequest,
+    ) -> SourceResult<NativeSourceResult<ResolvedDownload>> {
+        match &self.implementation {
+            Implementation::Local(_) => Ok(NativeSourceResult::Unavailable),
+            Implementation::Jellyfin(source) => source
+                .resolve_download(request)
+                .map(NativeSourceResult::Available),
+            Implementation::OpenSubsonic(source) => source
+                .resolve_download(request)
                 .map(NativeSourceResult::Available),
         }
     }

@@ -11,7 +11,8 @@ use library::{
     FolderId, Genre, GenreCredit, GenreId, HomeItemId, ImageRef, MoodCredit, MoodId, MusicFolder,
     MusicFolderId, PlayedFilter, Playlist, PlaylistEntry, PlaylistId, PlaylistSnapshot, RadioSeed,
     RandomCriteria, ResolvedStream, SourceHomeSection, SourceHomeSectionKind, SourceId,
-    StreamRequest, Track, TrackData, TrackId, TrackRelations, normalize_release_types,
+    StreamQuality, StreamRequest, Track, TrackData, TrackId, TrackRelations,
+    normalize_release_types,
 };
 use playback::{SourceReportFact, SourceReportPhase};
 use reqwest::{Client, Url};

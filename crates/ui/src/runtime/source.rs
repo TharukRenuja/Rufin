@@ -21,6 +21,7 @@ pub struct SourceSummary {
     pub id: SourceId,
     pub kind: String,
     pub name: String,
+    pub transcoded_download_bitrate_limit_kbps: Option<u32>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

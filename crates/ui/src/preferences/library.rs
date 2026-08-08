@@ -11,7 +11,6 @@ use localization::{msgid, tr};
 
 use super::{
     PreferencesNavigationControls,
-    general::{stream_quality_from_index, stream_quality_index},
     layout::button_row,
     selection_row,
     source::{
@@ -26,6 +25,13 @@ use localization::{album_count_text, track_count_text};
 const SERVER_PROVIDER_ICON_SIZE: i32 = 28;
 const DOWNLOAD_JOB_DRAG_PREFIX: &str = "rufin-download-job:";
 const DEFAULT_DOWNLOAD_DIRECTORY_SUBTITLE: &str = msgid("Rufin data folder");
+const DOWNLOAD_QUALITIES: [StreamQuality; 5] = [
+    StreamQuality::Original,
+    StreamQuality::MaxBitrateKbps(320),
+    StreamQuality::MaxBitrateKbps(256),
+    StreamQuality::MaxBitrateKbps(192),
+    StreamQuality::MaxBitrateKbps(128),
+];
 
 pub(super) fn library_page(
     shell: &Rc<Shell>,
@@ -269,22 +275,29 @@ fn library_sources_page(
 
         let quality_shell = Rc::clone(shell);
         let quality_source_id = server.id.clone();
+        let quality_choices =
+            download_quality_choices(server.transcoded_download_bitrate_limit_kbps);
+        let quality_labels = quality_choices
+            .iter()
+            .copied()
+            .map(download_quality_label)
+            .collect::<Vec<_>>();
+        let quality_index = quality_choices
+            .iter()
+            .position(|quality| *quality == download_settings.quality)
+            .unwrap_or_default() as u32;
+        let selected_qualities = quality_choices.clone();
         let quality = selection_row(
             &tr("Download quality"),
-            &[
-                tr("Original"),
-                tr("320 kbps"),
-                tr("256 kbps"),
-                tr("192 kbps"),
-                tr("128 kbps"),
-            ],
-            stream_quality_index(download_settings.quality),
+            &quality_labels,
+            quality_index,
             move |selected| {
+                let quality = selected_qualities
+                    .get(selected as usize)
+                    .copied()
+                    .unwrap_or(StreamQuality::Original);
                 quality_shell.update_app_settings("download quality", |settings| {
-                    settings.set_download_quality(
-                        quality_source_id.clone(),
-                        stream_quality_from_index(selected),
-                    )
+                    settings.set_download_quality(quality_source_id.clone(), quality)
                 });
             },
         );
@@ -1064,4 +1077,26 @@ fn local_folder_title(path: &str) -> String {
         .filter(|name| !name.trim().is_empty())
         .map(ToString::to_string)
         .unwrap_or_else(|| path.to_string())
+}
+
+fn download_quality_choices(limit_kbps: Option<u32>) -> Vec<StreamQuality> {
+    DOWNLOAD_QUALITIES
+        .into_iter()
+        .filter(|quality| {
+            quality
+                .max_bitrate_kbps()
+                .is_none_or(|bitrate| limit_kbps.is_none_or(|limit| bitrate <= limit))
+        })
+        .collect()
+}
+
+fn download_quality_label(quality: StreamQuality) -> String {
+    match quality {
+        StreamQuality::Original => tr("Original"),
+        StreamQuality::MaxBitrateKbps(320) => tr("320 kbps"),
+        StreamQuality::MaxBitrateKbps(256) => tr("256 kbps"),
+        StreamQuality::MaxBitrateKbps(192) => tr("192 kbps"),
+        StreamQuality::MaxBitrateKbps(128) => tr("128 kbps"),
+        StreamQuality::MaxBitrateKbps(bitrate) => format!("{bitrate} kbps"),
+    }
 }

@@ -1689,7 +1689,37 @@ async fn stream_keeps_auth_for_playback_and_redacts_it_for_logs() {
 
     assert!(stream.uri().contains("api_key=secret-token"));
     assert!(stream.uri().contains("MaxStreamingBitrate=320000"));
+    assert!(stream.uri().contains("TranscodingContainer=mp3"));
+    assert!(stream.uri().contains("AudioCodec=mp3"));
     assert!(!stream.redacted_uri().contains("secret-token"));
     assert!(stream.redacted_uri().contains("api_key=%3Credacted%3E"));
     assert!(stream.trust_invalid_certificate());
+
+    let download = source
+        .resolve_download(&StreamRequest::new(
+            TrackId::new("jellyfin:track:track-one"),
+            StreamQuality::MaxBitrateKbps(320),
+        ))
+        .expect("Jellyfin download");
+    assert_eq!(download.transcoded_extension(), Some("ogg"));
+    assert!(
+        download
+            .stream()
+            .uri()
+            .contains("Audio/track-one/Universal")
+    );
+    assert!(download.stream().uri().contains("transcodingContainer=ogg"));
+    assert!(download.stream().uri().contains("audioCodec=opus"));
+    assert!(download.stream().uri().contains("audioBitRate=256000"));
+    assert!(download.stream().uri().contains("api_key=secret-token"));
+    assert!(!download.stream().redacted_uri().contains("secret-token"));
+
+    let original = source
+        .resolve_download(&StreamRequest::original(TrackId::new(
+            "jellyfin:track:track-one",
+        )))
+        .expect("original Jellyfin download");
+    assert_eq!(original.transcoded_extension(), None);
+    assert!(original.stream().uri().contains("Audio/track-one/stream"));
+    assert!(original.stream().uri().contains("Static=true"));
 }

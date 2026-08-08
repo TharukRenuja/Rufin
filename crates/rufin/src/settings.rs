@@ -143,6 +143,24 @@ impl StoredSettings {
                 .iter()
                 .any(|source| source.configuration.source_id == download.source_id)
         });
+        for download in &mut self.ui.downloads {
+            let limit = self
+                .sources
+                .configured
+                .iter()
+                .find(|source| source.configuration.source_id == download.source_id)
+                .and_then(|source| {
+                    source
+                        .configuration
+                        .transcoded_download_bitrate_limit_kbps()
+                });
+            if let (library::StreamQuality::MaxBitrateKbps(bitrate), Some(limit)) =
+                (download.quality, limit)
+                && bitrate > limit
+            {
+                download.quality = library::StreamQuality::MaxBitrateKbps(limit);
+            }
+        }
     }
 
     pub(crate) fn scrobbling_runtime_settings(&self) -> ScrobblingSettings {
@@ -1441,5 +1459,51 @@ mod tests {
 
         assert!(stored.ui.download_rules(&source_id).entire_library);
         assert!(stored.ui.download_rules(&removed_id).is_empty());
+    }
+
+    #[test]
+    fn saved_320_download_quality_is_limited_only_for_jellyfin() {
+        let jellyfin_id = SourceId::new("jellyfin:quality");
+        let navidrome_id = SourceId::new("navidrome:quality");
+        let configured_source = |source_id: SourceId, kind: &str| ConfiguredSource {
+            configuration: SourceConfiguration {
+                source_id,
+                kind: kind.to_string(),
+                name: "Server".to_string(),
+                provider_payload: "{}".to_string(),
+            },
+            credential_ref: None,
+            music_folder_id: None,
+            local_access: None,
+        };
+        let mut stored = StoredSettings {
+            sources: SourceSettings {
+                selected_source_id: Some(jellyfin_id.clone()),
+                configured: vec![
+                    configured_source(jellyfin_id.clone(), "jellyfin"),
+                    configured_source(navidrome_id.clone(), "navidrome"),
+                ],
+            },
+            ..StoredSettings::default()
+        };
+        stored.ui.set_download_quality(
+            jellyfin_id.clone(),
+            library::StreamQuality::MaxBitrateKbps(320),
+        );
+        stored.ui.set_download_quality(
+            navidrome_id.clone(),
+            library::StreamQuality::MaxBitrateKbps(320),
+        );
+
+        stored.migrate_defaults();
+
+        assert_eq!(
+            stored.ui.download_quality(&jellyfin_id),
+            library::StreamQuality::MaxBitrateKbps(256)
+        );
+        assert_eq!(
+            stored.ui.download_quality(&navidrome_id),
+            library::StreamQuality::MaxBitrateKbps(320)
+        );
     }
 }
