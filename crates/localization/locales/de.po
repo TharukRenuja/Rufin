@@ -403,6 +403,11 @@ msgstr "Warteschlange leeren"
 
 #, fuzzy
 #| msgid "App window"
+msgid "Close Window"
+msgstr "Anwendungsfenster"
+
+#, fuzzy
+#| msgid "App window"
 msgid "Close app window"
 msgstr "Anwendungsfenster"
 
@@ -762,6 +767,9 @@ msgstr "Rasterbeschriftung"
 
 msgid "Grid"
 msgstr "Raster"
+
+msgid "Help"
+msgstr ""
 
 msgid "Hidden"
 msgstr "Versteckt"
@@ -2097,6 +2105,9 @@ msgstr ""
 
 msgid "Waveform seekbar"
 msgstr "Wellenform-Fortschrittsbalken"
+
+msgid "Window"
+msgstr ""
 
 msgid "Year"
 msgstr "Jahr"

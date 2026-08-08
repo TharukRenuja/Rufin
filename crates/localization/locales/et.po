@@ -403,6 +403,11 @@ msgstr "Tühjenda esitusjärjekord"
 
 #, fuzzy
 #| msgid "App window"
+msgid "Close Window"
+msgstr "Rakenduse aken"
+
+#, fuzzy
+#| msgid "App window"
 msgid "Close app window"
 msgstr "Rakenduse aken"
 
@@ -763,6 +768,9 @@ msgstr "Ruudustikuvaate sildid"
 
 msgid "Grid"
 msgstr "Ruudustikuvaade"
+
+msgid "Help"
+msgstr ""
 
 msgid "Hidden"
 msgstr "Peidetud"
@@ -2097,6 +2105,9 @@ msgstr ""
 
 msgid "Waveform seekbar"
 msgstr "Helilainega kerimisriba"
+
+msgid "Window"
+msgstr ""
 
 msgid "Year"
 msgstr "Aasta"

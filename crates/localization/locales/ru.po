@@ -368,6 +368,11 @@ msgstr "Удалить загруженные тексты песен для э�
 msgid "Clear queue"
 msgstr "Очистить очередь"
 
+#, fuzzy
+#| msgid "Close app window"
+msgid "Close Window"
+msgstr "Закрыть окно приложения"
+
 msgid "Close app window"
 msgstr "Закрыть окно приложения"
 
@@ -710,6 +715,9 @@ msgstr "Метки сетки"
 
 msgid "Grid"
 msgstr "Сетка"
+
+msgid "Help"
+msgstr ""
 
 msgid "Hidden"
 msgstr "Скрыт"
@@ -1914,6 +1922,9 @@ msgstr "Ожидание подключения"
 
 msgid "Waveform seekbar"
 msgstr "Индикатор прогресса воспроизведения в виде волновой формы"
+
+msgid "Window"
+msgstr ""
 
 msgid "Year"
 msgstr "Год"
