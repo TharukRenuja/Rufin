@@ -4,7 +4,7 @@ use crate::interactions::{
     install_context_menu_openers, keep_parent_grab_for_nested_native_menus, popdown_native_menu,
     replace_native_menu_checkmarks, show_native_menu_icons,
 };
-use crate::localization::bind_widget_tooltip;
+use crate::localization::{bind_widget_accessible_label, bind_widget_tooltip};
 use crate::preferences::source::selector::source_submenu;
 use crate::routes::collection_context::{
     present_album_context_menu, present_artist_context_menu, present_genre_context_menu,
@@ -146,7 +146,7 @@ pub(super) struct NormalPrimaryMenuWidgets {
 pub(crate) struct NavigationWidgets {
     pub(super) split_view: adw::OverlaySplitView,
     pub(super) left_resize_handle: gtk::Box,
-    pub(super) normal_nav_slot: gtk::ScrolledWindow,
+    pub(super) normal_nav_panel: gtk::Box,
     pub(super) compact_nav_slot: gtk::ScrolledWindow,
     pub(super) tiny_nav_button: gtk::Button,
     pub(super) normal_nav: gtk::Box,
@@ -156,10 +156,6 @@ pub(crate) struct NavigationWidgets {
 }
 
 pub(super) fn build_normal_navigation(shell: &Rc<Shell>) {
-    shell
-        .navigation_view
-        .normal_nav
-        .append(&normal_sidebar_header(shell));
     for item in nav_items(shell) {
         shell.navigation_view.normal_nav.append(&nav_button(
             shell,
@@ -362,7 +358,7 @@ fn sidebar_spacer() -> gtk::Box {
     spacer
 }
 
-fn normal_sidebar_header(shell: &Rc<Shell>) -> adw::HeaderBar {
+pub(super) fn normal_sidebar_header(shell: &Rc<Shell>) -> adw::HeaderBar {
     let search = gtk::Button::from_icon_name("system-search-symbolic");
     bind_widget_tooltip(&search, msgid("Search"));
     let search_shell = Rc::clone(shell);
@@ -520,7 +516,8 @@ fn normal_primary_menu_button(
     shell: &Rc<Shell>,
 ) -> gtk::MenuButton {
     button.set_icon_name("open-menu-symbolic");
-    chrome::configure_normal_primary_menu_button(button);
+    bind_widget_tooltip(button, msgid("Menu"));
+    bind_widget_accessible_label(button, msgid("Menu"));
     let popover = primary_menu_popover(shell);
     let mapped_popover = popover.clone();
     let row_shell = Rc::downgrade(shell);

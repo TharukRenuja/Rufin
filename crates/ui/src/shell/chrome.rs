@@ -178,12 +178,6 @@ pub(super) fn configure_primary_menu_button(button: &gtk::Button) {
     button.update_property(&[gtk::accessible::Property::Label(&label)]);
 }
 
-pub(super) fn configure_normal_primary_menu_button(button: &gtk::MenuButton) {
-    let label = tr("Menu");
-    button.set_tooltip_text(Some(&label));
-    button.update_property(&[gtk::accessible::Property::Label(&label)]);
-}
-
 pub(crate) fn window_drag_handle_with_child(
     css_class: &str,
     child: &impl IsA<gtk::Widget>,

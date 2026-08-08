@@ -50,7 +50,7 @@ use super::layout::{
 use super::localization::LocalizationState;
 use super::navigation::{
     NavigationState, NavigationWidgets, NormalPrimaryMenuWidgets, PrimaryMenuWidgets,
-    build_compact_navigation, build_normal_navigation,
+    build_compact_navigation, build_normal_navigation, normal_sidebar_header,
 };
 use super::route::{RouteStack, RouteViewport};
 use super::startup::StartupState;
@@ -243,12 +243,16 @@ pub fn build(app: &adw::Application, inputs: RuntimeInputs) {
     let normal_nav_handle = window_drag_handle_with_child("sidebar-drag-handle", &normal_nav);
     normal_nav_handle.set_vexpand(true);
     normal_nav_handle.set_valign(gtk::Align::Fill);
-    let normal_nav_slot = sidebar_scroll_slot(NORMAL_SIDEBAR_WIDTH, &normal_nav_handle);
-    normal_nav_slot.set_width_request(1);
-    normal_nav_slot.set_min_content_width(1);
-    normal_nav_slot.set_max_content_width(-1);
-    normal_nav_slot.add_css_class("sidebar-pane");
-    normal_nav_slot.add_css_class("wide-sidebar-slot");
+    let normal_nav_scroller = sidebar_scroll_slot(NORMAL_SIDEBAR_WIDTH, &normal_nav_handle);
+    normal_nav_scroller.set_width_request(1);
+    normal_nav_scroller.set_min_content_width(1);
+    normal_nav_scroller.set_max_content_width(-1);
+    let normal_nav_panel = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    normal_nav_panel.set_width_request(1);
+    normal_nav_panel.set_vexpand(true);
+    normal_nav_panel.add_css_class("sidebar-pane");
+    normal_nav_panel.add_css_class("wide-sidebar-slot");
+    normal_nav_panel.append(&normal_nav_scroller);
 
     let compact_nav = gtk::Box::new(gtk::Orientation::Vertical, 1);
     compact_nav.add_css_class("compact-rail");
@@ -315,7 +319,7 @@ pub fn build(app: &adw::Application, inputs: RuntimeInputs) {
     split_view.set_min_sidebar_width(NORMAL_SIDEBAR_WIDTH as f64);
     split_view.set_max_sidebar_width(NORMAL_SIDEBAR_WIDTH as f64);
     split_view.set_sidebar_width_unit(adw::LengthUnit::Px);
-    split_view.set_sidebar(Some(&normal_nav_slot));
+    split_view.set_sidebar(Some(&normal_nav_panel));
     split_view.set_content(Some(&content_row));
 
     let shell_layout = gtk::Overlay::new();
@@ -413,7 +417,7 @@ pub fn build(app: &adw::Application, inputs: RuntimeInputs) {
     let navigation_view = NavigationWidgets {
         split_view,
         left_resize_handle,
-        normal_nav_slot,
+        normal_nav_panel,
         compact_nav_slot,
         tiny_nav_button,
         normal_nav,
@@ -491,6 +495,10 @@ pub fn build(app: &adw::Application, inputs: RuntimeInputs) {
             }
         });
     }
+    shell
+        .navigation_view
+        .normal_nav_panel
+        .prepend(&normal_sidebar_header(&shell));
     build_normal_navigation(&shell);
     build_compact_navigation(&shell);
     shell.install_locale_bindings();
