@@ -1789,6 +1789,10 @@ listview.queue-list row {
   color: var(--dim-label-color);
 }
 
+.lyrics-ruby-annotated > .lyrics-reading-surface {
+  transform: translateY(-1px);
+}
+
 .lyrics-romanization {
   margin-top: 2px;
   font-size: 15px;
