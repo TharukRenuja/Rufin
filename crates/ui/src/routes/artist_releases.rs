@@ -28,7 +28,6 @@ use super::route_shell::{LibraryToolbarProjection, non_propagating_width_scrolle
 
 const ARTIST_RELEASE_SECTION_GAP: i32 = 18;
 const ARTIST_RELEASE_HEADER_GAP: i32 = 10;
-const ARTIST_ROUTE_BOTTOM_MARGIN: i32 = 36;
 const ARTIST_RELEASE_SECTION_COUNT: usize = 6;
 
 #[derive(Clone)]
@@ -388,7 +387,6 @@ impl ArtistReleaseProjections {
                 )
             });
         list.set_margin_top(ROUTE_TOP_MARGIN);
-        list.set_margin_bottom(ARTIST_ROUTE_BOTTOM_MARGIN);
 
         let resize_columns = Rc::clone(&columns);
         let resize_layout = Rc::clone(&layout);
