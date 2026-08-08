@@ -43,7 +43,7 @@ pub(crate) struct DownloadsState {
     pub(crate) queue_refresh: RefCell<Option<Rc<dyn Fn()>>>,
     feedback_generation: Rc<Cell<u64>>,
     feedback_opens_queue: Cell<bool>,
-    badges: RefCell<HashMap<usize, DownloadBadgeBinding>>,
+    badges: Rc<RefCell<HashMap<usize, DownloadBadgeBinding>>>,
 }
 
 impl Shell {
@@ -433,10 +433,15 @@ impl Shell {
             .as_ref()
             .is_some_and(|selected| (binding.downloaded)(selected));
         self.set_download_badge_visible(&image, downloaded);
-        self.downloads
-            .badges
-            .borrow_mut()
-            .insert(image.as_ptr() as usize, binding);
+        let identity = image.as_ptr() as usize;
+        self.downloads.badges.borrow_mut().insert(identity, binding);
+        let badges = Rc::downgrade(&self.downloads.badges);
+        let _ = image.add_weak_ref_notify_local(move || {
+            let Some(badges) = badges.upgrade() else {
+                return;
+            };
+            badges.borrow_mut().remove(&identity);
+        });
         image
     }
 

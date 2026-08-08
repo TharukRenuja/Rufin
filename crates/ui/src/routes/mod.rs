@@ -8,6 +8,7 @@ pub(crate) mod collections;
 mod columns;
 pub(crate) mod detail_links;
 mod detail_showcase;
+mod factory_cells;
 pub(crate) mod folders;
 mod genre_detail;
 mod grid_cells;
