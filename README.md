@@ -156,7 +156,7 @@ This makes just commands go through the container development. If you want to bu
 
 ### Native build
 
-Rufin requires Rust 1.95 or newer, GTK 4.20 or newer, libadwaita 1.8 or
+Rufin requires Rust 1.95 or newer, GTK 4.20 or newer, libadwaita 1.9 or
 newer, and GStreamer 1.26 or newer.
 
 **Arch Linux:**
