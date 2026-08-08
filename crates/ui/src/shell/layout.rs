@@ -460,7 +460,7 @@ impl Shell {
                 self.navigation_view.split_view.set_collapsed(collapsed);
             }
         }
-        set_widget_visible(&self.navigation_view.normal_nav_slot, app_active);
+        set_widget_visible(&self.navigation_view.normal_nav_panel, app_active);
         set_widget_visible(
             &self.navigation_view.compact_nav_slot,
             app_active && resolved.left_sidebar == ResolvedLeftSidebarMode::Compact,
