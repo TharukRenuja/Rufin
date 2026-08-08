@@ -117,6 +117,9 @@ impl Shell {
         let title = self.download_subject_title(&feedback.subject);
         let count = track_count_text(feedback.item_count as u64);
         let subtitle = operation_feedback_subtitle(&feedback.kind, &count);
+        self.chrome
+            .operation_feedback
+            .remove_css_class("operation-feedback-notice");
         self.chrome.operation_feedback_artwork.set_visible(true);
         while let Some(child) = self.chrome.operation_feedback_artwork.first_child() {
             self.chrome.operation_feedback_artwork.remove(&child);
@@ -135,6 +138,9 @@ impl Shell {
     }
 
     fn show_download_notice(&self, message: &str) {
+        self.chrome
+            .operation_feedback
+            .add_css_class("operation-feedback-notice");
         self.chrome.operation_feedback_artwork.set_visible(false);
         self.chrome.operation_feedback_title.set_text(message);
         self.chrome.operation_feedback_subtitle.set_visible(false);
