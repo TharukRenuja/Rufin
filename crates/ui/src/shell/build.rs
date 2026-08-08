@@ -67,7 +67,10 @@ fn sidebar_scroll_slot(width: i32, child: &impl IsA<gtk::Widget>) -> gtk::Scroll
     slot.set_propagate_natural_height(false);
     slot.set_hexpand(false);
     slot.set_vexpand(true);
-    slot.set_child(Some(child));
+    let viewport = gtk::Viewport::new(None::<&gtk::Adjustment>, None::<&gtk::Adjustment>);
+    viewport.set_vscroll_policy(gtk::ScrollablePolicy::Natural);
+    viewport.set_child(Some(child));
+    slot.set_child(Some(&viewport));
     slot
 }
 
