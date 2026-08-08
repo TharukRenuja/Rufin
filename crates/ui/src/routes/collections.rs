@@ -26,7 +26,7 @@ use super::columns::{
     smart_playlist_column, track_column_fit_width, track_column_for_key,
     track_position_text_column,
 };
-use super::detail_links::track_artist_route;
+use super::detail_links::{DetailLinks, track_album_artist_links, track_artist_links};
 use super::grid_cells::{
     AlbumGridCell, ArtistGridCell, CollectionGridProjection, FixedPageCollectionRow,
     PlaylistGridCell, ReusableCollectionGridCell, SmartPlaylistGridCell, TrackGridCell,
@@ -36,7 +36,7 @@ use super::library_fields::{
     ALBUM_COLLECTION_GRID_MAX_CARD_WIDTH, ALBUM_COLLECTION_GRID_MIN_CARD_WIDTH,
     COLLECTION_GRID_CARD_GAP, COLLECTION_GRID_MAX_CARD_WIDTH, COLLECTION_GRID_MIN_CARD_WIDTH,
     clear_list_item_child, column_width, compact_header_column_width, grid_label_with_label,
-    item_at, item_at_from_item,
+    item_at, item_at_from_item, track_field,
 };
 use super::playlist_picker::PlaylistTrackSource;
 use super::route::Route;
@@ -863,7 +863,16 @@ pub(crate) fn track_grid(
                         } else {
                             super::library_fields::track_field(track, field)
                         };
-                    (value, track_grid_field_route(track, field))
+                    if matches!(field, LibraryField::Artist | LibraryField::AlbumArtist) {
+                        track_grid_field_links(track, field)
+                    } else {
+                        DetailLinks::route(
+                            &value,
+                            (field == LibraryField::Album)
+                                .then(|| track.album_id.clone().map(Route::AlbumDetail))
+                                .flatten(),
+                        )
+                    }
                 }),
             )
         },
@@ -1441,20 +1450,15 @@ pub(super) fn collection_grid_field_label(
     grid_label_with_label(value, collection_grid_field_class(field))
 }
 
-pub(super) fn track_grid_field_route(track: &Track, field: LibraryField) -> Option<Route> {
+pub(super) fn track_grid_field_links(track: &Track, field: LibraryField) -> DetailLinks {
     match field {
-        LibraryField::Artist => track_artist_route(track),
-        LibraryField::AlbumArtist => track_album_artist_route(track),
-        LibraryField::Album => track.album_id.clone().map(Route::AlbumDetail),
-        _ => None,
+        LibraryField::Artist => track_artist_links(track),
+        LibraryField::AlbumArtist => track_album_artist_links(track),
+        LibraryField::Album => {
+            DetailLinks::route(&track.album, track.album_id.clone().map(Route::AlbumDetail))
+        }
+        _ => DetailLinks::text(&track_field(track, field)),
     }
-}
-
-fn track_album_artist_route(track: &Track) -> Option<Route> {
-    track
-        .album_artist_credits()
-        .first()
-        .map(|artist| Route::ArtistDetail(artist.id.clone()))
 }
 
 pub(super) fn collection_grid_card() -> gtk::Box {

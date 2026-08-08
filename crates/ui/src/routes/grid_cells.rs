@@ -32,13 +32,13 @@ use std::rc::Rc;
 use super::cards;
 use super::collections::{
     PlaybackTarget, SMART_PLAYLIST_REORDER_WIDTH, collection_grid_card,
-    collection_grid_field_label, track_grid_field_route,
+    collection_grid_field_label, track_grid_field_links,
 };
-use super::detail_links::album_artist_route;
+use super::detail_links::{DetailLinkBinding, DetailLinks, album_artist_links};
 use super::library_fields::{
     COLLECTION_GRID_CARD_MARGIN, COLLECTION_GRID_MAX_CARD_WIDTH, COLLECTION_GRID_MIN_CARD_WIDTH,
     album_field, artist_field, grid_title_with_label, item_at, item_at_from_item, playlist_field,
-    smart_playlist_display_name, smart_playlist_field, track_field,
+    smart_playlist_display_name, smart_playlist_field,
 };
 use super::route::Route;
 use super::route_shell::restore_single_click_activation_on_primary_press;
@@ -493,7 +493,7 @@ pub(super) struct TrackGridCell {
     current_track: Rc<RefCell<Option<Track>>>,
     current_position: Rc<Cell<u32>>,
     cover_size: i32,
-    field_value: Rc<dyn Fn(u32, &Track, LibraryField) -> (String, Option<Route>)>,
+    field_value: Rc<dyn Fn(u32, &Track, LibraryField) -> DetailLinks>,
 }
 
 impl TrackGridCell {
@@ -508,12 +508,7 @@ impl TrackGridCell {
             fields,
             play_from_collection,
             cover_size,
-            Rc::new(|_, track, field| {
-                (
-                    track_field(track, field),
-                    track_grid_field_route(track, field),
-                )
-            }),
+            Rc::new(|_, track, field| track_grid_field_links(track, field)),
         )
     }
 
@@ -522,7 +517,7 @@ impl TrackGridCell {
         fields: &[LibraryField],
         play_from_collection: Rc<dyn Fn(u32)>,
         cover_size: i32,
-        field_value: Rc<dyn Fn(u32, &Track, LibraryField) -> (String, Option<Route>)>,
+        field_value: Rc<dyn Fn(u32, &Track, LibraryField) -> DetailLinks>,
     ) -> Self {
         let current_track = Rc::new(RefCell::new(None::<Track>));
         let current_position = Rc::new(Cell::new(0));
@@ -846,14 +841,13 @@ impl ReusableCollectionGridCell<AlbumSummary> for AlbumGridCell {
         );
         self.body.bind(&album.album.title, |field| {
             let value = album_field(&album, field);
-            let route = if value.is_empty()
+            if value.is_empty()
                 || !matches!(field, LibraryField::Artist | LibraryField::AlbumArtist)
             {
-                None
+                DetailLinks::text(&value)
             } else {
-                album_artist_route(&album.album)
-            };
-            (value, route)
+                album_artist_links(&album.album)
+            }
         });
         self.body.set_downloaded(
             &self.shell,
@@ -884,14 +878,13 @@ impl ReusableCollectionGridCell<AlbumSummary> for AlbumGridCell {
         if let Some(album) = self.current_album.borrow().as_ref().cloned() {
             self.body.bind(&album.album.title, |field| {
                 let value = album_field(&album, field);
-                let route = if value.is_empty()
+                if value.is_empty()
                     || !matches!(field, LibraryField::Artist | LibraryField::AlbumArtist)
                 {
-                    None
+                    DetailLinks::text(&value)
                 } else {
-                    album_artist_route(&album.album)
-                };
-                (value, route)
+                    album_artist_links(&album.album)
+                }
             });
         }
     }
@@ -1048,7 +1041,7 @@ impl ReusableCollectionGridCell<ArtistSummary> for ArtistGridCell {
             LARGE_COVER_SIZE,
         );
         self.body.bind(&artist.artist.name, |field| {
-            (artist_field(&artist, field), None)
+            DetailLinks::text(&artist_field(&artist, field))
         });
         self.body.set_downloaded(
             &self.shell,
@@ -1078,7 +1071,7 @@ impl ReusableCollectionGridCell<ArtistSummary> for ArtistGridCell {
         self.body.replace_fields(&self.shell, fields);
         if let Some(artist) = self.current_artist.borrow().as_ref().cloned() {
             self.body.bind(&artist.artist.name, |field| {
-                (artist_field(&artist, field), None)
+                DetailLinks::text(&artist_field(&artist, field))
             });
         }
     }
@@ -1219,7 +1212,7 @@ impl ReusableCollectionGridCell<PlaylistSummary> for PlaylistGridCell {
                 THUMB_COVER_SIZE,
             )));
         self.body.bind(&playlist.playlist.name, |field| {
-            (playlist_field(&playlist, field), None)
+            DetailLinks::text(&playlist_field(&playlist, field))
         });
         self.body.set_downloaded(
             &self.shell,
@@ -1248,7 +1241,7 @@ impl ReusableCollectionGridCell<PlaylistSummary> for PlaylistGridCell {
         self.body.replace_fields(&self.shell, fields);
         if let Some(playlist) = self.current_playlist.borrow().as_ref().cloned() {
             self.body.bind(&playlist.playlist.name, |field| {
-                (playlist_field(&playlist, field), None)
+                DetailLinks::text(&playlist_field(&playlist, field))
             });
         }
     }
@@ -1394,7 +1387,7 @@ impl ReusableCollectionGridCell<SmartPlaylistSummary> for SmartPlaylistGridCell 
             )));
         self.body.bind(
             &smart_playlist_display_name(&playlist.smart_playlist),
-            |field| (smart_playlist_field(&playlist, field), None),
+            |field| DetailLinks::text(&smart_playlist_field(&playlist, field)),
         );
         self.body.set_downloaded(
             &self.shell,
@@ -1427,7 +1420,7 @@ impl ReusableCollectionGridCell<SmartPlaylistSummary> for SmartPlaylistGridCell 
         if let Some(playlist) = self.current_playlist.borrow().as_ref().cloned() {
             self.body.bind(
                 &smart_playlist_display_name(&playlist.smart_playlist),
-                |field| (smart_playlist_field(&playlist, field), None),
+                |field| DetailLinks::text(&smart_playlist_field(&playlist, field)),
             );
         }
     }
@@ -1639,14 +1632,13 @@ impl CollectionGridCardCell {
     pub(super) fn bind(
         &self,
         title: &str,
-        mut field_value: impl FnMut(LibraryField) -> (String, Option<Route>),
+        mut field_value: impl FnMut(LibraryField) -> DetailLinks,
     ) {
         self.title.set_text(title);
         self.title
             .set_tooltip_text((!title.is_empty()).then_some(title));
         for field in self.fields.borrow().iter() {
-            let (value, route) = field_value(field.field);
-            field.bind(value, route);
+            field.bind(field_value(field.field));
         }
     }
 
@@ -1711,95 +1703,33 @@ struct CollectionGridFieldCell {
     field: LibraryField,
     widget: gtk::Widget,
     label: gtk::Label,
-    route: Rc<RefCell<Option<Route>>>,
+    links: DetailLinkBinding,
 }
 
 impl CollectionGridFieldCell {
     fn new(shell: &Rc<Shell>, field: LibraryField) -> Self {
         let (widget, label) = collection_grid_field_label("", field);
-        let route = Rc::new(RefCell::new(None::<Route>));
-        install_dynamic_grid_label_link(shell, &widget, &label, Rc::clone(&route));
+        let links = DetailLinkBinding::new(&label, shell);
         Self {
             field,
             widget,
             label,
-            route,
+            links,
         }
     }
 
-    fn bind(&self, value: String, route: Option<Route>) {
-        *self.route.borrow_mut() = route;
-        self.label.set_text(&value);
+    fn bind(&self, links: DetailLinks) {
+        self.links.bind(links);
+        let value = self.label.text();
         self.label
             .set_tooltip_text((!value.is_empty()).then_some(value.as_str()));
-        let clickable = self.route.borrow().is_some();
-        let cursor = clickable.then_some("pointer");
-        self.widget.set_cursor_from_name(cursor);
-        self.label.set_cursor_from_name(cursor);
     }
 
     fn clear(&self) {
-        *self.route.borrow_mut() = None;
-        self.label.set_text("");
+        self.links.clear();
         self.label.set_tooltip_text(None);
         self.widget.set_cursor_from_name(None);
-        self.label.set_cursor_from_name(None);
     }
-}
-
-fn install_dynamic_grid_label_link(
-    shell: &Rc<Shell>,
-    target: &gtk::Widget,
-    label: &gtk::Label,
-    route: Rc<RefCell<Option<Route>>>,
-) {
-    let enter_label = label.downgrade();
-    let enter_route = Rc::clone(&route);
-    let leave_label = label.downgrade();
-    let leave_route = Rc::clone(&route);
-    let motion = gtk::EventControllerMotion::new();
-    motion.connect_enter(move |_, _, _| {
-        if enter_route.borrow().is_none() {
-            return;
-        }
-        let Some(label) = enter_label.upgrade() else {
-            return;
-        };
-        let text = label.text();
-        if text.is_empty() {
-            return;
-        }
-        let escaped_text = glib::markup_escape_text(text.as_str());
-        label.add_css_class("hovered-link");
-        label.set_markup(&format!("<u>{escaped_text}</u>"));
-    });
-    motion.connect_leave(move |_| {
-        if leave_route.borrow().is_some() {
-            let Some(label) = leave_label.upgrade() else {
-                return;
-            };
-            let text = label.text().to_string();
-            label.remove_css_class("hovered-link");
-            label.set_text(&text);
-        }
-    });
-    target.add_controller(motion);
-
-    let click_shell = Rc::clone(shell);
-    let click_route = route;
-    let click = gtk::GestureClick::new();
-    click.set_button(1);
-    click.connect_released(move |gesture, press_count, _, _| {
-        if press_count != 1 {
-            return;
-        }
-        let Some(route) = click_route.borrow().clone() else {
-            return;
-        };
-        gesture.set_state(gtk::EventSequenceState::Claimed);
-        click_shell.navigate(route);
-    });
-    target.add_controller(click);
 }
 
 #[cfg(test)]

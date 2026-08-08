@@ -25,6 +25,7 @@ use super::collections::{
     PlaybackTarget, collection_column_width, dynamic_collection_table,
 };
 use super::columns::{column_fit_width, row_index_column};
+use super::detail_links::DetailLinks;
 use super::grid_cells::{
     CollectionGridCardCell, CollectionGridProjection, ReusableCollectionGridCell, collection_grid,
     collection_grid_cover_shell, install_dynamic_genre_context_menu,
@@ -583,7 +584,7 @@ impl ReusableCollectionGridCell<NamedCollectionItem> for NamedCollectionGridCell
                 THUMB_COVER_SIZE,
             )));
         self.body
-            .bind(item.name(), |field| (item.field(field), None));
+            .bind(item.name(), |field| DetailLinks::text(&item.field(field)));
         self.body.set_downloaded(
             &self.shell,
             self.shell
@@ -611,7 +612,7 @@ impl ReusableCollectionGridCell<NamedCollectionItem> for NamedCollectionGridCell
         self.body.replace_fields(&self.shell, fields);
         if let Some(item) = self.current_item.borrow().as_ref().cloned() {
             self.body
-                .bind(item.name(), |field| (item.field(field), None));
+                .bind(item.name(), |field| DetailLinks::text(&item.field(field)));
         }
     }
 }

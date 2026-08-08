@@ -13,7 +13,6 @@ use localization::{album_count_text, msgid, track_count_text};
 use playback::RadioPlayRequest;
 
 use crate::format_duration_units;
-use crate::interactions::{add_link_hover, add_widget_click};
 use crate::layout::{configure_fill_width_clip, width_allocation_owner};
 use crate::localization::{bind_label_text_with, localized_label};
 use crate::shell::Shell;
@@ -22,7 +21,7 @@ use crate::shell::route::MountedRoute;
 
 use super::cards::{album_cover_overlay, track_cover_overlay};
 use super::collections::{home_item_row, library_route_inset};
-use super::detail_links::{album_artist_route, track_artist_route};
+use super::detail_links::{DetailLinkBinding, album_artist_links, track_artist_links};
 use super::detail_showcase::{DetailSummaryProjection, detail_radio_button};
 use super::grid_cells::collection_grid_column_count;
 use super::home_layout::{
@@ -32,23 +31,6 @@ use super::home_layout::{
 use super::library_fields::{COLLECTION_GRID_MAX_CARD_WIDTH, COLLECTION_GRID_MIN_CARD_WIDTH};
 use super::route::Route;
 use super::route_layout::{ROUTE_TOP_MARGIN, home_album_content_width, route_scroller_widget};
-
-fn add_card_label_link(
-    shell: &Rc<Shell>,
-    target: &gtk::Widget,
-    label: &gtk::Label,
-    text: &str,
-    route: Option<Route>,
-) {
-    let Some(route) = route else {
-        return;
-    };
-    target.set_cursor_from_name(Some("pointer"));
-    label.set_cursor_from_name(Some("pointer"));
-    add_link_hover(target, label, text);
-    let shell = Rc::clone(shell);
-    add_widget_click(target, move || shell.navigate(route.clone()));
-}
 
 fn render_home_section_page_model(
     model: &gio::ListStore,
@@ -371,7 +353,7 @@ impl Shell {
             year,
             track_count,
             duration,
-            artist_route,
+            artist_links,
             radio,
         ) = match item {
             ShowcaseItem::Album(album) => (
@@ -382,7 +364,7 @@ impl Shell {
                 album.album.year,
                 album.track_count,
                 album.duration_seconds,
-                album_artist_route(&album.album),
+                album_artist_links(&album.album),
                 RadioSeed::Album(album.album.id.clone()),
             ),
             ShowcaseItem::Track(track) => (
@@ -393,7 +375,7 @@ impl Shell {
                 track.year,
                 1,
                 track.duration_seconds,
-                track_artist_route(track),
+                track_artist_links(track),
                 RadioSeed::Track(track.id.clone()),
             ),
         };
@@ -421,7 +403,10 @@ impl Shell {
                 "rufin-route-tracks-symbolic",
                 track_count_text(track_count.into()),
             ),
-            ("appointment-soon-symbolic", format_duration_units(duration)),
+            (
+                "preferences-system-time-symbolic",
+                format_duration_units(duration),
+            ),
         ]);
         facts.bind_text_with(1, move || track_count_text(track_count.into()));
         let metadata = gtk::Box::new(gtk::Orientation::Vertical, 10);
@@ -448,13 +433,7 @@ impl Shell {
         artist.set_xalign(0.0);
         artist.set_ellipsize(gtk::pango::EllipsizeMode::End);
         artist.set_width_chars(1);
-        add_card_label_link(
-            self,
-            artist.upcast_ref(),
-            &artist,
-            &artist_text,
-            artist_route,
-        );
+        DetailLinkBinding::new(&artist, self).bind(artist_links);
         metadata.append(&artist);
         metadata.append(&facts.widget());
         body.append(&metadata);

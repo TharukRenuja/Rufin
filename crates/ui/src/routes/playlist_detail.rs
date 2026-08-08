@@ -791,7 +791,7 @@ impl PlaylistDetailSummary {
             track_count_text(u64::from(track_count_for_locale.get()))
         });
         let (duration_item, duration_label) = playlist_detail_summary_item(
-            "appointment-soon-symbolic",
+            "preferences-system-time-symbolic",
             &format_duration_units(duration_seconds),
         );
         row.append(&track_count_item);
