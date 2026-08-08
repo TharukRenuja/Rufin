@@ -1105,27 +1105,53 @@ fn sidebar_pin_row(
 }
 
 fn sidebar_pin_metadata(track_count: u32, duration_seconds: u32) -> gtk::Box {
-    let metadata = gtk::Box::new(gtk::Orientation::Horizontal, 3);
+    let metadata = gtk::Box::new(gtk::Orientation::Horizontal, 8);
     metadata.add_css_class("sidebar-pin-metadata");
     metadata.set_hexpand(true);
     metadata.set_width_request(1);
+    metadata.set_valign(gtk::Align::Center);
     metadata.set_overflow(gtk::Overflow::Hidden);
+
+    let track_metadata = gtk::Box::new(gtk::Orientation::Horizontal, 3);
+    track_metadata.add_css_class("sidebar-pin-metadata-item");
+    track_metadata.set_valign(gtk::Align::Center);
 
     let tracks_icon = gtk::Image::from_icon_name("rufin-route-tracks-symbolic");
     tracks_icon.add_css_class("sidebar-pin-metadata-icon");
-    metadata.append(&tracks_icon);
+    tracks_icon.set_pixel_size(12);
+    tracks_icon.set_size_request(12, 12);
+    tracks_icon.set_valign(gtk::Align::Center);
+    track_metadata.append(&tracks_icon);
     let tracks = gtk::Label::new(Some(&track_count.to_string()));
     tracks.add_css_class("sidebar-pin-metadata-label");
-    metadata.append(&tracks);
+    tracks.set_valign(gtk::Align::Center);
+    tracks.set_yalign(0.5);
+    track_metadata.append(&tracks);
+    metadata.append(&track_metadata);
 
-    let duration_icon = gtk::Image::from_icon_name("appointment-soon-symbolic");
+    let duration_metadata = gtk::Box::new(gtk::Orientation::Horizontal, 3);
+    duration_metadata.add_css_class("sidebar-pin-metadata-item");
+    duration_metadata.set_hexpand(true);
+    duration_metadata.set_width_request(1);
+    duration_metadata.set_valign(gtk::Align::Center);
+    duration_metadata.set_overflow(gtk::Overflow::Hidden);
+
+    let duration_icon = gtk::Image::from_icon_name("preferences-system-time-symbolic");
     duration_icon.add_css_class("sidebar-pin-metadata-icon");
-    duration_icon.set_margin_start(3);
-    metadata.append(&duration_icon);
+    duration_icon.set_pixel_size(12);
+    duration_icon.set_size_request(12, 12);
+    duration_icon.set_valign(gtk::Align::Center);
+    duration_metadata.append(&duration_icon);
     let duration = gtk::Label::new(Some(&format_duration_units(duration_seconds)));
     duration.add_css_class("sidebar-pin-metadata-label");
+    duration.set_hexpand(true);
+    duration.set_width_request(1);
+    duration.set_xalign(0.0);
+    duration.set_valign(gtk::Align::Center);
+    duration.set_yalign(0.5);
     duration.set_ellipsize(gtk::pango::EllipsizeMode::End);
-    metadata.append(&duration);
+    duration_metadata.append(&duration);
+    metadata.append(&duration_metadata);
     metadata
 }
 

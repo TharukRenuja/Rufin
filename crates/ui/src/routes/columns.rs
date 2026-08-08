@@ -13,14 +13,17 @@ use crate::favorites::{
     album_favorite_key, artist_favorite_key, favorite_button_is_active, favorite_icon_button,
     set_favorite_button_active, track_favorite_key,
 };
-use crate::interactions::{add_dynamic_link_hover, add_label_click, install_context_menu_openers};
+use crate::interactions::install_context_menu_openers;
 use crate::localization::localized_column;
 use crate::shell::Shell;
 use crate::shell::cover::presentation::stable_seed;
 use crate::shell::cover::{ArtworkTile, THUMB_COVER_SIZE};
 use crate::{LibraryField, LibraryListKey};
 
-use super::detail_links::{album_artist_route, track_artist_route};
+use super::detail_links::{
+    DetailLinkBinding, DetailLinks, album_artist_links, track_album_artist_links,
+    track_artist_links,
+};
 use super::library_fields::{
     album_field, artist_field, column_width, item_at_from_item, play_count_column_width,
     playlist_field, smart_playlist_display_name, smart_playlist_field, track_artwork_at_from_item,
@@ -334,8 +337,7 @@ pub(crate) fn track_column_for_key(
                 title: |track: &Track| track.title.clone(),
                 subtitle: |track: &Track| track.artist.clone(),
                 seed: |track: &Track| stable_seed(track.id.as_str()),
-                subtitle_route: track_artist_route,
-                subtitle_link: true,
+                subtitle_links: |track: &Track| Some(track_artist_links(track)),
                 context_menu: true,
             },
         ),
@@ -345,22 +347,15 @@ pub(crate) fn track_column_for_key(
             })
         }
         LibraryField::Favorite => track_favorite_column(shell),
-        LibraryField::Artist => track_link_column(shell, "Artist", width, |track| {
-            (track.artist.clone(), track_artist_route(track))
-        }),
-        LibraryField::AlbumArtist => {
-            track_link_column(shell, LibraryField::AlbumArtist.title(), width, |track| {
-                (
-                    track_field(track, LibraryField::AlbumArtist),
-                    track_album_artist_route(track),
-                )
-            })
-        }
+        LibraryField::Artist => track_link_column(shell, "Artist", width, track_artist_links),
+        LibraryField::AlbumArtist => track_link_column(
+            shell,
+            LibraryField::AlbumArtist.title(),
+            width,
+            track_album_artist_links,
+        ),
         LibraryField::Album => track_link_column(shell, "Album", width, |track| {
-            (
-                track.album.clone(),
-                track.album_id.clone().map(Route::AlbumDetail),
-            )
+            DetailLinks::route(&track.album, track.album_id.clone().map(Route::AlbumDetail))
         }),
         LibraryField::Duration => track_text_column(shell, "◷", width, 0.0, None, |track| {
             track_field(track, LibraryField::Duration)
@@ -414,12 +409,6 @@ pub(crate) fn column_fit_width(field: LibraryField, width: i32) -> i32 {
     } else {
         width
     }
-}
-fn track_album_artist_route(track: &Track) -> Option<Route> {
-    track
-        .album_artist_credits()
-        .first()
-        .map(|artist| Route::ArtistDetail(artist.id.clone()))
 }
 fn track_list_column_width(field: LibraryField) -> i32 {
     match field {
@@ -736,7 +725,7 @@ pub(crate) struct LibraryAlbumMergedCell {
     pub(crate) title: gtk::Label,
     pub(crate) subtitle: gtk::Label,
     downloaded: gtk::Image,
-    pub(crate) subtitle_route: Rc<RefCell<Option<Route>>>,
+    pub(crate) subtitle_links: DetailLinkBinding,
     pub(crate) current_album: Rc<RefCell<Option<AlbumSummary>>>,
 }
 
@@ -964,7 +953,6 @@ pub(crate) fn album_merged_column(
             return;
         };
         let current_album = Rc::new(RefCell::new(None::<AlbumSummary>));
-        let subtitle_route = Rc::new(RefCell::new(None::<Route>));
         let row = gtk::Box::new(gtk::Orientation::Horizontal, 10);
         row.set_valign(gtk::Align::Center);
 
@@ -1000,16 +988,7 @@ pub(crate) fn album_merged_column(
         subtitle.set_ellipsize(gtk::pango::EllipsizeMode::End);
         subtitle.set_single_line_mode(true);
         subtitle.set_visible(false);
-        subtitle.set_cursor_from_name(Some("pointer"));
-        add_dynamic_link_hover(subtitle.upcast_ref(), &subtitle);
-        let click_shell = Rc::clone(&setup_shell);
-        let route_for_click = Rc::clone(&subtitle_route);
-        add_label_click(&subtitle, move || {
-            let route = route_for_click.borrow().clone();
-            if let Some(route) = route {
-                click_shell.navigate(route);
-            }
-        });
+        let subtitle_links = DetailLinkBinding::new(&subtitle, &setup_shell);
         labels.append(&subtitle);
 
         row.append(&labels);
@@ -1029,7 +1008,7 @@ pub(crate) fn album_merged_column(
                     title,
                     subtitle,
                     downloaded,
-                    subtitle_route,
+                    subtitle_links,
                     current_album,
                 },
             );
@@ -1055,9 +1034,7 @@ pub(crate) fn album_merged_column(
             THUMB_COVER_SIZE,
         );
         cell.title.set_text(&album.album.title);
-        cell.subtitle.set_text(&album.album.artist);
-        let route = album_artist_route(&album.album);
-        *cell.subtitle_route.borrow_mut() = route;
+        cell.subtitle_links.bind(album_artist_links(&album.album));
         cell.subtitle
             .set_visible(!album.album.artist.trim().is_empty());
         bind_shell
@@ -1072,9 +1049,8 @@ pub(crate) fn album_merged_column(
         {
             cell.title.set_text("");
             cell.downloaded.set_visible(false);
-            cell.subtitle.set_text("");
+            cell.subtitle_links.clear();
             cell.subtitle.set_visible(false);
-            *cell.subtitle_route.borrow_mut() = None;
             unbind_shell.clear_artwork_tile(&cell.cover);
             *cell.current_album.borrow_mut() = None;
         }
@@ -1380,7 +1356,7 @@ pub(crate) struct LibraryTrackMergedCell {
     pub(crate) title: gtk::Label,
     pub(crate) subtitle: gtk::Label,
     downloaded: gtk::Image,
-    pub(crate) subtitle_route: Rc<RefCell<Option<Route>>>,
+    pub(crate) subtitle_links: DetailLinkBinding,
     pub(crate) current_track: Rc<RefCell<Option<Track>>>,
 }
 
@@ -1635,24 +1611,23 @@ where
     column
 }
 
-pub(crate) struct TrackMergedColumnValues<ItemTrack, Artwork, Title, Subtitle, Seed, SubtitleRoute>
+pub(crate) struct TrackMergedColumnValues<ItemTrack, Artwork, Title, Subtitle, Seed, SubtitleLinks>
 {
     pub(crate) track: ItemTrack,
     pub(crate) artwork: Artwork,
     pub(crate) title: Title,
     pub(crate) subtitle: Subtitle,
     pub(crate) seed: Seed,
-    pub(crate) subtitle_route: SubtitleRoute,
-    pub(crate) subtitle_link: bool,
+    pub(crate) subtitle_links: SubtitleLinks,
     pub(crate) context_menu: bool,
 }
 
-pub(crate) fn track_merged_column<T, ItemTrack, Artwork, Title, Subtitle, Seed, SubtitleRoute>(
+pub(crate) fn track_merged_column<T, ItemTrack, Artwork, Title, Subtitle, Seed, SubtitleLinks>(
     shell: &Rc<Shell>,
     title: &'static str,
     width: i32,
     playing: TrackRowPlayingIndicator,
-    values: TrackMergedColumnValues<ItemTrack, Artwork, Title, Subtitle, Seed, SubtitleRoute>,
+    values: TrackMergedColumnValues<ItemTrack, Artwork, Title, Subtitle, Seed, SubtitleLinks>,
 ) -> gtk::ColumnViewColumn
 where
     T: Clone + 'static,
@@ -1661,7 +1636,7 @@ where
     Title: Fn(&T) -> String + 'static,
     Subtitle: Fn(&T) -> String + 'static,
     Seed: Fn(&T) -> u32 + 'static,
-    SubtitleRoute: Fn(&T) -> Option<Route> + 'static,
+    SubtitleLinks: Fn(&T) -> Option<DetailLinks> + 'static,
 {
     let factory = gtk::SignalListItemFactory::new();
     let shell = Rc::clone(shell);
@@ -1671,8 +1646,7 @@ where
         title: title_value,
         subtitle: subtitle_value,
         seed,
-        subtitle_route,
-        subtitle_link,
+        subtitle_links,
         context_menu,
     } = values;
     let title_value = Rc::new(title_value);
@@ -1680,7 +1654,7 @@ where
     let artwork_value = Rc::new(artwork_value);
     let subtitle_value = Rc::new(subtitle_value);
     let seed = Rc::new(seed);
-    let subtitle_route = Rc::new(subtitle_route);
+    let subtitle_links = Rc::new(subtitle_links);
 
     let setup_shell = Rc::clone(&shell);
     factory.connect_setup(move |_, item| {
@@ -1688,7 +1662,6 @@ where
             return;
         };
         let current_track = Rc::new(RefCell::new(None::<Track>));
-        let subtitle_route = Rc::new(RefCell::new(None::<Route>));
         let row = gtk::Box::new(gtk::Orientation::Horizontal, 10);
         row.set_valign(gtk::Align::Center);
 
@@ -1726,22 +1699,8 @@ where
         subtitle.set_width_chars(1);
         subtitle.set_max_width_chars(28);
         subtitle.set_visible(false);
-        if subtitle_link {
-            subtitle.set_cursor_from_name(Some("pointer"));
-            add_dynamic_link_hover(subtitle.upcast_ref(), &subtitle);
-        }
+        let subtitle_binding = DetailLinkBinding::new(&subtitle, &setup_shell);
         labels.append(&subtitle);
-
-        if subtitle_link {
-            let click_shell = Rc::clone(&setup_shell);
-            let route_for_click = Rc::clone(&subtitle_route);
-            add_label_click(&subtitle, move || {
-                let route = route_for_click.borrow().clone();
-                if let Some(route) = route {
-                    click_shell.navigate(route);
-                }
-            });
-        }
 
         row.append(&labels);
         if context_menu {
@@ -1757,7 +1716,7 @@ where
                     title,
                     subtitle,
                     downloaded,
-                    subtitle_route,
+                    subtitle_links: subtitle_binding,
                     current_track,
                 },
             );
@@ -1781,21 +1740,17 @@ where
         bind_shell.bind_artwork_tile(&cell.cover, artwork, seed(&value), 48, THUMB_COVER_SIZE);
         cell.title.set_text(&title_value(&value));
         let subtitle = subtitle_value(&value);
-        let subtitle_route = subtitle_route(&value);
+        let subtitle_links = subtitle_links(&value);
         bind_shell
             .set_download_badge_visible(&cell.downloaded, track_is_downloaded(&bind_shell, &track));
         bind_playing.bind(cell.title.upcast_ref(), item.position());
         *cell.current_track.borrow_mut() = Some(track);
         if subtitle.trim().is_empty() {
-            *cell.subtitle_route.borrow_mut() = None;
+            cell.subtitle_links.clear();
             cell.subtitle.set_visible(false);
-        } else if let Some(route) = subtitle_route {
-            *cell.subtitle_route.borrow_mut() = Some(route);
-            cell.subtitle.set_text(&subtitle);
-            cell.subtitle.set_visible(true);
         } else {
-            *cell.subtitle_route.borrow_mut() = None;
-            cell.subtitle.set_text(&subtitle);
+            cell.subtitle_links
+                .bind(subtitle_links.unwrap_or_else(|| DetailLinks::text(&subtitle)));
             cell.subtitle.set_visible(true);
         }
     });
@@ -1808,9 +1763,8 @@ where
             cell.title.set_text("");
             cell.downloaded.set_visible(false);
             playing.unbind(cell.title.upcast_ref());
-            cell.subtitle.set_text("");
+            cell.subtitle_links.clear();
             cell.subtitle.set_visible(false);
-            *cell.subtitle_route.borrow_mut() = None;
             unbind_shell.clear_artwork_tile(&cell.cover);
             *cell.current_track.borrow_mut() = None;
         }

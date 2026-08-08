@@ -16,7 +16,6 @@ use super::playlist_entry_model::{
 use crate::favorites::{
     favorite_button_is_active, favorite_icon_button, set_favorite_button_active, track_favorite_key,
 };
-use crate::interactions::{add_dynamic_link_hover, add_label_click};
 use crate::localization::{bind_search_placeholder, bind_widget_tooltip, localized_column};
 use crate::preferences::dialogs::popup::present_light_dismiss_dialog;
 use crate::shell::Shell;
@@ -29,13 +28,15 @@ use crate::{LibraryField, LibraryLayout, LibraryListKey, LibraryListSettings};
 
 use super::collections::{
     CollectionTableProjection, LibraryCollectionProjection, LibraryPresentationProjection,
-    dynamic_collection_table, library_route_inset, track_grid_field_route,
+    dynamic_collection_table, library_route_inset, track_grid_field_links,
 };
 use super::columns::{
     ROW_INDEX_COLUMN_TITLE, TrackRowPlayingIndicator, set_track_row_index_text,
     track_column_fit_width, track_column_width, track_is_downloaded, track_row_index_cell,
 };
-use super::detail_links::track_artist_route;
+use super::detail_links::{
+    DetailLinkBinding, DetailLinks, track_album_artist_links, track_artist_links,
+};
 use super::grid_cells::{
     CollectionGridCardCell, CollectionGridProjection, ReusableCollectionGridCell, collection_grid,
 };
@@ -182,7 +183,7 @@ fn playlist_entry_playing_position(
 struct PlaylistEntryCellState {
     menu: Rc<RefCell<Option<PlaylistEntryContextMenuState>>>,
     row: Rc<Cell<Option<usize>>>,
-    link_route: Rc<RefCell<Option<Route>>>,
+    links: Rc<RefCell<Option<DetailLinkBinding>>>,
     downloaded: Rc<RefCell<Option<gtk::Image>>>,
 }
 #[derive(Clone)]
@@ -542,7 +543,7 @@ fn playlist_entry_column_for_field(
             playlist_id,
             |entry| track_field(&entry.track, LibraryField::Artist),
             Some(Rc::new(|entry: &PlaylistEntryItem| {
-                track_artist_route(&entry.track)
+                track_artist_links(&entry.track)
             })),
         ),
         LibraryField::AlbumArtist => playlist_entry_text_column(
@@ -553,11 +554,7 @@ fn playlist_entry_column_for_field(
             playlist_id,
             |entry| track_field(&entry.track, LibraryField::AlbumArtist),
             Some(Rc::new(|entry: &PlaylistEntryItem| {
-                entry
-                    .track
-                    .album_artist_credits()
-                    .first()
-                    .map(|artist| Route::ArtistDetail(artist.id.clone()))
+                track_album_artist_links(&entry.track)
             })),
         ),
         _ => playlist_entry_text_column(
@@ -621,10 +618,7 @@ impl ReusableCollectionGridCell<PlaylistEntryRow> for PlaylistEntryGridCell {
             LARGE_COVER_SIZE,
         );
         self.body.bind(&entry.track.title, |field| {
-            (
-                track_field(&entry.track, field),
-                track_grid_field_route(&entry.track, field),
-            )
+            track_grid_field_links(&entry.track, field)
         });
         bind_playlist_entry_cell_state(&self.state, row, &entry, &self.playlist_id);
         bind_playlist_entry_download_badge(&self.shell, &self.state, &entry.track);
@@ -648,10 +642,7 @@ impl ReusableCollectionGridCell<PlaylistEntryRow> for PlaylistEntryGridCell {
             return;
         };
         self.body.bind(&entry.track.title, |field| {
-            (
-                track_field(&entry.track, field),
-                track_grid_field_route(&entry.track, field),
-            )
+            track_grid_field_links(&entry.track, field)
         });
     }
 }
@@ -660,7 +651,7 @@ fn playlist_entry_cell_state() -> PlaylistEntryCellState {
     PlaylistEntryCellState {
         menu: Rc::new(RefCell::new(None)),
         row: Rc::new(Cell::new(None)),
-        link_route: Rc::new(RefCell::new(None)),
+        links: Rc::new(RefCell::new(None)),
         downloaded: Rc::new(RefCell::new(None)),
     }
 }
@@ -700,7 +691,9 @@ fn bind_playlist_entry_cell_state(
 fn clear_playlist_entry_cell_state(state: &PlaylistEntryCellState) {
     state.row.set(None);
     state.menu.borrow_mut().take();
-    state.link_route.borrow_mut().take();
+    if let Some(links) = state.links.borrow().as_ref() {
+        links.clear();
+    }
     if let Some(downloaded) = state.downloaded.borrow().as_ref() {
         downloaded.set_visible(false);
     }
@@ -733,15 +726,9 @@ fn setup_playlist_entry_link_label(
     state: &PlaylistEntryCellState,
 ) {
     label.add_css_class("table-link-label");
-    label.set_cursor_from_name(Some("pointer"));
-    add_dynamic_link_hover(label.upcast_ref(), label);
-    let shell = Rc::clone(shell);
-    let route = Rc::clone(&state.link_route);
-    add_label_click(label, move || {
-        if let Some(route) = route.borrow().clone() {
-            shell.navigate(route);
-        }
-    });
+    state
+        .links
+        .replace(Some(DetailLinkBinding::new(label, shell)));
 }
 fn setup_playlist_entry_cell_actions(
     target: &impl IsA<gtk::Widget>,
@@ -1106,7 +1093,10 @@ fn playlist_entry_album_column(
         playlist_id,
         |entry| entry.track.album.clone(),
         Some(Rc::new(|entry: &PlaylistEntryItem| {
-            entry.track.album_id.clone().map(Route::AlbumDetail)
+            DetailLinks::route(
+                &entry.track.album,
+                entry.track.album_id.clone().map(Route::AlbumDetail),
+            )
         })),
     )
 }
@@ -1132,14 +1122,14 @@ fn playlist_entry_text_column<F>(
     entries: PlaylistEntryModel,
     playlist_id: PlaylistId,
     value: F,
-    route: Option<Rc<dyn Fn(&PlaylistEntryItem) -> Option<Route>>>,
+    links: Option<Rc<dyn Fn(&PlaylistEntryItem) -> DetailLinks>>,
 ) -> gtk::ColumnViewColumn
 where
     F: Fn(&PlaylistEntryItem) -> String + 'static,
 {
     let factory = gtk::SignalListItemFactory::new();
     let value = Rc::new(value);
-    let has_link = route.is_some();
+    let has_link = links.is_some();
     let setup_shell = Rc::clone(shell);
     let setup_entries = entries.clone();
     let setup_playlist_id = playlist_id.clone();
@@ -1204,9 +1194,12 @@ where
         let Some(state) = playlist_entry_cell_state_for_item(item) else {
             return;
         };
-        label.set_text(&(value)(&entry));
-        if let Some(route) = route.as_ref() {
-            *state.link_route.borrow_mut() = route(&entry);
+        if let Some(links) = links.as_ref()
+            && let Some(binding) = state.links.borrow().as_ref()
+        {
+            binding.bind(links(&entry));
+        } else {
+            label.set_text(&(value)(&entry));
         }
         bind_playlist_entry_cell_state(&state, row, &entry, &playlist_id);
         bind_playlist_entry_download_badge(&bind_shell, &state, &entry.track);
@@ -1314,11 +1307,12 @@ fn playlist_entry_title_column(
         );
         cell.title.set_text(&entry.track.title);
         bind_playing_indicator.bind(cell.title.upcast_ref(), item.position());
-        cell.artist.set_text(&entry.track.artist);
         let Some(state) = playlist_entry_cell_state_for_item(item) else {
             return;
         };
-        *state.link_route.borrow_mut() = track_artist_route(&entry.track);
+        if let Some(links) = state.links.borrow().as_ref() {
+            links.bind(track_artist_links(&entry.track));
+        }
         bind_playlist_entry_cell_state(&state, row, &entry, &playlist_id);
         bind_playlist_entry_download_badge(&bind_shell, &state, &entry.track);
     });

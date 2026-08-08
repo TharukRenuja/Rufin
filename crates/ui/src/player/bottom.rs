@@ -3,6 +3,7 @@ use std::rc::Rc;
 use std::time::Duration;
 
 use crate::format_duration;
+use crate::routes::detail_links::{DetailLinkBinding, DetailLinks, track_artist_links};
 use crate::routes::route::Route;
 use adw::prelude::*;
 use artwork::ArtworkBinding;
@@ -20,7 +21,7 @@ use super::icons::{
 };
 use super::outputs::present_audio_output_popover;
 use super::progress::seekbar_target_seconds;
-use crate::interactions::{add_dynamic_link_hover, add_label_click, add_widget_click};
+use crate::interactions::add_widget_click;
 use crate::layout::{AllocationOwner, allocation_owner};
 use crate::routes::collection_context::{
     install_current_track_context_menu, present_current_track_context_menu,
@@ -83,9 +84,12 @@ pub(crate) struct PlayerControls {
     surface: gtk::Box,
     pub(crate) cover: ArtworkTile,
     title: gtk::Label,
+    title_links: RefCell<Option<DetailLinkBinding>>,
     pub(crate) menu_button: gtk::Button,
     artist: gtk::Label,
+    artist_links: RefCell<Option<DetailLinkBinding>>,
     album: gtk::Label,
+    album_links: RefCell<Option<DetailLinkBinding>>,
     now_playing_wall: gtk::Box,
     left_slot: gtk::Overlay,
     right_slot: gtk::Overlay,
@@ -549,9 +553,28 @@ impl Shell {
             let album = current
                 .map(|entry| entry.track.album.as_str())
                 .unwrap_or("");
-            set_player_link_text(&controls.title, &title);
-            set_player_link_text(&controls.artist, &artist);
-            set_player_link_text(&controls.album, album);
+            let album_route = current
+                .and_then(|entry| entry.track.album_id.clone())
+                .map(Route::AlbumDetail);
+            if let Some(title_links) = controls.title_links.borrow().as_ref() {
+                title_links.bind(DetailLinks::route(&title, album_route.clone()));
+            } else {
+                controls.title.set_text(&title);
+            }
+            if let Some(artist_links) = controls.artist_links.borrow().as_ref() {
+                artist_links.bind(
+                    current
+                        .map(|entry| track_artist_links(&entry.track))
+                        .unwrap_or_else(|| DetailLinks::text(&artist)),
+                );
+            } else {
+                controls.artist.set_text(&artist);
+            }
+            if let Some(album_links) = controls.album_links.borrow().as_ref() {
+                album_links.bind(DetailLinks::route(album, album_route));
+            } else {
+                controls.album.set_text(album);
+            }
             controls.title.set_sensitive(current.is_some());
             controls.menu_button.set_sensitive(current.is_some());
             controls
@@ -802,9 +825,12 @@ pub(crate) fn build_bottom_player() -> PlayerControls {
         surface: root,
         cover,
         title,
+        title_links: RefCell::new(None),
         menu_button,
         artist,
+        artist_links: RefCell::new(None),
         album,
+        album_links: RefCell::new(None),
         now_playing_wall,
         left_slot,
         right_slot,
@@ -1295,18 +1321,7 @@ fn player_link(css_class: &str) -> gtk::Label {
     label.set_valign(gtk::Align::Center);
     label.set_hexpand(false);
     label.set_yalign(0.5);
-    label.set_cursor_from_name(Some("pointer"));
-    add_dynamic_link_hover(label.upcast_ref(), &label);
     label
-}
-
-fn set_player_link_text(label: &gtk::Label, text: &str) {
-    if label.has_css_class("hovered-link") {
-        let escaped = gtk::glib::markup_escape_text(text);
-        label.set_markup(&format!("<u>{escaped}</u>"));
-    } else {
-        label.set_text(text);
-    }
 }
 
 fn playback_state_label(state: TransportStatus) -> String {
@@ -1402,6 +1417,16 @@ fn commit_player_seek_preview(shell: &Rc<Shell>) {
 
 pub(crate) fn connect_player_controls(shell: &Rc<Shell>) {
     connect_bottom_player_resize(shell);
+    let controls = &shell.player_view.player_controls;
+    controls
+        .title_links
+        .replace(Some(DetailLinkBinding::new(&controls.title, shell)));
+    controls
+        .artist_links
+        .replace(Some(DetailLinkBinding::new(&controls.artist, shell)));
+    controls
+        .album_links
+        .replace(Some(DetailLinkBinding::new(&controls.album, shell)));
     install_current_track_context_menu(&shell.player_view.player_controls.cover.area, shell);
     let menu_shell = Rc::clone(shell);
     shell
@@ -1535,54 +1560,6 @@ pub(crate) fn connect_player_controls(shell: &Rc<Shell>) {
         .player_controls
         .favorite_button
         .connect_clicked(move |_| favorite_shell.toggle_current_track_favorite());
-
-    let title_shell = Rc::clone(shell);
-    add_label_click(&shell.player_view.player_controls.title, move || {
-        let Some(entry) = title_shell
-            .playback
-            .player
-            .borrow()
-            .as_ref()
-            .and_then(|player| player.transport.current.clone())
-        else {
-            return;
-        };
-        if let Some(album_id) = entry.track.album_id.clone() {
-            title_shell.navigate(Route::AlbumDetail(album_id));
-        }
-    });
-
-    let artist_shell = Rc::clone(shell);
-    add_label_click(&shell.player_view.player_controls.artist, move || {
-        let Some(entry) = artist_shell
-            .playback
-            .player
-            .borrow()
-            .as_ref()
-            .and_then(|player| player.transport.current.clone())
-        else {
-            return;
-        };
-        if let Some(artist_id) = entry.track.primary_artist_id().cloned() {
-            artist_shell.navigate(Route::ArtistDetail(artist_id));
-        }
-    });
-
-    let album_shell = Rc::clone(shell);
-    add_label_click(&shell.player_view.player_controls.album, move || {
-        let Some(entry) = album_shell
-            .playback
-            .player
-            .borrow()
-            .as_ref()
-            .and_then(|player| player.transport.current.clone())
-        else {
-            return;
-        };
-        if let Some(album_id) = entry.track.album_id.clone() {
-            album_shell.navigate(Route::AlbumDetail(album_id));
-        }
-    });
 
     let mute_shell = Rc::clone(shell);
     shell

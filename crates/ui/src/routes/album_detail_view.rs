@@ -12,7 +12,6 @@ use crate::favorites::{
     album_favorite_key, favorite_button_is_active, favorite_icon_button, set_favorite_button_active,
 };
 use crate::format_duration_units;
-use crate::interactions::{add_dynamic_link_hover, add_label_click};
 use crate::localization::bind_label_text_with;
 use crate::shell::Shell;
 use crate::shell::actions::{ActionButtonVariant, configure_action_button};
@@ -25,7 +24,7 @@ use playback::RadioPlayRequest;
 use super::collection_context::present_album_context_menu;
 use super::collections::CollectionPlay;
 use super::collections::{library_route_inset, set_library_table_content_height};
-use super::detail_links::album_artist_route;
+use super::detail_links::{DetailLinkBinding, album_artist_links};
 use super::detail_showcase::{
     DetailExternalLinksProjection, DetailSummaryProjection, MediaDetailShowcase,
     album_external_links, detail_action_row, detail_cover_projection, detail_genre_pill_button,
@@ -169,17 +168,8 @@ impl Shell {
         artist.set_width_chars(1);
         artist.set_max_width_chars(32);
         fit_detail_text(&artist, &album.artist);
-        if album_artist_route(&album).is_some() {
-            artist.set_cursor_from_name(Some("pointer"));
-        }
-        add_dynamic_link_hover(artist.upcast_ref(), &artist);
-        let shell = Rc::clone(self);
-        let linked_album = Rc::clone(&current_album);
-        add_label_click(&artist, move || {
-            if let Some(route) = album_artist_route(&linked_album.borrow().album) {
-                shell.navigate(route);
-            }
-        });
+        let artist_links = DetailLinkBinding::new(&artist, self);
+        artist_links.bind(album_artist_links(&album));
         text_stack.append(&kind_row);
         text_stack.append(&title);
         text_stack.append(&artist);
@@ -311,6 +301,7 @@ impl Shell {
             let genres = genres.clone();
             let title = title.clone();
             let artist = artist.clone();
+            let artist_links = artist_links.clone();
             let external_links = external_links.clone();
             let track_projection = track_projection.clone();
             Rc::new(
@@ -347,11 +338,8 @@ impl Shell {
                     kind.set_text(&tr(next_kind));
                     title.set_text(&album.title);
                     fit_detail_text(&title, &album.title);
-                    artist.set_text(&album.artist);
+                    artist_links.bind(album_artist_links(&album));
                     fit_detail_text(&artist, &album.artist);
-                    artist.set_cursor_from_name(
-                        album_artist_route(&album).is_some().then_some("pointer"),
-                    );
                     while let Some(child) = genres.first_child() {
                         genres.remove(&child);
                     }
@@ -515,7 +503,7 @@ fn album_summary_items(summary: &AlbumSummary) -> Vec<(&'static str, String)> {
             track_count_text(summary.track_count.into()),
         ),
         (
-            "appointment-soon-symbolic",
+            "preferences-system-time-symbolic",
             format_duration_units(summary.duration_seconds),
         ),
     ]

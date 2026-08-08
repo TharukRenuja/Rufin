@@ -192,14 +192,6 @@ impl From<&Album> for AlbumArtworkFacts {
 }
 
 impl Album {
-    pub fn primary_artist_id(&self) -> Option<&ArtistId> {
-        self.relations
-            .album_artists
-            .first()
-            .or_else(|| self.relations.artists.first())
-            .map(|credit| &credit.id)
-    }
-
     pub fn genre_names(&self) -> impl Iterator<Item = &str> {
         self.relations
             .genres

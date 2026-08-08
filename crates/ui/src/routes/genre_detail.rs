@@ -288,7 +288,7 @@ fn genre_summary_items(genre: &GenreSummary) -> Vec<(&'static str, String)> {
     )];
     if genre.duration_seconds > 0 {
         items.push((
-            "appointment-soon-symbolic",
+            "preferences-system-time-symbolic",
             format_duration_units(genre.duration_seconds),
         ));
     }

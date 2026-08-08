@@ -7,7 +7,7 @@ use ::library::{
 };
 use adw::prelude::*;
 use downloads::DownloadSubject;
-use gtk::glib;
+use gtk::{gio, glib};
 use playback::{QueuePlacement, RadioPlayRequest};
 
 use crate::SidebarPin;
@@ -27,7 +27,6 @@ use crate::shell::actions::{
 use localization::{msgid, tr};
 
 use super::collections::{CollectionPlay, PlaybackTarget};
-use super::detail_links::{album_artist_route, track_artist_route};
 use super::playlist_entries::{
     PlaylistEntryContextMenuAction, PlaylistEntryContextMenuState, confirm_remove_playlist_entry,
 };
@@ -307,14 +306,38 @@ fn present_resolved_track_context_menu(
             EDIT_ICON,
         );
     }
-    let artist_route = library_backed.then(|| track_artist_route(&track)).flatten();
-    if artist_route.is_some() {
-        surface.append_configurable_action(
+    let artist_credits = library_backed
+        .then(|| {
+            if track.relations.artists.is_empty() {
+                track.relations.album_artists.clone()
+            } else {
+                track.relations.artists.clone()
+            }
+        })
+        .unwrap_or_default();
+    match artist_credits.as_slice() {
+        [] => {}
+        [_] => surface.append_configurable_action(
             ContextMenuItem::GoToArtist,
             msgid("Go to Artist"),
             "go-artist",
             ARTIST_ICON,
-        );
+        ),
+        _ => {
+            let submenu = gio::Menu::new();
+            for (index, artist) in artist_credits.iter().enumerate() {
+                submenu.append(
+                    Some(&artist.name),
+                    Some(&format!("track.go-artist-{index}")),
+                );
+            }
+            surface.append_configurable_submenu(
+                ContextMenuItem::GoToArtist,
+                msgid("Go to Artist"),
+                &submenu,
+                ARTIST_ICON,
+            );
+        }
     }
     if library_backed && track.album_id.is_some() {
         surface.append_configurable_action(
@@ -359,15 +382,32 @@ fn present_resolved_track_context_menu(
             }
         });
     }
-    if let Some(route) = artist_route {
+    if let [artist] = artist_credits.as_slice() {
         surface.add_action("go-artist", {
             let shell = Rc::clone(shell);
+            let artist_id = artist.id.clone();
             move || {
                 let shell = Rc::clone(&shell);
-                let route = route.clone();
-                glib::idle_add_local_once(move || shell.navigate(route));
+                let artist_id = artist_id.clone();
+                glib::idle_add_local_once(move || {
+                    shell.navigate(Route::ArtistDetail(artist_id));
+                });
             }
         });
+    } else {
+        for (index, artist) in artist_credits.iter().enumerate() {
+            surface.add_action(&format!("go-artist-{index}"), {
+                let shell = Rc::clone(shell);
+                let artist_id = artist.id.clone();
+                move || {
+                    let shell = Rc::clone(&shell);
+                    let artist_id = artist_id.clone();
+                    glib::idle_add_local_once(move || {
+                        shell.navigate(Route::ArtistDetail(artist_id));
+                    });
+                }
+            });
+        }
     }
     if let Some(album_id) = track.album_id.clone() {
         surface.add_action("go-album", {
@@ -517,14 +557,34 @@ fn present_resolved_album_context_menu_inner(
                 album_id: album.album.id.clone(),
             }),
     );
-    let artist_route = album_artist_route(&album.album);
-    if artist_route.is_some() {
-        surface.append_configurable_action(
+    let artist_credits = if album.album.relations.album_artists.is_empty() {
+        album.album.relations.artists.clone()
+    } else {
+        album.album.relations.album_artists.clone()
+    };
+    match artist_credits.as_slice() {
+        [] => {}
+        [_] => surface.append_configurable_action(
             ContextMenuItem::GoToArtist,
             msgid("Go to Artist"),
             "go-artist",
             ARTIST_ICON,
-        );
+        ),
+        _ => {
+            let submenu = gio::Menu::new();
+            for (index, artist) in artist_credits.iter().enumerate() {
+                submenu.append(
+                    Some(&artist.name),
+                    Some(&format!("album.go-artist-{index}")),
+                );
+            }
+            surface.append_configurable_submenu(
+                ContextMenuItem::GoToArtist,
+                msgid("Go to Artist"),
+                &submenu,
+                ARTIST_ICON,
+            );
+        }
     }
     surface.append_configurable_action(
         ContextMenuItem::GoToAlbum,
@@ -559,15 +619,32 @@ fn present_resolved_album_context_menu_inner(
             }
         });
     }
-    if let Some(route) = artist_route {
+    if let [artist] = artist_credits.as_slice() {
         surface.add_action("go-artist", {
             let shell = Rc::clone(shell);
+            let artist_id = artist.id.clone();
             move || {
                 let shell = Rc::clone(&shell);
-                let route = route.clone();
-                glib::idle_add_local_once(move || shell.navigate(route));
+                let artist_id = artist_id.clone();
+                glib::idle_add_local_once(move || {
+                    shell.navigate(Route::ArtistDetail(artist_id));
+                });
             }
         });
+    } else {
+        for (index, artist) in artist_credits.iter().enumerate() {
+            surface.add_action(&format!("go-artist-{index}"), {
+                let shell = Rc::clone(shell);
+                let artist_id = artist.id.clone();
+                move || {
+                    let shell = Rc::clone(&shell);
+                    let artist_id = artist_id.clone();
+                    glib::idle_add_local_once(move || {
+                        shell.navigate(Route::ArtistDetail(artist_id));
+                    });
+                }
+            });
+        }
     }
     surface.add_action("go-album", {
         let shell = Rc::clone(shell);

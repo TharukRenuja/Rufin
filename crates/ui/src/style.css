@@ -391,11 +391,15 @@ row:focus {
   background: color-mix(in srgb, currentColor 6%, transparent);
 }
 
-.track-table.track-list .track-list-title,
 .track-table.track-list .table-link,
-.track-table.track-list .table-link-label,
-.track-table.playlist-entry-table .playlist-entry-title {
+.track-table.track-list .table-link-label {
   font-weight: 400;
+}
+
+.track-list-title,
+.playlist-entry-title,
+.queue-title {
+  font-weight: 475;
 }
 
 .track-table row:selected,
@@ -413,9 +417,6 @@ row:focus {
 .playlist-entry-title.track-row-playing,
 .album-detail-track-row.album-detail-track-selected .track-list-title {
   color: var(--accent-color);
-  text-shadow:
-    0.35px 0 0 var(--accent-color),
-    -0.35px 0 0 var(--accent-color);
 }
 
 .track-row-index-playing,
@@ -515,7 +516,6 @@ row:focus {
 
 .section-heading {
   font-size: 21px;
-  font-weight: 800;
 }
 
 .nav-button {
@@ -533,7 +533,7 @@ row:focus {
 
 .sidebar-entry-label {
   font-size: 10px;
-  font-weight: 600;
+  font-weight: 475;
 }
 
 .nav-button:not(.rail-button) .sidebar-entry-label {
@@ -554,7 +554,7 @@ row:focus {
 .sidebar-pins-heading {
   margin: 12px 18px 2px;
   font-size: 12px;
-  font-weight: 700;
+  font-weight: 475;
 }
 
 .sidebar-pin-row {
@@ -578,17 +578,25 @@ row:focus {
 
 .sidebar-pin-title {
   font-size: 13px;
-  font-weight: 600;
+  font-weight: 475;
 }
 
 .sidebar-pin-metadata {
   min-width: 0;
 }
 
-.sidebar-pin-metadata-icon,
+.sidebar-pin-metadata-item {
+  min-width: 0;
+}
+
+.sidebar-pin-metadata-icon {
+  opacity: 0.62;
+}
+
 .sidebar-pin-metadata-label {
-  font-size: 10px;
-  opacity: 0.68;
+  font-size: 11px;
+  font-weight: 400;
+  opacity: 0.72;
 }
 
 .sidebar-pin-row.playing .sidebar-pin-title {
@@ -1070,15 +1078,19 @@ row.entry.password:focus-within {
   font-size: 13px;
 }
 
-.album-title,
 .player-title {
   color: var(--window-fg-color);
-  font-weight: 700;
+  font-weight: 475;
+}
+
+.album-title {
+  color: var(--window-fg-color);
+  font-weight: 475;
 }
 
 .artist-label,
 .player-primary {
-  color: var(--window-fg-color);
+  color: color-mix(in srgb, var(--window-fg-color) 90%, var(--window-bg-color));
 }
 
 .player-link {
@@ -1202,7 +1214,7 @@ popover.audio-output-popover > contents {
 }
 
 .muted {
-  color: color-mix(in srgb, var(--window-fg-color) 95%, var(--window-bg-color));
+  color: color-mix(in srgb, var(--window-fg-color) 90%, var(--window-bg-color));
 }
 
 .lyrics-search-helper {
@@ -1220,7 +1232,7 @@ popover.audio-output-popover > contents {
 
 .track-title {
   color: var(--window-fg-color);
-  font-weight: 700;
+  font-weight: 475;
 }
 
 .track-artist-link {
@@ -1294,8 +1306,12 @@ popover.audio-output-popover > contents {
   color: color-mix(in srgb, var(--accent-color) 72%, var(--window-fg-color));
 }
 
-.hovered-link {
-  color: color-mix(in srgb, var(--accent-color) 72%, var(--window-fg-color));
+link.inline-detail-link,
+link.inline-detail-link:visited,
+link.inline-detail-link:hover,
+link.inline-detail-link:active {
+  color: inherit;
+  text-decoration: none;
 }
 
 .cached-row {
@@ -1735,9 +1751,6 @@ button.download-queue-pause image {
 
 .queue-row-current .queue-title {
   color: var(--accent-color);
-  text-shadow:
-    0.35px 0 0 var(--accent-color),
-    -0.35px 0 0 var(--accent-color);
 }
 
 .queue-header {

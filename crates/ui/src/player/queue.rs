@@ -4,6 +4,7 @@ use std::rc::Rc;
 use std::time::Duration;
 
 use crate::format_duration;
+use crate::routes::detail_links::{DetailLinkBinding, track_artist_links};
 use crate::routes::route::Route;
 use ::library::{AcceptedTrackReplacement, MetadataItemId, RadioSeed, Track, TrackId};
 use adw::prelude::*;
@@ -16,7 +17,6 @@ use crate::favorites::{
     FAVORITE_ADD_ICON, FAVORITE_REMOVE_ICON, favorite_button_is_active, favorite_icon_button,
     set_favorite_button_active,
 };
-use crate::interactions::add_dynamic_link_hover;
 use crate::interactions::install_context_menu_openers;
 use crate::interactions::{
     ADD_TO_PLAYLIST_ICON, ALBUM_ICON, ARTIST_ICON, ContextMenuSurface, RADIO_ICON,
@@ -33,7 +33,6 @@ use crate::shell::actions::{EDIT_ICON, PLAY_ICON, PLAY_LATER_ICON, PLAY_NEXT_ICO
 use crate::shell::cover::{ArtworkTile, THUMB_COVER_SIZE};
 use localization::{msgid, tr};
 
-const QUEUE_LINK_CLICK_DELAY_MS: u64 = 250;
 const QUEUE_SEARCH_DELAY_MS: u64 = 120;
 const QUEUE_FULLSCREEN_COLUMN_SPACING: i32 = 16;
 const QUEUE_FULLSCREEN_ROW_HORIZONTAL_PADDING: i32 = 12;
@@ -154,7 +153,7 @@ struct QueueSidebarRowSlot {
     drag: gtk::Image,
     cover: ArtworkTile,
     title: gtk::Label,
-    artist: gtk::Label,
+    artist_links: DetailLinkBinding,
     year: gtk::Label,
     empty: gtk::Label,
     covered: gtk::Box,
@@ -190,6 +189,7 @@ impl QueueSidebarRowSlot {
         title.set_xalign(0.0);
         title.set_ellipsize(gtk::pango::EllipsizeMode::End);
         let artist = queue_link_label("");
+        let artist_links = DetailLinkBinding::new(&artist, shell);
         labels.append(&title);
         labels.append(&artist);
         row.append(&labels);
@@ -200,19 +200,6 @@ impl QueueSidebarRowSlot {
         year.set_width_chars(4);
         year.set_halign(gtk::Align::End);
         row.append(&year);
-
-        add_queue_label_link_style(&artist);
-        let artist_shell = Rc::clone(shell);
-        let artist_binding = Rc::clone(&binding);
-        add_queue_label_click(&artist, move || {
-            let route = artist_binding
-                .borrow()
-                .as_ref()
-                .and_then(|binding| queue_artist_route(&binding.entry));
-            if let Some(route) = route {
-                artist_shell.navigate(route);
-            }
-        });
 
         install_reusable_queue_row_drop(&row, &shell.products.playback.queue, Rc::clone(&binding));
         install_reusable_queue_row_context_menu(&row, shell, Rc::clone(&binding));
@@ -233,7 +220,7 @@ impl QueueSidebarRowSlot {
             drag,
             cover,
             title,
-            artist,
+            artist_links,
             year,
             empty,
             covered,
@@ -262,9 +249,7 @@ impl QueueSidebarRowSlot {
                 }
                 self.drag.set_visible(reorderable);
                 self.title.set_text(&entry.track.title);
-                self.artist.set_text(&entry.track.artist);
-                self.artist
-                    .set_cursor_from_name(entry.track.primary_artist_id().map(|_| "pointer"));
+                self.artist_links.bind(track_artist_links(&entry.track));
                 self.year.set_text(
                     &(entry.track.year != 0)
                         .then(|| entry.track.year.to_string())
@@ -305,8 +290,7 @@ impl QueueSidebarRowSlot {
         self.row.remove_css_class("queue-row-current");
         self.drag.set_visible(false);
         self.title.set_text("");
-        self.artist.set_text("");
-        self.artist.set_cursor_from_name(None);
+        self.artist_links.clear();
         self.year.set_text("");
         self.empty.set_text("");
         self.covered.set_height_request(0);
@@ -541,15 +525,9 @@ impl Shell {
         title.set_xalign(0.0);
         title.set_ellipsize(gtk::pango::EllipsizeMode::End);
         let artist = queue_link_label(&entry.track.artist);
+        DetailLinkBinding::new(&artist, self).bind(track_artist_links(&entry.track));
         labels.append(&title);
         labels.append(&artist);
-        if let Some(artist_id) = entry.track.primary_artist_id().cloned() {
-            add_queue_label_link_style(&artist);
-            let shell = Rc::clone(self);
-            add_queue_label_click(&artist, move || {
-                shell.navigate(Route::ArtistDetail(artist_id.clone()))
-            });
-        }
         let year_text = (entry.track.year != 0).then(|| entry.track.year.to_string());
         let year = gtk::Label::new(year_text.as_deref());
         year.add_css_class("muted");
@@ -632,13 +610,7 @@ impl Shell {
             },
         );
 
-        if let Some(artist_id) = entry.track.primary_artist_id().cloned() {
-            add_queue_label_link_style(&artist);
-            let shell = Rc::clone(self);
-            add_queue_label_click(&artist, move || {
-                shell.navigate(Route::ArtistDetail(artist_id.clone()))
-            });
-        }
+        DetailLinkBinding::new(&artist, self).bind(track_artist_links(&entry.track));
 
         if reorderable {
             install_queue_row_drop(
@@ -1331,7 +1303,7 @@ fn queue_header_fixed_label(text: &str, width: i32) -> gtk::Label {
 }
 
 fn queue_duration_header_icon() -> gtk::Image {
-    let image = gtk::Image::from_icon_name("appointment-soon-symbolic");
+    let image = gtk::Image::from_icon_name("preferences-system-time-symbolic");
     let label = tr("Duration");
     image.add_css_class("muted");
     image.set_width_request(QUEUE_DURATION_COLUMN_WIDTH);
@@ -1704,14 +1676,34 @@ fn show_resolved_queue_row_context_menu(
             EDIT_ICON,
         );
     }
-    let artist_route = queue_artist_route(entry);
-    if artist_route.is_some() {
-        surface.append_configurable_action(
+    let artist_credits = if entry.track.relations.artists.is_empty() {
+        entry.track.relations.album_artists.clone()
+    } else {
+        entry.track.relations.artists.clone()
+    };
+    match artist_credits.as_slice() {
+        [] => {}
+        [_] => surface.append_configurable_action(
             ContextMenuItem::GoToArtist,
             msgid("Go to Artist"),
             "go-artist",
             ARTIST_ICON,
-        );
+        ),
+        _ => {
+            let submenu = gio::Menu::new();
+            for (index, artist) in artist_credits.iter().enumerate() {
+                submenu.append(
+                    Some(&artist.name),
+                    Some(&format!("queue.go-artist-{index}")),
+                );
+            }
+            surface.append_configurable_submenu(
+                ContextMenuItem::GoToArtist,
+                msgid("Go to Artist"),
+                &submenu,
+                ARTIST_ICON,
+            );
+        }
     }
     let album_route = entry.track.album_id.clone().map(Route::AlbumDetail);
     if album_route.is_some() {
@@ -1814,15 +1806,32 @@ fn show_resolved_queue_row_context_menu(
         }
     });
 
-    if let Some(artist_route) = artist_route {
+    if let [artist] = artist_credits.as_slice() {
         surface.add_action("go-artist", {
             let action_shell = Rc::clone(shell);
+            let artist_id = artist.id.clone();
             move || {
                 let shell = Rc::clone(&action_shell);
-                let route = artist_route.clone();
-                glib::idle_add_local_once(move || shell.navigate(route));
+                let artist_id = artist_id.clone();
+                glib::idle_add_local_once(move || {
+                    shell.navigate(Route::ArtistDetail(artist_id));
+                });
             }
         });
+    } else {
+        for (index, artist) in artist_credits.iter().enumerate() {
+            surface.add_action(&format!("go-artist-{index}"), {
+                let action_shell = Rc::clone(shell);
+                let artist_id = artist.id.clone();
+                move || {
+                    let shell = Rc::clone(&action_shell);
+                    let artist_id = artist_id.clone();
+                    glib::idle_add_local_once(move || {
+                        shell.navigate(Route::ArtistDetail(artist_id));
+                    });
+                }
+            });
+        }
     }
     if let Some(album_route) = album_route {
         surface.add_action("go-album", {
@@ -1838,14 +1847,6 @@ fn show_resolved_queue_row_context_menu(
     surface.popup(&shell.settings.current.borrow().context_menu);
 }
 
-fn queue_artist_route(entry: &SequenceEntry) -> Option<Route> {
-    entry
-        .track
-        .primary_artist_id()
-        .cloned()
-        .map(Route::ArtistDetail)
-}
-
 fn queue_link_label(text: &str) -> gtk::Label {
     let label = gtk::Label::new(Some(text));
     label.add_css_class("queue-link");
@@ -1853,42 +1854,6 @@ fn queue_link_label(text: &str) -> gtk::Label {
     label.set_xalign(0.0);
     label.set_ellipsize(gtk::pango::EllipsizeMode::End);
     label
-}
-
-fn add_queue_label_link_style(label: &gtk::Label) {
-    label.set_cursor_from_name(Some("pointer"));
-    add_dynamic_link_hover(label.upcast_ref(), label);
-}
-
-fn add_queue_label_click(label: &gtk::Label, callback: impl Fn() + 'static) {
-    let click = gtk::GestureClick::new();
-    let callback: Rc<dyn Fn()> = Rc::new(callback);
-    let generation = Rc::new(Cell::new(0_u64));
-    let cancel_generation = Rc::clone(&generation);
-    click.connect_pressed(move |_, press_count, _, _| {
-        if press_count > 1 {
-            cancel_generation.set(cancel_generation.get().saturating_add(1));
-        }
-    });
-    click.connect_released(move |_, press_count, _, _| {
-        let next_generation = generation.get().saturating_add(1);
-        generation.set(next_generation);
-        if press_count != 1 {
-            return;
-        }
-
-        let callback = Rc::clone(&callback);
-        let generation = Rc::clone(&generation);
-        glib::timeout_add_local_once(
-            Duration::from_millis(QUEUE_LINK_CLICK_DELAY_MS),
-            move || {
-                if generation.get() == next_generation {
-                    callback();
-                }
-            },
-        );
-    });
-    label.add_controller(click);
 }
 
 #[cfg(test)]

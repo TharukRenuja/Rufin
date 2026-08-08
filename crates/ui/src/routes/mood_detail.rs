@@ -253,7 +253,7 @@ fn mood_summary_items(mood: &MoodSummary) -> Vec<(&'static str, String)> {
     )];
     if mood.duration_seconds > 0 {
         items.push((
-            "appointment-soon-symbolic",
+            "preferences-system-time-symbolic",
             format_duration_units(mood.duration_seconds),
         ));
     }

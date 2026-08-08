@@ -41,6 +41,7 @@ use super::columns::{
     row_index_column_with_width, text_column, track_column_fit_width, track_column_width,
     track_merged_column, track_row_index_column_with_width,
 };
+use super::detail_links::DetailLinks;
 use super::grid_cells::{
     CollectionGridCardCell, ReusableCollectionGridCell, collection_grid_cover_shell,
     collection_grid_with_card_widths,
@@ -532,7 +533,7 @@ impl<T: SearchGridItem> ReusableCollectionGridCell<T> for SearchGridCell<T> {
             LARGE_COVER_SIZE,
         );
         self.body
-            .bind(item.title(), |field| (item.field(field), None));
+            .bind(item.title(), |field| DetailLinks::text(&item.field(field)));
         let activatable = item.activatable();
         self.cover_button.set_can_target(activatable);
         self.cover_button.set_focusable(activatable);
@@ -590,7 +591,7 @@ impl<T: SearchGridItem> ReusableCollectionGridCell<T> for SearchGridCell<T> {
         self.body.replace_fields(&self.shell, fields);
         if let Some(item) = self.current.borrow().as_ref() {
             self.body
-                .bind(item.title(), |field| (item.field(field), None));
+                .bind(item.title(), |field| DetailLinks::text(&item.field(field)));
         }
     }
 }
@@ -1182,8 +1183,7 @@ fn search_track_column(
                 title: |track: &SearchTrack| track.track.title.clone(),
                 subtitle: |track: &SearchTrack| track.track.artist.clone(),
                 seed: |track: &SearchTrack| stable_seed(track.track.id.as_str()),
-                subtitle_route: |_: &SearchTrack| None,
-                subtitle_link: false,
+                subtitle_links: |_: &SearchTrack| None,
                 context_menu: true,
             },
         ),
