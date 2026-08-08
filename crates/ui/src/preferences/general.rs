@@ -23,6 +23,7 @@ use localization::{tr, tr_with};
 use playback::{
     EQUALIZER_BAND_COUNT, MAX_AUTO_DJ_REFILL_THRESHOLD, MAX_CROSSFADE_SECONDS,
     MIN_AUTO_DJ_REFILL_THRESHOLD, MIN_CROSSFADE_SECONDS, PlaybackTransitionMode, ReplayGainMode,
+    VolumeScale,
 };
 
 pub(crate) fn scrobbling_page(shell: &Rc<Shell>) -> adw::PreferencesPage {
@@ -526,7 +527,26 @@ pub(crate) fn playback_page(shell: &Rc<Shell>) -> adw::PreferencesPage {
             });
         },
     );
+    replay_gain_row.set_subtitle(&tr(
+        "Balance loudness levels. Track adjusts each song; Album applies one adjustment album-wide",
+    ));
     audio_group.add(&replay_gain_row);
+
+    let volume_scale_shell = Rc::clone(shell);
+    let volume_scale_row = selection_row(
+        &tr("Volume scale"),
+        &[tr("Perceptual"), tr("Linear")],
+        volume_scale_index(settings.volume_scale),
+        move |selected| {
+            volume_scale_shell.update_playback_settings(|settings| {
+                settings.set_volume_scale_preserving_gain(volume_scale_from_index(selected));
+            });
+        },
+    );
+    volume_scale_row.set_subtitle(&tr(
+        "Perceptual for a finer control at low volume; Linear for a direct scale",
+    ));
+    audio_group.add(&volume_scale_row);
 
     let quality_shell = Rc::clone(shell);
     let quality_row = selection_row(
@@ -864,6 +884,18 @@ pub(crate) fn replay_gain_from_index(index: u32) -> ReplayGainMode {
         1 => ReplayGainMode::Track,
         2 => ReplayGainMode::Album,
         _ => ReplayGainMode::Off,
+    }
+}
+pub(crate) fn volume_scale_index(scale: VolumeScale) -> u32 {
+    match scale {
+        VolumeScale::Perceptual => 0,
+        VolumeScale::Linear => 1,
+    }
+}
+pub(crate) fn volume_scale_from_index(index: u32) -> VolumeScale {
+    match index {
+        1 => VolumeScale::Linear,
+        _ => VolumeScale::Perceptual,
     }
 }
 pub(crate) fn stream_quality_index(quality: StreamQuality) -> u32 {

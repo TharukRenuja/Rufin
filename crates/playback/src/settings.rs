@@ -18,10 +18,35 @@ pub enum PlaybackTransitionMode {
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 pub enum ReplayGainMode {
-    #[default]
     Off,
     Track,
+    #[default]
     Album,
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+pub enum VolumeScale {
+    #[default]
+    Perceptual,
+    Linear,
+}
+
+impl VolumeScale {
+    pub fn gain(self, position: f64) -> f64 {
+        let position = sanitize_volume(position);
+        match self {
+            Self::Perceptual => position.powi(3),
+            Self::Linear => position,
+        }
+    }
+
+    pub fn position_for_gain(self, gain: f64) -> f64 {
+        let gain = sanitize_volume(gain);
+        match self {
+            Self::Perceptual => gain.cbrt(),
+            Self::Linear => gain,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -53,28 +78,76 @@ impl EqualizerSettings {
     }
 }
 
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct PlaybackSettings {
-    #[serde(default)]
     pub transition_mode: PlaybackTransitionMode,
-    #[serde(default = "default_crossfade_seconds")]
     pub crossfade_seconds: u8,
-    #[serde(default)]
     pub skip_same_album_crossfade: bool,
-    #[serde(default = "default_true")]
     pub audio_fade_on_status_change: bool,
-    #[serde(default)]
     pub replay_gain: ReplayGainMode,
-    #[serde(default)]
     pub stream_quality: StreamQuality,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub audio_output: Option<String>,
-    #[serde(default)]
     pub equalizer: EqualizerSettings,
-    #[serde(default = "default_volume")]
     pub volume: f64,
-    #[serde(default)]
+    pub volume_scale: VolumeScale,
     pub muted: bool,
+}
+
+#[derive(Deserialize)]
+struct SavedPlaybackSettings {
+    #[serde(default)]
+    transition_mode: PlaybackTransitionMode,
+    #[serde(default = "default_crossfade_seconds")]
+    crossfade_seconds: u8,
+    #[serde(default)]
+    skip_same_album_crossfade: bool,
+    #[serde(default = "default_true")]
+    audio_fade_on_status_change: bool,
+    #[serde(default)]
+    replay_gain: ReplayGainMode,
+    #[serde(default)]
+    stream_quality: StreamQuality,
+    #[serde(default)]
+    audio_output: Option<String>,
+    #[serde(default)]
+    equalizer: EqualizerSettings,
+    #[serde(default = "default_volume")]
+    volume: f64,
+    #[serde(default)]
+    volume_scale: Option<VolumeScale>,
+    #[serde(default)]
+    muted: bool,
+}
+
+impl<'de> Deserialize<'de> for PlaybackSettings {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let saved = SavedPlaybackSettings::deserialize(deserializer)?;
+        let legacy_gain = sanitize_volume(saved.volume);
+        let (volume, volume_scale) = match saved.volume_scale {
+            Some(scale) => (saved.volume, scale),
+            None => (
+                VolumeScale::Perceptual.position_for_gain(legacy_gain),
+                VolumeScale::Perceptual,
+            ),
+        };
+        Ok(Self {
+            transition_mode: saved.transition_mode,
+            crossfade_seconds: saved.crossfade_seconds,
+            skip_same_album_crossfade: saved.skip_same_album_crossfade,
+            audio_fade_on_status_change: saved.audio_fade_on_status_change,
+            replay_gain: saved.replay_gain,
+            stream_quality: saved.stream_quality,
+            audio_output: saved.audio_output,
+            equalizer: saved.equalizer,
+            volume,
+            volume_scale,
+            muted: saved.muted,
+        })
+    }
 }
 
 impl Default for PlaybackSettings {
@@ -84,25 +157,32 @@ impl Default for PlaybackSettings {
             crossfade_seconds: default_crossfade_seconds(),
             skip_same_album_crossfade: false,
             audio_fade_on_status_change: true,
-            replay_gain: ReplayGainMode::Off,
+            replay_gain: ReplayGainMode::Album,
             stream_quality: StreamQuality::Original,
             audio_output: None,
             equalizer: EqualizerSettings::default(),
             volume: default_volume(),
+            volume_scale: VolumeScale::Perceptual,
             muted: false,
         }
     }
 }
 
 impl PlaybackSettings {
+    pub fn set_volume_scale_preserving_gain(&mut self, volume_scale: VolumeScale) {
+        if self.volume_scale == volume_scale {
+            return;
+        }
+        let gain = self.volume_scale.gain(self.volume);
+        self.volume = volume_scale.position_for_gain(gain);
+        self.volume_scale = volume_scale;
+    }
+
     pub fn sanitize(&mut self) {
         self.crossfade_seconds = self
             .crossfade_seconds
             .clamp(MIN_CROSSFADE_SECONDS, MAX_CROSSFADE_SECONDS);
-        if !self.volume.is_finite() {
-            self.volume = default_volume();
-        }
-        self.volume = self.volume.clamp(0.0, 1.0);
+        self.volume = sanitize_volume(self.volume);
         if self
             .audio_output
             .as_deref()
@@ -120,6 +200,14 @@ fn default_true() -> bool {
 
 fn default_volume() -> f64 {
     1.0
+}
+
+fn sanitize_volume(volume: f64) -> f64 {
+    if volume.is_finite() {
+        volume.clamp(0.0, 1.0)
+    } else {
+        default_volume()
+    }
 }
 
 fn default_crossfade_seconds() -> u8 {
@@ -178,5 +266,78 @@ mod tests {
         settings.crossfade_seconds = MAX_CROSSFADE_SECONDS + 1;
         settings.sanitize();
         assert_eq!(settings.crossfade_seconds, MAX_CROSSFADE_SECONDS);
+    }
+
+    #[test]
+    fn replay_gain_defaults_to_album() {
+        assert_eq!(ReplayGainMode::default(), ReplayGainMode::Album);
+        assert_eq!(
+            PlaybackSettings::default().replay_gain,
+            ReplayGainMode::Album
+        );
+
+        let restored = serde_json::from_str::<PlaybackSettings>("{}")
+            .expect("restore playback settings without ReplayGain");
+        assert_eq!(restored.replay_gain, ReplayGainMode::Album);
+    }
+
+    #[test]
+    fn perceptual_volume_is_cubic_and_reversible() {
+        for position in [0.0, 0.1, 0.5, 1.0] {
+            let gain = VolumeScale::Perceptual.gain(position);
+            assert!((gain - position.powi(3)).abs() < f64::EPSILON);
+            assert!((VolumeScale::Perceptual.position_for_gain(gain) - position).abs() < 1e-12);
+        }
+    }
+
+    #[test]
+    fn legacy_linear_volume_migrates_to_perceptual_without_changing_gain() {
+        let mut value =
+            serde_json::to_value(PlaybackSettings::default()).expect("serialize settings");
+        value
+            .as_object_mut()
+            .expect("playback settings object")
+            .remove("volume_scale");
+        value["volume"] = 0.5.into();
+
+        let migrated =
+            serde_json::from_value::<PlaybackSettings>(value).expect("migrate playback settings");
+
+        assert_eq!(migrated.volume_scale, VolumeScale::Perceptual);
+        assert!((migrated.volume_scale.gain(migrated.volume) - 0.5).abs() < 1e-12);
+    }
+
+    #[test]
+    fn explicit_linear_volume_round_trips_without_migration() {
+        let settings = PlaybackSettings {
+            volume: 0.5,
+            volume_scale: VolumeScale::Linear,
+            ..PlaybackSettings::default()
+        };
+        let restored = serde_json::from_value::<PlaybackSettings>(
+            serde_json::to_value(settings).expect("serialize linear volume"),
+        )
+        .expect("restore linear volume");
+
+        assert_eq!(restored.volume_scale, VolumeScale::Linear);
+        assert_eq!(restored.volume, 0.5);
+        assert_eq!(restored.volume_scale.gain(restored.volume), 0.5);
+    }
+
+    #[test]
+    fn changing_volume_scale_preserves_output_gain() {
+        let mut settings = PlaybackSettings {
+            volume: 0.5,
+            volume_scale: VolumeScale::Linear,
+            ..PlaybackSettings::default()
+        };
+
+        settings.set_volume_scale_preserving_gain(VolumeScale::Perceptual);
+        assert!((settings.volume - 0.5_f64.cbrt()).abs() < 1e-12);
+        assert!((settings.volume_scale.gain(settings.volume) - 0.5).abs() < 1e-12);
+
+        settings.set_volume_scale_preserving_gain(VolumeScale::Linear);
+        assert!((settings.volume - 0.5).abs() < 1e-12);
+        assert!((settings.volume_scale.gain(settings.volume) - 0.5).abs() < 1e-12);
     }
 }

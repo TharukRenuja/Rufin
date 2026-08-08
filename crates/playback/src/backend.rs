@@ -1,4 +1,4 @@
-use crate::{EqualizerSettings, PlaybackSettings, ReplayGainMode};
+use crate::{EqualizerSettings, PlaybackSettings, ReplayGainMode, VolumeScale};
 use library::ResolvedStream;
 use thiserror::Error;
 
@@ -53,6 +53,7 @@ pub struct BackendAudioSettings {
     pub audio_output: Option<String>,
     pub equalizer: EqualizerSettings,
     pub volume: f64,
+    pub volume_scale: VolumeScale,
     pub muted: bool,
     pub fade_on_status_change: bool,
 }
@@ -60,6 +61,12 @@ pub struct BackendAudioSettings {
 impl Default for BackendAudioSettings {
     fn default() -> Self {
         Self::from(PlaybackSettings::default())
+    }
+}
+
+impl BackendAudioSettings {
+    pub fn output_gain(&self) -> f64 {
+        self.volume_scale.gain(self.volume)
     }
 }
 
@@ -71,6 +78,7 @@ impl From<PlaybackSettings> for BackendAudioSettings {
             audio_output: settings.audio_output,
             equalizer: settings.equalizer,
             volume: settings.volume,
+            volume_scale: settings.volume_scale,
             muted: settings.muted,
             fade_on_status_change: settings.audio_fade_on_status_change,
         }
@@ -112,6 +120,7 @@ pub enum BackendCommand {
     },
     SetOutputVolume {
         volume: f64,
+        volume_scale: VolumeScale,
         muted: bool,
     },
     ConfigureAudio(BackendAudioSettings),

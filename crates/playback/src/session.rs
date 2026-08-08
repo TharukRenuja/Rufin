@@ -1196,6 +1196,7 @@ impl PlaybackSession {
         SessionUpdate {
             effects: vec![SessionEffect::Backend(BackendCommand::SetOutputVolume {
                 volume,
+                volume_scale: self.settings.volume_scale,
                 muted: self.settings.muted,
             })],
             view_changed: true,
@@ -1212,6 +1213,7 @@ impl PlaybackSession {
             effects: vec![
                 SessionEffect::Backend(BackendCommand::SetOutputVolume {
                     volume: self.settings.volume,
+                    volume_scale: self.settings.volume_scale,
                     muted,
                 }),
                 SessionEffect::PersistOutputState {
@@ -1272,13 +1274,30 @@ impl PlaybackSession {
             return SessionUpdate::default();
         }
         let stream_changed = settings.stream_quality != self.settings.stream_quality;
+        let output_changed = settings.volume != self.settings.volume
+            || settings.volume_scale != self.settings.volume_scale
+            || settings.muted != self.settings.muted;
+        let audio_configuration_changed = settings.replay_gain != self.settings.replay_gain
+            || settings.audio_output != self.settings.audio_output
+            || settings.equalizer != self.settings.equalizer
+            || settings.audio_fade_on_status_change != self.settings.audio_fade_on_status_change;
         self.settings = settings.clone();
         let mut update = SessionUpdate::changed();
-        update
-            .effects
-            .push(SessionEffect::Backend(BackendCommand::ConfigureAudio(
-                settings.into(),
-            )));
+        if audio_configuration_changed {
+            update
+                .effects
+                .push(SessionEffect::Backend(BackendCommand::ConfigureAudio(
+                    settings.into(),
+                )));
+        } else if output_changed {
+            update
+                .effects
+                .push(SessionEffect::Backend(BackendCommand::SetOutputVolume {
+                    volume: settings.volume,
+                    volume_scale: settings.volume_scale,
+                    muted: settings.muted,
+                }));
+        }
         if stream_changed {
             self.replan_next(true, &mut update.effects);
         } else {
@@ -2021,7 +2040,7 @@ mod tests {
     use library::{AlbumId, Track};
 
     use super::*;
-    use crate::{BatchItem, Provenance};
+    use crate::{BatchItem, Provenance, VolumeScale};
 
     #[test]
     fn current_media_changes_are_separate_from_position_and_control_updates() {
@@ -2052,6 +2071,34 @@ mod tests {
             .handle_command(SessionCommand::Next, &sample(4))
             .expect("next");
         assert!(changes_current_media(&next));
+    }
+
+    #[test]
+    fn volume_scale_change_uses_the_output_path_and_preserves_gain() {
+        let mut session = session(&[1]);
+        session
+            .handle_command(SessionCommand::SetVolume(0.5), &sample(0))
+            .expect("set perceptual volume");
+        let expected_gain = VolumeScale::Perceptual.gain(0.5);
+        let mut settings = session.settings().clone();
+        settings.set_volume_scale_preserving_gain(VolumeScale::Linear);
+
+        let update = session
+            .handle_command(SessionCommand::UpdateSettings(settings), &sample(1))
+            .expect("change volume scale");
+
+        assert!(update.effects.iter().any(|effect| matches!(
+            effect,
+            SessionEffect::Backend(BackendCommand::SetOutputVolume {
+                volume,
+                volume_scale: VolumeScale::Linear,
+                muted: false,
+            }) if (*volume - expected_gain).abs() < 1e-12
+        )));
+        assert!(!update.effects.iter().any(|effect| matches!(
+            effect,
+            SessionEffect::Backend(BackendCommand::ConfigureAudio(_))
+        )));
     }
 
     #[test]

@@ -964,7 +964,7 @@ impl GstEngine {
     ) {
         let slot = incoming.slot;
         self.stop_pipeline(from);
-        let (volume, muted) = self.output_state();
+        let (volume, muted) = self.output_gain_state();
         self.pipeline_for_slot(slot)
             .set_output_volume(volume, muted);
         let visualizer_enabled = {
@@ -1012,7 +1012,7 @@ impl GstEngine {
     ) {
         let to = incoming.slot;
         let new_run = incoming.item.run;
-        let (volume, muted) = self.output_state();
+        let (volume, muted) = self.output_gain_state();
         let visualizer_enabled = {
             let mut shared = lock_recover(&self.shared);
             shared.next = None;
@@ -1120,12 +1120,12 @@ impl GstEngine {
                     self.primary.configure_audio(&settings)?;
                     self.secondary.configure_audio(&settings)?;
                     self.sync_visualizer_taps(visualizer_enabled);
-                    let (volume, muted) = self.output_state();
-                    self.apply_output_state_to_pipelines(volume, muted);
+                    let (gain, muted) = self.output_gain_state();
+                    self.apply_output_gain_to_pipelines(gain, muted);
                     push_event(
                         &self.events,
                         BackendEvent::AudioApplied {
-                            volume,
+                            volume: settings.volume,
                             muted,
                             output: settings.audio_output.clone(),
                         },
@@ -1141,7 +1141,11 @@ impl GstEngine {
                 }
                 result
             }
-            BackendCommand::SetOutputVolume { volume, muted } => {
+            BackendCommand::SetOutputVolume {
+                volume,
+                volume_scale,
+                muted,
+            } => {
                 let volume = if volume.is_finite() {
                     volume.clamp(0.0, 1.0)
                 } else {
@@ -1150,9 +1154,11 @@ impl GstEngine {
                 {
                     let mut shared = lock_recover(&self.shared);
                     shared.settings.volume = volume;
+                    shared.settings.volume_scale = volume_scale;
                     shared.settings.muted = muted;
                 }
-                self.apply_output_state_to_pipelines(volume, muted);
+                let (gain, muted) = self.output_gain_state();
+                self.apply_output_gain_to_pipelines(gain, muted);
                 push_event(
                     &self.events,
                     BackendEvent::AudioApplied {
@@ -1556,7 +1562,7 @@ impl GstEngine {
         let shared = lock_recover(&self.shared);
         (
             shared.settings.clone(),
-            shared.settings.volume,
+            shared.settings.output_gain(),
             shared.settings.muted,
             shared.visualizer_enabled,
             shared.active,
@@ -1898,7 +1904,7 @@ impl GstEngine {
             && self.status_fade.is_none()
             && self.restore_output_on_playing
         {
-            let (volume, muted) = self.output_state();
+            let (volume, muted) = self.output_gain_state();
             self.active_pipeline().set_output_volume(volume, muted);
             self.restore_output_on_playing = false;
         }
@@ -2021,7 +2027,7 @@ impl GstEngine {
             .is_ok()
         {
             if self.restore_output_on_playing {
-                let (volume, muted) = self.output_state();
+                let (volume, muted) = self.output_gain_state();
                 self.active_pipeline().set_output_volume(volume, muted);
                 self.restore_output_on_playing = false;
             }
@@ -2098,7 +2104,7 @@ impl GstEngine {
         }
         self.state = BackendState::Paused;
         self.finish_crossfade_for_visible_current();
-        let (volume, muted, enabled) = self.status_fade_settings();
+        let (volume, muted, enabled) = self.status_fade_gain_settings();
         if !self.active_pipeline().has_session() {
             self.push_state(BackendState::Paused);
             return Ok(());
@@ -2142,7 +2148,7 @@ impl GstEngine {
                 Ok(())
             };
         }
-        let (volume, muted, enabled) = self.status_fade_settings();
+        let (volume, muted, enabled) = self.status_fade_gain_settings();
         if !enabled || muted || volume <= 0.0 {
             return self
                 .active_pipeline()
@@ -2198,12 +2204,12 @@ impl GstEngine {
                     return;
                 }
                 self.push_state(BackendState::Paused);
-                let (volume, muted) = self.output_state();
+                let (volume, muted) = self.output_gain_state();
                 self.pipeline_for_slot(fade.slot)
                     .set_output_volume(volume, muted);
             }
             StatusFadeTarget::Playing => {
-                let (volume, muted) = self.output_state();
+                let (volume, muted) = self.output_gain_state();
                 self.pipeline_for_slot(fade.slot)
                     .set_output_volume(volume, muted);
             }
@@ -2213,17 +2219,17 @@ impl GstEngine {
     fn cancel_status_fade(&mut self) -> Option<StatusFade> {
         let fade = self.status_fade.take();
         if let Some(fade) = fade {
-            let (volume, muted) = self.output_state();
+            let (volume, muted) = self.output_gain_state();
             self.pipeline_for_slot(fade.slot)
                 .set_output_volume(volume, muted);
         }
         fade
     }
 
-    fn status_fade_settings(&self) -> (f64, bool, bool) {
+    fn status_fade_gain_settings(&self) -> (f64, bool, bool) {
         let shared = lock_recover(&self.shared);
         (
-            shared.settings.volume,
+            shared.settings.output_gain(),
             shared.settings.muted,
             shared.settings.fade_on_status_change,
         )
@@ -2343,7 +2349,7 @@ impl GstEngine {
         };
         let slot = incoming.slot;
         let id = incoming.id;
-        let (volume, muted) = self.output_state();
+        let (volume, muted) = self.output_gain_state();
         self.pipeline_for_slot(slot)
             .set_output_volume(volume, muted);
         match self.pipeline_for_slot(slot).set_state(gst::State::Playing) {
@@ -2460,7 +2466,7 @@ impl GstEngine {
         };
         let now = Instant::now();
         let progress = crossfade.progress_at(now);
-        let (volume, muted) = self.output_state();
+        let (volume, muted) = self.output_gain_state();
         self.set_pipeline_output_levels(crossfade.output_levels_at(volume, now), muted);
         if progress >= 1.0 {
             self.finish_crossfade(crossfade);
@@ -2492,7 +2498,7 @@ impl GstEngine {
     fn finish_crossfade(&mut self, crossfade: CrossfadeState) {
         self.pending_seek = None;
         self.stop_pipeline(crossfade.from);
-        let (volume, muted) = self.output_state();
+        let (volume, muted) = self.output_gain_state();
         self.pipeline_for_slot(crossfade.to)
             .set_output_volume(volume, muted);
         let retained_next = {
@@ -2512,9 +2518,9 @@ impl GstEngine {
         lock_recover(&self.shared).settings.clone()
     }
 
-    fn output_state(&self) -> (f64, bool) {
+    fn output_gain_state(&self) -> (f64, bool) {
         let shared = lock_recover(&self.shared);
-        (shared.settings.volume, shared.settings.muted)
+        (shared.settings.output_gain(), shared.settings.muted)
     }
 
     fn output_levels_at(&self, volume: f64, now: Instant) -> [f64; 2] {
@@ -2558,7 +2564,7 @@ impl GstEngine {
             .set_output_volume(levels[Slot::Secondary.index()], muted);
     }
 
-    fn apply_output_state_to_pipelines(&mut self, volume: f64, muted: bool) {
+    fn apply_output_gain_to_pipelines(&mut self, volume: f64, muted: bool) {
         self.set_pipeline_output_levels(self.output_levels_at(volume, Instant::now()), muted);
     }
 
@@ -3280,6 +3286,37 @@ mod tests {
             event,
             BackendEvent::Ended { run } if *run == fixture.old_run
         )));
+    }
+
+    #[test]
+    fn volume_scale_change_preserves_an_unconfirmed_handoff() {
+        let mut fixture = HandoffFixture::separate(NextTransition::Crossfade {
+            duration_millis: 5_000,
+        });
+        fixture.begin_separate();
+
+        fixture
+            .engine
+            .handle_command(BackendCommand::SetOutputVolume {
+                volume: 0.5,
+                volume_scale: VolumeScale::Perceptual,
+                muted: false,
+            });
+
+        assert!(fixture.engine.pending_handoff.is_some());
+        let (gain, muted) = fixture.engine.output_gain_state();
+        assert!((gain - 0.125).abs() < f64::EPSILON);
+        assert!(!muted);
+        assert_eq!(
+            fixture.engine.output_levels_at(gain, Instant::now()),
+            [gain, 0.0]
+        );
+        assert!(
+            !fixture
+                .drain()
+                .iter()
+                .any(|event| matches!(event, BackendEvent::Ended { .. }))
+        );
     }
 
     #[test]
