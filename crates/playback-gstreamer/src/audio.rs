@@ -1,10 +1,13 @@
 use super::ensure_gstreamer_initialized;
 use gst::prelude::*;
 use gstreamer as gst;
+use library::TrackLoudness;
 use playback::{
-    AudioOutput, BackendAudioSettings, EQUALIZER_BAND_COUNT, EqualizerSettings, ReplayGainMode,
+    AudioOutput, BackendAudioSettings, EQUALIZER_BAND_COUNT, EqualizerSettings,
+    LOUDNESS_NORMALIZATION_TARGET_LUFS, LoudnessNormalizationMode,
 };
 use std::collections::HashSet;
+use std::sync::{Arc, Mutex};
 
 const AUDIO_OUTPUT_DEVICE_PREFIX: &str = "gst-device:";
 const CLASSIC_EQUALIZER_FREQUENCIES: [f64; EQUALIZER_BAND_COUNT] = [
@@ -15,14 +18,14 @@ const EQUALIZER_DUMMY_HIGH_FREQUENCY: f64 = 20_000.0;
 
 #[derive(Clone, Debug, PartialEq)]
 struct AudioGraphConfig {
-    replay_gain: ReplayGainMode,
+    loudness_normalization: LoudnessNormalizationMode,
     audio_output: Option<String>,
 }
 
 impl AudioGraphConfig {
     fn new(settings: &BackendAudioSettings) -> Self {
         Self {
-            replay_gain: settings.replay_gain,
+            loudness_normalization: settings.loudness_normalization,
             audio_output: settings.audio_output.clone(),
         }
     }
@@ -33,12 +36,13 @@ pub(super) struct AudioGraph {
     config: AudioGraphConfig,
     output: gst::Element,
     equalizer: gst::Element,
+    loudness_tags: Option<LoudnessTags>,
     visualizer_pad: Option<gst::Pad>,
 }
 
 impl AudioGraph {
     pub(super) fn new(settings: &BackendAudioSettings) -> Result<Self, String> {
-        let has_replay_gain = settings.replay_gain != ReplayGainMode::Off;
+        let normalizes_loudness = settings.loudness_normalization != LoudnessNormalizationMode::Off;
         let bin = gst::Bin::new();
         let convert_in = make_element("audioconvert", "rufin-audio-convert-in")?;
         let convert_out = make_element("audioconvert", "rufin-audio-convert-out")?;
@@ -50,13 +54,18 @@ impl AudioGraph {
         configure_equalizer(&equalizer, &settings.equalizer);
         elements.push(equalizer.clone());
 
-        if has_replay_gain {
-            let rgvolume = make_element("rgvolume", "rufin-replaygain")?;
-            if settings.replay_gain == ReplayGainMode::Album {
-                rgvolume.set_property("album-mode", true);
-            }
+        let mut loudness_tags = None;
+        if normalizes_loudness {
+            let (tags, handle) = make_loudness_tags(settings.loudness_normalization)?;
+            elements.push(tags);
+            loudness_tags = Some(handle);
+
+            let rgvolume = make_element("rgvolume", "rufin-loudness-normalization")?;
+            rgvolume.set_property(
+                "album-mode",
+                settings.loudness_normalization == LoudnessNormalizationMode::Album,
+            );
             elements.push(rgvolume);
-            elements.push(make_element("rglimiter", "rufin-replaygain-limiter")?);
         }
 
         let visualizer_pad = convert_out.static_pad("src");
@@ -84,6 +93,7 @@ impl AudioGraph {
             config: AudioGraphConfig::new(settings),
             output,
             equalizer,
+            loudness_tags,
             visualizer_pad,
         })
     }
@@ -98,7 +108,7 @@ impl AudioGraph {
             self.apply_equalizer(&settings.equalizer);
             return Ok(true);
         }
-        if self.config.replay_gain != config.replay_gain {
+        if self.config.loudness_normalization != config.loudness_normalization {
             return Ok(false);
         }
         if !self.update_output(config.audio_output.as_deref())? {
@@ -119,6 +129,16 @@ impl AudioGraph {
             .map(|factory| factory.name().to_string())
     }
 
+    pub(super) fn apply_loudness(&self, loudness: &TrackLoudness) {
+        if let Some(tags) = self.loudness_tags.as_ref() {
+            tags.apply(loudness);
+        }
+    }
+
+    pub(super) fn loudness_tags(&self) -> Option<LoudnessTags> {
+        self.loudness_tags.clone()
+    }
+
     fn apply_equalizer(&self, settings: &EqualizerSettings) {
         configure_equalizer(&self.equalizer, settings);
     }
@@ -137,6 +157,202 @@ impl AudioGraph {
             return Err(selected_output_unavailable(selected));
         }
         Ok(set_output_target(&self.output, target))
+    }
+}
+
+pub(super) type SharedLoudnessTags = Arc<Mutex<Option<LoudnessTags>>>;
+
+pub(super) fn apply_shared_loudness(shared: &SharedLoudnessTags, loudness: &TrackLoudness) {
+    if let Some(tags) = shared
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .as_ref()
+    {
+        tags.apply(loudness);
+    }
+}
+
+#[derive(Clone)]
+pub(super) struct LoudnessTags {
+    state: Arc<Mutex<LoudnessTagState>>,
+}
+
+struct LoudnessTagState {
+    mode: LoudnessNormalizationMode,
+    internal: Option<gst::TagList>,
+    fallback: Option<gst::TagList>,
+    sent: bool,
+}
+
+impl LoudnessTags {
+    fn apply(&self, loudness: &TrackLoudness) {
+        let mut state = self
+            .state
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        state.internal = internal_loudness_tags(state.mode, loudness);
+        state.sent = false;
+    }
+}
+
+fn make_loudness_tags(
+    mode: LoudnessNormalizationMode,
+) -> Result<(gst::Element, LoudnessTags), String> {
+    let element = make_element("identity", "rufin-loudness-tags")?;
+    let state = Arc::new(Mutex::new(LoudnessTagState {
+        mode,
+        internal: None,
+        fallback: None,
+        sent: false,
+    }));
+    let handle = LoudnessTags {
+        state: Arc::clone(&state),
+    };
+    let sink_pad = element
+        .static_pad("sink")
+        .ok_or_else(|| "loudness tag handoff is missing its input pad".to_string())?;
+    sink_pad.add_probe(gst::PadProbeType::EVENT_DOWNSTREAM, move |_, info| {
+        handle_loudness_event(info, &state);
+        gst::PadProbeReturn::Ok
+    });
+
+    let state_for_handoff = Arc::clone(&handle.state);
+    let src_pad = element
+        .static_pad("src")
+        .ok_or_else(|| "loudness tag handoff is missing its output pad".to_string())?;
+    element.connect("handoff", false, move |_| {
+        push_loudness_tags(&src_pad, &state_for_handoff);
+        None
+    });
+    Ok((element, handle))
+}
+
+fn handle_loudness_event(info: &mut gst::PadProbeInfo<'_>, state: &Mutex<LoudnessTagState>) {
+    let Some(event) = info.event().cloned() else {
+        return;
+    };
+    match event.view() {
+        gst::EventView::StreamStart(_) => {
+            let mut state = state
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            state.fallback = None;
+            state.sent = false;
+        }
+        gst::EventView::Tag(tag) => {
+            let incoming = tag.tag_owned();
+            let mut state = state
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            if let Some(fallback) = selected_loudness_tags(state.mode, &incoming) {
+                state.fallback = Some(fallback);
+            }
+            if let Some(internal) = state.internal.as_ref() {
+                let merged = incoming.merge(internal, gst::TagMergeMode::Replace);
+                let replacement = gst::event::Tag::builder(merged)
+                    .seqnum(event.seqnum())
+                    .build();
+                info.data = Some(gst::PadProbeData::Event(replacement));
+                state.sent = true;
+            } else if state.fallback.is_some() {
+                state.sent = true;
+            }
+        }
+        _ => {}
+    }
+}
+
+fn push_loudness_tags(pad: &gst::Pad, state: &Mutex<LoudnessTagState>) {
+    let tags = {
+        let mut state = state
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if state.sent {
+            return;
+        }
+        state.sent = true;
+        state
+            .internal
+            .clone()
+            .or_else(|| state.fallback.clone())
+            .unwrap_or_else(|| neutral_loudness_tags(state.mode))
+    };
+    pad.push_event(gst::event::Tag::new(tags));
+}
+
+fn internal_loudness_tags(
+    mode: LoudnessNormalizationMode,
+    loudness: &TrackLoudness,
+) -> Option<gst::TagList> {
+    let measurement = match mode {
+        LoudnessNormalizationMode::Off => None,
+        LoudnessNormalizationMode::Track => loudness.track,
+        LoudnessNormalizationMode::Album => loudness.album,
+    }?;
+    let gain = measurement
+        .integrated_lufs
+        .map_or(0.0, |lufs| LOUDNESS_NORMALIZATION_TARGET_LUFS - lufs);
+    Some(loudness_tag_list(mode, gain, measurement.true_peak_ratio))
+}
+
+fn neutral_loudness_tags(mode: LoudnessNormalizationMode) -> gst::TagList {
+    loudness_tag_list(mode, 0.0, 1.0)
+}
+
+fn loudness_tag_list(mode: LoudnessNormalizationMode, gain: f64, peak: f64) -> gst::TagList {
+    let mut tags = gst::TagList::new();
+    let tags = tags.make_mut();
+    match mode {
+        LoudnessNormalizationMode::Off | LoudnessNormalizationMode::Track => {
+            tags.add::<gst::tags::TrackGain>(&gain, gst::TagMergeMode::Replace);
+            tags.add::<gst::tags::TrackPeak>(&peak, gst::TagMergeMode::Replace);
+        }
+        LoudnessNormalizationMode::Album => {
+            tags.add::<gst::tags::AlbumGain>(&gain, gst::TagMergeMode::Replace);
+            tags.add::<gst::tags::AlbumPeak>(&peak, gst::TagMergeMode::Replace);
+        }
+    }
+    tags.to_owned()
+}
+
+fn selected_loudness_tags(
+    mode: LoudnessNormalizationMode,
+    incoming: &gst::TagListRef,
+) -> Option<gst::TagList> {
+    match mode {
+        LoudnessNormalizationMode::Off | LoudnessNormalizationMode::Track => {
+            incoming.get::<gst::tags::TrackGain>().map(|gain| {
+                loudness_tag_list(
+                    mode,
+                    gain.get(),
+                    incoming
+                        .get::<gst::tags::TrackPeak>()
+                        .map_or(1.0, |peak| peak.get()),
+                )
+            })
+        }
+        LoudnessNormalizationMode::Album => incoming
+            .get::<gst::tags::AlbumGain>()
+            .map(|gain| {
+                loudness_tag_list(
+                    mode,
+                    gain.get(),
+                    incoming
+                        .get::<gst::tags::AlbumPeak>()
+                        .map_or(1.0, |peak| peak.get()),
+                )
+            })
+            .or_else(|| {
+                incoming.get::<gst::tags::TrackGain>().map(|gain| {
+                    loudness_tag_list(
+                        LoudnessNormalizationMode::Track,
+                        gain.get(),
+                        incoming
+                            .get::<gst::tags::TrackPeak>()
+                            .map_or(1.0, |peak| peak.get()),
+                    )
+                })
+            }),
     }
 }
 
@@ -328,6 +544,8 @@ fn make_element(factory: &str, name: &str) -> Result<gst::Element, String> {
 
 #[cfg(test)]
 mod tests {
+    use library::LoudnessMeasurement;
+
     use super::*;
 
     fn initialize_gstreamer() {
@@ -391,6 +609,156 @@ mod tests {
         settings.enabled = false;
         configure_equalizer(&equalizer, &settings);
         assert_eq!(equalizer_band_gain(&equalizer, 1), Some(0.0));
+    }
+
+    #[test]
+    fn track_normalization_disables_album_mode_without_a_limiter() {
+        initialize_gstreamer();
+        let settings = BackendAudioSettings {
+            loudness_normalization: LoudnessNormalizationMode::Track,
+            audio_output: Some("fakesink".to_string()),
+            ..BackendAudioSettings::default()
+        };
+
+        let graph = AudioGraph::new(&settings).expect("track normalization graph");
+        let bin = graph.root.downcast_ref::<gst::Bin>().expect("audio bin");
+        let rgvolume = bin
+            .by_name("rufin-loudness-normalization")
+            .expect("loudness normalization volume element");
+
+        assert!(!rgvolume.property::<bool>("album-mode"));
+        assert!(bin.by_name("rufin-replaygain-limiter").is_none());
+    }
+
+    #[test]
+    fn stored_r128_measurement_replaces_the_selected_replaygain_scope() {
+        initialize_gstreamer();
+        let settings = BackendAudioSettings {
+            loudness_normalization: LoudnessNormalizationMode::Album,
+            audio_output: Some("fakesink".to_string()),
+            ..BackendAudioSettings::default()
+        };
+        let graph = AudioGraph::new(&settings).expect("album normalization graph");
+        graph.apply_loudness(&TrackLoudness {
+            track: LoudnessMeasurement::new(Some(-21.0), 0.4).ok(),
+            album: LoudnessMeasurement::new(Some(-23.0), 0.8).ok(),
+        });
+
+        let tags = graph
+            .loudness_tags
+            .as_ref()
+            .expect("loudness tag handoff")
+            .state
+            .lock()
+            .expect("loudness tag state")
+            .internal
+            .clone()
+            .expect("stored album loudness tags");
+        assert_eq!(
+            tags.get::<gst::tags::AlbumGain>().map(|gain| gain.get()),
+            Some(5.0)
+        );
+        assert_eq!(
+            tags.get::<gst::tags::AlbumPeak>().map(|peak| peak.get()),
+            Some(0.8)
+        );
+
+        graph.apply_loudness(&TrackLoudness::default());
+        assert!(
+            graph
+                .loudness_tags
+                .as_ref()
+                .expect("loudness tag handoff")
+                .state
+                .lock()
+                .expect("loudness tag state")
+                .internal
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn album_mode_keeps_embedded_track_gain_as_its_fallback() {
+        initialize_gstreamer();
+        let embedded = loudness_tag_list(LoudnessNormalizationMode::Track, -3.0, 0.7);
+
+        let fallback = selected_loudness_tags(LoudnessNormalizationMode::Album, &embedded)
+            .expect("embedded track fallback");
+
+        assert_eq!(
+            fallback
+                .get::<gst::tags::TrackGain>()
+                .map(|gain| gain.get()),
+            Some(-3.0)
+        );
+        assert!(fallback.get::<gst::tags::AlbumGain>().is_none());
+    }
+
+    #[test]
+    fn stored_r128_gain_reaches_rgvolume_before_audio() {
+        initialize_gstreamer();
+        let settings = BackendAudioSettings {
+            loudness_normalization: LoudnessNormalizationMode::Track,
+            audio_output: Some("fakesink".to_string()),
+            ..BackendAudioSettings::default()
+        };
+        let graph = AudioGraph::new(&settings).expect("normalization graph");
+        graph.apply_loudness(&TrackLoudness {
+            track: LoudnessMeasurement::new(Some(-23.0), 0.1).ok(),
+            album: None,
+        });
+        let source = gst::ElementFactory::make("audiotestsrc")
+            .property("num-buffers", 4_i32)
+            .build()
+            .expect("test audio source");
+        let pipeline = gst::Pipeline::new();
+        pipeline
+            .add_many([&source, graph.root()])
+            .expect("test normalization pipeline");
+        source
+            .link(graph.root())
+            .expect("test normalization pipeline link");
+        let bin = graph.root.downcast_ref::<gst::Bin>().expect("audio bin");
+        let rgvolume = bin
+            .by_name("rufin-loudness-normalization")
+            .expect("loudness normalization volume element");
+        let observed_gain = Arc::new(Mutex::new(None));
+        let observed_gain_for_probe = Arc::clone(&observed_gain);
+        let rgvolume_for_probe = rgvolume.clone();
+        rgvolume
+            .static_pad("src")
+            .expect("loudness normalization output pad")
+            .add_probe(gst::PadProbeType::BUFFER, move |_, _| {
+                observed_gain_for_probe
+                    .lock()
+                    .expect("observed gain")
+                    .get_or_insert_with(|| rgvolume_for_probe.property::<f64>("result-gain"));
+                gst::PadProbeReturn::Ok
+            });
+
+        pipeline
+            .set_state(gst::State::Playing)
+            .expect("start test normalization pipeline");
+        let bus = pipeline.bus().expect("test normalization bus");
+        let error = loop {
+            let message = bus
+                .timed_pop(gst::ClockTime::from_seconds(5))
+                .expect("test normalization pipeline completion");
+            match message.view() {
+                gst::MessageView::Eos(..) => break None,
+                gst::MessageView::Error(error) => break Some(error.error().to_string()),
+                _ => {}
+            }
+        };
+        pipeline
+            .set_state(gst::State::Null)
+            .expect("stop test normalization pipeline");
+        assert!(error.is_none(), "{}", error.unwrap_or_default());
+        let observed_gain = observed_gain
+            .lock()
+            .expect("observed gain")
+            .expect("gain before the first audio buffer");
+        assert!((observed_gain - 5.0).abs() < 0.001);
     }
 
     fn equalizer_band_gain(equalizer: &gst::Element, index: usize) -> Option<f64> {

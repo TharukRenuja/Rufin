@@ -21,15 +21,16 @@ use library::{
 };
 use playback::{
     LoadedPlayRequest, OccurrenceId, Playback, PlaybackBackend, PlaybackProjection, PlaybackUpdate,
-    QueueCommandPort, QueuePage, QueuePageQuery, QueueReorderRequest, RadioCommandPort,
-    RadioPlayRequest, RandomPlayRequest, RepeatMode, RunId, SessionCommand, SessionEffect,
-    SourceReportFact, SourceReportPhase, SourceSessionEpoch, TransportCommandPort,
+    PreparedStream, QueueCommandPort, QueuePage, QueuePageQuery, QueueReorderRequest,
+    RadioCommandPort, RadioPlayRequest, RandomPlayRequest, RepeatMode, RunId, SessionCommand,
+    SessionEffect, SourceReportFact, SourceReportPhase, SourceSessionEpoch, TransportCommandPort,
 };
 use scrobbling::Scrobbler;
 use sources::{NativeSourceResult, Source};
 use tracing::{debug, warn};
 use ui::runtime::PlaybackPublication;
 
+use crate::loudness::LoudnessAnalysisOwner;
 use crate::settings::SettingsFile;
 use crate::source::{
     ActiveSource, SelectedSourceState, SourceAcceptanceSender, WeakActiveSource,
@@ -678,6 +679,7 @@ pub(crate) struct PlaybackOwner {
     runtime: tokio::runtime::Handle,
     events: EventSender<PlaybackPublication>,
     waveform: Arc<WaveformOwner>,
+    loudness: Arc<LoudnessAnalysisOwner>,
     lyrics: Arc<LyricsService>,
     discord: Arc<desktop_integration::Discord>,
     active: Mutex<Option<ActivePlayback>>,
@@ -714,6 +716,7 @@ impl PlaybackOwner {
             scrobbler: Arc::clone(&scrobbler),
         });
         let queue_intents = QueueIntentWorker::new(runtime.clone());
+        let loudness = LoudnessAnalysisOwner::new(runtime.clone());
         let owner = Arc::new(Self {
             scrobbler,
             library,
@@ -721,6 +724,7 @@ impl PlaybackOwner {
             runtime,
             events,
             waveform,
+            loudness,
             lyrics,
             discord,
             active: Mutex::new(None),
@@ -828,6 +832,7 @@ impl PlaybackOwner {
             .take()
             .expect("a prepared Playback retains its projection until installation");
         let source_session_epoch = active.source_session_epoch;
+        let loudness_selected = Arc::clone(&active.selected);
         let mut current = self
             .active
             .lock()
@@ -840,6 +845,10 @@ impl PlaybackOwner {
         drop(current);
         prepared.activated.store(true, Ordering::Release);
         self.queue_intents.select(source_session_epoch);
+        self.loudness.settings_changed(
+            self.settings.load().ui.playback.loudness_normalization,
+            Some(loudness_selected),
+        );
         projection
     }
 
@@ -850,6 +859,7 @@ impl PlaybackOwner {
             .unwrap_or_else(|poisoned| poisoned.into_inner())
             .take();
         self.queue_intents.retire();
+        self.loudness.cancel();
         self.publish_current_media(None);
         self.observe_discord(None, false);
         if let Some(active) = active
@@ -877,6 +887,7 @@ impl PlaybackOwner {
             .playback
             .refresh_tracks(source_session_epoch, tracks)
             .map_err(string_error)?;
+        self.refresh_loudness_analysis(&active);
         self.publish_projection(active.source_id, active.source_session_epoch, projection);
         Ok(())
     }
@@ -928,6 +939,7 @@ impl PlaybackOwner {
                 .queue_page(QueuePageQuery::current())
                 .map_err(string_error)?,
         );
+        self.refresh_loudness_analysis(&active);
         self.publish_projection(active.source_id, active.source_session_epoch, projection);
         Ok(())
     }
@@ -942,7 +954,10 @@ impl PlaybackOwner {
     }
 
     pub(crate) fn playback_settings_changed(&self, settings: playback::PlaybackSettings) {
+        let loudness_mode = settings.loudness_normalization;
         self.send(SessionCommand::UpdateSettings(settings));
+        self.loudness
+            .settings_changed(loudness_mode, self.active().map(|active| active.selected));
     }
 
     pub(crate) fn auto_dj_threshold_changed(&self, enabled: bool, refill_threshold: u8) {
@@ -1146,7 +1161,15 @@ impl PlaybackOwner {
         let runtime = self.runtime.clone();
         let playback = active.playback;
         runtime.spawn(async move {
-            let result = prepare_stream(Some(loaded), source, request).await;
+            let loudness = loaded
+                .loudness_for_track(&track_id)
+                .unwrap_or_else(|error| {
+                    warn!(%source_id, %track_id, %error, "could not read stored loudness");
+                    library::TrackLoudness::default()
+                });
+            let result = prepare_stream(Some(Arc::clone(&loaded)), source, request)
+                .await
+                .map(|stream| PreparedStream::new(stream, loudness));
             match &result {
                 Ok(stream) => debug!(
                     %source_id,
@@ -1233,6 +1256,13 @@ impl PlaybackOwner {
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
             .clone()
+    }
+
+    fn refresh_loudness_analysis(&self, active: &ActivePlayback) {
+        self.loudness.library_changed(
+            self.settings.load().ui.playback.loudness_normalization,
+            Some(Arc::clone(&active.selected)),
+        );
     }
 
     fn active_matching(

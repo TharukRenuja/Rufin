@@ -27,10 +27,12 @@ csv = "1.4.0"
 directories = "6.0.0"
 desktop-integration = { path = "crates/desktop-integration" }
 downloads = { path = "crates/downloads" }
+ebur128 = "0.1.10"
 futures-util = "0.3.32"
 getrandom = "0.4.0"
 gio = "0.22.6"
 gstreamer = "0.25.2"
+gstreamer-app = "0.25.2"
 gstreamer-audio = "0.25.2"
 gstreamer-pbutils = "0.25.2"
 gtk = { package = "gtk4", version = "0.11.3" }

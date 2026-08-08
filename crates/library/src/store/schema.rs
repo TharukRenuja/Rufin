@@ -9,11 +9,12 @@ use rusqlite::{Connection, OptionalExtension};
 use super::{StoreError, StoreResult};
 
 pub(crate) const APPLICATION_ID: i64 = 1_381_320_270;
-pub(crate) const SCHEMA_VERSION: i64 = 36;
+pub(crate) const SCHEMA_VERSION: i64 = 37;
 const FIRST_STORE_SCHEMA_VERSION: i64 = 32;
 const MUSIC_FOLDER_ARTWORK_SCHEMA_VERSION: i64 = 33;
 const FILESYSTEM_IDENTITY_SCHEMA_VERSION: i64 = 34;
 const RECENT_PLAYS_SCHEMA_VERSION: i64 = 35;
+const PENDING_FAVORITES_SCHEMA_VERSION: i64 = 36;
 
 struct Migration {
     from_version: i64,
@@ -39,12 +40,17 @@ const MIGRATIONS: &[Migration] = &[
     },
     Migration {
         from_version: RECENT_PLAYS_SCHEMA_VERSION,
-        to_version: SCHEMA_VERSION,
+        to_version: PENDING_FAVORITES_SCHEMA_VERSION,
         run: migrate_schema_35,
+    },
+    Migration {
+        from_version: PENDING_FAVORITES_SCHEMA_VERSION,
+        to_version: SCHEMA_VERSION,
+        run: migrate_schema_36,
     },
 ];
 
-const CREATE_SCHEMA: &str = r###"-- Rufin Store schema 36.
+const CREATE_SCHEMA: &str = r###"-- Rufin Store schema 37.
 --
 -- Product routes hydrate Library and do not query these tables for
 -- sorting or filtering.
@@ -54,7 +60,7 @@ PRAGMA foreign_keys = ON;
 BEGIN IMMEDIATE;
 
 PRAGMA application_id = 1381320270; -- "RUFN"
-PRAGMA user_version = 36;
+PRAGMA user_version = 37;
 
 -- One row is one complete or in-progress source-library candidate. The newest
 -- accepted library_id is current; there is no mutable head row.
@@ -497,6 +503,24 @@ CREATE TABLE local_favorites (
     ),
     item_id TEXT NOT NULL CHECK (item_id <> ''),
     PRIMARY KEY (source_id, item_kind, item_id)
+) STRICT;
+
+-- Rufin-owned loudness measurements survive immutable library-candidate
+-- replacement. The analysis key binds each result to the audio facts that
+-- produced it; stale rows are ignored when the selected Library is hydrated.
+CREATE TABLE loudness_measurements (
+    source_id TEXT NOT NULL CHECK (source_id <> ''),
+    scope TEXT NOT NULL CHECK (scope IN ('track', 'album')),
+    item_id TEXT NOT NULL CHECK (item_id <> ''),
+    analysis_key BLOB NOT NULL CHECK (length(analysis_key) = 32),
+    integrated_lufs REAL CHECK (
+        integrated_lufs IS NULL
+        OR integrated_lufs BETWEEN -200.0 AND 100.0
+    ),
+    true_peak REAL NOT NULL CHECK (
+        true_peak >= 0.0 AND true_peak <= 1000.0
+    ),
+    PRIMARY KEY (source_id, scope, item_id)
 ) STRICT;
 
 -- Remote favorites are accepted locally before delivery. One row is the
@@ -993,6 +1017,33 @@ COMMIT;
     Ok(())
 }
 
+fn migrate_schema_36(connection: &Connection) -> StoreResult<()> {
+    connection.execute_batch(
+        r###"BEGIN IMMEDIATE;
+
+CREATE TABLE loudness_measurements (
+    source_id TEXT NOT NULL CHECK (source_id <> ''),
+    scope TEXT NOT NULL CHECK (scope IN ('track', 'album')),
+    item_id TEXT NOT NULL CHECK (item_id <> ''),
+    analysis_key BLOB NOT NULL CHECK (length(analysis_key) = 32),
+    integrated_lufs REAL CHECK (
+        integrated_lufs IS NULL
+        OR integrated_lufs BETWEEN -200.0 AND 100.0
+    ),
+    true_peak REAL NOT NULL CHECK (
+        true_peak >= 0.0 AND true_peak <= 1000.0
+    ),
+    PRIMARY KEY (source_id, scope, item_id)
+) STRICT;
+
+PRAGMA user_version = 37;
+
+COMMIT;
+"###,
+    )?;
+    Ok(())
+}
+
 fn backfill_recent_plays(connection: &Connection) -> StoreResult<()> {
     connection.execute(
         "INSERT OR IGNORE INTO recent_plays(
@@ -1141,7 +1192,8 @@ mod tests {
         initialize(&connection).expect("initialize current Store");
         connection
             .execute_batch(
-                "DROP INDEX pending_favorites_due_idx;
+                "DROP TABLE loudness_measurements;
+                 DROP INDEX pending_favorites_due_idx;
                  DROP TABLE pending_favorites;
                  PRAGMA user_version = 35;",
             )
@@ -1155,6 +1207,33 @@ mod tests {
         connection
             .query_row("SELECT count(*) FROM pending_favorites", [], |_| Ok(()))
             .expect("pending favorite outbox exists");
+    }
+
+    #[test]
+    fn schema_36_adds_source_scoped_loudness_measurements() {
+        let connection = Connection::open_in_memory().expect("open Store");
+        initialize(&connection).expect("initialize current Store");
+        connection
+            .execute_batch(
+                "DROP TABLE loudness_measurements;
+                 PRAGMA user_version = 36;",
+            )
+            .expect("prepare schema 36 Store");
+
+        initialize(&connection).expect("migrate schema 36 Store");
+        assert_eq!(
+            pragma_i64(&connection, "user_version").expect("read migrated schema"),
+            SCHEMA_VERSION
+        );
+        connection
+            .execute(
+                "INSERT INTO loudness_measurements(
+                     source_id, scope, item_id, analysis_key,
+                     integrated_lufs, true_peak
+                 ) VALUES ('source:test', 'track', 'track:test', ?1, -18.0, 0.9)",
+                [vec![7_u8; 32]],
+            )
+            .expect("write loudness measurement");
     }
 
     #[test]
@@ -1195,7 +1274,7 @@ mod tests {
                 [],
             )
             .expect("write Local access file");
-        remove_pending_favorite_schema(&connection);
+        remove_newer_schema(&connection);
         connection
             .pragma_update(None, "user_version", MUSIC_FOLDER_ARTWORK_SCHEMA_VERSION)
             .expect("prepare schema 33 Store");
@@ -1246,7 +1325,7 @@ mod tests {
                 [],
             )
             .expect("write a play recorded after migration");
-        remove_pending_favorite_schema(&connection);
+        remove_newer_schema(&connection);
         connection
             .pragma_update(None, "user_version", FILESYSTEM_IDENTITY_SCHEMA_VERSION)
             .expect("prepare schema 34 Store");
@@ -1326,7 +1405,7 @@ mod tests {
                 )
                 .expect("write migrated activity");
         }
-        remove_pending_favorite_schema(&connection);
+        remove_newer_schema(&connection);
         connection
             .pragma_update(None, "user_version", FILESYSTEM_IDENTITY_SCHEMA_VERSION)
             .expect("prepare schema 34 Store");
@@ -1372,7 +1451,7 @@ mod tests {
                 [],
             )
             .expect("write music folder");
-        remove_pending_favorite_schema(&connection);
+        remove_newer_schema(&connection);
         connection
             .execute_batch(
                 "ALTER TABLE music_folders RENAME TO schema_33_music_folders;
@@ -1419,12 +1498,13 @@ mod tests {
         );
     }
 
-    fn remove_pending_favorite_schema(connection: &Connection) {
+    fn remove_newer_schema(connection: &Connection) {
         connection
             .execute_batch(
-                "DROP INDEX pending_favorites_due_idx;
+                "DROP TABLE loudness_measurements;
+                 DROP INDEX pending_favorites_due_idx;
                  DROP TABLE pending_favorites;",
             )
-            .expect("remove schema 36 favorite outbox");
+            .expect("remove newer Store schema");
     }
 }

@@ -15,11 +15,13 @@ use tracing::{debug, error, info, instrument, warn};
 
 mod audio;
 mod engine;
+mod loudness;
 mod pipeline;
 mod waveform;
 
 pub use audio::available_audio_outputs;
 pub use engine::GStreamerPlaybackBackend;
+pub use loudness::{LoudnessAnalysis, album_loudness, analyze_loudness_cancellable};
 pub use waveform::generate_waveform_peaks_cancellable;
 
 pub fn verify_audio_file(path: &Path) -> Result<(), String> {

@@ -3,14 +3,15 @@ use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
-use library::{PlaybackCheckpoint, ResolvedStream, SourceId, Track};
+use library::{PlaybackCheckpoint, SourceId, Track};
 use thiserror::Error;
 
 use crate::{
     BackendEvent, BackendFailure, Batch, ClockSample, LoadedPlayRequest, MaterializationId,
     MaterializationReservation, Placement, PlaybackBackend, PlaybackNotice, PlaybackProjection,
-    PlaybackSession, PlaybackSettings, QueuePage, QueuePageQuery, RunId, Sequence, SequenceError,
-    SessionCommand, SessionEffect, SessionUpdate, SourceSessionEpoch, build_checkpoint,
+    PlaybackSession, PlaybackSettings, PreparedStream, QueuePage, QueuePageQuery, RunId, Sequence,
+    SequenceError, SessionCommand, SessionEffect, SessionUpdate, SourceSessionEpoch,
+    build_checkpoint,
 };
 
 const BACKEND_POLL_INTERVAL: Duration = Duration::from_millis(33);
@@ -130,7 +131,7 @@ enum RuntimeCommand {
     },
     ResolveStream {
         run: RunId,
-        stream: Result<ResolvedStream, String>,
+        stream: Result<PreparedStream, String>,
         reply: Reply<()>,
     },
     CompleteAutoDj {
@@ -321,7 +322,7 @@ impl Playback {
     pub fn resolve_stream(
         &self,
         run: RunId,
-        stream: Result<ResolvedStream, String>,
+        stream: Result<PreparedStream, String>,
     ) -> PlaybackResult<()> {
         self.request(|reply| RuntimeCommand::ResolveStream { run, stream, reply })
     }
@@ -785,7 +786,7 @@ impl PlaybackRuntime {
     fn resolve_stream(
         &mut self,
         run: RunId,
-        result: Result<ResolvedStream, String>,
+        result: Result<PreparedStream, String>,
         sample: &ClockSample,
     ) -> PlaybackResult<PlaybackUpdate> {
         let update = match result {

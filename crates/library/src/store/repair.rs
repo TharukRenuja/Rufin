@@ -127,6 +127,22 @@ fn prepare_replacement(
             &destination,
             &mut report,
             SimpleFamily {
+                name: "Loudness measurements",
+                select: "SELECT
+                        source_id, scope, item_id, analysis_key,
+                        integrated_lufs, true_peak
+                     FROM loudness_measurements",
+                insert: "INSERT INTO loudness_measurements(
+                        source_id, scope, item_id, analysis_key,
+                        integrated_lufs, true_peak
+                     ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            },
+        )?;
+        salvage_simple_family(
+            source,
+            &destination,
+            &mut report,
+            SimpleFamily {
                 name: "Local playlists",
                 select: "SELECT source_id, playlist_id, name
                      FROM local_playlists

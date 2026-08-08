@@ -1,5 +1,6 @@
-use crate::{EqualizerSettings, PlaybackSettings, ReplayGainMode, VolumeScale};
-use library::ResolvedStream;
+use crate::{EqualizerSettings, LoudnessNormalizationMode, PlaybackSettings, VolumeScale};
+use library::{ResolvedStream, TrackLoudness};
+use std::ops::Deref;
 use thiserror::Error;
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -31,17 +32,43 @@ pub enum NextTransition {
 }
 
 #[derive(Clone, Debug, PartialEq)]
+pub struct PreparedStream {
+    pub stream: ResolvedStream,
+    pub loudness: TrackLoudness,
+}
+
+impl PreparedStream {
+    pub fn new(stream: ResolvedStream, loudness: TrackLoudness) -> Self {
+        Self { stream, loudness }
+    }
+}
+
+impl From<ResolvedStream> for PreparedStream {
+    fn from(stream: ResolvedStream) -> Self {
+        Self::new(stream, TrackLoudness::default())
+    }
+}
+
+impl Deref for PreparedStream {
+    type Target = ResolvedStream;
+
+    fn deref(&self) -> &Self::Target {
+        &self.stream
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
 pub struct PreparedNext {
     pub run: RunId,
-    pub stream: ResolvedStream,
+    pub stream: PreparedStream,
     pub transition: NextTransition,
 }
 
 impl PreparedNext {
-    pub fn new(run: RunId, stream: ResolvedStream, transition: NextTransition) -> Self {
+    pub fn new(run: RunId, stream: impl Into<PreparedStream>, transition: NextTransition) -> Self {
         Self {
             run,
-            stream,
+            stream: stream.into(),
             transition,
         }
     }
@@ -49,7 +76,7 @@ impl PreparedNext {
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct BackendAudioSettings {
-    pub replay_gain: ReplayGainMode,
+    pub loudness_normalization: LoudnessNormalizationMode,
     pub audio_output: Option<String>,
     pub equalizer: EqualizerSettings,
     pub volume: f64,
@@ -74,7 +101,7 @@ impl From<PlaybackSettings> for BackendAudioSettings {
     fn from(mut settings: PlaybackSettings) -> Self {
         settings.sanitize();
         Self {
-            replay_gain: settings.replay_gain,
+            loudness_normalization: settings.loudness_normalization,
             audio_output: settings.audio_output,
             equalizer: settings.equalizer,
             volume: settings.volume,
@@ -97,7 +124,7 @@ pub enum BackendState {
 pub enum BackendCommand {
     Start {
         run: RunId,
-        current: ResolvedStream,
+        current: PreparedStream,
         next: Option<PreparedNext>,
         start_position_millis: u64,
     },
