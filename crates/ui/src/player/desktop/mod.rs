@@ -257,8 +257,7 @@ impl Shell {
     }
 
     fn present_from_tray(&self) {
-        self.chrome.window.set_visible(true);
-        self.chrome.window.present();
+        crate::application::present_window(&self.chrome.window);
     }
 }
 
@@ -291,6 +290,6 @@ pub(crate) fn present_initial_window(shell: &Rc<Shell>) {
     if settings.tray_enabled && settings.start_minimized && tray_available {
         shell.chrome.window.set_visible(false);
     } else {
-        shell.chrome.window.present();
+        crate::application::present_window(&shell.chrome.window);
     }
 }

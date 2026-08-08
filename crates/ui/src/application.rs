@@ -35,7 +35,7 @@ where
     let bootstrap = Rc::new(RefCell::new(Some(bootstrap)));
     app.connect_activate(move |app| {
         if let Some(window) = app.active_window() {
-            window.present();
+            present_window(&window);
             return;
         }
         let Some(bootstrap) = bootstrap.borrow_mut().take() else {
@@ -58,7 +58,7 @@ fn run_startup_error_application(error: String) -> ExitCode {
     app.connect_startup(|_| configure_app_icon());
     app.connect_activate(move |app| {
         if let Some(window) = app.active_window() {
-            window.present();
+            present_window(&window);
         } else {
             present_startup_error(app, &error);
         }
@@ -80,6 +80,15 @@ fn application() -> adw::Application {
     app
 }
 
+pub(crate) fn present_window(window: &impl IsA<gtk::Window>) {
+    let window = window.as_ref();
+    let had_focus = gtk::prelude::RootExt::focus(window).is_some();
+    window.present();
+    if !had_focus {
+        gtk::prelude::RootExt::set_focus(window, None::<&gtk::Widget>);
+    }
+}
+
 fn present_startup_error(app: &adw::Application, error: &str) {
     let status = adw::StatusPage::builder()
         .icon_name(APP_ID)
@@ -93,7 +102,7 @@ fn present_startup_error(app: &adw::Application, error: &str) {
         .default_height(320)
         .content(&status)
         .build();
-    window.present();
+    present_window(&window);
 }
 
 fn configure_app_icon() {
