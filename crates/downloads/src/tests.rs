@@ -1089,14 +1089,14 @@ async fn deleting_a_custom_folder_download_leaves_neighboring_music() {
         &source_id,
         &track,
         Some(custom.path()),
-        StreamQuality::Original,
+        None,
     );
     let other_source_paths = new_download_paths(
         directory.path(),
         &SourceId::fake(2),
         &track,
         Some(custom.path()),
-        StreamQuality::Original,
+        None,
     );
     assert_ne!(paths.audio, other_source_paths.audio);
     assert_eq!(paths.audio.parent(), other_source_paths.audio.parent());
@@ -1147,4 +1147,37 @@ async fn deleting_a_custom_folder_download_leaves_neighboring_music() {
             .is_downloaded(&track.id)
             .expect("read download status")
     );
+}
+
+#[test]
+fn download_paths_use_the_resolved_transcoded_extension() {
+    let directory = tempfile::tempdir().expect("temporary downloads");
+    let source_id = SourceId::fake(1);
+    let (_loaded, track) = accepted_track(directory.path(), source_id.clone(), TrackId::fake(2));
+
+    let original = new_download_paths(directory.path(), &source_id, &track, None, None);
+    let jellyfin_opus = new_download_paths(directory.path(), &source_id, &track, None, Some("ogg"));
+    let navidrome_opus =
+        new_download_paths(directory.path(), &source_id, &track, None, Some("opus"));
+
+    assert_eq!(
+        original.audio.extension().and_then(|value| value.to_str()),
+        Some("flac")
+    );
+    assert_eq!(
+        jellyfin_opus
+            .audio
+            .extension()
+            .and_then(|value| value.to_str()),
+        Some("ogg")
+    );
+    assert_eq!(
+        navidrome_opus
+            .audio
+            .extension()
+            .and_then(|value| value.to_str()),
+        Some("opus")
+    );
+    assert_eq!(original.audio_part, jellyfin_opus.audio_part);
+    assert_eq!(original.audio_part, navidrome_opus.audio_part);
 }

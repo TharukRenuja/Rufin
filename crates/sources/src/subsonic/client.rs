@@ -248,13 +248,48 @@ impl SubsonicSource {
         &self,
         request: &StreamRequest,
     ) -> SourceResult<ResolvedStream> {
-        let mut extra = vec![("id", raw_item_id(request.track_id.as_str()).to_string())];
-        if let Some(kbps) = request.quality.max_bitrate_kbps() {
-            extra.push(("maxBitRate", kbps.to_string()));
-            extra.push(("format", "mp3".to_string()));
+        let format = if request.quality.max_bitrate_kbps().is_some() {
+            "mp3"
         } else {
-            extra.push(("format", "raw".to_string()));
+            "raw"
+        };
+        self.resolve_audio(
+            &request.track_id,
+            request.quality.max_bitrate_kbps(),
+            format,
+        )
+    }
+
+    pub(crate) fn resolve_download(
+        &self,
+        request: &StreamRequest,
+    ) -> SourceResult<crate::ResolvedDownload> {
+        let (format, extension) = match request.quality {
+            StreamQuality::Original => ("raw", None),
+            StreamQuality::MaxBitrateKbps(_) if self.flavor == SubsonicFlavor::Navidrome => {
+                ("opus", Some("opus"))
+            }
+            StreamQuality::MaxBitrateKbps(_) => ("mp3", Some("mp3")),
+        };
+        let stream = self.resolve_audio(
+            &request.track_id,
+            request.quality.max_bitrate_kbps(),
+            format,
+        )?;
+        Ok(crate::ResolvedDownload::new(stream, extension))
+    }
+
+    fn resolve_audio(
+        &self,
+        track_id: &TrackId,
+        max_bitrate_kbps: Option<u32>,
+        format: &str,
+    ) -> SourceResult<ResolvedStream> {
+        let mut extra = vec![("id", raw_item_id(track_id.as_str()).to_string())];
+        if let Some(kbps) = max_bitrate_kbps {
+            extra.push(("maxBitRate", kbps.to_string()));
         }
+        extra.push(("format", format.to_string()));
         let url = self.authenticated_url("stream", &extra)?;
         let redacted = redacted_subsonic_url(&url);
         Ok(ResolvedStream::with_redacted(url.to_string(), redacted)

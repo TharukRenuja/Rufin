@@ -14,8 +14,8 @@ use item::{
 use library::{
     AlbumId, FavoriteItemId, Folder, FolderId, HomeItemId, ImageRef, MusicFolder, MusicFolderId,
     PlayedFilter, Playlist, PlaylistEntry, PlaylistId, PlaylistSnapshot, RadioSeed, RandomCriteria,
-    ResolvedStream, SourceHomeSection, SourceHomeSectionKind, SourceId, StreamRequest, Track,
-    TrackId,
+    ResolvedStream, SourceHomeSection, SourceHomeSectionKind, SourceId, StreamQuality,
+    StreamRequest, Track, TrackId,
 };
 use playback::{RepeatMode, SourceReportFact, SourceReportPhase};
 use reqwest::{Client, Url, header};
@@ -43,6 +43,7 @@ const CLIENT_VERSION: &str = env!("CARGO_PKG_VERSION");
 const COLLECTION_PAGE_SIZE: usize = 500;
 
 pub const JELLYFIN_SOURCE_ID: &str = "jellyfin";
+pub(crate) const JELLYFIN_TRANSCODED_DOWNLOAD_BITRATE_LIMIT_KBPS: u32 = 256;
 const SOURCE_CONFIG_VERSION: u32 = 1;
 
 #[derive(Deserialize)]

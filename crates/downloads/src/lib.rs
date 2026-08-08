@@ -10,7 +10,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use async_channel::{Receiver, Sender};
 use library::{
-    AcceptedLibraryChange, Library, MusicFolderId, SourceId, StreamQuality, TrackId,
+    AcceptedLibraryChange, Library, MusicFolderId, SourceId, StreamQuality, StreamRequest, TrackId,
     TrackSelection, TrackSort,
 };
 use serde::{Deserialize, Serialize};
@@ -1361,12 +1361,26 @@ impl Actor {
                     continue;
                 }
             }
+            let request = StreamRequest::new(track_id.clone(), quality);
+            let resolved = source.resolve_download(&request);
+            let (transcoded_extension, transfer) = match resolved {
+                Ok(NativeSourceResult::Available(download)) => {
+                    (download.transcoded_extension(), Ok(download.into_stream()))
+                }
+                Ok(NativeSourceResult::Unavailable) => (
+                    None,
+                    Err(DownloadFailure::NeedsAttention(
+                        "the selected source does not support downloads".to_string(),
+                    )),
+                ),
+                Err(error) => (None, Err(download_source_failure(error))),
+            };
             let paths = new_download_paths(
                 &self.root,
                 &source_id,
                 &track,
                 attached.directory.as_deref(),
-                quality,
+                transcoded_extension,
             );
             let entering_download = state != DownloadQueueState::Downloading;
             if let Some(job) = self.find_job_mut(&source_id, &job_id) {
@@ -1380,14 +1394,20 @@ impl Actor {
             let task_paths = paths.clone();
             let transfers = Arc::clone(&self.transfers);
             let (cancellation, cancelled) = tokio::sync::oneshot::channel();
-            let task = tokio::spawn(download_track(
-                source,
-                track_id.clone(),
-                quality,
-                task_paths,
-                transfers,
-                cancelled,
-            ));
+            let task = match transfer {
+                Ok(stream) => tokio::spawn(download_track(
+                    source_id.clone(),
+                    request,
+                    stream,
+                    task_paths,
+                    transfers,
+                    cancelled,
+                )),
+                Err(error) => {
+                    drop(cancelled);
+                    tokio::spawn(async move { Err(error) })
+                }
+            };
             return Some(ActiveDownload {
                 source_id,
                 job_id,
@@ -2066,20 +2086,23 @@ impl Actor {
 }
 
 async fn download_track(
-    source: Arc<Source>,
-    track_id: TrackId,
-    quality: StreamQuality,
+    source_id: SourceId,
+    request: StreamRequest,
+    stream: library::ResolvedStream,
     paths: DownloadPaths,
     transfers: Arc<TransferClients>,
     cancellation: tokio::sync::oneshot::Receiver<()>,
 ) -> Result<(), DownloadFailure> {
-    match run_transfer(&source, track_id, quality, &paths, &transfers, cancellation).await {
-        Ok(NativeSourceResult::Available(())) => Ok(()),
-        Ok(NativeSourceResult::Unavailable) => Err(DownloadFailure::NeedsAttention(
-            "the selected source does not support downloads".to_string(),
-        )),
-        Err(error) => Err(download_source_failure(error)),
-    }
+    run_transfer(
+        &source_id,
+        &request,
+        &stream,
+        &paths,
+        &transfers,
+        cancellation,
+    )
+    .await
+    .map_err(download_source_failure)
 }
 
 fn download_source_failure(error: SourceError) -> DownloadFailure {

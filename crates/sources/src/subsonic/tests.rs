@@ -1238,4 +1238,41 @@ async fn stream_description_keeps_auth_for_playback_and_redacts_it_for_logs() {
         .await
         .expect("resolve original stream");
     assert!(original.uri().contains("format=raw"));
+
+    let download = source
+        .resolve_download(&StreamRequest::new(
+            TrackId::new("subsonic:track:one"),
+            StreamQuality::MaxBitrateKbps(320),
+        ))
+        .expect("resolve OpenSubsonic download");
+    assert_eq!(download.transcoded_extension(), Some("mp3"));
+    assert!(download.stream().uri().contains("maxBitRate=320"));
+    assert!(download.stream().uri().contains("format=mp3"));
+
+    let navidrome_configuration = crate::config::encode_provider_payload(
+        SourceId::new("navidrome:server:test"),
+        SubsonicFlavor::Navidrome.source_id(),
+        "Navidrome",
+        SubsonicSourceConfig {
+            base_url: server.uri(),
+            username: "listener".to_string(),
+            trust_invalid_cert: true,
+            navidrome_library_version: 0,
+        }
+        .into_payload(),
+    );
+    let navidrome = open(
+        &navidrome_configuration,
+        Some("fixed-salt:fixed-token".to_string()),
+    )
+    .expect("open Navidrome provider");
+    let download = navidrome
+        .resolve_download(&StreamRequest::new(
+            TrackId::new("navidrome:track:one"),
+            StreamQuality::MaxBitrateKbps(320),
+        ))
+        .expect("resolve Navidrome download");
+    assert_eq!(download.transcoded_extension(), Some("opus"));
+    assert!(download.stream().uri().contains("maxBitRate=320"));
+    assert!(download.stream().uri().contains("format=opus"));
 }

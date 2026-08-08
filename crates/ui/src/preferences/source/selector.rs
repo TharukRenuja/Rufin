@@ -266,6 +266,7 @@ mod tests {
             id: SourceId::new(id),
             kind: "test".to_string(),
             name: id.to_string(),
+            transcoded_download_bitrate_limit_kbps: None,
         }
     }
 
@@ -315,6 +316,7 @@ mod tests {
             id: SourceId::new("local"),
             kind: "local".to_string(),
             name: "Local".to_string(),
+            transcoded_download_bitrate_limit_kbps: None,
         };
 
         assert_eq!(source_menu_label(&local), "Local");

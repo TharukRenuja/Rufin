@@ -2492,6 +2492,9 @@ fn configured_sources(
             id: configured.configuration.source_id.clone(),
             kind: configured.configuration.kind.clone(),
             name: configured.configuration.name.clone(),
+            transcoded_download_bitrate_limit_kbps: configured
+                .configuration
+                .transcoded_download_bitrate_limit_kbps(),
         })
         .collect::<Vec<_>>();
     let local_folders = stored
@@ -2593,6 +2596,8 @@ fn editable_source(configuration: &SourceConfiguration) -> Result<EditableSource
                 id: configuration.source_id.clone(),
                 kind: configuration.kind.clone(),
                 name: configuration.name.clone(),
+                transcoded_download_bitrate_limit_kbps: configuration
+                    .transcoded_download_bitrate_limit_kbps(),
             },
             credentials: CredentialPreset {
                 source_name: credentials.server_name,

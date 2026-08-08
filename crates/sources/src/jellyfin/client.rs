@@ -298,6 +298,55 @@ impl JellyfinSource {
 }
 
 impl JellyfinSource {
+    pub(crate) fn resolve_download(
+        &self,
+        request: &StreamRequest,
+    ) -> SourceResult<crate::ResolvedDownload> {
+        if request.quality == StreamQuality::Original {
+            let stream = stream_descriptor(
+                &self.base_url,
+                &self.user_id,
+                &self.device_id,
+                &self.access_token,
+                self.trust_invalid_cert,
+                request,
+            )?;
+            return Ok(crate::ResolvedDownload::new(stream, None));
+        }
+
+        let StreamQuality::MaxBitrateKbps(kbps) = request.quality else {
+            unreachable!("original downloads return before transcoding")
+        };
+        let raw_track_id = raw_item_id(request.track_id.as_str());
+        let bitrate = kbps
+            .min(super::JELLYFIN_TRANSCODED_DOWNLOAD_BITRATE_LIMIT_KBPS)
+            .saturating_mul(1_000)
+            .to_string();
+        let mut url = endpoint(&self.base_url, &format!("Audio/{raw_track_id}/Universal"))?;
+        url.query_pairs_mut()
+            .append_pair("UserId", &self.user_id)
+            .append_pair("DeviceId", &self.device_id)
+            .append_pair("api_key", &self.access_token)
+            .append_pair("transcodingContainer", "ogg")
+            .append_pair("audioCodec", "opus")
+            .append_pair("audioBitRate", &bitrate);
+        let mut redacted_url = url.clone();
+        redacted_url
+            .query_pairs_mut()
+            .clear()
+            .append_pair("UserId", &self.user_id)
+            .append_pair("DeviceId", &self.device_id)
+            .append_pair("api_key", "<redacted>")
+            .append_pair("transcodingContainer", "ogg")
+            .append_pair("audioCodec", "opus")
+            .append_pair("audioBitRate", &bitrate);
+        let stream = ResolvedStream::with_redacted(url.to_string(), redacted_url.to_string())
+            .with_trust_invalid_certificate(self.trust_invalid_cert);
+        Ok(crate::ResolvedDownload::new(stream, Some("ogg")))
+    }
+}
+
+impl JellyfinSource {
     pub(crate) async fn image_bytes(
         &self,
         image_ref: &ImageRef,
