@@ -54,14 +54,14 @@
     {
         "type": "archive",
         "archive-type": "tar-gzip",
-        "url": "https://static.crates.io/crates/apple-cf/apple-cf-0.9.3.crate",
-        "sha256": "e7fd680cd0f3f02ee717b2014b26d18985c57b784384ba47213fcf8791e8c250",
-        "dest": "cargo/vendor/apple-cf-0.9.3"
+        "url": "https://static.crates.io/crates/apple-cf/apple-cf-0.6.0.crate",
+        "sha256": "fa8973cd8c3dffc5266a7c4a60825f71e54d4b741ba103115727c9d67a98bb06",
+        "dest": "cargo/vendor/apple-cf-0.6.0"
     },
     {
         "type": "inline",
-        "contents": "{\"package\": \"e7fd680cd0f3f02ee717b2014b26d18985c57b784384ba47213fcf8791e8c250\", \"files\": {}}",
-        "dest": "cargo/vendor/apple-cf-0.9.3",
+        "contents": "{\"package\": \"fa8973cd8c3dffc5266a7c4a60825f71e54d4b741ba103115727c9d67a98bb06\", \"files\": {}}",
+        "dest": "cargo/vendor/apple-cf-0.6.0",
         "dest-filename": ".cargo-checksum.json"
     },
     {
