@@ -46,7 +46,9 @@ Navidrome, and local music libraries.
 # aws-lc-sys omits CFLAGS from one compiler probe, so pair Fedora's hardened
 # linker flags with the PIE compile flag that probe still needs.
 LDFLAGS="%{build_ldflags} -fPIE" \
-  %{__cargo} build %{__cargo_common_opts} --profile rpm --package rufin
+  %{__cargo} build %{__cargo_common_opts} --profile rpm \
+    --package rufin \
+    --package xtask
 CARGO_HOME=.cargo RUSTC_BOOTSTRAP=1 cargo tree \
   -Zavoid-dev-deps \
   --package rufin \
@@ -58,25 +60,10 @@ CARGO_HOME=.cargo RUSTC_BOOTSTRAP=1 cargo tree \
 %cargo_vendor_manifest
 
 %install
-install -Dpm0755 target/rpm/rufin %{buildroot}%{_bindir}/rufin
-install -Dpm0644 data/japanese-readings.dic \
-  %{buildroot}%{_datadir}/rufin/japanese-readings.dic
-desktop-file-install \
-  --dir=%{buildroot}%{_datadir}/applications \
-  data/io.github.screwys.Rufin.desktop
-install -Dpm0644 data/io.github.screwys.Rufin.metainfo.xml \
-  %{buildroot}%{_metainfodir}/io.github.screwys.Rufin.metainfo.xml
-
-install -d %{buildroot}%{_datadir}/icons/hicolor
-cp -a data/icons/hicolor/. %{buildroot}%{_datadir}/icons/hicolor/
-
-for po_file in crates/localization/locales/*.po; do
-  lang=${po_file##*/}
-  lang=${lang%.po}
-  install -d %{buildroot}%{_datadir}/locale/${lang}/LC_MESSAGES
-  msgfmt "${po_file}" \
-    -o %{buildroot}%{_datadir}/locale/${lang}/LC_MESSAGES/rufin.mo
-done
+target/rpm/xtask install linux \
+  --binary target/rpm/rufin \
+  --destdir %{buildroot} \
+  --prefix /usr
 
 %find_lang rufin
 
@@ -88,7 +75,7 @@ appstreamcli validate --no-net data/io.github.screwys.Rufin.metainfo.xml
 %license LICENSE
 %license LICENSE.dependencies
 %license cargo-vendor.txt
-%license data/japanese-readings.LICENSE
+%license %{_datadir}/licenses/rufin/japanese-readings.LICENSE
 %doc README.md
 %{_bindir}/rufin
 %{_datadir}/rufin/japanese-readings.dic

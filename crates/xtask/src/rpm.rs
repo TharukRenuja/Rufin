@@ -301,7 +301,7 @@ fn verify_source_inputs(root: &Path, spec: &str, source_ref: &str, version: &str
         )
         .into());
     }
-    verify_spec_japanese_readings(spec)?;
+    verify_spec_linux_install(spec)?;
 
     let cargo_toml = git_file(root, source_ref, "Cargo.toml")?;
     let cargo_version = workspace_version(&cargo_toml)?;
@@ -329,13 +329,17 @@ fn verify_source_inputs(root: &Path, spec: &str, source_ref: &str, version: &str
     Ok(())
 }
 
-fn verify_spec_japanese_readings(spec: &str) -> Result<()> {
+fn verify_spec_linux_install(spec: &str) -> Result<()> {
     for marker in [
-        "data/japanese-readings.dic",
-        "%{_datadir}/rufin/japanese-readings.dic",
+        "target/rpm/xtask install linux",
+        "--binary target/rpm/rufin",
+        "--destdir %{buildroot}",
+        "--prefix /usr",
     ] {
         if !spec.contains(marker) {
-            return Err(format!("RPM spec is missing Japanese readings data: {marker}").into());
+            return Err(
+                format!("RPM spec does not use the Linux payload installer: {marker}").into(),
+            );
         }
     }
     Ok(())
@@ -442,7 +446,7 @@ fn run(command: &mut Command, label: &str) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::{RpmSource, select_source, verify_lock_sources, verify_spec_japanese_readings};
+    use super::{RpmSource, select_source, verify_lock_sources, verify_spec_linux_install};
 
     #[test]
     fn candidate_ref_is_distinct_from_a_signed_release_tag() {
@@ -460,10 +464,9 @@ mod tests {
     }
 
     #[test]
-    fn rpm_spec_installs_japanese_readings_data() {
-        let spec = "install data/japanese-readings.dic \
-                    %{buildroot}%{_datadir}/rufin/japanese-readings.dic\n";
-        verify_spec_japanese_readings(spec).unwrap();
-        assert!(verify_spec_japanese_readings("Source0: Rufin.tar.xz\n").is_err());
+    fn rpm_spec_uses_the_linux_payload_installer() {
+        let spec = "target/rpm/xtask install linux \\\n+                    --binary target/rpm/rufin \\\n+                    --destdir %{buildroot} \\\n+                    --prefix /usr\n";
+        verify_spec_linux_install(spec).unwrap();
+        assert!(verify_spec_linux_install("Source0: Rufin.tar.xz\n").is_err());
     }
 }

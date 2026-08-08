@@ -5,9 +5,10 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
 use crate::Result;
+use crate::install::linux_payload;
 use crate::process::{
-    collect_files_relative, command_stdout, ensure_command, path_to_slash, read_to_string,
-    repo_root, run_command, temp_path,
+    command_stdout, ensure_command, path_to_slash, read_to_string, repo_root, run_command,
+    temp_path,
 };
 use crate::release::{
     first_metainfo_release_version, normalize_tag, workspace_version_from_cargo_toml,
@@ -61,49 +62,12 @@ fn package_layout(args: Vec<String>) -> Result<()> {
         require_file(&package_path(&root, &prefix, "bin/rufin"))?;
     }
 
-    require_file(&package_path(
-        &root,
-        &prefix,
-        "share/applications/io.github.screwys.Rufin.desktop",
-    ))?;
-    require_file(&package_path(
-        &root,
-        &prefix,
-        "share/metainfo/io.github.screwys.Rufin.metainfo.xml",
-    ))?;
-    require_file(&package_path(
-        &root,
-        &prefix,
-        "share/rufin/japanese-readings.dic",
-    ))?;
-    require_file(&package_path(
-        &root,
-        &prefix,
-        "share/licenses/rufin/japanese-readings.LICENSE",
-    ))?;
-
     let repo = repo_root()?;
-    let icon_root = repo.join("data/icons/hicolor");
-    let mut icon_paths = Vec::new();
-    collect_files_relative(&icon_root, &icon_root, &mut icon_paths)?;
-    icon_paths.sort();
-    for icon in icon_paths {
+    for file in linux_payload(&repo)? {
         require_file(&package_path(
             &root,
             &prefix,
-            &format!("share/icons/hicolor/{}", path_to_slash(&icon)),
-        ))?;
-    }
-
-    for po_file in po_files(&repo.join("crates/localization/locales"))? {
-        let lang = po_file
-            .file_stem()
-            .and_then(|value| value.to_str())
-            .ok_or_else(|| format!("invalid locale filename: {}", po_file.display()))?;
-        require_file(&package_path(
-            &root,
-            &prefix,
-            &format!("share/locale/{lang}/LC_MESSAGES/rufin.mo"),
+            &path_to_slash(file.destination()),
         ))?;
     }
 
@@ -152,16 +116,6 @@ fn require_file(path: &Path) -> Result<()> {
     } else {
         Err(format!("missing file: {}", path.display()).into())
     }
-}
-
-fn po_files(dir: &Path) -> Result<Vec<PathBuf>> {
-    let mut files = fs::read_dir(dir)?
-        .flatten()
-        .map(|entry| entry.path())
-        .filter(|path| path.extension().and_then(|value| value.to_str()) == Some("po"))
-        .collect::<Vec<_>>();
-    files.sort();
-    Ok(files)
 }
 
 fn release_metadata(args: Vec<String>) -> Result<()> {

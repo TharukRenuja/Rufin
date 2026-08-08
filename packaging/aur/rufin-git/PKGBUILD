@@ -59,38 +59,14 @@ build() {
   cd Rufin || return
 
   export CARGO_TARGET_DIR=target
-  cargo build --frozen --release -p rufin
+  cargo build --frozen --release -p rufin -p xtask
 }
 
 package() {
   cd Rufin || return
 
-  install -Dm755 target/release/rufin "$pkgdir/usr/bin/rufin"
-  install -Dm644 data/japanese-readings.dic \
-    "$pkgdir/usr/share/rufin/japanese-readings.dic"
-  install -Dm644 data/japanese-readings.LICENSE \
-    "$pkgdir/usr/share/licenses/rufin/japanese-readings.LICENSE"
-  install -Dm644 data/io.github.screwys.Rufin.desktop \
-    "$pkgdir/usr/share/applications/io.github.screwys.Rufin.desktop"
-  install -Dm644 data/io.github.screwys.Rufin.metainfo.xml \
-    "$pkgdir/usr/share/metainfo/io.github.screwys.Rufin.metainfo.xml"
-  install -Dm644 data/icons/hicolor/scalable/apps/io.github.screwys.Rufin.svg \
-    "$pkgdir/usr/share/icons/hicolor/scalable/apps/io.github.screwys.Rufin.svg"
-  install -Dm644 -t "$pkgdir/usr/share/icons/hicolor/scalable/actions" \
-    data/icons/hicolor/scalable/actions/*.svg
-  install -Dm644 -t "$pkgdir/usr/share/icons/hicolor/scalable/status" \
-    data/icons/hicolor/scalable/status/*.svg
-  install -Dm644 -t "$pkgdir/usr/share/icons/hicolor/512x512/apps" \
-    data/icons/hicolor/512x512/apps/*.png
-  install -Dm644 -t "$pkgdir/usr/share/icons/hicolor/64x64/apps" \
-    data/icons/hicolor/64x64/apps/*.png
-
-  local lang po_file
-  for po_file in crates/localization/locales/*.po; do
-    [[ -f $po_file ]] || continue
-    lang=${po_file##*/}
-    lang=${lang%.po}
-    install -dm755 "$pkgdir/usr/share/locale/$lang/LC_MESSAGES"
-    msgfmt "$po_file" -o "$pkgdir/usr/share/locale/$lang/LC_MESSAGES/rufin.mo"
-  done
+  target/release/xtask install linux \
+    --binary target/release/rufin \
+    --destdir "$pkgdir" \
+    --prefix /usr
 }

@@ -174,42 +174,20 @@ jobs:
             set -euo pipefail
             export PATH=/usr/local/sbin:/usr/local/bin:/usr/bin:/bin
             cd '$source_dir'
-            CARGO_TARGET_DIR='$target_dir' cargo build --frozen --release -p rufin
+            CARGO_TARGET_DIR='$target_dir' \
+              cargo build --frozen --release -p rufin -p xtask
+            '$target_dir/release/xtask' install linux \
+              --binary '$target_dir/release/rufin' \
+              --destdir '$staging' \
+              --prefix /usr
           "
 
-          install -Dm755 "$target_dir/release/rufin" "$staging/usr/bin/rufin"
           strip --strip-unneeded "$staging/usr/bin/rufin"
-          install -Dm644 "$source_dir/data/japanese-readings.dic" \
-            "$staging/usr/share/rufin/japanese-readings.dic"
-          install -Dm644 "$source_dir/data/japanese-readings.LICENSE" \
-            "$staging/usr/share/licenses/rufin/japanese-readings.LICENSE"
-          install -Dm644 "$source_dir/data/io.github.screwys.Rufin.desktop" \
-            "$staging/usr/share/applications/io.github.screwys.Rufin.desktop"
-          install -Dm644 "$source_dir/data/io.github.screwys.Rufin.metainfo.xml" \
-            "$staging/usr/share/metainfo/io.github.screwys.Rufin.metainfo.xml"
-          install -Dm644 "$source_dir/data/icons/hicolor/scalable/apps/io.github.screwys.Rufin.svg" \
-            "$staging/usr/share/icons/hicolor/scalable/apps/io.github.screwys.Rufin.svg"
-          install -Dm644 -t "$staging/usr/share/icons/hicolor/scalable/actions" \
-            "$source_dir"/data/icons/hicolor/scalable/actions/*.svg
-          install -Dm644 -t "$staging/usr/share/icons/hicolor/scalable/status" \
-            "$source_dir"/data/icons/hicolor/scalable/status/*.svg
-          install -Dm644 -t "$staging/usr/share/icons/hicolor/512x512/apps" \
-            "$source_dir"/data/icons/hicolor/512x512/apps/*.png
-          install -Dm644 -t "$staging/usr/share/icons/hicolor/64x64/apps" \
-            "$source_dir"/data/icons/hicolor/64x64/apps/*.png
-          for po_file in "$source_dir"/crates/localization/locales/*.po; do
-            language="${po_file##*/}"
-            language="${language%.po}"
-            install -dm755 "$staging/usr/share/locale/$language/LC_MESSAGES"
-            msgfmt "$po_file" \
-              -o "$staging/usr/share/locale/$language/LC_MESSAGES/rufin.mo"
-          done
 
           runuser -u builder -- bash -lc "
             export PATH=/usr/local/sbin:/usr/local/bin:/usr/bin:/bin
             cd '$source_dir'
-            CARGO_TARGET_DIR='$target_dir' \
-              cargo run --locked -p xtask -- verify package-layout '$staging' /usr
+            '$target_dir/release/xtask' verify package-layout '$staging' /usr
           "
           commit_time="$(runuser -u builder -- git -C "$source_dir" show -s --format=%ct HEAD)"
           tar \
