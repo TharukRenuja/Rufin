@@ -2,20 +2,22 @@ pub(crate) mod lifecycle;
 
 use std::cell::RefCell;
 use std::rc::Rc;
-use std::sync::mpsc::Receiver;
-use std::time::Duration;
+use std::sync::mpsc::{Receiver, TryRecvError, channel};
+use std::time::{Duration, Instant};
 
 use adw::prelude::*;
 use gtk::glib;
 use library::SourceId;
 use playback::{CurrentMedia, PlaybackView, PositionDiscontinuity, TransportHandle};
-use tracing::warn;
+use tracing::{info, warn};
 
 use crate::Settings as UiSettings;
 use crate::shell::Shell;
 use crate::shell::cover::THUMB_COVER_SIZE;
 
 const TRAY_POLL_INTERVAL: Duration = Duration::from_millis(120);
+const QUIT_POLL_INTERVAL: Duration = Duration::from_millis(50);
+const QUIT_TIMEOUT: Duration = Duration::from_secs(5);
 
 pub(crate) struct DesktopState {
     pub(crate) media_controls: Rc<desktop_integration::MediaControls>,
@@ -53,6 +55,52 @@ pub(crate) fn now_playing_notification_should_withdraw(
 }
 
 impl Shell {
+    pub(crate) fn request_quit(self: &Rc<Self>, reason: &'static str) {
+        if self.quitting.replace(true) {
+            return;
+        }
+        info!(reason, "stopping Rufin");
+        self.save_window_state();
+        self.chrome.window.set_visible(false);
+        self.shutdown_tray();
+
+        let transport = self.products.playback.transport.clone();
+        let (completed, completion) = channel();
+        if let Err(error) = std::thread::Builder::new()
+            .name("rufin-shutdown".to_string())
+            .spawn(move || {
+                transport.shutdown();
+                let _ = completed.send(());
+            })
+        {
+            warn!(%error, "could not start playback shutdown");
+            self.chrome.application.quit();
+            return;
+        }
+
+        let application = self.chrome.application.clone();
+        let started_at = Instant::now();
+        glib::timeout_add_local(QUIT_POLL_INTERVAL, move || match completion.try_recv() {
+            Ok(()) | Err(TryRecvError::Disconnected) => {
+                info!(
+                    elapsed_ms = started_at.elapsed().as_millis(),
+                    "Rufin stopped"
+                );
+                application.quit();
+                glib::ControlFlow::Break
+            }
+            Err(TryRecvError::Empty) if started_at.elapsed() >= QUIT_TIMEOUT => {
+                warn!(
+                    elapsed_ms = started_at.elapsed().as_millis(),
+                    "playback shutdown did not finish before Rufin exited"
+                );
+                application.quit();
+                glib::ControlFlow::Break
+            }
+            Err(TryRecvError::Empty) => glib::ControlFlow::Continue,
+        });
+    }
+
     pub(crate) fn notify_now_playing(self: &Rc<Self>, player: Option<&PlaybackView>) {
         self.observe_now_playing_notification(player, false);
     }
@@ -245,8 +293,7 @@ impl Shell {
                         shell.set_private_mode(enabled);
                     }
                     desktop_integration::TrayIntent::Quit => {
-                        shell.shutdown_tray();
-                        shell.chrome.application.quit();
+                        shell.request_quit("tray action");
                         return glib::ControlFlow::Break;
                     }
                 }
@@ -267,27 +314,40 @@ pub(crate) fn install_tray(shell: &Rc<Shell>) {
     }
     let close_shell = Rc::clone(shell);
     shell.chrome.window.connect_close_request(move |_| {
+        #[cfg(target_os = "macos")]
+        {
+            close_shell.save_window_state();
+            close_shell.chrome.window.set_visible(false);
+            return glib::Propagation::Stop;
+        }
+
+        #[cfg(not(target_os = "macos"))]
         let settings = close_shell.settings.current.borrow().clone();
+        #[cfg(not(target_os = "macos"))]
         let tray_available =
             settings.tray_enabled && settings.exit_to_tray && close_shell.ensure_tray();
+        #[cfg(not(target_os = "macos"))]
         if settings.tray_enabled && settings.exit_to_tray && tray_available {
             close_shell.save_window_state();
             close_shell.chrome.window.set_visible(false);
             glib::Propagation::Stop
         } else {
-            glib::Propagation::Proceed
+            close_shell.request_quit("window close");
+            glib::Propagation::Stop
         }
     });
-    let shutdown_shell = Rc::clone(shell);
+    let shutdown_shell = Rc::downgrade(shell);
     shell.chrome.application.connect_shutdown(move |_| {
-        shutdown_shell.shutdown_tray();
+        if let Some(shell) = shutdown_shell.upgrade() {
+            shell.shutdown_tray();
+        }
     });
 }
 
-pub(crate) fn present_initial_window(shell: &Rc<Shell>) {
+pub(crate) fn present_initial_window(shell: &Rc<Shell>, force_visible: bool) {
     let settings = shell.settings.current.borrow().clone();
     let tray_available = settings.tray_enabled && settings.start_minimized && shell.ensure_tray();
-    if settings.tray_enabled && settings.start_minimized && tray_available {
+    if !force_visible && settings.tray_enabled && settings.start_minimized && tray_available {
         shell.chrome.window.set_visible(false);
     } else {
         crate::application::present_window(&shell.chrome.window);

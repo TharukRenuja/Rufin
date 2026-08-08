@@ -32,5 +32,8 @@ proptest = "1.6.0"
 serde_json.workspace = true
 tempfile.workspace = true
 
+[build-dependencies]
+glib-build-tools.workspace = true
+
 [lints]
 workspace = true

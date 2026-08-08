@@ -1,7 +1,7 @@
 use std::cell::RefCell;
-use std::path::PathBuf;
 use std::process::ExitCode;
 use std::rc::Rc;
+use std::sync::OnceLock;
 
 use adw::prelude::*;
 use gtk::gio;
@@ -14,6 +14,24 @@ pub(crate) mod style;
 const APP_ID: &str = "io.github.screwys.Rufin";
 
 pub fn run_application<F>(bootstrap: F) -> ExitCode
+where
+    F: FnOnce() -> Result<RuntimeInputs, String> + 'static,
+{
+    run_application_with_presentation(bootstrap, false, None)
+}
+
+pub fn run_application_after_update<F>(bootstrap: F, presented: impl FnOnce() + 'static) -> ExitCode
+where
+    F: FnOnce() -> Result<RuntimeInputs, String> + 'static,
+{
+    run_application_with_presentation(bootstrap, true, Some(Box::new(presented)))
+}
+
+fn run_application_with_presentation<F>(
+    bootstrap: F,
+    force_initial_presentation: bool,
+    presented: Option<Box<dyn FnOnce()>>,
+) -> ExitCode
 where
     F: FnOnce() -> Result<RuntimeInputs, String> + 'static,
 {
@@ -33,8 +51,12 @@ where
     let app = application();
     app.connect_startup(|_| configure_app_icon());
     let bootstrap = Rc::new(RefCell::new(Some(bootstrap)));
+    let presented = Rc::new(RefCell::new(presented));
     app.connect_activate(move |app| {
-        if let Some(window) = app.active_window() {
+        if let Some(window) = app
+            .active_window()
+            .or_else(|| app.windows().into_iter().next())
+        {
             present_window(&window);
             return;
         }
@@ -42,7 +64,12 @@ where
             return;
         };
         match bootstrap() {
-            Ok(inputs) => crate::shell::build::build(app, inputs),
+            Ok(inputs) => crate::shell::build::build(
+                app,
+                inputs,
+                force_initial_presentation,
+                presented.borrow_mut().take(),
+            ),
             Err(error) => {
                 error!(%error, "failed to start Rufin");
                 present_startup_error(app, &error);
@@ -75,8 +102,16 @@ fn application() -> adw::Application {
     let quit_app = app.clone();
     quit.connect_activate(move |_, _| quit_app.quit());
     app.add_action(&quit);
-    app.set_accels_for_action("app.quit", &["<Control>q"]);
-    app.set_accels_for_action("window.close", &["<Control>w"]);
+    #[cfg(target_os = "macos")]
+    {
+        app.set_accels_for_action("app.quit", &["<Meta>q"]);
+        app.set_accels_for_action("window.close", &["<Meta>w"]);
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        app.set_accels_for_action("app.quit", &["<Control>q"]);
+        app.set_accels_for_action("window.close", &["<Control>w"]);
+    }
     app
 }
 
@@ -106,57 +141,36 @@ fn present_startup_error(app: &adw::Application, error: &str) {
 }
 
 fn configure_app_icon() {
+    if let Err(error) = register_resources() {
+        error!(%error, "failed to register Rufin's interface resources");
+    }
     gtk::Window::set_default_icon_name(APP_ID);
-
     let Some(display) = gtk::gdk::Display::default() else {
         return;
     };
-    let icon_theme = gtk::IconTheme::for_display(&display);
-    for path in app_icon_search_paths() {
-        if path.exists() {
-            icon_theme.add_search_path(path);
-        }
-    }
+    gtk::IconTheme::for_display(&display).add_resource_path("/io/github/screwys/Rufin/icons");
 }
 
-fn app_icon_search_paths() -> Vec<PathBuf> {
-    app_icon_search_paths_for(
-        option_env!("CARGO_MANIFEST_DIR").map(PathBuf::from),
-        std::env::current_exe().ok(),
-        std::env::current_dir().ok(),
-    )
+fn register_resources() -> Result<(), String> {
+    static REGISTERED: OnceLock<Result<(), String>> = OnceLock::new();
+    REGISTERED
+        .get_or_init(|| {
+            gio::resources_register_include!("rufin.gresource").map_err(|error| error.to_string())
+        })
+        .clone()
 }
 
-fn app_icon_search_paths_for(
-    manifest_dir: Option<PathBuf>,
-    exe: Option<PathBuf>,
-    current_dir: Option<PathBuf>,
-) -> Vec<PathBuf> {
-    let mut paths = Vec::new();
-
-    if let Some(path) = manifest_dir.map(|path| path.join("../../data/icons")) {
-        paths.push(path);
+pub(crate) fn verify_interface_resources() -> Result<(), String> {
+    register_resources()?;
+    for path in [
+        "/io/github/screwys/Rufin/icons/hicolor/scalable/apps/io.github.screwys.Rufin.svg",
+        "/io/github/screwys/Rufin/icons/hicolor/scalable/actions/rufin-play-symbolic.svg",
+        "/io/github/screwys/Rufin/icons/hicolor/scalable/status/io.github.screwys.Rufin.scrobbling-symbolic.svg",
+    ] {
+        gio::resources_lookup_data(path, gio::ResourceLookupFlags::NONE)
+            .map_err(|error| format!("missing compiled Rufin resource {path}: {error}"))?;
     }
-
-    if let Some(exe) = exe
-        && let Some(exe_dir) = exe.parent()
-    {
-        paths.push(exe_dir.join("data/icons"));
-        paths.push(exe_dir.join("share/icons"));
-        paths.push(exe_dir.join("../Resources/share/icons"));
-        if let Some(install_prefix) = exe_dir.parent() {
-            paths.push(install_prefix.join("share/icons"));
-        }
-        if let Some(repo_root) = exe_dir.parent().and_then(|path| path.parent()) {
-            paths.push(repo_root.join("data/icons"));
-        }
-    }
-
-    if let Some(current_dir) = current_dir {
-        paths.push(current_dir.join("data/icons"));
-    }
-
-    paths
+    Ok(())
 }
 
 #[cfg(test)]
@@ -164,24 +178,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn includes_flatpak_icon_search_path() {
-        let paths = app_icon_search_paths_for(None, Some(PathBuf::from("/app/bin/rufin")), None);
-
-        assert!(paths.contains(&PathBuf::from("/app/share/icons")));
-    }
-
-    #[test]
-    fn includes_macos_bundle_icon_search_path() {
-        let paths = app_icon_search_paths_for(
-            None,
-            Some(PathBuf::from(
-                "/Applications/Rufin.app/Contents/MacOS/rufin-bin",
-            )),
-            None,
-        );
-
-        assert!(paths.contains(&PathBuf::from(
-            "/Applications/Rufin.app/Contents/MacOS/../Resources/share/icons",
-        )));
+    fn representative_rufin_icons_are_compiled_resources() {
+        verify_interface_resources().expect("compiled interface resources");
     }
 }

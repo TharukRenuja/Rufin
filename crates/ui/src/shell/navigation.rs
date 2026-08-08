@@ -715,7 +715,7 @@ fn primary_menu_model(shell: &Rc<Shell>) -> gio::Menu {
     append_menu_action(
         &preferences,
         &tr("Preferences"),
-        "win.preferences",
+        "app.preferences",
         "preferences-system-symbolic",
     );
     append_menu_action(
@@ -730,7 +730,7 @@ fn primary_menu_model(shell: &Rc<Shell>) -> gio::Menu {
     append_menu_action(
         &window,
         &tr("Keyboard Shortcuts"),
-        "win.show-shortcuts",
+        "app.show-shortcuts",
         "preferences-desktop-keyboard-shortcuts-symbolic",
     );
     append_menu_action(
@@ -763,7 +763,7 @@ fn primary_menu_model(shell: &Rc<Shell>) -> gio::Menu {
     append_menu_action(
         &information,
         &tr("About Rufin"),
-        "win.about",
+        "app.about",
         "help-about-symbolic",
     );
     menu.append_section(None, &information);

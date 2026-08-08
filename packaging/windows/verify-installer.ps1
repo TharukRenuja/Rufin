@@ -256,6 +256,18 @@ New-Item -ItemType Directory -Force -Path $helperInstallerDir | Out-Null
 $helperInstaller = Join-Path $helperInstallerDir $installer.Name
 Copy-Item -LiteralPath $installer.FullName -Destination $helperInstaller
 $helperResult = Join-Path $helperUpdateRoot "result.json"
+$relaunchPeer = Join-Path $TemporaryDirectory "rufin-relaunch-peer.bat"
+$relaunchPeerSource = @"
+@echo off
+if not "%~1"=="--updated-restart" exit /b 2
+if not "%~2"=="$sentinelVersion" exit /b 2
+if not "%~3"=="" exit /b 2
+echo READY
+set /p relaunch_permission=
+if not "%relaunch_permission%"=="PRESENT" exit /b 3
+echo VISIBLE
+"@
+Set-Content -NoNewline -Path $relaunchPeer -Value $relaunchPeerSource
 Remove-Item -Force -ErrorAction SilentlyContinue $helperReady, $helperError
 $waitParent = Start-Process `
   -FilePath "powershell.exe" `
@@ -269,7 +281,7 @@ $helperProcess = Start-Process `
     "--channel", "direct",
     "--target-version", $sentinelVersion,
     "--result-file", $helperResult,
-    "--relaunch", (Join-Path $env:SystemRoot "System32\where.exe"),
+    "--relaunch", $relaunchPeer,
     "--installer", $helperInstaller
   ) `
   -WorkingDirectory $oldUpdaterRoot `
@@ -310,6 +322,7 @@ if (-not $helperProcess.WaitForExit(120000)) {
 }
 if ($helperProcess.ExitCode -ne 0) {
   if (Test-Path $helperError) { Get-Content $helperError }
+  if (Test-Path $helperResult) { Get-Content $helperResult }
   throw "Windows update helper exited with code $($helperProcess.ExitCode)"
 }
 if (-not (Test-Path $helperResult)) {

@@ -379,7 +379,7 @@ pub(crate) fn apply_release_update(shell: &Rc<Shell>, update: ReleaseUpdate) {
         ReleaseUpdate::Restarting { version } => {
             dismiss_release_notification(shell);
             *shell.preferences.release_updating.borrow_mut() = Some(version);
-            shell.chrome.application.quit();
+            shell.request_quit("update restart");
         }
     }
 }

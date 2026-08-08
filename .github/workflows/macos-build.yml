@@ -17,11 +17,6 @@ on:
         default: false
         required: false
         type: boolean
-      run_platform_checks:
-        description: Run the macOS platform integration tests
-        default: true
-        required: false
-        type: boolean
 
 permissions:
   contents: read
@@ -152,5 +147,5 @@ jobs:
           retention-days: 7
 
       - name: Check platform integrations
-        if: matrix.architecture == 'arm64' && inputs.run_platform_checks
-        run: cargo test --locked --tests -p secrets -p desktop-integration
+        if: matrix.architecture == 'arm64'
+        run: cargo test --locked --tests -p secrets -p desktop-integration -p playback-gstreamer

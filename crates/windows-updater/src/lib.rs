@@ -36,6 +36,8 @@ const RESULT_FILE: &str = "result.json";
 const READY_LINE: &str = "READY";
 #[cfg(target_os = "windows")]
 const READY_TIMEOUT: Duration = Duration::from_secs(10);
+#[cfg(target_os = "windows")]
+const RELAUNCH_TIMEOUT: Duration = Duration::from_secs(15);
 const MAX_RESULT_BYTES: u64 = 16 * 1024;
 #[cfg(any(target_os = "windows", test))]
 const MAX_INSTALLER_BYTES: u64 = 512 * 1024 * 1024;
@@ -44,6 +46,76 @@ const MAX_FAILURE_MESSAGE_BYTES: usize = 1024;
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 #[cfg(target_os = "windows")]
 const PENDING_FAILURE_MESSAGE: &str = "The update did not finish after Rufin closed.";
+
+#[cfg(any(target_os = "windows", test))]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum RelaunchStatus {
+    Ready,
+    Present,
+    Visible,
+}
+
+#[cfg(any(target_os = "windows", test))]
+impl RelaunchStatus {
+    fn line(self) -> &'static str {
+        match self {
+            Self::Ready => "READY",
+            Self::Present => "PRESENT",
+            Self::Visible => "VISIBLE",
+        }
+    }
+
+    fn parse(line: &str) -> Option<Self> {
+        Some(match line.trim_end_matches(['\r', '\n']) {
+            "READY" => Self::Ready,
+            "PRESENT" => Self::Present,
+            "VISIBLE" => Self::Visible,
+            _ => return None,
+        })
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn allow_set_foreground_window(process_id: u32) -> bool {
+    winsafe::AllowSetForegroundWindow(Some(process_id)).is_ok()
+}
+
+/// Waits for the updater helper to grant an updater-driven restart permission
+/// to present its window.
+#[cfg(target_os = "windows")]
+pub fn wait_for_updated_restart() -> Result<(), String> {
+    io::stdout()
+        .write_all(format!("{}\n", RelaunchStatus::Ready.line()).as_bytes())
+        .and_then(|()| io::stdout().flush())
+        .map_err(|error| format!("could not report Rufin restart readiness: {error}"))?;
+    let (sender, receiver) = mpsc::channel();
+    let _reader = std::thread::spawn(move || {
+        let mut line = String::new();
+        let result = io::stdin()
+            .lock()
+            .take(64)
+            .read_line(&mut line)
+            .map(|_| line);
+        let _ = sender.send(result);
+    });
+    let permission = receiver
+        .recv_timeout(RELAUNCH_TIMEOUT)
+        .map_err(|_| "the update helper did not grant window presentation".to_owned())?
+        .map_err(|error| format!("could not read the update helper response: {error}"))?;
+    if RelaunchStatus::parse(&permission) != Some(RelaunchStatus::Present) {
+        return Err("the update helper sent an invalid presentation response".to_owned());
+    }
+    Ok(())
+}
+
+/// Reports that the updater-driven Rufin window reached GTK's mapped state.
+#[cfg(target_os = "windows")]
+pub fn report_updated_restart_visible() -> Result<(), String> {
+    io::stdout()
+        .write_all(format!("{}\n", RelaunchStatus::Visible.line()).as_bytes())
+        .and_then(|()| io::stdout().flush())
+        .map_err(|error| format!("could not report the reopened Rufin window: {error}"))
+}
 
 #[cfg(any(target_os = "windows", test))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -193,6 +265,9 @@ enum UpdateError {
     #[cfg(target_os = "windows")]
     #[error("the update helper did not become ready")]
     HelperNotReady,
+    #[cfg(target_os = "windows")]
+    #[error("Windows did not permit the updater to transfer foreground activation")]
+    ForegroundTransfer,
     #[error("the previous update result is invalid")]
     InvalidResult,
 }
@@ -277,6 +352,12 @@ fn start_installed_update(
     }
 
     let mut child = command.spawn()?;
+    if !allow_set_foreground_window(child.id()) {
+        let _ = child.kill();
+        let _ = child.wait();
+        let _ = remove_file_if_present(&result_path(cache_dir));
+        return Err(UpdateError::ForegroundTransfer);
+    }
     let stdout = child.stdout.take().ok_or(UpdateError::HelperNotReady)?;
     let (sender, receiver) = mpsc::channel();
     let _reader = std::thread::spawn(move || {
@@ -933,6 +1014,93 @@ fn write_failure(path: &Path, version: &str, message: &str) -> Result<(), String
 }
 
 #[cfg(target_os = "windows")]
+fn relaunch_command(args: &HelperArgs) -> Command {
+    let mut relaunch = Command::new(&args.relaunch);
+    if let Some(install_root) = args.relaunch.parent().and_then(Path::parent) {
+        relaunch.current_dir(install_root);
+    }
+    relaunch
+}
+
+#[cfg(target_os = "windows")]
+fn reopen_after_failed_update(args: &HelperArgs) -> Result<(), String> {
+    relaunch_command(args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .creation_flags(CREATE_NO_WINDOW)
+        .spawn()
+        .map(|_| ())
+        .map_err(|error| format!("Rufin could not be reopened after the update: {error}"))
+}
+
+#[cfg(target_os = "windows")]
+fn receive_relaunch_line(
+    receiver: &mpsc::Receiver<io::Result<String>>,
+    expected: RelaunchStatus,
+) -> Result<(), String> {
+    let line = receiver
+        .recv_timeout(RELAUNCH_TIMEOUT)
+        .map_err(|_| {
+            format!(
+                "Rufin did not report {} before the restart deadline",
+                expected.line()
+            )
+        })?
+        .map_err(|error| format!("could not read Rufin restart status: {error}"))?;
+    if RelaunchStatus::parse(&line) != Some(expected) {
+        return Err(format!("Rufin reported an invalid restart status: {line}"));
+    }
+    Ok(())
+}
+
+#[cfg(target_os = "windows")]
+fn reopen_after_successful_update(args: &HelperArgs) -> Result<(), String> {
+    let mut child = relaunch_command(args)
+        .arg("--updated-restart")
+        .arg(&args.target_version)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .creation_flags(CREATE_NO_WINDOW)
+        .spawn()
+        .map_err(|error| format!("Rufin could not be reopened after the update: {error}"))?;
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| "the reopened Rufin process has no readiness channel".to_owned())?;
+    let mut stdin = child
+        .stdin
+        .take()
+        .ok_or_else(|| "the reopened Rufin process has no presentation channel".to_owned())?;
+    let (sender, receiver) = mpsc::channel();
+    let _reader = std::thread::spawn(move || {
+        for line in BufReader::new(stdout).lines().take(2) {
+            if sender.send(line).is_err() {
+                break;
+            }
+        }
+    });
+
+    let result = (|| {
+        receive_relaunch_line(&receiver, RelaunchStatus::Ready)?;
+        if !allow_set_foreground_window(child.id()) {
+            return Err("Windows did not permit Rufin to take foreground activation".to_string());
+        }
+        stdin
+            .write_all(format!("{}\n", RelaunchStatus::Present.line()).as_bytes())
+            .and_then(|()| stdin.flush())
+            .map_err(|error| format!("could not permit Rufin window presentation: {error}"))?;
+        receive_relaunch_line(&receiver, RelaunchStatus::Visible)
+    })();
+    if result.is_err() {
+        let _ = child.kill();
+        let _ = child.wait();
+    }
+    result
+}
+
+#[cfg(target_os = "windows")]
 fn run_helper_windows() -> Result<(), String> {
     let raw_args = std::env::args_os().collect::<Vec<_>>();
     if raw_args.get(1).and_then(|arg| arg.to_str()) == Some("--self-check") {
@@ -1007,25 +1175,17 @@ fn run_helper_windows() -> Result<(), String> {
     );
     if let Some(message) = failure.as_deref() {
         write_failure(&args.result_file, &args.target_version, message)?;
+        if let Err(error) = reopen_after_failed_update(&args) {
+            write_failure(&args.result_file, &args.target_version, &error)?;
+            return Err(error);
+        }
     } else {
+        if let Err(error) = reopen_after_successful_update(&args) {
+            write_failure(&args.result_file, &args.target_version, &error)?;
+            return Err(error);
+        }
         write_installed(&args.result_file, &args.target_version)?;
     }
-
-    let mut relaunch = Command::new(&args.relaunch);
-    if let Some(install_root) = args.relaunch.parent().and_then(Path::parent) {
-        relaunch.current_dir(install_root);
-    }
-    relaunch
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .creation_flags(CREATE_NO_WINDOW)
-        .spawn()
-        .map_err(|error| {
-            let message = format!("Rufin could not be reopened after the update: {error}");
-            let _ = write_failure(&args.result_file, &args.target_version, &message);
-            message
-        })?;
     Ok(())
 }
 
@@ -1498,5 +1658,26 @@ mod tests {
         assert_eq!(normalize_version("v1.2.3").expect("release tag"), "1.2.3");
         assert!(normalize_version("../1.2.3").is_err());
         assert!(normalize_version("1/2/3").is_err());
+    }
+
+    #[test]
+    fn relaunch_protocol_accepts_only_owned_status_messages() {
+        assert_eq!(RelaunchStatus::Ready.line(), "READY");
+        assert_eq!(RelaunchStatus::Present.line(), "PRESENT");
+        assert_eq!(RelaunchStatus::Visible.line(), "VISIBLE");
+        assert_eq!(
+            RelaunchStatus::parse("READY\r\n"),
+            Some(RelaunchStatus::Ready)
+        );
+        assert_eq!(
+            RelaunchStatus::parse("PRESENT\n"),
+            Some(RelaunchStatus::Present)
+        );
+        assert_eq!(
+            RelaunchStatus::parse("VISIBLE"),
+            Some(RelaunchStatus::Visible)
+        );
+        assert_eq!(RelaunchStatus::parse("ready"), None);
+        assert_eq!(RelaunchStatus::parse("VISIBLE extra"), None);
     }
 }

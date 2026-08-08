@@ -146,6 +146,9 @@ jobs:
                 crates/windows-updater/*)
                   add_jobs workspace windows
                   ;;
+                crates/ui/*|crates/playback-gstreamer/*|crates/desktop-integration/*)
+                  add_jobs workspace macos
+                  ;;
                 crates/xtask/src/install.rs)
                   add_jobs workspace aur_bin aur_git flatpak nix rpm
                   ;;
@@ -414,6 +417,12 @@ jobs:
         run: |
           bash scripts/retry-nix nix --accept-flake-config develop "${{ steps.nix-environment.outputs.target }}" --command \
             bash -c 'nextest_jobs="${NEXTEST_JOBS:-4}"; if [[ ! "$nextest_jobs" =~ ^[1-9][0-9]*$ ]]; then echo "NEXTEST_JOBS must be a positive integer." >&2; exit 1; fi; if command -v cargo-nextest >/dev/null 2>&1; then cargo nextest run --workspace --locked --test-threads "$nextest_jobs"; else echo "cargo-nextest is unavailable; falling back to cargo test." >&2; cargo test --workspace --locked --lib --bins --tests --benches --examples; fi'
+
+      - name: Check real audio output
+        if: github.event_name != 'push'
+        run: |
+          bash scripts/retry-nix nix --accept-flake-config develop "${{ steps.nix-environment.outputs.target }}" --command \
+            bash -c 'set -euo pipefail; pulseaudio --start --exit-idle-time=-1; pactl load-module module-null-sink sink_name=rufin_ci >/dev/null; pactl set-default-sink rufin_ci; RUFIN_TEST_AUDIO_OUTPUT=pulsesink cargo test --locked -p playback-gstreamer audio::tests::real_audio_output_accepts_rufin_graph -- --ignored --exact'
 
       - name: Warm Rust build cache
         if: github.event_name == 'push'

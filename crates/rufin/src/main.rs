@@ -18,17 +18,64 @@ use std::ffi::OsStr;
 use std::io::{self, Write};
 use std::path::PathBuf;
 use std::process::ExitCode;
+#[cfg(target_os = "windows")]
+use tracing::error;
 use tracing::info;
 
 fn main() -> ExitCode {
     if let Some(result) = verify_media_argument() {
         return result;
     }
+    let updated_restart = match updated_restart_argument() {
+        Some(Ok(())) => true,
+        Some(Err(message)) => {
+            let _ = writeln!(io::stderr().lock(), "{message}");
+            return ExitCode::FAILURE;
+        }
+        None => false,
+    };
     let _desktop_platform = desktop_integration::Platform::initialize();
     let diagnostics = diagnostics::Diagnostics::install(paths::state_dir());
     info!("starting Rufin native shell");
 
-    ui::run_application(move || app::runtime_inputs(diagnostics))
+    let bootstrap = move || app::runtime_inputs(diagnostics, !updated_restart);
+    if updated_restart {
+        ui::run_application_after_update(bootstrap, || {
+            #[cfg(target_os = "windows")]
+            if let Err(report_error) = windows_updater::report_updated_restart_visible() {
+                error!(%report_error, "could not acknowledge the reopened Rufin window");
+            }
+        })
+    } else {
+        ui::run_application(bootstrap)
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn updated_restart_argument() -> Option<Result<(), String>> {
+    let mut arguments = env::args_os().skip(1);
+    if arguments.next().as_deref() != Some(OsStr::new("--updated-restart")) {
+        return None;
+    }
+    Some((|| {
+        let version = arguments
+            .next()
+            .ok_or("Usage: rufin --updated-restart VERSION")?;
+        if arguments.next().is_some() {
+            return Err("Usage: rufin --updated-restart VERSION".to_string());
+        }
+        if version != OsStr::new(env!("CARGO_PKG_VERSION")) {
+            return Err(
+                "The reopened Rufin version does not match the installed update.".to_string(),
+            );
+        }
+        windows_updater::wait_for_updated_restart()
+    })())
+}
+
+#[cfg(not(target_os = "windows"))]
+fn updated_restart_argument() -> Option<Result<(), String>> {
+    None
 }
 
 fn verify_media_argument() -> Option<ExitCode> {
@@ -41,6 +88,7 @@ fn verify_media_argument() -> Option<ExitCode> {
         if arguments.next().is_some() {
             return Err("Usage: rufin --verify-media PATH".to_string());
         }
+        ui::verify_interface_resources()?;
         sources::verify_local_media_file(&path).map_err(|error| error.to_string())?;
         playback_gstreamer::verify_audio_file(&path)?;
         Ok(())

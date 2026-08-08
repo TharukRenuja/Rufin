@@ -46,6 +46,7 @@ impl AudioGraph {
         let bin = gst::Bin::new();
         let convert_in = make_element("audioconvert", "rufin-audio-convert-in")?;
         let convert_out = make_element("audioconvert", "rufin-audio-convert-out")?;
+        let resample = make_element("audioresample", "rufin-audio-resample")?;
         let output = make_audio_output(settings.audio_output.as_deref())?;
         let mut elements = vec![convert_in.clone()];
 
@@ -70,6 +71,7 @@ impl AudioGraph {
 
         let visualizer_pad = convert_out.static_pad("src");
         elements.push(convert_out.clone());
+        elements.push(resample);
         elements.push(output.clone());
         for element in &elements {
             bin.add(element).map_err(|error| error.to_string())?;
@@ -436,7 +438,7 @@ fn audio_output_device_node_name(properties: &gst::StructureRef) -> Option<Strin
 
 fn make_audio_output(selected: Option<&str>) -> Result<gst::Element, String> {
     match selected {
-        None => make_element("autoaudiosink", "rufin-audio-output"),
+        None => make_element(default_audio_output_factory(), "rufin-audio-output"),
         Some(selected) => {
             if let Some(target) = audio_output_device_target(selected) {
                 return make_device_audio_output(target)
@@ -449,6 +451,16 @@ fn make_audio_output(selected: Option<&str>) -> Result<gst::Element, String> {
                 .map_err(|_| selected_output_unavailable(selected))
         }
     }
+}
+
+#[cfg(target_os = "macos")]
+fn default_audio_output_factory() -> &'static str {
+    "osxaudiosink"
+}
+
+#[cfg(not(target_os = "macos"))]
+fn default_audio_output_factory() -> &'static str {
+    "autoaudiosink"
 }
 
 fn make_device_audio_output(target: &str) -> Option<gst::Element> {
@@ -562,13 +574,15 @@ mod tests {
     #[test]
     fn no_output_preference_uses_the_system_default_sink() {
         initialize_gstreamer();
-        if gst::ElementFactory::find("autoaudiosink").is_none() {
-            return;
-        }
+        let expected = default_audio_output_factory();
+        assert!(
+            gst::ElementFactory::find(expected).is_some(),
+            "required system audio output is unavailable: {expected}"
+        );
         let output = make_audio_output(None).expect("system default output");
         assert_eq!(
             output.factory().map(|factory| factory.name().to_string()),
-            Some("autoaudiosink".to_string())
+            Some(expected.to_string())
         );
     }
 
@@ -759,6 +773,53 @@ mod tests {
             .expect("observed gain")
             .expect("gain before the first audio buffer");
         assert!((observed_gain - 5.0).abs() < 0.001);
+    }
+
+    #[test]
+    #[ignore = "requires the isolated Linux audio server started by CI"]
+    fn real_audio_output_accepts_rufin_graph() {
+        initialize_gstreamer();
+        let output = std::env::var("RUFIN_TEST_AUDIO_OUTPUT")
+            .expect("RUFIN_TEST_AUDIO_OUTPUT names the isolated CI audio sink");
+        let settings = BackendAudioSettings {
+            audio_output: Some(output.clone()),
+            ..BackendAudioSettings::default()
+        };
+        let graph = AudioGraph::new(&settings).expect("Rufin audio graph");
+        let source = gst::ElementFactory::make("audiotestsrc")
+            .property("volume", 0.0_f64)
+            .property("num-buffers", 20_i32)
+            .build()
+            .expect("silent test source");
+        let pipeline = gst::Pipeline::new();
+        pipeline
+            .add_many([&source, graph.root()])
+            .expect("real-output pipeline");
+        source
+            .link(graph.root())
+            .expect("real-output pipeline link");
+        let bus = pipeline.bus().expect("real-output message bus");
+        pipeline
+            .set_state(gst::State::Playing)
+            .expect("real audio output reaches Playing");
+        let message = bus
+            .timed_pop_filtered(
+                gst::ClockTime::from_seconds(10),
+                &[gst::MessageType::Eos, gst::MessageType::Error],
+            )
+            .expect("real audio output finishes");
+        let result = match message.view() {
+            gst::MessageView::Eos(_) => Ok(()),
+            gst::MessageView::Error(_) => Err(crate::gstreamer_error_details(
+                &message,
+                "real audio output verification",
+                Some(&output),
+            )
+            .unwrap_or_else(|| "real audio output failed".to_string())),
+            _ => Err("real audio output returned an unexpected message".to_string()),
+        };
+        let _ = pipeline.set_state(gst::State::Null);
+        result.expect("Rufin audio reaches the isolated Linux server");
     }
 
     fn equalizer_band_gain(equalizer: &gst::Element, index: usize) -> Option<f64> {
