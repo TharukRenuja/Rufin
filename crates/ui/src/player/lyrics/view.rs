@@ -460,6 +460,7 @@ impl LyricsPane {
                 content.append(&ruby_line(&reading.segments));
             } else {
                 let label = lyrics_label(&line.text);
+                label.add_css_class("lyrics-scroll-anchor");
                 content.append(&label);
             }
 
@@ -675,6 +676,9 @@ fn lyrics_reading_unit(text: &str, show_furigana: bool, language: Option<&str>) 
 fn ruby_segment(segment: &JapaneseReadingSegment) -> gtk::Box {
     let segment_box = gtk::Box::new(gtk::Orientation::Vertical, 0);
     segment_box.set_halign(gtk::Align::Center);
+    if segment.furigana.is_some() {
+        segment_box.add_css_class("lyrics-ruby-annotated");
+    }
 
     let furigana = gtk::Label::new(Some(segment.furigana.as_deref().unwrap_or(" ")));
     furigana.add_css_class("lyrics-furigana");
@@ -687,8 +691,25 @@ fn ruby_segment(segment: &JapaneseReadingSegment) -> gtk::Box {
 fn reading_surface_label(text: &str) -> gtk::Label {
     let label = gtk::Label::new(Some(text));
     label.add_css_class("lyrics-reading-surface");
+    label.add_css_class("lyrics-scroll-anchor");
     label.set_halign(gtk::Align::Center);
     label
+}
+
+fn first_lyrics_scroll_surface(widget: &gtk::Widget) -> Option<gtk::Widget> {
+    if widget.has_css_class("lyrics-scroll-anchor") {
+        return Some(widget.clone());
+    }
+    std::iter::successors(widget.first_child(), gtk::Widget::next_sibling)
+        .find_map(|child| first_lyrics_scroll_surface(&child))
+}
+
+fn last_lyrics_scroll_surface(widget: &gtk::Widget) -> Option<gtk::Widget> {
+    if widget.has_css_class("lyrics-scroll-anchor") {
+        return Some(widget.clone());
+    }
+    std::iter::successors(widget.last_child(), gtk::Widget::prev_sibling)
+        .find_map(|child| last_lyrics_scroll_surface(&child))
 }
 
 fn scroll_row_into_view_when_ready(
@@ -704,9 +725,15 @@ fn scroll_row_into_view_when_ready(
             return;
         }
 
-        let bounds = row.compute_bounds(&scroller);
+        let first_surface = first_lyrics_scroll_surface(&row).unwrap_or_else(|| row.clone());
+        let last_surface = last_lyrics_scroll_surface(&row).unwrap_or_else(|| row.clone());
+        let first_bounds = first_surface.compute_bounds(&scroller);
+        let last_bounds = last_surface.compute_bounds(&scroller);
         let adjustment = scroller.vadjustment();
-        let ready = bounds.is_some() && scroller.height() > 1 && adjustment.page_size() > 1.0;
+        let ready = first_bounds.is_some()
+            && last_bounds.is_some()
+            && scroller.height() > 1
+            && adjustment.page_size() > 1.0;
         if !ready && retries_left > 0 {
             glib::timeout_add_local_once(
                 Duration::from_millis(LYRICS_SCROLL_READY_RETRY_MS),
@@ -724,14 +751,22 @@ fn scroll_row_into_view_when_ready(
             return;
         }
 
-        let Some(bounds) = bounds else {
+        let (Some(first_bounds), Some(last_bounds)) = (first_bounds, last_bounds) else {
             return;
         };
         let viewport_height = f64::from(scroller.height().max(1));
-        let row_center = adjustment.value() + f64::from(bounds.y() + bounds.height() / 2.0);
-        let target = row_center - viewport_height / 2.0;
+        let surface_top = f64::from(first_bounds.y().min(last_bounds.y()));
+        let surface_bottom = f64::from(
+            (first_bounds.y() + first_bounds.height()).max(last_bounds.y() + last_bounds.height()),
+        );
         let upper = adjustment.upper() - adjustment.page_size();
-        let target = target.clamp(adjustment.lower(), upper.max(adjustment.lower()));
+        let target = centered_scroll_target(
+            surface_top,
+            surface_bottom,
+            adjustment.value(),
+            viewport_height,
+        )
+        .clamp(adjustment.lower(), upper.max(adjustment.lower()));
         let start = adjustment.value();
         let delta = target - start;
         if duration_millis == 0 || delta.abs() < 1.0 {
@@ -754,6 +789,16 @@ fn scroll_row_into_view_when_ready(
             }
         });
     });
+}
+
+fn centered_scroll_target(
+    surface_top: f64,
+    surface_bottom: f64,
+    current_scroll: f64,
+    viewport_height: f64,
+) -> f64 {
+    let surface_center = current_scroll + (surface_top + surface_bottom) / 2.0;
+    surface_center - viewport_height / 2.0
 }
 
 pub(crate) fn active_lyrics_line_index(
@@ -863,8 +908,9 @@ fn lyrics_control_button(icon_name: &str) -> gtk::Button {
 #[cfg(test)]
 mod tests {
     use super::{
-        LyricsFollowScrollPause, active_lyrics_line_index, lyrics_follow_scroll_pause_state,
-        lyrics_follow_scroll_target, lyrics_scroll_animation_millis, next_lyrics_line_start_after,
+        LyricsFollowScrollPause, active_lyrics_line_index, centered_scroll_target,
+        lyrics_follow_scroll_pause_state, lyrics_follow_scroll_target,
+        lyrics_scroll_animation_millis, next_lyrics_line_start_after,
         should_highlight_all_lyrics_lines,
     };
     use lyrics::{LyricsCue, LyricsCueLine, LyricsLine as LyricLine};
@@ -1038,6 +1084,14 @@ mod tests {
             lyrics_follow_scroll_target(Some(4), Some(3), LyricsFollowScrollPause::Active),
             None
         );
+    }
+
+    #[test]
+    fn lyrics_scroll_centers_the_surface_instead_of_its_annotations() {
+        let target = centered_scroll_target(38.0, 58.0, 240.0, 100.0);
+
+        assert_eq!(target, 238.0);
+        assert_ne!(target, centered_scroll_target(20.0, 58.0, 240.0, 100.0));
     }
 
     fn line(text: &str, start_millis: Option<u64>) -> LyricLine {
