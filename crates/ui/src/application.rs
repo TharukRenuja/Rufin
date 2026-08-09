@@ -12,6 +12,7 @@ use crate::runtime::RuntimeInputs;
 pub(crate) mod style;
 
 const APP_ID: &str = "io.github.screwys.Rufin";
+const ICON_RESOURCE_ROOT: &str = "/io/github/screwys/Rufin/icons/hicolor";
 
 pub fn run_application<F>(bootstrap: F) -> ExitCode
 where
@@ -148,7 +149,7 @@ fn configure_app_icon() {
     let Some(display) = gtk::gdk::Display::default() else {
         return;
     };
-    gtk::IconTheme::for_display(&display).add_resource_path("/io/github/screwys/Rufin/icons");
+    gtk::IconTheme::for_display(&display).add_resource_path(ICON_RESOURCE_ROOT);
 }
 
 fn register_resources() -> Result<(), String> {
@@ -162,12 +163,13 @@ fn register_resources() -> Result<(), String> {
 
 pub(crate) fn verify_interface_resources() -> Result<(), String> {
     register_resources()?;
-    for path in [
-        "/io/github/screwys/Rufin/icons/hicolor/scalable/apps/io.github.screwys.Rufin.svg",
-        "/io/github/screwys/Rufin/icons/hicolor/scalable/actions/rufin-play-symbolic.svg",
-        "/io/github/screwys/Rufin/icons/hicolor/scalable/status/io.github.screwys.Rufin.scrobbling-symbolic.svg",
+    for relative_path in [
+        "scalable/apps/io.github.screwys.Rufin.svg",
+        "scalable/actions/rufin-play-symbolic.svg",
+        "scalable/status/io.github.screwys.Rufin.scrobbling-symbolic.svg",
     ] {
-        gio::resources_lookup_data(path, gio::ResourceLookupFlags::NONE)
+        let path = format!("{ICON_RESOURCE_ROOT}/{relative_path}");
+        gio::resources_lookup_data(&path, gio::ResourceLookupFlags::NONE)
             .map_err(|error| format!("missing compiled Rufin resource {path}: {error}"))?;
     }
     Ok(())
