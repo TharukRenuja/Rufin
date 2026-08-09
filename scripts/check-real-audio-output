@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+audio_state="$(mktemp -d)"
+install -d -m 700 "$audio_state/runtime" "$audio_state/state"
+
+export PULSE_RUNTIME_PATH="$audio_state/runtime"
+export PULSE_STATE_PATH="$audio_state/state"
+export PULSE_COOKIE="$audio_state/cookie"
+export PULSE_SERVER="unix:$audio_state/runtime/native"
+
+cleanup() {
+  pulseaudio --kill >/dev/null 2>&1 || true
+  rm -rf -- "$audio_state"
+}
+trap cleanup EXIT
+
+pulseaudio \
+  -n \
+  --daemonize=yes \
+  --exit-idle-time=-1 \
+  --load=module-native-protocol-unix \
+  --load="module-null-sink sink_name=rufin_ci"
+pactl set-default-sink rufin_ci
+
+RUFIN_TEST_AUDIO_OUTPUT=pulsesink \
+  cargo test --locked -p playback-gstreamer \
+  audio::tests::real_audio_output_accepts_rufin_graph -- --ignored --exact

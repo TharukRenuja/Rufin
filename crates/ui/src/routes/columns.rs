@@ -24,6 +24,7 @@ use super::detail_links::{
     DetailLinkBinding, DetailLinks, album_artist_links, track_album_artist_links,
     track_artist_links,
 };
+use super::factory_cells::FactoryCells;
 use super::library_fields::{
     album_field, artist_field, column_width, item_at_from_item, play_count_column_width,
     playlist_field, smart_playlist_display_name, smart_playlist_field, track_artwork_at_from_item,
@@ -729,33 +730,6 @@ pub(crate) struct LibraryAlbumMergedCell {
     pub(crate) current_album: Rc<RefCell<Option<AlbumSummary>>>,
 }
 
-thread_local! {
-    static LIBRARY_ARTWORK_CELLS: RefCell<HashMap<usize, LibraryArtworkCell>> = RefCell::new(HashMap::new());
-    static LIBRARY_ALBUM_IMAGE_CELLS: RefCell<HashMap<usize, LibraryAlbumImageCell>> = RefCell::new(HashMap::new());
-    static LIBRARY_ALBUM_TEXT_CELLS: RefCell<HashMap<usize, LibraryAlbumTextCell>> = RefCell::new(HashMap::new());
-    static LIBRARY_ALBUM_MERGED_CELLS: RefCell<HashMap<usize, LibraryAlbumMergedCell>> = RefCell::new(HashMap::new());
-}
-
-fn artwork_cell(item: &gtk::ListItem) -> Option<LibraryArtworkCell> {
-    let key = library_list_item_storage_key(item);
-    LIBRARY_ARTWORK_CELLS.with(|cells| cells.borrow().get(&key).cloned())
-}
-
-pub(crate) fn album_image_cell(item: &gtk::ListItem) -> Option<LibraryAlbumImageCell> {
-    let key = library_list_item_storage_key(item);
-    LIBRARY_ALBUM_IMAGE_CELLS.with(|cells| cells.borrow().get(&key).cloned())
-}
-
-pub(crate) fn album_text_cell(item: &gtk::ListItem) -> Option<LibraryAlbumTextCell> {
-    let key = library_list_item_storage_key(item);
-    LIBRARY_ALBUM_TEXT_CELLS.with(|cells| cells.borrow().get(&key).cloned())
-}
-
-pub(crate) fn album_merged_cell(item: &gtk::ListItem) -> Option<LibraryAlbumMergedCell> {
-    let key = library_list_item_storage_key(item);
-    LIBRARY_ALBUM_MERGED_CELLS.with(|cells| cells.borrow().get(&key).cloned())
-}
-
 pub(crate) fn album_image_column(
     shell: &Rc<Shell>,
     title: &'static str,
@@ -763,9 +737,11 @@ pub(crate) fn album_image_column(
     playback_context: Option<String>,
 ) -> gtk::ColumnViewColumn {
     let factory = gtk::SignalListItemFactory::new();
+    let cells = FactoryCells::<LibraryAlbumImageCell>::new();
     let shell = Rc::clone(shell);
 
     let setup_shell = Rc::clone(&shell);
+    let setup_cells = cells.clone();
     factory.connect_setup(move |_, item| {
         let Some(item) = item.downcast_ref::<gtk::ListItem>() else {
             return;
@@ -780,19 +756,17 @@ pub(crate) fn album_image_column(
             playback_context.clone(),
         );
         item.set_child(Some(&widget));
-        let key = library_list_item_storage_key(item);
-        LIBRARY_ALBUM_IMAGE_CELLS.with(|cells| {
-            cells.borrow_mut().insert(
-                key,
-                LibraryAlbumImageCell {
-                    cover,
-                    current_album,
-                },
-            );
-        });
+        setup_cells.insert(
+            item,
+            LibraryAlbumImageCell {
+                cover,
+                current_album,
+            },
+        );
     });
 
     let bind_shell = Rc::clone(&shell);
+    let bind_cells = cells.clone();
     factory.connect_bind(move |_, item| {
         let Some(item) = item.downcast_ref::<gtk::ListItem>() else {
             return;
@@ -800,7 +774,7 @@ pub(crate) fn album_image_column(
         let Some(album) = item_at_from_item::<AlbumSummary>(item) else {
             return;
         };
-        let Some(cell) = album_image_cell(item) else {
+        let Some(cell) = bind_cells.get(item) else {
             return;
         };
         bind_shell.bind_artwork_tile(
@@ -814,21 +788,20 @@ pub(crate) fn album_image_column(
     });
 
     let unbind_shell = Rc::clone(&shell);
+    let unbind_cells = cells.clone();
     factory.connect_unbind(move |_, item| {
         if let Some(item) = item.downcast_ref::<gtk::ListItem>()
-            && let Some(cell) = album_image_cell(item)
+            && let Some(cell) = unbind_cells.get(item)
         {
             unbind_shell.clear_artwork_tile(&cell.cover);
             *cell.current_album.borrow_mut() = None;
         }
     });
 
-    factory.connect_teardown(|_, item| {
+    let teardown_cells = cells.clone();
+    factory.connect_teardown(move |_, item| {
         if let Some(item) = item.downcast_ref::<gtk::ListItem>() {
-            let key = library_list_item_storage_key(item);
-            LIBRARY_ALBUM_IMAGE_CELLS.with(|cells| {
-                cells.borrow_mut().remove(&key);
-            });
+            teardown_cells.remove(item);
         }
     });
 
@@ -848,10 +821,12 @@ where
     F: Fn(&AlbumSummary) -> String + 'static,
 {
     let factory = gtk::SignalListItemFactory::new();
+    let cells = FactoryCells::<LibraryAlbumTextCell>::new();
     let shell = Rc::clone(shell);
     let value = Rc::new(value);
 
     let setup_shell = Rc::clone(&shell);
+    let setup_cells = cells.clone();
     factory.connect_setup(move |_, item| {
         let Some(item) = item.downcast_ref::<gtk::ListItem>() else {
             return;
@@ -884,20 +859,18 @@ where
             playback_context.clone(),
         );
         item.set_child(Some(&row));
-        let key = library_list_item_storage_key(item);
-        LIBRARY_ALBUM_TEXT_CELLS.with(|cells| {
-            cells.borrow_mut().insert(
-                key,
-                LibraryAlbumTextCell {
-                    label,
-                    downloaded,
-                    current_album,
-                },
-            );
-        });
+        setup_cells.insert(
+            item,
+            LibraryAlbumTextCell {
+                label,
+                downloaded,
+                current_album,
+            },
+        );
     });
 
     let bind_shell = Rc::clone(&shell);
+    let bind_cells = cells.clone();
     factory.connect_bind(move |_, item| {
         let Some(item) = item.downcast_ref::<gtk::ListItem>() else {
             return;
@@ -905,7 +878,7 @@ where
         let Some(album) = item_at_from_item::<AlbumSummary>(item) else {
             return;
         };
-        let Some(cell) = album_text_cell(item) else {
+        let Some(cell) = bind_cells.get(item) else {
             return;
         };
         cell.label.set_text(&(value)(&album));
@@ -914,9 +887,10 @@ where
         *cell.current_album.borrow_mut() = Some(album);
     });
 
-    factory.connect_unbind(|_, item| {
+    let unbind_cells = cells.clone();
+    factory.connect_unbind(move |_, item| {
         if let Some(item) = item.downcast_ref::<gtk::ListItem>()
-            && let Some(cell) = album_text_cell(item)
+            && let Some(cell) = unbind_cells.get(item)
         {
             cell.label.set_text("");
             cell.downloaded.set_visible(false);
@@ -924,12 +898,10 @@ where
         }
     });
 
-    factory.connect_teardown(|_, item| {
+    let teardown_cells = cells.clone();
+    factory.connect_teardown(move |_, item| {
         if let Some(item) = item.downcast_ref::<gtk::ListItem>() {
-            let key = library_list_item_storage_key(item);
-            LIBRARY_ALBUM_TEXT_CELLS.with(|cells| {
-                cells.borrow_mut().remove(&key);
-            });
+            teardown_cells.remove(item);
         }
     });
 
@@ -945,9 +917,11 @@ pub(crate) fn album_merged_column(
     playback_context: Option<String>,
 ) -> gtk::ColumnViewColumn {
     let factory = gtk::SignalListItemFactory::new();
+    let cells = FactoryCells::<LibraryAlbumMergedCell>::new();
     let shell = Rc::clone(shell);
 
     let setup_shell = Rc::clone(&shell);
+    let setup_cells = cells.clone();
     factory.connect_setup(move |_, item| {
         let Some(item) = item.downcast_ref::<gtk::ListItem>() else {
             return;
@@ -999,23 +973,21 @@ pub(crate) fn album_merged_column(
             playback_context.clone(),
         );
         item.set_child(Some(&row));
-        let key = library_list_item_storage_key(item);
-        LIBRARY_ALBUM_MERGED_CELLS.with(|cells| {
-            cells.borrow_mut().insert(
-                key,
-                LibraryAlbumMergedCell {
-                    cover,
-                    title,
-                    subtitle,
-                    downloaded,
-                    subtitle_links,
-                    current_album,
-                },
-            );
-        });
+        setup_cells.insert(
+            item,
+            LibraryAlbumMergedCell {
+                cover,
+                title,
+                subtitle,
+                downloaded,
+                subtitle_links,
+                current_album,
+            },
+        );
     });
 
     let bind_shell = Rc::clone(&shell);
+    let bind_cells = cells.clone();
     factory.connect_bind(move |_, item| {
         let Some(item) = item.downcast_ref::<gtk::ListItem>() else {
             return;
@@ -1023,7 +995,7 @@ pub(crate) fn album_merged_column(
         let Some(album) = item_at_from_item::<AlbumSummary>(item) else {
             return;
         };
-        let Some(cell) = album_merged_cell(item) else {
+        let Some(cell) = bind_cells.get(item) else {
             return;
         };
         bind_shell.bind_artwork_tile(
@@ -1043,9 +1015,10 @@ pub(crate) fn album_merged_column(
     });
 
     let unbind_shell = Rc::clone(&shell);
+    let unbind_cells = cells.clone();
     factory.connect_unbind(move |_, item| {
         if let Some(item) = item.downcast_ref::<gtk::ListItem>()
-            && let Some(cell) = album_merged_cell(item)
+            && let Some(cell) = unbind_cells.get(item)
         {
             cell.title.set_text("");
             cell.downloaded.set_visible(false);
@@ -1056,12 +1029,10 @@ pub(crate) fn album_merged_column(
         }
     });
 
-    factory.connect_teardown(|_, item| {
+    let teardown_cells = cells.clone();
+    factory.connect_teardown(move |_, item| {
         if let Some(item) = item.downcast_ref::<gtk::ListItem>() {
-            let key = library_list_item_storage_key(item);
-            LIBRARY_ALBUM_MERGED_CELLS.with(|cells| {
-                cells.borrow_mut().remove(&key);
-            });
+            teardown_cells.remove(item);
         }
     });
 
@@ -1127,23 +1098,23 @@ where
     S: Fn(&T) -> u32 + 'static,
 {
     let factory = gtk::SignalListItemFactory::new();
+    let cells = FactoryCells::<LibraryArtworkCell>::new();
     let shell = Rc::clone(shell);
     let candidates = Rc::new(candidates);
     let seed = Rc::new(seed);
 
-    factory.connect_setup(|_, item| {
+    let setup_cells = cells.clone();
+    factory.connect_setup(move |_, item| {
         let Some(item) = item.downcast_ref::<gtk::ListItem>() else {
             return;
         };
         let cover = ArtworkTile::new(48, 0);
         item.set_child(Some(&cover.widget()));
-        let key = library_list_item_storage_key(item);
-        LIBRARY_ARTWORK_CELLS.with(|cells| {
-            cells.borrow_mut().insert(key, LibraryArtworkCell { cover });
-        });
+        setup_cells.insert(item, LibraryArtworkCell { cover });
     });
 
     let bind_shell = Rc::clone(&shell);
+    let bind_cells = cells.clone();
     factory.connect_bind(move |_, item| {
         let Some(item) = item.downcast_ref::<gtk::ListItem>() else {
             return;
@@ -1155,7 +1126,7 @@ where
             return;
         };
         let data = boxed.borrow::<T>();
-        let Some(cell) = artwork_cell(item) else {
+        let Some(cell) = bind_cells.get(item) else {
             return;
         };
         bind_shell.bind_artwork_tile(
@@ -1167,19 +1138,18 @@ where
         );
     });
     let unbind_shell = Rc::clone(&shell);
+    let unbind_cells = cells.clone();
     factory.connect_unbind(move |_, item| {
         if let Some(item) = item.downcast_ref::<gtk::ListItem>()
-            && let Some(cell) = artwork_cell(item)
+            && let Some(cell) = unbind_cells.get(item)
         {
             unbind_shell.clear_artwork_tile(&cell.cover);
         }
     });
-    factory.connect_teardown(|_, item| {
+    let teardown_cells = cells.clone();
+    factory.connect_teardown(move |_, item| {
         if let Some(item) = item.downcast_ref::<gtk::ListItem>() {
-            let key = library_list_item_storage_key(item);
-            LIBRARY_ARTWORK_CELLS.with(|cells| {
-                cells.borrow_mut().remove(&key);
-            });
+            teardown_cells.remove(item);
         }
     });
     let column = localized_column(title, &factory);
@@ -1188,9 +1158,11 @@ where
 }
 pub(crate) fn artist_image_column(shell: &Rc<Shell>) -> gtk::ColumnViewColumn {
     let factory = gtk::SignalListItemFactory::new();
+    let cells = FactoryCells::<LibraryArtworkCell>::new();
     let shell = Rc::clone(shell);
 
     let setup_shell = Rc::clone(&shell);
+    let setup_cells = cells.clone();
     factory.connect_setup(move |_, item| {
         let Some(item) = item.downcast_ref::<gtk::ListItem>() else {
             return;
@@ -1199,13 +1171,11 @@ pub(crate) fn artist_image_column(shell: &Rc<Shell>) -> gtk::ColumnViewColumn {
         let widget = cover.widget();
         install_artist_list_item_context_menu(&widget, &setup_shell, item);
         item.set_child(Some(&widget));
-        let key = library_list_item_storage_key(item);
-        LIBRARY_ARTWORK_CELLS.with(|cells| {
-            cells.borrow_mut().insert(key, LibraryArtworkCell { cover });
-        });
+        setup_cells.insert(item, LibraryArtworkCell { cover });
     });
 
     let bind_shell = Rc::clone(&shell);
+    let bind_cells = cells.clone();
     factory.connect_bind(move |_, item| {
         let Some(item) = item.downcast_ref::<gtk::ListItem>() else {
             return;
@@ -1213,7 +1183,7 @@ pub(crate) fn artist_image_column(shell: &Rc<Shell>) -> gtk::ColumnViewColumn {
         let Some(artist) = item_at_from_item::<ArtistSummary>(item) else {
             return;
         };
-        let Some(cell) = artwork_cell(item) else {
+        let Some(cell) = bind_cells.get(item) else {
             return;
         };
         bind_shell.bind_artwork_tile(
@@ -1225,19 +1195,18 @@ pub(crate) fn artist_image_column(shell: &Rc<Shell>) -> gtk::ColumnViewColumn {
         );
     });
     let unbind_shell = Rc::clone(&shell);
+    let unbind_cells = cells.clone();
     factory.connect_unbind(move |_, item| {
         if let Some(item) = item.downcast_ref::<gtk::ListItem>()
-            && let Some(cell) = artwork_cell(item)
+            && let Some(cell) = unbind_cells.get(item)
         {
             unbind_shell.clear_artwork_tile(&cell.cover);
         }
     });
-    factory.connect_teardown(|_, item| {
+    let teardown_cells = cells.clone();
+    factory.connect_teardown(move |_, item| {
         if let Some(item) = item.downcast_ref::<gtk::ListItem>() {
-            let key = library_list_item_storage_key(item);
-            LIBRARY_ARTWORK_CELLS.with(|cells| {
-                cells.borrow_mut().remove(&key);
-            });
+            teardown_cells.remove(item);
         }
     });
     let column = localized_column("Image", &factory);
@@ -1366,37 +1335,6 @@ pub(crate) struct LibraryTrackFavoriteCell {
     pub(crate) current_track: Rc<RefCell<Option<Track>>>,
 }
 
-thread_local! {
-    static LIBRARY_TRACK_IMAGE_CELLS: RefCell<HashMap<usize, LibraryTrackImageCell>> = RefCell::new(HashMap::new());
-    static LIBRARY_TRACK_TEXT_CELLS: RefCell<HashMap<usize, LibraryTrackTextCell>> = RefCell::new(HashMap::new());
-    static LIBRARY_TRACK_MERGED_CELLS: RefCell<HashMap<usize, LibraryTrackMergedCell>> = RefCell::new(HashMap::new());
-    static LIBRARY_TRACK_FAVORITE_CELLS: RefCell<HashMap<usize, LibraryTrackFavoriteCell>> = RefCell::new(HashMap::new());
-}
-
-pub(crate) fn library_list_item_storage_key(list_item: &gtk::ListItem) -> usize {
-    list_item.as_ptr() as usize
-}
-
-pub(crate) fn track_image_cell(item: &gtk::ListItem) -> Option<LibraryTrackImageCell> {
-    let key = library_list_item_storage_key(item);
-    LIBRARY_TRACK_IMAGE_CELLS.with(|cells| cells.borrow().get(&key).cloned())
-}
-
-pub(crate) fn track_text_cell(item: &gtk::ListItem) -> Option<LibraryTrackTextCell> {
-    let key = library_list_item_storage_key(item);
-    LIBRARY_TRACK_TEXT_CELLS.with(|cells| cells.borrow().get(&key).cloned())
-}
-
-pub(crate) fn track_merged_cell(item: &gtk::ListItem) -> Option<LibraryTrackMergedCell> {
-    let key = library_list_item_storage_key(item);
-    LIBRARY_TRACK_MERGED_CELLS.with(|cells| cells.borrow().get(&key).cloned())
-}
-
-pub(crate) fn track_favorite_cell(item: &gtk::ListItem) -> Option<LibraryTrackFavoriteCell> {
-    let key = library_list_item_storage_key(item);
-    LIBRARY_TRACK_FAVORITE_CELLS.with(|cells| cells.borrow().get(&key).cloned())
-}
-
 fn install_track_cell_context_menu(
     target: &impl IsA<gtk::Widget>,
     shell: &Rc<Shell>,
@@ -1411,9 +1349,11 @@ pub(crate) fn track_image_column(
     width: i32,
 ) -> gtk::ColumnViewColumn {
     let factory = gtk::SignalListItemFactory::new();
+    let cells = FactoryCells::<LibraryTrackImageCell>::new();
     let shell = Rc::clone(shell);
 
     let setup_shell = Rc::clone(&shell);
+    let setup_cells = cells.clone();
     factory.connect_setup(move |_, item| {
         let Some(item) = item.downcast_ref::<gtk::ListItem>() else {
             return;
@@ -1423,19 +1363,17 @@ pub(crate) fn track_image_column(
         let widget = cover.widget();
         install_track_cell_context_menu(&widget, &setup_shell, Rc::clone(&current_track));
         item.set_child(Some(&widget));
-        let key = library_list_item_storage_key(item);
-        LIBRARY_TRACK_IMAGE_CELLS.with(|cells| {
-            cells.borrow_mut().insert(
-                key,
-                LibraryTrackImageCell {
-                    cover,
-                    current_track,
-                },
-            );
-        });
+        setup_cells.insert(
+            item,
+            LibraryTrackImageCell {
+                cover,
+                current_track,
+            },
+        );
     });
 
     let bind_shell = Rc::clone(&shell);
+    let bind_cells = cells.clone();
     factory.connect_bind(move |_, item| {
         let Some(item) = item.downcast_ref::<gtk::ListItem>() else {
             return;
@@ -1446,7 +1384,7 @@ pub(crate) fn track_image_column(
         let Some(artwork) = track_artwork_at_from_item(item) else {
             return;
         };
-        let Some(cell) = track_image_cell(item) else {
+        let Some(cell) = bind_cells.get(item) else {
             return;
         };
         bind_shell.bind_artwork_tile(
@@ -1460,21 +1398,20 @@ pub(crate) fn track_image_column(
     });
 
     let unbind_shell = Rc::clone(&shell);
+    let unbind_cells = cells.clone();
     factory.connect_unbind(move |_, item| {
         if let Some(item) = item.downcast_ref::<gtk::ListItem>()
-            && let Some(cell) = track_image_cell(item)
+            && let Some(cell) = unbind_cells.get(item)
         {
             *cell.current_track.borrow_mut() = None;
             unbind_shell.clear_artwork_tile(&cell.cover);
         }
     });
 
-    factory.connect_teardown(|_, item| {
+    let teardown_cells = cells.clone();
+    factory.connect_teardown(move |_, item| {
         if let Some(item) = item.downcast_ref::<gtk::ListItem>() {
-            let key = library_list_item_storage_key(item);
-            LIBRARY_TRACK_IMAGE_CELLS.with(|cells| {
-                cells.borrow_mut().remove(&key);
-            });
+            teardown_cells.remove(item);
         }
     });
 
@@ -1510,11 +1447,13 @@ where
     F: Fn(u32, &Track) -> String + 'static,
 {
     let factory = gtk::SignalListItemFactory::new();
+    let cells = FactoryCells::<LibraryTrackTextCell>::new();
     let shell = Rc::clone(shell);
     let value = Rc::new(value);
 
     let setup_shell = Rc::clone(&shell);
     let setup_playing = playing.clone();
+    let setup_cells = cells.clone();
     factory.connect_setup(move |_, item| {
         let Some(item) = item.downcast_ref::<gtk::ListItem>() else {
             return;
@@ -1546,21 +1485,19 @@ where
         });
         install_track_cell_context_menu(&row, &setup_shell, Rc::clone(&current_track));
         item.set_child(Some(&row));
-        let key = library_list_item_storage_key(item);
-        LIBRARY_TRACK_TEXT_CELLS.with(|cells| {
-            cells.borrow_mut().insert(
-                key,
-                LibraryTrackTextCell {
-                    label,
-                    downloaded,
-                    current_track,
-                },
-            );
-        });
+        setup_cells.insert(
+            item,
+            LibraryTrackTextCell {
+                label,
+                downloaded,
+                current_track,
+            },
+        );
     });
 
     let bind_shell = Rc::clone(&shell);
     let bind_playing = playing.clone();
+    let bind_cells = cells.clone();
     factory.connect_bind(move |_, item| {
         let Some(item) = item.downcast_ref::<gtk::ListItem>() else {
             return;
@@ -1568,7 +1505,7 @@ where
         let Some(track) = item_at_from_item::<Track>(item) else {
             return;
         };
-        let Some(cell) = track_text_cell(item) else {
+        let Some(cell) = bind_cells.get(item) else {
             return;
         };
         cell.label.set_text(&(value)(item.position(), &track));
@@ -1582,9 +1519,10 @@ where
         *cell.current_track.borrow_mut() = Some(track);
     });
 
+    let unbind_cells = cells.clone();
     factory.connect_unbind(move |_, item| {
         if let Some(item) = item.downcast_ref::<gtk::ListItem>()
-            && let Some(cell) = track_text_cell(item)
+            && let Some(cell) = unbind_cells.get(item)
         {
             cell.label.set_text("");
             if let Some(downloaded) = cell.downloaded.as_ref() {
@@ -1597,12 +1535,10 @@ where
         }
     });
 
-    factory.connect_teardown(|_, item| {
+    let teardown_cells = cells.clone();
+    factory.connect_teardown(move |_, item| {
         if let Some(item) = item.downcast_ref::<gtk::ListItem>() {
-            let key = library_list_item_storage_key(item);
-            LIBRARY_TRACK_TEXT_CELLS.with(|cells| {
-                cells.borrow_mut().remove(&key);
-            });
+            teardown_cells.remove(item);
         }
     });
 
@@ -1639,6 +1575,7 @@ where
     SubtitleLinks: Fn(&T) -> Option<DetailLinks> + 'static,
 {
     let factory = gtk::SignalListItemFactory::new();
+    let cells = FactoryCells::<LibraryTrackMergedCell>::new();
     let shell = Rc::clone(shell);
     let TrackMergedColumnValues {
         track: item_track,
@@ -1657,6 +1594,7 @@ where
     let subtitle_links = Rc::new(subtitle_links);
 
     let setup_shell = Rc::clone(&shell);
+    let setup_cells = cells.clone();
     factory.connect_setup(move |_, item| {
         let Some(item) = item.downcast_ref::<gtk::ListItem>() else {
             return;
@@ -1707,24 +1645,22 @@ where
             install_track_cell_context_menu(&row, &setup_shell, Rc::clone(&current_track));
         }
         item.set_child(Some(&row));
-        let key = library_list_item_storage_key(item);
-        LIBRARY_TRACK_MERGED_CELLS.with(|cells| {
-            cells.borrow_mut().insert(
-                key,
-                LibraryTrackMergedCell {
-                    cover,
-                    title,
-                    subtitle,
-                    downloaded,
-                    subtitle_links: subtitle_binding,
-                    current_track,
-                },
-            );
-        });
+        setup_cells.insert(
+            item,
+            LibraryTrackMergedCell {
+                cover,
+                title,
+                subtitle,
+                downloaded,
+                subtitle_links: subtitle_binding,
+                current_track,
+            },
+        );
     });
 
     let bind_shell = Rc::clone(&shell);
     let bind_playing = playing.clone();
+    let bind_cells = cells.clone();
     factory.connect_bind(move |_, item| {
         let Some(item) = item.downcast_ref::<gtk::ListItem>() else {
             return;
@@ -1734,7 +1670,7 @@ where
         };
         let track = item_track(&value);
         let artwork = artwork_value(&value);
-        let Some(cell) = track_merged_cell(item) else {
+        let Some(cell) = bind_cells.get(item) else {
             return;
         };
         bind_shell.bind_artwork_tile(&cell.cover, artwork, seed(&value), 48, THUMB_COVER_SIZE);
@@ -1756,9 +1692,10 @@ where
     });
 
     let unbind_shell = Rc::clone(&shell);
+    let unbind_cells = cells.clone();
     factory.connect_unbind(move |_, item| {
         if let Some(item) = item.downcast_ref::<gtk::ListItem>()
-            && let Some(cell) = track_merged_cell(item)
+            && let Some(cell) = unbind_cells.get(item)
         {
             cell.title.set_text("");
             cell.downloaded.set_visible(false);
@@ -1770,12 +1707,10 @@ where
         }
     });
 
-    factory.connect_teardown(|_, item| {
+    let teardown_cells = cells.clone();
+    factory.connect_teardown(move |_, item| {
         if let Some(item) = item.downcast_ref::<gtk::ListItem>() {
-            let key = library_list_item_storage_key(item);
-            LIBRARY_TRACK_MERGED_CELLS.with(|cells| {
-                cells.borrow_mut().remove(&key);
-            });
+            teardown_cells.remove(item);
         }
     });
 
@@ -1939,9 +1874,11 @@ where
     TrackValue: Fn(&T) -> Option<Track> + 'static,
 {
     let factory = gtk::SignalListItemFactory::new();
+    let cells = FactoryCells::<LibraryTrackFavoriteCell>::new();
     let shell = Rc::clone(shell);
 
     let setup_shell = Rc::clone(&shell);
+    let setup_cells = cells.clone();
     factory.connect_setup(move |_, item| {
         let Some(item) = item.downcast_ref::<gtk::ListItem>() else {
             return;
@@ -1973,19 +1910,17 @@ where
             );
         });
         item.set_child(Some(&button));
-        let key = library_list_item_storage_key(item);
-        LIBRARY_TRACK_FAVORITE_CELLS.with(|cells| {
-            cells.borrow_mut().insert(
-                key,
-                LibraryTrackFavoriteCell {
-                    button,
-                    current_track,
-                },
-            );
-        });
+        setup_cells.insert(
+            item,
+            LibraryTrackFavoriteCell {
+                button,
+                current_track,
+            },
+        );
     });
 
     let bind_shell = Rc::clone(&shell);
+    let bind_cells = cells.clone();
     factory.connect_bind(move |_, item| {
         let Some(item) = item.downcast_ref::<gtk::ListItem>() else {
             return;
@@ -1993,7 +1928,7 @@ where
         let Some(value) = item_at_from_item::<T>(item) else {
             return;
         };
-        let Some(cell) = track_favorite_cell(item) else {
+        let Some(cell) = bind_cells.get(item) else {
             return;
         };
         let track = track_value(&value);
@@ -2005,9 +1940,10 @@ where
         *cell.current_track.borrow_mut() = track;
     });
 
-    factory.connect_unbind(|_, item| {
+    let unbind_cells = cells.clone();
+    factory.connect_unbind(move |_, item| {
         if let Some(item) = item.downcast_ref::<gtk::ListItem>()
-            && let Some(cell) = track_favorite_cell(item)
+            && let Some(cell) = unbind_cells.get(item)
         {
             cell.button.set_sensitive(false);
             set_favorite_button_active(&cell.button, false);
@@ -2015,12 +1951,10 @@ where
         }
     });
 
-    factory.connect_teardown(|_, item| {
+    let teardown_cells = cells.clone();
+    factory.connect_teardown(move |_, item| {
         if let Some(item) = item.downcast_ref::<gtk::ListItem>() {
-            let key = library_list_item_storage_key(item);
-            LIBRARY_TRACK_FAVORITE_CELLS.with(|cells| {
-                cells.borrow_mut().remove(&key);
-            });
+            teardown_cells.remove(item);
         }
     });
 

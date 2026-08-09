@@ -1,4 +1,4 @@
-use std::{cell::RefCell, collections::HashMap, rc::Rc};
+use std::{cell::RefCell, rc::Rc};
 
 use ::library::Track;
 use adw::prelude::*;
@@ -8,39 +8,13 @@ use crate::routes::collection_context::install_dynamic_track_context_menu;
 use crate::shell::Shell;
 
 use super::detail_links::{DetailLinkBinding, DetailLinks};
+use super::factory_cells::FactoryCells;
 use super::library_fields::item_at_from_item;
 
 #[derive(Clone)]
 pub(crate) struct TrackLinkCell {
     links: DetailLinkBinding,
     current_track: Rc<RefCell<Option<Track>>>,
-}
-
-thread_local! {
-    static TRACK_LINK_CELLS: RefCell<HashMap<usize, TrackLinkCell>> = RefCell::new(HashMap::new());
-}
-
-pub(crate) fn list_item_storage_key(list_item: &gtk::ListItem) -> usize {
-    list_item.as_ptr() as usize
-}
-
-fn store_track_link_cell(list_item: &gtk::ListItem, cell: TrackLinkCell) {
-    let key = list_item_storage_key(list_item);
-    TRACK_LINK_CELLS.with(|cells| {
-        cells.borrow_mut().insert(key, cell);
-    });
-}
-
-fn track_link_cell(list_item: &gtk::ListItem) -> Option<TrackLinkCell> {
-    let key = list_item_storage_key(list_item);
-    TRACK_LINK_CELLS.with(|cells| cells.borrow().get(&key).cloned())
-}
-
-fn remove_track_link_cell(list_item: &gtk::ListItem) {
-    let key = list_item_storage_key(list_item);
-    TRACK_LINK_CELLS.with(|cells| {
-        cells.borrow_mut().remove(&key);
-    });
 }
 
 pub(crate) fn track_link_column<F>(
@@ -53,10 +27,12 @@ where
     F: Fn(&Track) -> DetailLinks + 'static,
 {
     let factory = gtk::SignalListItemFactory::new();
+    let cells = FactoryCells::new();
     let value = Rc::new(value);
     let shell = Rc::clone(shell);
 
     let setup_shell = Rc::clone(&shell);
+    let setup_cells = cells.clone();
     factory.connect_setup(move |_, list_item| {
         let Some(list_item) = list_item.downcast_ref::<gtk::ListItem>() else {
             return;
@@ -80,7 +56,7 @@ where
 
         install_dynamic_track_context_menu(&root, &setup_shell, Rc::clone(&current_track));
         list_item.set_child(Some(&root));
-        store_track_link_cell(
+        setup_cells.insert(
             list_item,
             TrackLinkCell {
                 links,
@@ -89,11 +65,12 @@ where
         );
     });
 
+    let bind_cells = cells.clone();
     factory.connect_bind(move |_, list_item| {
         let Some(list_item) = list_item.downcast_ref::<gtk::ListItem>() else {
             return;
         };
-        let Some(cell) = track_link_cell(list_item) else {
+        let Some(cell) = bind_cells.get(list_item) else {
             return;
         };
         let Some(track) = item_at_from_item::<Track>(list_item) else {
@@ -104,18 +81,19 @@ where
         cell.links.bind(links);
     });
 
-    factory.connect_unbind(|_, list_item| {
+    let unbind_cells = cells.clone();
+    factory.connect_unbind(move |_, list_item| {
         if let Some(list_item) = list_item.downcast_ref::<gtk::ListItem>()
-            && let Some(cell) = track_link_cell(list_item)
+            && let Some(cell) = unbind_cells.get(list_item)
         {
             cell.links.clear();
             *cell.current_track.borrow_mut() = None;
         }
     });
 
-    factory.connect_teardown(|_, list_item| {
+    factory.connect_teardown(move |_, list_item| {
         if let Some(list_item) = list_item.downcast_ref::<gtk::ListItem>() {
-            remove_track_link_cell(list_item);
+            cells.remove(list_item);
         }
     });
 

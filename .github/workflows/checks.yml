@@ -422,7 +422,7 @@ jobs:
         if: github.event_name != 'push'
         run: |
           bash scripts/retry-nix nix --accept-flake-config develop "${{ steps.nix-environment.outputs.target }}" --command \
-            bash -c 'set -euo pipefail; pulseaudio --start --exit-idle-time=-1; pactl load-module module-null-sink sink_name=rufin_ci >/dev/null; pactl set-default-sink rufin_ci; RUFIN_TEST_AUDIO_OUTPUT=pulsesink cargo test --locked -p playback-gstreamer audio::tests::real_audio_output_accepts_rufin_graph -- --ignored --exact'
+            bash scripts/check-real-audio-output
 
       - name: Warm Rust build cache
         if: github.event_name == 'push'
