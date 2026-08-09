@@ -146,9 +146,6 @@ jobs:
                 crates/windows-updater/*)
                   add_jobs workspace windows
                   ;;
-                crates/ui/*|crates/playback-gstreamer/*|crates/desktop-integration/*)
-                  add_jobs workspace macos
-                  ;;
                 crates/xtask/src/install.rs)
                   add_jobs workspace aur_bin aur_git flatpak nix rpm
                   ;;
