@@ -1000,14 +1000,14 @@ fn complete_scan_streams_roots_and_rejects_invalid_media() {
 #[test]
 fn complete_scan_discovers_content_without_an_audio_suffix() {
     let root = tempfile::tempdir().expect("Local root");
-    let audio = root.path().join("Extensionless Track");
-    let non_media = root.path().join("notes.pdf");
-    let playlist = root.path().join("queue.m3u8");
+    let root_path = fs::canonicalize(root.path()).expect("canonical Local root");
+    let audio = root_path.join("Extensionless Track");
+    let non_media = root_path.join("notes.pdf");
+    let playlist = root_path.join("queue.m3u8");
     write_silent_wav(&audio, 1).expect("write extensionless WAV");
     fs::write(&non_media, b"not media").expect("write non-media candidate");
     fs::write(&playlist, audio.to_string_lossy().as_bytes()).expect("write ignored playlist");
-    let source =
-        LocalSource::from_roots(vec![root.path().to_path_buf()]).expect("open Local source");
+    let source = LocalSource::from_roots(vec![root_path]).expect("open Local source");
 
     let facts = complete_scan(&source);
     let tracks = facts.tracks();
