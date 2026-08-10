@@ -420,6 +420,8 @@ impl Shell {
         title.set_xalign(0.0);
         title.set_wrap(true);
         title.set_wrap_mode(gtk::pango::WrapMode::WordChar);
+        title.set_lines(3);
+        title.set_ellipsize(gtk::pango::EllipsizeMode::End);
         title.set_width_chars(1);
         metadata.append(&title);
 
