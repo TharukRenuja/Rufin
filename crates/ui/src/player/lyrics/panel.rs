@@ -45,8 +45,10 @@ impl Shell {
     }
 
     fn mark_lyrics_panes_dirty(&self) {
-        self.lyrics.right_pane_dirty.set(true);
-        self.lyrics.fullscreen_pane_dirty.set(true);
+        if let Some(lyrics) = self.selected_lyrics() {
+            lyrics.right_pane_dirty.set(true);
+            lyrics.fullscreen_pane_dirty.set(true);
+        }
     }
 
     fn render_lyrics_contents(self: &Rc<Self>) {
@@ -58,24 +60,27 @@ impl Shell {
             release_japanese_reader();
         }
         self.request_auto_lyrics_if_needed();
+        let Some(lyrics) = self.selected_lyrics() else {
+            return;
+        };
         if take_dirty_lyrics_pane(
-            &self.lyrics.right_pane_dirty,
+            &lyrics.right_pane_dirty,
             self.right_lyrics_surface_visible(),
         ) {
-            self.render_lyrics_pane(&self.right_panel.lyrics_pane);
+            self.render_lyrics_pane(&lyrics.right_pane);
         }
         if take_dirty_lyrics_pane(
-            &self.lyrics.fullscreen_pane_dirty,
+            &lyrics.fullscreen_pane_dirty,
             self.fullscreen_lyrics_surface_visible(),
         ) {
-            self.render_lyrics_pane(&self.player_view.fullscreen_player.lyrics_pane);
+            self.render_lyrics_pane(&lyrics.fullscreen_pane);
         }
     }
 
     fn render_lyrics_pane(self: &Rc<Self>, pane: &LyricsPane) {
         let settings = self.settings.current.borrow();
-        let current_media = current_playback_media_id(&self.playback.player.borrow());
-        let current_track_id = current_playback_track_id(&self.playback.player.borrow());
+        let current_media = current_playback_media_id(self.selected_playback().as_deref());
+        let current_track_id = current_playback_track_id(self.selected_playback().as_deref());
         let has_current_track = current_media.is_some();
         let (search_label, search_enabled) = if settings.private_mode {
             (tr("Private mode is on"), false)
@@ -110,13 +115,16 @@ impl Shell {
             &tr("Lyrics offset (ms)"),
             &tr("Decrease"),
             &tr("Increase"),
-            self.lyrics.offset_millis.get(),
+            self.selected_lyrics()
+                .map_or(0, |lyrics| lyrics.offset_millis.get()),
             lyrics_available,
         );
         let empty_status = self.lyrics_empty_status();
-        let seek_shell = Rc::clone(self);
+        let seek_shell = Rc::downgrade(self);
         let seek: Rc<dyn Fn(u64)> = Rc::new(move |position_millis| {
-            seek_shell.seek_to_lyrics_position(position_millis);
+            if let Some(shell) = seek_shell.upgrade() {
+                shell.seek_to_lyrics_position(position_millis);
+            }
         });
         let content = if let Some(lyrics) = lyrics.as_deref() {
             LyricsPaneContent::Document {
@@ -141,21 +149,23 @@ impl Shell {
 
     pub(crate) fn present_current_lyrics_save_dialog(self: &Rc<Self>) {
         let Some(current) = self
-            .playback
-            .player
-            .borrow()
-            .as_ref()
+            .selected_playback()
+            .as_deref()
             .and_then(|player| player.transport.current.clone())
         else {
             return;
         };
-        let Some(media_id) = current_playback_media_id(&self.playback.player.borrow()) else {
+        let Some(media_id) = current_playback_media_id(self.selected_playback().as_deref()) else {
             return;
         };
         if self.visible_lyrics().is_none() {
             return;
         }
-        let offset_millis = self.lyrics.offset_millis.get();
+        let Some(lyrics) = self.selected_lyrics() else {
+            return;
+        };
+        let offset_millis = lyrics.offset_millis.get();
+        drop(lyrics);
         let shell = Rc::clone(self);
         gtk::glib::spawn_future_local(async move {
             let dialog = gtk::FileDialog::builder()
@@ -175,22 +185,24 @@ impl Shell {
         });
     }
     pub(crate) fn present_lyrics_search_dialog(self: &Rc<Self>) {
-        if let Some(dialog) = self.lyrics.search_dialog.borrow().as_ref() {
+        let Some(lyrics) = self.selected_lyrics() else {
+            return;
+        };
+        if let Some(dialog) = lyrics.search_dialog.borrow().as_ref() {
             present_light_dismiss_dialog(&dialog.dialog, &self.chrome.window);
             dialog.title_entry.grab_focus();
             return;
         }
+        drop(lyrics);
 
         let Some(current) = self
-            .playback
-            .player
-            .borrow()
-            .as_ref()
+            .selected_playback()
+            .as_deref()
             .and_then(|player| player.transport.current.clone())
         else {
             return;
         };
-        let Some(media_id) = current_playback_media_id(&self.playback.player.borrow()) else {
+        let Some(media_id) = current_playback_media_id(self.selected_playback().as_deref()) else {
             return;
         };
         if self.settings.current.borrow().private_mode {
@@ -265,7 +277,9 @@ impl Shell {
             list,
             status,
         };
-        *self.lyrics.search_dialog.borrow_mut() = Some(search_dialog.clone());
+        if let Some(lyrics) = self.selected_lyrics() {
+            *lyrics.search_dialog.borrow_mut() = Some(search_dialog.clone());
+        }
 
         let close_shell = Rc::clone(self);
         let close_debounce_source = Rc::clone(&search_dialog.search_debounce_source);
@@ -273,7 +287,9 @@ impl Shell {
             if let Some(source) = close_debounce_source.borrow_mut().take() {
                 source.remove();
             }
-            close_shell.lyrics.search_dialog.borrow_mut().take();
+            if let Some(lyrics) = close_shell.selected_lyrics() {
+                lyrics.search_dialog.borrow_mut().take();
+            }
         });
 
         let close_dialog = dialog.downgrade();
@@ -304,9 +320,13 @@ impl Shell {
         track_name: String,
         results: Vec<LyricsSearchResult>,
     ) {
-        let Some(dialog) = self.lyrics.search_dialog.borrow().clone() else {
+        let Some(lyrics) = self.selected_lyrics() else {
             return;
         };
+        let Some(dialog) = lyrics.search_dialog.borrow().clone() else {
+            return;
+        };
+        drop(lyrics);
         if dialog.media_id != media_id {
             debug!(
                 dialog_occurrence = %dialog.media_id.occurrence,
@@ -389,7 +409,9 @@ impl Shell {
                         .products
                         .lyrics
                         .preview(preview_media.clone(), preview_result.clone());
-                    if let Some(dialog) = preview_shell.lyrics.search_dialog.borrow().as_ref() {
+                    if let Some(lyrics) = preview_shell.selected_lyrics()
+                        && let Some(dialog) = lyrics.search_dialog.borrow().as_ref()
+                    {
                         dialog.status.set_text(&tr("Searching..."));
                     }
                 });
@@ -412,7 +434,9 @@ impl Shell {
                     let Some(path) = file.path() else {
                         return;
                     };
-                    if let Some(dialog) = shell.lyrics.search_dialog.borrow().as_ref() {
+                    if let Some(lyrics) = shell.selected_lyrics()
+                        && let Some(dialog) = lyrics.search_dialog.borrow().as_ref()
+                    {
                         dialog.status.set_text(&tr("Searching..."));
                     }
                     shell.products.lyrics.save_result(media_id, result, path);
@@ -428,9 +452,13 @@ impl Shell {
         track_name: String,
         error: String,
     ) {
-        let Some(dialog) = self.lyrics.search_dialog.borrow().clone() else {
+        let Some(lyrics) = self.selected_lyrics() else {
             return;
         };
+        let Some(dialog) = lyrics.search_dialog.borrow().clone() else {
+            return;
+        };
+        drop(lyrics);
         if dialog.media_id != media_id {
             debug!(
                 dialog_occurrence = %dialog.media_id.occurrence,
@@ -465,9 +493,13 @@ impl Shell {
         dialog.status.set_text(&tr("Couldn't search for lyrics"));
     }
     fn schedule_lyrics_search(self: &Rc<Self>) {
-        let Some(dialog) = self.lyrics.search_dialog.borrow().clone() else {
+        let Some(lyrics) = self.selected_lyrics() else {
             return;
         };
+        let Some(dialog) = lyrics.search_dialog.borrow().clone() else {
+            return;
+        };
+        drop(lyrics);
         if let Some(source) = dialog.search_debounce_source.borrow_mut().take() {
             source.remove();
         }
@@ -489,14 +521,20 @@ impl Shell {
         *dialog.search_debounce_source.borrow_mut() = Some(source);
     }
     fn clear_stale_lyrics_search_results(self: &Rc<Self>) {
-        let Some(dialog) = self.lyrics.search_dialog.borrow().clone() else {
+        let Some(lyrics) = self.selected_lyrics() else {
+            return;
+        };
+        let Some(dialog) = lyrics.search_dialog.borrow().clone() else {
             return;
         };
         clear_list_box(&dialog.list);
         dialog.status.set_text(&tr("Ready"));
     }
     pub(crate) fn apply_lyrics_saved(&self, media_id: playback::CurrentMediaId, path: PathBuf) {
-        if let Some(dialog) = self.lyrics.search_dialog.borrow().as_ref()
+        let Some(lyrics) = self.selected_lyrics() else {
+            return;
+        };
+        if let Some(dialog) = lyrics.search_dialog.borrow().as_ref()
             && dialog.media_id == media_id
         {
             dialog

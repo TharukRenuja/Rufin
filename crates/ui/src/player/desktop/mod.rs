@@ -141,7 +141,7 @@ impl Shell {
     }
 
     pub(crate) fn update_media_controls_after(&self, discontinuity: Option<PositionDiscontinuity>) {
-        let playback = self.playback.player.borrow();
+        let playback = self.selected_playback();
         let art_url = playback.as_ref().and_then(|playback| {
             playback
                 .transport
@@ -151,7 +151,7 @@ impl Shell {
         });
         self.desktop
             .media_controls
-            .observe(playback.as_ref(), art_url, discontinuity);
+            .observe(playback.as_deref(), art_url, discontinuity);
     }
 
     pub(crate) fn update_media_controls_position_after(

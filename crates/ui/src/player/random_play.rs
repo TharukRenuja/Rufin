@@ -4,7 +4,6 @@ use ::library::{GenreId, GenreSummary, PlayedFilter, RandomCriteria};
 use adw::prelude::*;
 use playback::{QueuePlacement, RandomPlayRequest};
 
-use crate::preferences::dialogs::popup::present_light_dismiss_dialog;
 use localization::tr;
 
 use crate::shell::Shell;
@@ -31,7 +30,7 @@ struct RandomPlayControls {
 }
 
 pub(super) fn present_random_play_dialog(shell: &Rc<Shell>) {
-    let Some(selected) = shell.library.selected.borrow().clone() else {
+    let Some(selected) = shell.selected_library().as_deref().cloned() else {
         return;
     };
     let genres = selected
@@ -126,7 +125,7 @@ pub(super) fn present_random_play_dialog(shell: &Rc<Shell>) {
         QueuePlacement::Last,
     );
 
-    present_light_dismiss_dialog(&dialog, &shell.chrome.window);
+    shell.present_selected_dialog(&dialog);
 }
 
 fn count_spinner(default: f64, min: f64, max: f64) -> gtk::SpinButton {

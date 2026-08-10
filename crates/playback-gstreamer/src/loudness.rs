@@ -101,8 +101,13 @@ pub fn analyze_loudness_cancellable(
                 break;
             }
         }
-        let analyzer = analyzer.ok_or_else(|| "audio stream produced no samples".to_string())?;
+        let mut analyzer =
+            analyzer.ok_or_else(|| "audio stream produced no samples".to_string())?;
         let measurement = measurement(&analyzer)?;
+        // Album aggregation reads the completed histogram, not the source-rate signal window.
+        analyzer
+            .change_parameters(1, 16)
+            .map_err(|error| error.to_string())?;
         Ok(LoudnessAnalysis {
             analyzer,
             measurement,
@@ -323,6 +328,18 @@ mod tests {
     }
 
     #[test]
+    fn completed_analysis_releases_the_source_rate_buffer() {
+        let directory = tempfile::tempdir().expect("loudness fixture directory");
+        let path = directory.path().join("high-rate.wav");
+        write_stereo_wave_at_rate(&path, &[0.5], 192_000);
+
+        let analysis = analyze_path(&path);
+
+        assert_eq!(analysis.analyzer.channels(), 1);
+        assert_eq!(analysis.analyzer.rate(), 16);
+    }
+
+    #[test]
     fn analysis_honors_cancellation_before_decoding() {
         let stream = ResolvedStream::new("file:///not-opened.wav");
         let error = analyze_loudness_cancellable(&stream, || true)
@@ -338,10 +355,13 @@ mod tests {
     }
 
     fn write_stereo_wave(path: &std::path::Path, amplitudes: &[f32]) {
-        const SAMPLE_RATE: u32 = 48_000;
+        write_stereo_wave_at_rate(path, amplitudes, 48_000);
+    }
+
+    fn write_stereo_wave_at_rate(path: &std::path::Path, amplitudes: &[f32], sample_rate: u32) {
         const CHANNELS: u16 = 2;
         const BITS_PER_SAMPLE: u16 = 16;
-        let frames = SAMPLE_RATE * amplitudes.len() as u32;
+        let frames = sample_rate * amplitudes.len() as u32;
         let bytes_per_frame = u32::from(CHANNELS) * u32::from(BITS_PER_SAMPLE / 8);
         let data_len = frames * bytes_per_frame;
         let mut file = File::create(path).expect("create loudness fixture");
@@ -355,9 +375,9 @@ mod tests {
             .expect("write PCM format");
         file.write_all(&CHANNELS.to_le_bytes())
             .expect("write channels");
-        file.write_all(&SAMPLE_RATE.to_le_bytes())
+        file.write_all(&sample_rate.to_le_bytes())
             .expect("write sample rate");
-        file.write_all(&(SAMPLE_RATE * bytes_per_frame).to_le_bytes())
+        file.write_all(&(sample_rate * bytes_per_frame).to_le_bytes())
             .expect("write byte rate");
         file.write_all(&(bytes_per_frame as u16).to_le_bytes())
             .expect("write block alignment");
@@ -368,8 +388,8 @@ mod tests {
             .expect("write data length");
 
         for amplitude in amplitudes.iter().copied() {
-            for frame in 0..SAMPLE_RATE {
-                let phase = TAU * 1_000.0 * frame as f32 / SAMPLE_RATE as f32;
+            for frame in 0..sample_rate {
+                let phase = TAU * 1_000.0 * frame as f32 / sample_rate as f32;
                 let sample = (phase.sin() * amplitude * f32::from(i16::MAX)) as i16;
                 for _ in 0..CHANNELS {
                     file.write_all(&sample.to_le_bytes()).expect("write sample");

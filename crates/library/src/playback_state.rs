@@ -76,6 +76,40 @@ pub struct PlaybackQueueSnapshot {
     pub traversal: Vec<PlaybackOccurrenceId>,
 }
 
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub(crate) struct PlaybackQueueRowsSnapshot {
+    pub occurrences: Vec<PlaybackOccurrence>,
+    pub fallback_tracks: Vec<PlaybackFallbackTrack>,
+}
+
+#[derive(Serialize)]
+pub(crate) struct PlaybackQueueRows<'a> {
+    occurrences: &'a [PlaybackOccurrence],
+    fallback_tracks: &'a [PlaybackFallbackTrack],
+}
+
+impl PlaybackQueueSnapshot {
+    pub(crate) fn rows(&self) -> PlaybackQueueRows<'_> {
+        PlaybackQueueRows {
+            occurrences: &self.occurrences,
+            fallback_tracks: &self.fallback_tracks,
+        }
+    }
+}
+
+impl PlaybackQueueRowsSnapshot {
+    pub(crate) fn with_traversal(
+        self,
+        traversal: Vec<PlaybackOccurrenceId>,
+    ) -> PlaybackQueueSnapshot {
+        PlaybackQueueSnapshot {
+            occurrences: self.occurrences,
+            fallback_tracks: self.fallback_tracks,
+            traversal,
+        }
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PlaybackState {
     pub selected: Option<PlaybackOccurrenceId>,
@@ -104,6 +138,19 @@ pub struct PlaybackProgressUpdate {
     pub revision: u64,
     pub occurrence: PlaybackOccurrenceId,
     pub progress_millis: u64,
+}
+
+/// A queue revision whose rows are unchanged and whose traversal changed.
+///
+/// The Store applies this only while the durable queue is still at
+/// `expected_revision`, so a delayed reshuffle cannot overwrite a newer queue.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PlaybackTraversalUpdate {
+    pub source_id: SourceId,
+    pub expected_revision: u64,
+    pub revision: u64,
+    pub traversal: Vec<PlaybackOccurrenceId>,
+    pub state: PlaybackState,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -139,6 +186,13 @@ impl Libraries {
         Ok(self.store.update_playback_state(update)?)
     }
 
+    pub fn replace_playback_traversal(
+        &self,
+        update: PlaybackTraversalUpdate,
+    ) -> LibraryResult<PlaybackWriteOutcome> {
+        Ok(self.store.replace_playback_traversal(update)?)
+    }
+
     pub fn update_playback_progress(
         &self,
         update: PlaybackProgressUpdate,
@@ -152,48 +206,129 @@ impl Libraries {
 }
 
 pub(crate) fn validate_checkpoint(checkpoint: &PlaybackCheckpoint) -> Result<(), String> {
-    let occurrences = checkpoint
-        .queue
-        .occurrences
-        .iter()
-        .map(|entry| &entry.id)
-        .collect::<HashSet<_>>();
-    if occurrences.len() != checkpoint.queue.occurrences.len() {
+    validate_queue_parts(
+        &checkpoint.queue.occurrences,
+        &checkpoint.queue.fallback_tracks,
+        &checkpoint.queue.traversal,
+        checkpoint.state.selected.as_ref(),
+    )
+}
+
+pub(crate) fn validate_queue_parts(
+    queue: &[PlaybackOccurrence],
+    fallback: &[PlaybackFallbackTrack],
+    traversal: &[PlaybackOccurrenceId],
+    selected: Option<&PlaybackOccurrenceId>,
+) -> Result<(), String> {
+    let occurrences = queue.iter().map(|entry| &entry.id).collect::<HashSet<_>>();
+    if occurrences.len() != queue.len() {
         return Err("Playback occurrence IDs must be unique".to_string());
     }
 
-    let queued_tracks = checkpoint
-        .queue
-        .occurrences
+    let queued_tracks = queue
         .iter()
         .map(|entry| &entry.track_id)
         .collect::<HashSet<_>>();
-    let fallback_tracks = checkpoint
-        .queue
-        .fallback_tracks
+    let fallback_tracks = fallback
         .iter()
         .map(|track| &track.id)
         .collect::<HashSet<_>>();
-    if fallback_tracks.len() != checkpoint.queue.fallback_tracks.len()
-        || fallback_tracks != queued_tracks
-    {
+    if fallback_tracks.len() != fallback.len() || fallback_tracks != queued_tracks {
         return Err("Playback fallback Tracks must match the distinct queued Tracks".to_string());
     }
 
-    if !checkpoint.queue.traversal.is_empty() {
-        let traversal = checkpoint.queue.traversal.iter().collect::<HashSet<_>>();
-        if traversal.len() != checkpoint.queue.traversal.len() || traversal != occurrences {
+    if !traversal.is_empty() {
+        let traversal_ids = traversal.iter().collect::<HashSet<_>>();
+        if traversal_ids.len() != traversal.len() || traversal_ids != occurrences {
             return Err("Playback traversal must contain every occurrence once".to_string());
         }
     }
 
-    if checkpoint
-        .state
-        .selected
-        .as_ref()
-        .is_some_and(|selected| !occurrences.contains(selected))
-    {
+    if selected.is_some_and(|selected| !occurrences.contains(selected)) {
         return Err("selected Playback occurrence is not queued".to_string());
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn fallback(id: TrackId) -> PlaybackFallbackTrack {
+        PlaybackFallbackTrack {
+            id,
+            album_id: None,
+            primary_artist_id: None,
+            title: "Track".to_string(),
+            artist: "Artist".to_string(),
+            album: "Album".to_string(),
+            year: 2026,
+            duration_seconds: 180,
+            favorite: false,
+            track_number: 1,
+            disc_number: 1,
+            image_ref: None,
+            local_artwork: None,
+            musicbrainz_recording_id: None,
+            source_format: None,
+            source_path: None,
+            cue: None,
+        }
+    }
+
+    #[test]
+    fn traversal_update_must_match_the_durable_queue_rows() {
+        let libraries = Libraries::memory().expect("memory Store");
+        let source_id = SourceId::fake(1);
+        let first = PlaybackOccurrenceId::new("first");
+        let second = PlaybackOccurrenceId::new("second");
+        let first_track = TrackId::fake(1);
+        let second_track = TrackId::fake(2);
+        let checkpoint = PlaybackCheckpoint {
+            source_id: source_id.clone(),
+            revision: 1,
+            queue: PlaybackQueueSnapshot {
+                occurrences: vec![
+                    PlaybackOccurrence {
+                        id: first.clone(),
+                        track_id: first_track.clone(),
+                        provenance: PlaybackProvenance::Manual,
+                    },
+                    PlaybackOccurrence {
+                        id: second.clone(),
+                        track_id: second_track.clone(),
+                        provenance: PlaybackProvenance::Manual,
+                    },
+                ],
+                fallback_tracks: vec![fallback(first_track), fallback(second_track)],
+                traversal: vec![first.clone(), second.clone()],
+            },
+            state: PlaybackState {
+                selected: Some(first.clone()),
+                progress_millis: 12,
+            },
+        };
+        assert_eq!(
+            libraries
+                .replace_playback(checkpoint.clone())
+                .expect("persist queue"),
+            PlaybackWriteOutcome::Applied
+        );
+
+        let invalid = libraries.replace_playback_traversal(PlaybackTraversalUpdate {
+            source_id: source_id.clone(),
+            expected_revision: 1,
+            revision: 2,
+            traversal: vec![first.clone(), PlaybackOccurrenceId::new("not-queued")],
+            state: PlaybackState {
+                selected: Some(first),
+                progress_millis: 24,
+            },
+        });
+        assert!(invalid.is_err());
+        assert_eq!(
+            libraries.load_playback(&source_id).expect("reload queue"),
+            PlaybackLoad::Ready(checkpoint)
+        );
+    }
 }

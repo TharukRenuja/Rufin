@@ -17,7 +17,7 @@ pub(crate) struct ArtworkTile {
     artwork_request: Rc<RefCell<Option<glib::JoinHandle<()>>>>,
     generation: Rc<Cell<u64>>,
     binding_active: Rc<Cell<bool>>,
-    cleanup_hook_installed: Rc<Cell<bool>>,
+    lifecycle_hooks_installed: Rc<Cell<bool>>,
 }
 
 #[derive(Clone)]
@@ -33,7 +33,7 @@ pub(crate) struct ArtworkTileWeak {
     artwork_request: Rc<RefCell<Option<glib::JoinHandle<()>>>>,
     generation: Rc<Cell<u64>>,
     binding_active: Rc<Cell<bool>>,
-    cleanup_hook_installed: Rc<Cell<bool>>,
+    lifecycle_hooks_installed: Rc<Cell<bool>>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -41,6 +41,7 @@ pub(super) struct ArtworkBindOutcome {
     pub(super) generation: u64,
     pub(super) request_needed: bool,
     pub(super) request_changed: bool,
+    pub(super) terminal_missing: bool,
 }
 
 impl ArtworkTile {
@@ -96,7 +97,7 @@ impl ArtworkTile {
         let artwork_request = Rc::new(RefCell::new(None));
         let generation = Rc::new(Cell::new(0));
         let binding_active = Rc::new(Cell::new(false));
-        let cleanup_hook_installed = Rc::new(Cell::new(false));
+        let lifecycle_hooks_installed = Rc::new(Cell::new(false));
 
         Self {
             area,
@@ -110,7 +111,7 @@ impl ArtworkTile {
             artwork_request,
             generation,
             binding_active,
-            cleanup_hook_installed,
+            lifecycle_hooks_installed,
         }
     }
 
@@ -135,19 +136,21 @@ impl ArtworkTile {
             artwork_request: Rc::clone(&self.artwork_request),
             generation: Rc::clone(&self.generation),
             binding_active: Rc::clone(&self.binding_active),
-            cleanup_hook_installed: Rc::clone(&self.cleanup_hook_installed),
+            lifecycle_hooks_installed: Rc::clone(&self.lifecycle_hooks_installed),
         }
     }
 
-    pub(super) fn install_cleanup_hook_once<F>(&self, cleanup: F)
+    pub(super) fn install_lifecycle_hooks_once<M, C>(&self, mapped: M, cleanup: C)
     where
-        F: FnOnce(usize) + 'static,
+        M: Fn(usize) + 'static,
+        C: FnOnce(usize) + 'static,
     {
-        if self.cleanup_hook_installed.replace(true) {
+        if self.lifecycle_hooks_installed.replace(true) {
             return;
         }
 
         let identity = self.identity();
+        self.area.connect_map(move |_| mapped(identity));
         let artwork_request = Rc::clone(&self.artwork_request);
         let binding_active = Rc::clone(&self.binding_active);
         let cleanup = RefCell::new(Some(cleanup));
@@ -199,6 +202,7 @@ impl ArtworkTile {
             generation: self.generation.get(),
             request_needed: request_changed || (!has_texture && !terminal_missing),
             request_changed,
+            terminal_missing,
         }
     }
 
@@ -359,7 +363,7 @@ impl ArtworkTileWeak {
             artwork_request: Rc::clone(&self.artwork_request),
             generation: Rc::clone(&self.generation),
             binding_active: Rc::clone(&self.binding_active),
-            cleanup_hook_installed: Rc::clone(&self.cleanup_hook_installed),
+            lifecycle_hooks_installed: Rc::clone(&self.lifecycle_hooks_installed),
         })
     }
 

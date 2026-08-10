@@ -3,15 +3,15 @@ use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
-use library::{PlaybackCheckpoint, SourceId, Track};
+use library::{SourceId, Track};
 use thiserror::Error;
 
 use crate::{
     BackendEvent, BackendFailure, Batch, ClockSample, LoadedPlayRequest, MaterializationId,
-    MaterializationReservation, Placement, PlaybackBackend, PlaybackNotice, PlaybackProjection,
-    PlaybackSession, PlaybackSettings, PreparedStream, QueuePage, QueuePageQuery, RunId, Sequence,
-    SequenceError, SessionCommand, SessionEffect, SessionUpdate, SourceSessionEpoch,
-    build_checkpoint,
+    MaterializationReservation, Placement, PlaybackBackend, PlaybackCheckpointRevision,
+    PlaybackNotice, PlaybackProjection, PlaybackSession, PlaybackSettings, PreparedStream,
+    QueuePage, QueuePageQuery, RunId, Sequence, SequenceError, SessionCommand, SessionEffect,
+    SessionUpdate, SourceSessionEpoch,
 };
 
 const BACKEND_POLL_INTERVAL: Duration = Duration::from_millis(33);
@@ -36,7 +36,7 @@ pub type PlaybackResult<T> = Result<T, PlaybackError>;
 
 #[derive(Debug, Default)]
 pub struct PlaybackUpdate {
-    pub checkpoint: Option<PlaybackCheckpoint>,
+    pub checkpoint: Option<PlaybackCheckpointRevision>,
     pub projection: Option<PlaybackProjection>,
     pub effects: Vec<SessionEffect>,
     pub current_media_changed: bool,
@@ -51,8 +51,12 @@ impl PlaybackUpdate {
     }
 
     fn merge(&mut self, mut newer: Self) {
-        if newer.checkpoint.is_some() {
-            self.checkpoint = newer.checkpoint.take();
+        if let Some(next) = newer.checkpoint.take() {
+            if let Some(current) = self.checkpoint.as_mut() {
+                current.coalesce(next);
+            } else {
+                self.checkpoint = Some(next);
+            }
         }
         match (&mut self.projection, newer.projection.take()) {
             (Some(current), Some(mut next)) => {
@@ -909,8 +913,8 @@ impl PlaybackRuntime {
 
     fn commit(&self, update: SessionUpdate) -> PlaybackUpdate {
         let checkpoint = update
-            .structure_changed
-            .then(|| build_checkpoint(self.session.sequence()));
+            .checkpoint_change
+            .map(|change| PlaybackCheckpointRevision::capture(self.session.sequence(), change));
         let mut notices = Vec::new();
         let mut effects = Vec::new();
         let mut current_media_changed = false;
@@ -938,7 +942,7 @@ impl PlaybackRuntime {
         let projection = (update.view_changed || !notices.is_empty()).then(|| PlaybackProjection {
             view: self.session.view(),
             queue_page: update
-                .structure_changed
+                .queue_page_changed
                 .then(|| self.session.sequence().current_page()),
             notices,
         });

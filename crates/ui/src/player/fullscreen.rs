@@ -27,7 +27,6 @@ use super::equalizer::{
     install_equalizer_scroll, relocalize_equalizer_preset_dropdown,
 };
 use super::icons::lyrics_icon_area;
-use super::lyrics::LyricsPane;
 
 const FULLSCREEN_PLAYER_OPEN_TRANSITION_MS: u32 = 420;
 const FULLSCREEN_PLAYER_CLOSE_TRANSITION_MS: u32 = 320;
@@ -100,7 +99,7 @@ pub(crate) struct FullscreenPlayerParts {
     meta: gtk::FlowBox,
     pub(crate) stack: adw::ViewStack,
     pub(crate) tabs: Vec<(gtk::ToggleButton, gtk::Label, &'static str)>,
-    pub(crate) lyrics_pane: LyricsPane,
+    pub(crate) lyrics_host: gtk::Box,
     pub(crate) queue_panel: gtk::Box,
     pub(crate) visualizer_panel: gtk::Box,
     visualizer_area: gtk::DrawingArea,
@@ -201,9 +200,11 @@ pub(crate) fn build_fullscreen_player() -> FullscreenPlayerParts {
     queue_panel.set_vexpand(true);
     stack.add_titled(&queue_panel, Some("queue"), &tr("Queue"));
 
-    let lyrics_pane = LyricsPane::new();
-    lyrics_pane.widget().add_css_class("fullscreen-player-pane");
-    stack.add_titled(lyrics_pane.widget(), Some("lyrics"), &tr("Lyrics"));
+    let lyrics_host = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    lyrics_host.add_css_class("fullscreen-player-pane");
+    lyrics_host.set_hexpand(true);
+    lyrics_host.set_vexpand(true);
+    stack.add_titled(&lyrics_host, Some("lyrics"), &tr("Lyrics"));
 
     let visualizer_panel = gtk::Box::new(gtk::Orientation::Vertical, 0);
     visualizer_panel.add_css_class("fullscreen-player-pane");
@@ -249,7 +250,7 @@ pub(crate) fn build_fullscreen_player() -> FullscreenPlayerParts {
         meta,
         stack,
         tabs,
-        lyrics_pane,
+        lyrics_host,
         queue_panel,
         visualizer_panel,
         visualizer_area,
@@ -1105,7 +1106,7 @@ fn while_equalizer_syncing(syncing: &Cell<bool>, update: impl FnOnce()) {
 
 impl Shell {
     pub(crate) fn open_fullscreen_player(self: &Rc<Self>) {
-        let Some(player) = self.playback.player.borrow().clone() else {
+        let Some(player) = self.selected_playback().as_deref().cloned() else {
             return;
         };
         if player.transport.current.is_none() {
@@ -1117,7 +1118,7 @@ impl Shell {
         let text_shell = Rc::clone(self);
         glib::idle_add_local_once(move || {
             if text_shell.fullscreen_player_visible()
-                && let Some(player) = text_shell.playback.player.borrow().as_ref()
+                && let Some(player) = text_shell.selected_playback().as_deref()
             {
                 text_shell.update_fullscreen_player_text(player);
             }
@@ -1203,7 +1204,7 @@ impl Shell {
         if !self.fullscreen_player_visible() {
             return;
         }
-        let Some(player) = self.playback.player.borrow().clone() else {
+        let Some(player) = self.selected_playback().as_deref().cloned() else {
             self.close_fullscreen_player();
             return;
         };
@@ -1398,17 +1399,12 @@ impl Shell {
                 .visible_child_name()
                 .as_deref()
                 == Some("visualizer")
-            && self
-                .playback
-                .player
-                .borrow()
-                .as_ref()
-                .is_some_and(|player| {
-                    matches!(
-                        player.transport.effective_state(),
-                        TransportStatus::Playing | TransportStatus::Buffering
-                    )
-                });
+            && self.selected_playback().as_deref().is_some_and(|player| {
+                matches!(
+                    player.transport.effective_state(),
+                    TransportStatus::Playing | TransportStatus::Buffering
+                )
+            });
         let changed = self
             .player_view
             .fullscreen_player
@@ -1538,13 +1534,12 @@ impl Shell {
             return;
         }
         let lyrics = self.visible_lyrics();
-        self.player_view
-            .fullscreen_player
-            .lyrics_pane
-            .refocus_highlight(
+        if let Some(selected_lyrics) = self.selected_lyrics() {
+            selected_lyrics.fullscreen_pane.refocus_highlight(
                 lyrics.as_deref(),
                 self.lyrics_position_millis(self.current_position_millis()),
             );
+        }
     }
 
     fn update_fullscreen_player_cover(self: &Rc<Self>, player: &PlaybackView) {

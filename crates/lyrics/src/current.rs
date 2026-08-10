@@ -547,7 +547,7 @@ impl LyricsService {
             let preferred_translation_language =
                 resolution.plan.preferred_translation_language().to_string();
             let lookup_cancelled = Arc::clone(&cancelled);
-            let document = tokio::task::spawn_blocking(move || {
+            let document = run_external_lookup(Arc::clone(&self.search_lane), move || {
                 external_best_lyrics(
                     &track,
                     &providers,
@@ -557,7 +557,6 @@ impl LyricsService {
                 )
             })
             .await
-            .ok()
             .and_then(|result| match result {
                 Ok(document) => document,
                 Err(error) => {
@@ -1079,6 +1078,19 @@ fn cancel_current_work(state: &mut State) {
     }
 }
 
+async fn run_external_lookup(
+    lane: Arc<Semaphore>,
+    lookup: impl FnOnce() -> Result<Option<LyricsBundle>, String> + Send + 'static,
+) -> Option<Result<Option<LyricsBundle>, String>> {
+    let permit = lane.acquire_owned().await.ok()?;
+    tokio::task::spawn_blocking(move || {
+        let _permit = permit;
+        lookup()
+    })
+    .await
+    .ok()
+}
+
 fn current_resolution(context: LyricsContext, plan: LyricsPlan) -> CurrentResolution {
     let local_file = context
         .loaded
@@ -1151,6 +1163,7 @@ fn unix_seconds() -> i64 {
 mod tests {
     use std::sync::Arc;
     use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::mpsc;
 
     use async_channel::{Receiver, unbounded};
     use library::{
@@ -1166,6 +1179,7 @@ mod tests {
     use super::{
         CachedBundle, DocumentKey, LYRICS_CACHE_PAYLOAD_VERSION, LyricsContext, LyricsEvent,
         LyricsService, cache_input, cache_write, current_event, decode_cached_bundle,
+        run_external_lookup,
     };
     use crate::{
         CurrentLyrics, CurrentLyricsContent, ExternalLyricsProvider, LyricsBundle, LyricsDocument,
@@ -1642,6 +1656,43 @@ mod tests {
             vec!["ready"],
             "a new current-media identity must still replace the visible projection"
         );
+    }
+
+    #[test]
+    fn cancelled_current_lookup_keeps_the_external_lane_until_work_finishes() {
+        let runtime = Builder::new_current_thread()
+            .build()
+            .expect("external lyrics runtime");
+        let lane = Arc::new(tokio::sync::Semaphore::new(1));
+        let (started, work_started) = tokio::sync::oneshot::channel();
+        let (release, work_release) = mpsc::sync_channel(0);
+        let task = runtime.spawn(run_external_lookup(Arc::clone(&lane), move || {
+            started.send(()).expect("publish external lookup start");
+            work_release.recv().expect("release external lookup");
+            Ok(None)
+        }));
+        runtime
+            .block_on(work_started)
+            .expect("external lookup started");
+
+        task.abort();
+        assert!(
+            runtime
+                .block_on(task)
+                .expect_err("the current lookup task was cancelled")
+                .is_cancelled()
+        );
+        assert_eq!(
+            lane.available_permits(),
+            0,
+            "cancelling the async owner must not admit overlapping blocking work"
+        );
+
+        release.send(()).expect("finish external lookup");
+        let permit = runtime
+            .block_on(Arc::clone(&lane).acquire_owned())
+            .expect("the external lane remains open");
+        drop(permit);
     }
 
     fn fixture(settings: Settings, private_mode: bool) -> Fixture {

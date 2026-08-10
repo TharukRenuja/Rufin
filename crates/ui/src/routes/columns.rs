@@ -173,10 +173,8 @@ where
         bind_shell.set_download_badge_visible(
             &downloaded,
             bind_shell
-                .library
-                .selected
-                .borrow()
-                .as_ref()
+                .selected_library()
+                .as_deref()
                 .is_some_and(|selected| {
                     selected
                         .library
@@ -288,10 +286,8 @@ where
         bind_shell.set_download_badge_visible(
             &downloaded,
             bind_shell
-                .library
-                .selected
-                .borrow()
-                .as_ref()
+                .selected_library()
+                .as_deref()
                 .is_some_and(|selected| {
                     selected
                         .library
@@ -429,25 +425,18 @@ fn track_list_column_width(field: LibraryField) -> i32 {
 
 pub(super) fn track_is_downloaded(shell: &Shell, track: &Track) -> bool {
     shell
-        .library
-        .selected
-        .borrow()
-        .as_ref()
+        .selected_library()
+        .as_deref()
         .is_some_and(|selected| selected.library.is_downloaded(&track.id).unwrap_or(false))
 }
 
 fn album_is_downloaded(shell: &Shell, album: &AlbumSummary) -> bool {
-    shell
-        .library
-        .selected
-        .borrow()
-        .as_ref()
-        .is_some_and(|selected| {
-            selected
-                .library
-                .is_album_downloaded(&album.album.id, selected.music_folder_id.as_ref())
-                .unwrap_or(false)
-        })
+    shell.selected_library().as_deref().is_some_and(|selected| {
+        selected
+            .library
+            .is_album_downloaded(&album.album.id, selected.music_folder_id.as_ref())
+            .unwrap_or(false)
+    })
 }
 
 pub(crate) fn text_column<T, F>(title: &str, width: i32, value: F) -> gtk::ColumnViewColumn
@@ -1273,10 +1262,8 @@ where
         bind_shell.set_download_badge_visible(
             &downloaded,
             bind_shell
-                .library
-                .selected
-                .borrow()
-                .as_ref()
+                .selected_library()
+                .as_deref()
                 .is_some_and(|selected| {
                     selected
                         .library
@@ -1731,7 +1718,7 @@ pub(crate) fn album_favorite_column(
         };
         let button = favorite_icon_button("Favorite album");
         let favorite_item = item.downgrade();
-        shell.favorites.register_dynamic_button(
+        shell.register_dynamic_favorite_button(
             Rc::new(move || {
                 favorite_item
                     .upgrade()
@@ -1801,7 +1788,7 @@ pub(crate) fn artist_favorite_column(shell: &Rc<Shell>) -> gtk::ColumnViewColumn
         };
         let button = favorite_icon_button("Favorite artist");
         let favorite_item = item.downgrade();
-        shell.favorites.register_dynamic_button(
+        shell.register_dynamic_favorite_button(
             Rc::new(move || {
                 favorite_item
                     .upgrade()
@@ -1887,7 +1874,7 @@ where
         let button = favorite_icon_button("Favorite track");
         install_track_cell_context_menu(&button, &setup_shell, Rc::clone(&current_track));
         let favorite_key_track = Rc::clone(&current_track);
-        setup_shell.favorites.register_dynamic_button(
+        setup_shell.register_dynamic_favorite_button(
             Rc::new(move || {
                 favorite_key_track
                     .borrow()

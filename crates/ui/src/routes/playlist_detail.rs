@@ -14,7 +14,6 @@ use artwork::ArtworkBinding;
 use crate::LibraryListKey;
 use crate::format_duration_units;
 use crate::localization::{bind_label_text_with, localized_label};
-use crate::preferences::dialogs::popup::present_light_dismiss_dialog;
 use crate::shell::Shell;
 use crate::shell::actions::{ADD_ICON, EDIT_ICON};
 use crate::shell::cover::presentation::stable_seed;
@@ -481,10 +480,8 @@ impl Shell {
 
         let add_current = detail_action_button(ADD_ICON, "Add current");
         add_current.set_sensitive(
-            self.playback
-                .player
-                .borrow()
-                .as_ref()
+            self.selected_playback()
+                .as_deref()
                 .and_then(|player| player.transport.current.as_ref())
                 .is_some(),
         );
@@ -492,10 +489,8 @@ impl Shell {
         let add_id = playlist_id.clone();
         add_current.connect_clicked(move |_| {
             let track_id = shell
-                .playback
-                .player
-                .borrow()
-                .as_ref()
+                .selected_playback()
+                .as_deref()
                 .and_then(|player| player.transport.current.as_ref())
                 .map(|entry| entry.track.id.clone());
             if let Some(track_id) = track_id {
@@ -511,7 +506,6 @@ impl Shell {
 
         let delete = detail_delete_button("Delete");
         let source = self.selected_source_operations();
-        let window = self.chrome.window.clone();
         let delete_shell = Rc::clone(self);
         let delete_header = Rc::clone(&header);
         let delete_id = playlist_id.clone();
@@ -539,7 +533,7 @@ impl Shell {
                     shell.navigate(Route::Playlists);
                 }
             });
-            present_light_dismiss_dialog(&dialog, &window);
+            delete_shell.present_selected_dialog(&dialog);
         });
         actions.append(&delete);
 
@@ -586,10 +580,8 @@ impl Shell {
         route_stack.set_visible_child_name("content");
 
         let music_folder_id = self
-            .library
-            .selected
-            .borrow()
-            .as_ref()
+            .selected_library()
+            .as_deref()
             .and_then(|selected| selected.music_folder_id.clone());
         let identity = self.mounted_route_read_identity(
             Route::PlaylistDetail(playlist_id.clone()),

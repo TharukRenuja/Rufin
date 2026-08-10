@@ -4,8 +4,8 @@ use std::sync::Arc;
 use library::{SourceId, StreamRequest, Track, TrackId};
 
 use crate::{
-    BackendCommand, BackendEvent, BackendState, Batch, BatchItem, ListeningFact, ListeningOutcome,
-    ListeningTrack, NextTransition, OccurrenceId, Placement, PlaybackSettings,
+    BackendCommand, BackendEvent, BackendState, Batch, BatchItem, CheckpointChange, ListeningFact,
+    ListeningOutcome, ListeningTrack, NextTransition, OccurrenceId, Placement, PlaybackSettings,
     PlaybackTransitionMode, PreparedNext, PreparedStream, Provenance, RepeatMode, RunEndReason,
     RunId, Sequence, SequenceEntry, SequenceError, external_scrobble_threshold_millis,
     manual_end_is_skip, qualified_play_threshold_millis,
@@ -179,7 +179,8 @@ pub enum SessionCommand {
 pub struct SessionUpdate {
     pub effects: Vec<SessionEffect>,
     pub view_changed: bool,
-    pub structure_changed: bool,
+    pub queue_page_changed: bool,
+    pub(crate) checkpoint_change: Option<CheckpointChange>,
 }
 
 impl SessionUpdate {
@@ -190,11 +191,26 @@ impl SessionUpdate {
         }
     }
 
-    fn structural() -> Self {
+    fn structural(expected_revision: u64) -> Self {
         Self {
             view_changed: true,
-            structure_changed: true,
-            effects: Vec::new(),
+            queue_page_changed: true,
+            checkpoint_change: Some(CheckpointChange {
+                expected_revision,
+                rows_changed: true,
+            }),
+            ..Self::default()
+        }
+    }
+
+    fn traversal(expected_revision: u64) -> Self {
+        Self {
+            view_changed: true,
+            checkpoint_change: Some(CheckpointChange {
+                expected_revision,
+                rows_changed: false,
+            }),
+            ..Self::default()
         }
     }
 }
@@ -716,8 +732,16 @@ impl PlaybackSession {
         }
         let continuation = self.auto_dj_waiting_for_continuation;
         self.auto_dj_waiting_for_continuation = false;
-        self.sequence.trim_auto_dj_history(AUTO_DJ_HISTORY_LIMIT);
+        let expected_revision = self.sequence.revision();
+        let trimmed = self.sequence.trim_auto_dj_history(AUTO_DJ_HISTORY_LIMIT);
         let mut update = self.apply_batch(batch, Placement::End, sample)?;
+        if trimmed {
+            update.checkpoint_change = Some(CheckpointChange {
+                expected_revision,
+                rows_changed: true,
+            });
+            update.queue_page_changed = true;
+        }
         if continuation && self.current_run.is_none() && self.sequence.advance_manual().is_some() {
             self.begin_selected_run(&mut update.effects);
         }
@@ -789,7 +813,7 @@ impl PlaybackSession {
             .selected()
             .map(|entry| entry.occurrence.clone());
         let previous_had_run = self.current_run.is_some();
-        let mut update = SessionUpdate::structural();
+        let mut update = SessionUpdate::changed();
         if replacing {
             self.pending_replacement = None;
             self.pending_additive.clear();
@@ -801,11 +825,19 @@ impl PlaybackSession {
             }
             self.finish_current(RunEndReason::Replaced, sample, &mut update.effects);
         }
-        self.sequence.apply_batch(batch, placement)?;
+        let (_, change) = self.sequence.apply_batch_with_change(batch, placement)?;
+        if change.durable_changed() {
+            update.checkpoint_change = Some(CheckpointChange {
+                expected_revision: change.expected_revision,
+                rows_changed: change.rows_changed,
+            });
+        }
         let next_selected = self
             .sequence
             .selected()
             .map(|entry| entry.occurrence.clone());
+        update.queue_page_changed = change.rows_changed
+            || (replacing && previous_selected.as_ref() != next_selected.as_ref());
         if replacing {
             self.begin_selected_run(&mut update.effects);
             if !previous_had_run && previous_selected.is_some() && next_selected.is_none() {
@@ -879,7 +911,8 @@ impl PlaybackSession {
         if self.sequence.occurrence(occurrence).is_none() {
             return SessionUpdate::default();
         }
-        let mut update = SessionUpdate::structural();
+        let expected_revision = self.sequence.revision();
+        let mut update = SessionUpdate::structural(expected_revision);
         self.pending_replacement = None;
         if self
             .auto_dj_in_flight
@@ -929,26 +962,29 @@ impl PlaybackSession {
         if old_index == absolute_index {
             return SessionUpdate::default();
         }
+        let expected_revision = self.sequence.revision();
         if !self.sequence.reorder(occurrence, absolute_index) {
             return SessionUpdate::default();
         }
         self.pending_replacement = None;
-        let mut update = SessionUpdate::structural();
+        let mut update = SessionUpdate::structural(expected_revision);
         self.replan_next_if_changed(&mut update.effects);
         update
     }
 
     fn move_after_current(&mut self, occurrence: &OccurrenceId) -> SessionUpdate {
+        let expected_revision = self.sequence.revision();
         if !self.sequence.move_after_current(occurrence) {
             return SessionUpdate::default();
         }
         self.pending_replacement = None;
-        let mut update = SessionUpdate::structural();
+        let mut update = SessionUpdate::structural(expected_revision);
         self.replan_next_if_changed(&mut update.effects);
         update
     }
 
     fn clear_upcoming(&mut self) -> SessionUpdate {
+        let expected_revision = self.sequence.revision();
         let clears_current = self.current_run.is_none() && self.sequence.selected().is_some();
         let changed = if self.current_run.is_some() {
             self.sequence.clear_upcoming()
@@ -963,7 +999,7 @@ impl PlaybackSession {
             return SessionUpdate::default();
         }
         self.next_plan = None;
-        let mut update = SessionUpdate::structural();
+        let mut update = SessionUpdate::structural(expected_revision);
         if clears_current {
             update.effects.push(SessionEffect::CurrentMediaChanged);
         }
@@ -1040,7 +1076,8 @@ impl PlaybackSession {
                                 }),
                             ],
                             view_changed: true,
-                            structure_changed: false,
+                            queue_page_changed: false,
+                            checkpoint_change: None,
                         };
                     }
                     BackendCommand::Play { run: run.id }
@@ -1082,11 +1119,12 @@ impl PlaybackSession {
                     },
                 ],
                 view_changed: true,
-                structure_changed: false,
+                queue_page_changed: false,
+                checkpoint_change: None,
             };
         };
         self.pending_replacement = None;
-        let mut update = SessionUpdate::structural();
+        let mut update = SessionUpdate::changed();
         update
             .effects
             .push(SessionEffect::Backend(BackendCommand::Stop { run: run.id }));
@@ -1170,7 +1208,8 @@ impl PlaybackSession {
             return SessionUpdate {
                 effects: vec![self.progress_effect()],
                 view_changed: true,
-                structure_changed: false,
+                queue_page_changed: false,
+                checkpoint_change: None,
             };
         };
         SessionUpdate {
@@ -1205,7 +1244,8 @@ impl PlaybackSession {
                 muted: self.settings.muted,
             })],
             view_changed: true,
-            structure_changed: false,
+            queue_page_changed: false,
+            checkpoint_change: None,
         }
     }
 
@@ -1227,7 +1267,8 @@ impl PlaybackSession {
                 },
             ],
             view_changed: true,
-            structure_changed: false,
+            queue_page_changed: false,
+            checkpoint_change: None,
         }
     }
 
@@ -1252,7 +1293,7 @@ impl PlaybackSession {
             return SessionUpdate::default();
         }
         self.pending_replacement = None;
-        let mut update = SessionUpdate::structural();
+        let mut update = SessionUpdate::traversal(revision);
         self.replan_next_if_changed(&mut update.effects);
         update
     }
@@ -1321,10 +1362,11 @@ impl PlaybackSession {
             return SessionUpdate::default();
         }
         let previous_current = self.sequence.selected().map(|entry| entry.track.clone());
+        let expected_revision = self.sequence.revision();
         if !self.sequence.refresh_tracks(tracks) {
             return SessionUpdate::default();
         }
-        let mut update = SessionUpdate::structural();
+        let mut update = SessionUpdate::structural(expected_revision);
         if previous_current.as_ref() != self.sequence.selected().map(|entry| &entry.track) {
             update.effects.push(SessionEffect::CurrentMediaChanged);
         }
@@ -1377,7 +1419,8 @@ impl PlaybackSession {
                 }),
             ],
             view_changed: true,
-            structure_changed: false,
+            queue_page_changed: false,
+            checkpoint_change: None,
         }
     }
 
@@ -2875,7 +2918,7 @@ mod tests {
             .handle_command(SessionCommand::ClearUpcoming, &sample(0))
             .expect("clear");
 
-        assert!(cleared.structure_changed);
+        assert!(cleared.checkpoint_change.is_some());
         assert!(session.sequence().entries().is_empty());
         assert!(session.sequence().selected().is_none());
         assert!(
@@ -2918,7 +2961,7 @@ mod tests {
             .handle_command(SessionCommand::ClearUpcoming, &sample(2))
             .expect("clear");
 
-        assert!(cleared.structure_changed);
+        assert!(cleared.checkpoint_change.is_some());
         assert!(session.sequence().entries().is_empty());
     }
 
@@ -2948,7 +2991,7 @@ mod tests {
             .handle_command(SessionCommand::ClearUpcoming, &sample(2))
             .expect("clear");
 
-        assert!(cleared.structure_changed);
+        assert!(cleared.checkpoint_change.is_some());
         assert_eq!(session.current_run(), Some(run));
         assert_eq!(session.status(), TransportStatus::Playing);
         assert_eq!(session.sequence().entries().len(), 1);
@@ -2990,7 +3033,7 @@ mod tests {
             .handle_command(SessionCommand::ClearUpcoming, &sample(3))
             .expect("clear");
 
-        assert!(cleared.structure_changed);
+        assert!(cleared.checkpoint_change.is_some());
         assert_eq!(session.current_run(), Some(run));
         assert_eq!(session.status(), TransportStatus::Paused);
         assert_eq!(session.sequence().entries().len(), 1);
@@ -3277,7 +3320,7 @@ mod tests {
                 &sample(4),
             )
             .expect("apply accepted refresh");
-        assert!(accepted.structure_changed);
+        assert!(accepted.checkpoint_change.is_some());
         assert_eq!(session.current_run(), Some(run));
         assert_eq!(session.position_millis(), 42_000);
         assert!(Track::ptr_eq(

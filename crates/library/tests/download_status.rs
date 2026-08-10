@@ -1,5 +1,5 @@
 use library::{
-    Album, AlbumId, AlbumRelations, Artist, ArtistCredit, ArtistId, CandidateBatch,
+    AcceptedPlay, Album, AlbumId, AlbumRelations, Artist, ArtistCredit, ArtistId, CandidateBatch,
     CandidateFinish, CandidateHeader, Genre, GenreCredit, GenreId, HomeFacts, Libraries,
     MoodCredit, MoodId, MusicFolder, MusicFolderId, Playlist, PlaylistEntry, PlaylistId,
     PlaylistSnapshot, SmartPlaylistBuiltin, SourceId, Track, TrackData, TrackId, TrackRelations,
@@ -143,6 +143,25 @@ fn collection_download_status_distinguishes_any_from_all_tracks() {
             .download_status()
             .expect("playlist download status"),
         partial
+    );
+    let recorded = loaded
+        .record_play(AcceptedPlay {
+            play_id: "download-status:play".to_string(),
+            track_id: tracks[1].id.clone(),
+            played_at: 1_700_000_000,
+            month: "2023-11".to_string(),
+        })
+        .expect("record play")
+        .expect("new play");
+    let activity = loaded
+        .apply_recorded_activity(&recorded)
+        .expect("apply play activity")
+        .expect("play changes smart playlist membership");
+    assert!(activity.smart_playlists.contains(&smart_playlist_id));
+    assert!(
+        loaded
+            .is_smart_playlist_downloaded(&smart_playlist_id, Some(&folder_id))
+            .expect("Never Played download status after membership change")
     );
     loaded
         .set_downloaded_file(tracks[1].id.clone(), directory.path().join("two.audio"))

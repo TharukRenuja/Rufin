@@ -9,12 +9,13 @@ use rusqlite::{Connection, OptionalExtension};
 use super::{StoreError, StoreResult};
 
 pub(crate) const APPLICATION_ID: i64 = 1_381_320_270;
-pub(crate) const SCHEMA_VERSION: i64 = 37;
+pub(crate) const SCHEMA_VERSION: i64 = 38;
 const FIRST_STORE_SCHEMA_VERSION: i64 = 32;
 const MUSIC_FOLDER_ARTWORK_SCHEMA_VERSION: i64 = 33;
 const FILESYSTEM_IDENTITY_SCHEMA_VERSION: i64 = 34;
 const RECENT_PLAYS_SCHEMA_VERSION: i64 = 35;
 const PENDING_FAVORITES_SCHEMA_VERSION: i64 = 36;
+const LOUDNESS_MEASUREMENTS_SCHEMA_VERSION: i64 = 37;
 
 struct Migration {
     from_version: i64,
@@ -45,12 +46,17 @@ const MIGRATIONS: &[Migration] = &[
     },
     Migration {
         from_version: PENDING_FAVORITES_SCHEMA_VERSION,
-        to_version: SCHEMA_VERSION,
+        to_version: LOUDNESS_MEASUREMENTS_SCHEMA_VERSION,
         run: migrate_schema_36,
+    },
+    Migration {
+        from_version: LOUDNESS_MEASUREMENTS_SCHEMA_VERSION,
+        to_version: SCHEMA_VERSION,
+        run: migrate_schema_37,
     },
 ];
 
-const CREATE_SCHEMA: &str = r###"-- Rufin Store schema 37.
+const CREATE_SCHEMA: &str = r###"-- Rufin Store schema 38.
 --
 -- Product routes hydrate Library and do not query these tables for
 -- sorting or filtering.
@@ -60,7 +66,7 @@ PRAGMA foreign_keys = ON;
 BEGIN IMMEDIATE;
 
 PRAGMA application_id = 1381320270; -- "RUFN"
-PRAGMA user_version = 37;
+PRAGMA user_version = 38;
 
 -- One row is one complete or in-progress source-library candidate. The newest
 -- accepted library_id is current; there is no mutable head row.
@@ -601,11 +607,19 @@ CREATE TABLE local_imports (
 CREATE TABLE playback_queues (
     source_id TEXT PRIMARY KEY CHECK (source_id <> ''),
     revision INTEGER NOT NULL CHECK (revision >= 0),
-    payload_json TEXT NOT NULL CHECK (
-        length(CAST(payload_json AS BLOB)) <= 268435456
+    rows_json TEXT NOT NULL CHECK (
+        length(CAST(rows_json AS BLOB)) <= 268435456
         AND CASE
-            WHEN json_valid(payload_json)
-            THEN json_type(payload_json) = 'object'
+            WHEN json_valid(rows_json)
+            THEN json_type(rows_json) = 'object'
+            ELSE 0
+        END
+    ),
+    traversal_json TEXT NOT NULL CHECK (
+        length(CAST(traversal_json AS BLOB)) <= 268435456
+        AND CASE
+            WHEN json_valid(traversal_json)
+            THEN 1
             ELSE 0
         END
     ),
@@ -1044,6 +1058,110 @@ COMMIT;
     Ok(())
 }
 
+fn migrate_schema_37(connection: &Connection) -> StoreResult<()> {
+    let transaction = connection.unchecked_transaction()?;
+    transaction.execute_batch(
+        r###"ALTER TABLE playback_state RENAME TO schema_37_playback_state;
+ALTER TABLE playback_queues RENAME TO schema_37_playback_queues;
+
+CREATE TABLE playback_queues (
+    source_id TEXT PRIMARY KEY CHECK (source_id <> ''),
+    revision INTEGER NOT NULL CHECK (revision >= 0),
+    rows_json TEXT NOT NULL CHECK (
+        length(CAST(rows_json AS BLOB)) <= 268435456
+        AND CASE
+            WHEN json_valid(rows_json)
+            THEN json_type(rows_json) = 'object'
+            ELSE 0
+        END
+    ),
+    traversal_json TEXT NOT NULL CHECK (
+        length(CAST(traversal_json AS BLOB)) <= 268435456
+        AND CASE
+            WHEN json_valid(traversal_json)
+            THEN 1
+            ELSE 0
+        END
+    ),
+    -- SQLite requires this exact unique parent key for playback_state's
+    -- deferred two-column foreign key, even though source_id is already unique.
+    UNIQUE (source_id, revision)
+) STRICT;
+
+CREATE TABLE playback_state (
+    source_id TEXT PRIMARY KEY CHECK (source_id <> ''),
+    revision INTEGER NOT NULL CHECK (revision >= 0),
+    selected_occurrence_id TEXT CHECK (
+        selected_occurrence_id IS NULL OR selected_occurrence_id <> ''
+    ),
+    progress_millis INTEGER NOT NULL CHECK (progress_millis >= 0),
+    FOREIGN KEY (source_id, revision)
+        REFERENCES playback_queues(source_id, revision)
+        ON DELETE NO ACTION
+        DEFERRABLE INITIALLY DEFERRED
+) STRICT;
+"###,
+    )?;
+
+    let queues = {
+        let mut statement = transaction.prepare(
+            "SELECT source_id, revision, payload_json
+             FROM schema_37_playback_queues
+             ORDER BY source_id",
+        )?;
+        statement
+            .query_map([], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, i64>(1)?,
+                    row.get::<_, String>(2)?,
+                ))
+            })?
+            .collect::<Result<Vec<_>, _>>()?
+    };
+    for (source_id, revision, payload_json) in queues {
+        let payload = serde_json::from_str::<serde_json::Value>(&payload_json)?;
+        let rows = serde_json::json!({
+            "occurrences": payload.get("occurrences").cloned().unwrap_or_default(),
+            "fallback_tracks": payload
+                .get("fallback_tracks")
+                .cloned()
+                .unwrap_or_default(),
+        });
+        let traversal = payload.get("traversal").cloned().unwrap_or_default();
+        transaction.execute(
+            "INSERT INTO playback_queues(
+                source_id, revision, rows_json, traversal_json
+             ) VALUES (?1, ?2, ?3, ?4)",
+            rusqlite::params![
+                source_id,
+                revision,
+                serde_json::to_string(&rows)?,
+                serde_json::to_string(&traversal)?,
+            ],
+        )?;
+    }
+    transaction.execute(
+        "INSERT INTO playback_state(
+            source_id, revision, selected_occurrence_id, progress_millis
+         )
+         SELECT state.source_id, state.revision,
+                state.selected_occurrence_id, state.progress_millis
+         FROM schema_37_playback_state AS state
+         JOIN schema_37_playback_queues AS queue
+           ON queue.source_id = state.source_id
+          AND queue.revision = state.revision",
+        [],
+    )?;
+    transaction.execute_batch(
+        "DROP TABLE schema_37_playback_state;
+         DROP TABLE schema_37_playback_queues;
+         PRAGMA user_version = 38;",
+    )?;
+    transaction.commit()?;
+    Ok(())
+}
+
 fn backfill_recent_plays(connection: &Connection) -> StoreResult<()> {
     connection.execute(
         "INSERT OR IGNORE INTO recent_plays(
@@ -1190,6 +1308,7 @@ mod tests {
     fn schema_35_adds_the_pending_favorite_outbox() {
         let connection = Connection::open_in_memory().expect("open Store");
         initialize(&connection).expect("initialize current Store");
+        restore_schema_37_playback(&connection);
         connection
             .execute_batch(
                 "DROP TABLE loudness_measurements;
@@ -1213,6 +1332,7 @@ mod tests {
     fn schema_36_adds_source_scoped_loudness_measurements() {
         let connection = Connection::open_in_memory().expect("open Store");
         initialize(&connection).expect("initialize current Store");
+        restore_schema_37_playback(&connection);
         connection
             .execute_batch(
                 "DROP TABLE loudness_measurements;
@@ -1234,6 +1354,77 @@ mod tests {
                 [vec![7_u8; 32]],
             )
             .expect("write loudness measurement");
+    }
+
+    #[test]
+    fn schema_37_splits_playback_rows_from_traversal_without_losing_checkpoints() {
+        let connection = Connection::open_in_memory().expect("open Store");
+        initialize(&connection).expect("initialize current Store");
+        restore_schema_37_playback(&connection);
+        connection
+            .execute_batch(
+                r###"INSERT INTO playback_queues(source_id, revision, payload_json)
+VALUES (
+    'source:valid', 7,
+    '{"occurrences":[],"fallback_tracks":[],"traversal":[]}'
+), (
+    'source:corrupt', 4,
+    '{"occurrences":"wrong","fallback_tracks":[],"traversal":null}'
+);
+INSERT INTO playback_state(
+    source_id, revision, selected_occurrence_id, progress_millis
+)
+VALUES ('source:valid', 7, NULL, 1200),
+       ('source:corrupt', 4, NULL, 0);
+PRAGMA user_version = 37;
+"###,
+            )
+            .expect("prepare schema 37 Store");
+
+        initialize(&connection).expect("migrate schema 37 Store");
+
+        let (revision, rows, traversal, progress) = connection
+            .query_row(
+                "SELECT queue.revision, queue.rows_json, queue.traversal_json,
+                        state.progress_millis
+                 FROM playback_queues AS queue
+                 JOIN playback_state AS state USING (source_id, revision)
+                 WHERE queue.source_id = 'source:valid'",
+                [],
+                |row| {
+                    Ok((
+                        row.get::<_, i64>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, String>(2)?,
+                        row.get::<_, i64>(3)?,
+                    ))
+                },
+            )
+            .expect("read migrated Playback checkpoint");
+        assert_eq!((revision, progress), (7, 1200));
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&rows).expect("parse migrated rows"),
+            serde_json::json!({"occurrences": [], "fallback_tracks": []})
+        );
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&traversal)
+                .expect("parse migrated traversal"),
+            serde_json::json!([])
+        );
+        assert_eq!(
+            connection
+                .query_row(
+                    "SELECT json_type(rows_json, '$.occurrences'),
+                            json_type(traversal_json)
+                     FROM playback_queues
+                     WHERE source_id = 'source:corrupt'",
+                    [],
+                    |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+                )
+                .expect("read migrated corrupt checkpoint"),
+            ("text".to_string(), "null".to_string()),
+            "semantic corruption remains load-time data instead of blocking migration"
+        );
     }
 
     #[test]
@@ -1499,6 +1690,7 @@ mod tests {
     }
 
     fn remove_newer_schema(connection: &Connection) {
+        restore_schema_37_playback(connection);
         connection
             .execute_batch(
                 "DROP TABLE loudness_measurements;
@@ -1506,5 +1698,42 @@ mod tests {
                  DROP TABLE pending_favorites;",
             )
             .expect("remove newer Store schema");
+    }
+
+    fn restore_schema_37_playback(connection: &Connection) {
+        connection
+            .execute_batch(
+                r###"DROP TABLE playback_state;
+DROP TABLE playback_queues;
+
+CREATE TABLE playback_queues (
+    source_id TEXT PRIMARY KEY CHECK (source_id <> ''),
+    revision INTEGER NOT NULL CHECK (revision >= 0),
+    payload_json TEXT NOT NULL CHECK (
+        length(CAST(payload_json AS BLOB)) <= 268435456
+        AND CASE
+            WHEN json_valid(payload_json)
+            THEN json_type(payload_json) = 'object'
+            ELSE 0
+        END
+    ),
+    UNIQUE (source_id, revision)
+) STRICT;
+
+CREATE TABLE playback_state (
+    source_id TEXT PRIMARY KEY CHECK (source_id <> ''),
+    revision INTEGER NOT NULL CHECK (revision >= 0),
+    selected_occurrence_id TEXT CHECK (
+        selected_occurrence_id IS NULL OR selected_occurrence_id <> ''
+    ),
+    progress_millis INTEGER NOT NULL CHECK (progress_millis >= 0),
+    FOREIGN KEY (source_id, revision)
+        REFERENCES playback_queues(source_id, revision)
+        ON DELETE NO ACTION
+        DEFERRABLE INITIALLY DEFERRED
+) STRICT;
+"###,
+            )
+            .expect("restore schema 37 Playback tables");
     }
 }

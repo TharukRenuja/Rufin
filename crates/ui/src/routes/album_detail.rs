@@ -402,10 +402,8 @@ impl AlbumDetailVirtualList {
 
         let width = route_content_width(shell).max(1);
         let play = shell
-            .library
-            .selected
-            .borrow()
-            .as_ref()
+            .selected_library()
+            .as_deref()
             .map(|selected| AlbumPlayContext {
                 source_id: selected.source_id.clone(),
                 source_session_epoch: selected.source_session_epoch,
@@ -1157,9 +1155,7 @@ pub(crate) fn album_detail_cover_tile(
     });
 
     if let Some(favorite) = controls.favorite.as_ref() {
-        shell
-            .favorites
-            .register_button(album_favorite_key(&album.album.id), favorite);
+        shell.register_favorite_button(album_favorite_key(&album.album.id), favorite);
         let favorite_shell = Rc::clone(shell);
         let album_id = album.album.id.clone();
         favorite.connect_clicked(move |button| {
@@ -1332,9 +1328,7 @@ pub(crate) fn album_detail_track_cell(
         LibraryField::Favorite => {
             let button = favorite_icon_button("Favorite track");
             set_favorite_button_active(&button, track.favorite);
-            shell
-                .favorites
-                .register_button(track_favorite_key(&track.id), &button);
+            shell.register_favorite_button(track_favorite_key(&track.id), &button);
             let favorite_shell = Rc::clone(shell);
             let track_id = track.id.clone();
             button.connect_clicked(move |button| {

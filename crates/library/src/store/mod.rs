@@ -23,10 +23,10 @@ use crate::{
     LyricsCacheAuthority, LyricsCacheInput, LyricsCacheKey, LyricsCacheTrim, LyricsCacheWrite,
     MusicFolder, MusicFolderId, NewScrobble, PendingFavorite, PendingScrobble, PendingScrobbleId,
     PlaybackCheckpoint, PlaybackLoad, PlaybackOccurrenceId, PlaybackProgressUpdate,
-    PlaybackQueueSnapshot, PlaybackState, PlaybackStateUpdate, PlaybackWriteOutcome, Playlist,
-    PlaylistEntry, PlaylistId, PlaylistSnapshot, ProviderFreshness, RecentPlay, ScrobbleService,
-    SmartPlaylistBuiltin, SmartPlaylistId, SmartPlaylistRecord, SourceId, Track, TrackActivity,
-    TrackData, TrackId, TrackRelations,
+    PlaybackQueueRowsSnapshot, PlaybackState, PlaybackStateUpdate, PlaybackTraversalUpdate,
+    PlaybackWriteOutcome, Playlist, PlaylistEntry, PlaylistId, PlaylistSnapshot, ProviderFreshness,
+    RecentPlay, ScrobbleService, SmartPlaylistBuiltin, SmartPlaylistId, SmartPlaylistRecord,
+    SourceId, Track, TrackActivity, TrackData, TrackId, TrackRelations,
     favorites::FavoriteValue,
     items::color_seed,
     loaded::{ItemReplacement, LocalFavoriteTransfer, LocalFavoriteUpdate},
@@ -482,6 +482,13 @@ impl StoreLane {
         update: PlaybackStateUpdate,
     ) -> StoreResult<PlaybackWriteOutcome> {
         self.execute(move |worker| worker.update_playback_state(&update))
+    }
+
+    pub(crate) fn replace_playback_traversal(
+        &self,
+        update: PlaybackTraversalUpdate,
+    ) -> StoreResult<PlaybackWriteOutcome> {
+        self.execute(move |worker| worker.replace_playback_traversal(&update))
     }
 
     pub(crate) fn update_playback_progress(
@@ -1903,10 +1910,16 @@ impl Worker {
         let queue = self
             .connection
             .query_row(
-                "SELECT revision, payload_json
+                "SELECT revision, rows_json, traversal_json
                  FROM playback_queues WHERE source_id = ?1",
                 [source_id.as_str()],
-                |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?)),
+                |row| {
+                    Ok((
+                        row.get::<_, i64>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, String>(2)?,
+                    ))
+                },
             )
             .optional()?;
         let state = self
@@ -1925,7 +1938,7 @@ impl Worker {
                 },
             )
             .optional()?;
-        let ((revision, payload), state) = match (queue, state) {
+        let ((revision, rows, traversal), state) = match (queue, state) {
             (Some(queue), Some(state)) => (queue, state),
             (None, None) => return Ok(PlaybackLoad::Missing),
             _ => {
@@ -1938,11 +1951,12 @@ impl Worker {
             if revision != state_revision {
                 return None;
             }
-            let queue = serde_json::from_str::<PlaybackQueueSnapshot>(&payload).ok()?;
+            let rows = serde_json::from_str::<PlaybackQueueRowsSnapshot>(&rows).ok()?;
+            let traversal = serde_json::from_str::<Vec<PlaybackOccurrenceId>>(&traversal).ok()?;
             let checkpoint = PlaybackCheckpoint {
                 source_id: source_id.clone(),
                 revision: u64::try_from(revision).ok()?,
-                queue,
+                queue: rows.with_traversal(traversal),
                 state: PlaybackState {
                     selected: selected.map(PlaybackOccurrenceId::new),
                     progress_millis: u64::try_from(progress_millis).ok()?,
@@ -1977,7 +1991,8 @@ impl Worker {
         if current.is_some_and(|current| current >= revision) {
             return Ok(PlaybackWriteOutcome::Stale);
         }
-        let payload = serde_json::to_string(&checkpoint.queue)?;
+        let rows = serde_json::to_string(&checkpoint.queue.rows())?;
+        let traversal = serde_json::to_string(&checkpoint.queue.traversal)?;
         let selected = checkpoint
             .state
             .selected
@@ -1988,13 +2003,14 @@ impl Worker {
         let transaction = self.connection.transaction()?;
         transaction.execute(
             "INSERT INTO playback_queues(
-                source_id, revision, payload_json
-             ) VALUES (?1, ?2, ?3)
+                source_id, revision, rows_json, traversal_json
+             ) VALUES (?1, ?2, ?3, ?4)
              ON CONFLICT(source_id)
              DO UPDATE SET
                 revision = excluded.revision,
-                payload_json = excluded.payload_json",
-            params![checkpoint.source_id.as_str(), revision, payload],
+                rows_json = excluded.rows_json,
+                traversal_json = excluded.traversal_json",
+            params![checkpoint.source_id.as_str(), revision, rows, traversal,],
         )?;
         transaction.execute(
             "INSERT INTO playback_state(
@@ -2007,6 +2023,81 @@ impl Worker {
                 progress_millis = excluded.progress_millis",
             params![checkpoint.source_id.as_str(), revision, selected, progress,],
         )?;
+        transaction.commit()?;
+        Ok(PlaybackWriteOutcome::Applied)
+    }
+
+    fn replace_playback_traversal(
+        &mut self,
+        update: &PlaybackTraversalUpdate,
+    ) -> StoreResult<PlaybackWriteOutcome> {
+        if update.revision <= update.expected_revision {
+            return Ok(PlaybackWriteOutcome::Stale);
+        }
+        let expected_revision =
+            i64::try_from(update.expected_revision).map_err(|_| StoreError::IntegerRange)?;
+        let revision = i64::try_from(update.revision).map_err(|_| StoreError::IntegerRange)?;
+        let progress =
+            i64::try_from(update.state.progress_millis).map_err(|_| StoreError::IntegerRange)?;
+        let traversal_json = serde_json::to_string(&update.traversal)?;
+        let transaction = self.connection.transaction()?;
+        let rows_json = transaction
+            .query_row(
+                "SELECT rows_json
+                 FROM playback_queues
+                 WHERE source_id = ?1 AND revision = ?2",
+                params![update.source_id.as_str(), expected_revision],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()?;
+        let Some(rows_json) = rows_json else {
+            transaction.rollback()?;
+            return Ok(PlaybackWriteOutcome::Stale);
+        };
+        let rows = serde_json::from_str::<PlaybackQueueRowsSnapshot>(&rows_json)?;
+        crate::playback_state::validate_queue_parts(
+            &rows.occurrences,
+            &rows.fallback_tracks,
+            &update.traversal,
+            update.state.selected.as_ref(),
+        )
+        .map_err(|value| StoreError::InvalidValue {
+            kind: "Playback traversal",
+            value,
+        })?;
+        let queue_changed = transaction.execute(
+            "UPDATE playback_queues
+             SET revision = ?3, traversal_json = ?4
+             WHERE source_id = ?1 AND revision = ?2",
+            params![
+                update.source_id.as_str(),
+                expected_revision,
+                revision,
+                traversal_json,
+            ],
+        )?;
+        let state_changed = transaction.execute(
+            "UPDATE playback_state
+             SET revision = ?3,
+                 selected_occurrence_id = ?4,
+                 progress_millis = ?5
+             WHERE source_id = ?1 AND revision = ?2",
+            params![
+                update.source_id.as_str(),
+                expected_revision,
+                revision,
+                update
+                    .state
+                    .selected
+                    .as_ref()
+                    .map(PlaybackOccurrenceId::as_str),
+                progress,
+            ],
+        )?;
+        if (queue_changed, state_changed) != (1, 1) {
+            transaction.rollback()?;
+            return Ok(PlaybackWriteOutcome::Stale);
+        }
         transaction.commit()?;
         Ok(PlaybackWriteOutcome::Applied)
     }

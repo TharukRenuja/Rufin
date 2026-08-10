@@ -16,9 +16,7 @@ use localization::msgid;
 use super::cards;
 use super::collections::{CollectionTableProjection, album_table};
 use super::grid_cells::{AlbumGridCell, ReusableCollectionGridCell, collection_grid_column_count};
-use super::library_fields::{
-    COLLECTION_GRID_MAX_CARD_WIDTH, COLLECTION_GRID_MIN_CARD_WIDTH, album_matches_query,
-};
+use super::library_fields::{COLLECTION_GRID_MIN_CARD_WIDTH, album_matches_query};
 use super::models::{replace_albums_in_model, sort_albums};
 use super::release_kind::{AlbumReleaseKind, album_release_kind};
 use super::route_layout::{
@@ -382,7 +380,6 @@ impl ArtistReleaseProjections {
                 AlbumGridCell::new(
                     Rc::clone(&cell_shell),
                     fields,
-                    COLLECTION_GRID_MAX_CARD_WIDTH,
                     Some(grid_playback_context.clone()),
                 )
             });
@@ -398,11 +395,8 @@ impl ArtistReleaseProjections {
             if resize_layout.get() == LibraryLayout::Row {
                 return;
             }
-            let next = collection_grid_column_count(
-                width.saturating_sub(PRIMARY_ROUTE_HORIZONTAL_INSET),
-                COLLECTION_GRID_MIN_CARD_WIDTH,
-                COLLECTION_GRID_MAX_CARD_WIDTH,
-            );
+            let next =
+                collection_grid_column_count(width.saturating_sub(PRIMARY_ROUTE_HORIZONTAL_INSET));
             if resize_columns.replace(next) != next {
                 for section in resize_sections.iter() {
                     section.refresh_body();

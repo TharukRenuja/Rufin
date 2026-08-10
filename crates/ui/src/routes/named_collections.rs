@@ -424,10 +424,8 @@ fn named_collection_title_column(
         bind_shell.set_download_badge_visible(
             &downloaded,
             bind_shell
-                .library
-                .selected
-                .borrow()
-                .as_ref()
+                .selected_library()
+                .as_deref()
                 .is_some_and(|selected| collection.is_downloaded(selected)),
         );
     });
@@ -588,10 +586,8 @@ impl ReusableCollectionGridCell<NamedCollectionItem> for NamedCollectionGridCell
         self.body.set_downloaded(
             &self.shell,
             self.shell
-                .library
-                .selected
-                .borrow()
-                .as_ref()
+                .selected_library()
+                .as_deref()
                 .is_some_and(|selected| item.is_downloaded(selected)),
         );
         *self.current_genre.borrow_mut() = match &item {

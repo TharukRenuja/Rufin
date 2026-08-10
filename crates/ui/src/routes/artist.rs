@@ -882,8 +882,7 @@ impl Shell {
             .expect("artist detail has a Favorite cover control")
             .clone();
         for button in [favorite, hover_favorite] {
-            self.favorites
-                .register_button(artist_favorite_key(&artist.id), &button);
+            self.register_favorite_button(artist_favorite_key(&artist.id), &button);
             let shell = Rc::clone(self);
             let artist_id = artist.id.clone();
             button.connect_clicked(move |button| {

@@ -63,6 +63,7 @@ impl LocalChangeFeed {
         should_stop: &dyn Fn() -> bool,
     ) -> SourceResult<()> {
         let (messages, receiver) = mpsc::channel();
+        let listener = std::thread::current();
         let mut watcher = notify::recommended_watcher(move |event: notify::Result<Event>| {
             let message = match event {
                 Ok(event) if !matches!(event.kind, EventKind::Access(_)) => {
@@ -71,7 +72,9 @@ impl LocalChangeFeed {
                 Ok(_) => return,
                 Err(error) => FeedMessage::Failed(error.to_string()),
             };
-            let _ = messages.send(message);
+            if messages.send(message).is_ok() {
+                listener.unpark();
+            }
         })
         .map_err(feed_error)?;
 
@@ -97,21 +100,22 @@ impl LocalChangeFeed {
 
         let mut retry_failed_roots_at = Instant::now() + FAILED_ROOT_RETRY;
         while !should_stop() {
-            match receiver.recv_timeout(POLL_INTERVAL) {
-                Ok(FeedMessage::Event(event)) => {
+            match wait_for_message(&receiver, POLL_INTERVAL, should_stop) {
+                FeedWait::Message(FeedMessage::Event(event)) => {
                     let mut evidence = event_evidence(event);
                     loop {
-                        match receiver.recv_timeout(DEBOUNCE) {
-                            Ok(FeedMessage::Event(event)) => {
+                        match wait_for_message(&receiver, DEBOUNCE, should_stop) {
+                            FeedWait::Message(FeedMessage::Event(event)) => {
                                 evidence
                                     .merge(event_evidence(event))
                                     .expect("Local watcher emitted a non-Local change");
                             }
-                            Ok(FeedMessage::Failed(error)) => {
+                            FeedWait::Message(FeedMessage::Failed(error)) => {
                                 return Err(SourceError::Other(error));
                             }
-                            Err(mpsc::RecvTimeoutError::Timeout) => break,
-                            Err(mpsc::RecvTimeoutError::Disconnected) => {
+                            FeedWait::TimedOut => break,
+                            FeedWait::Stopped => return Ok(()),
+                            FeedWait::Disconnected => {
                                 return Err(SourceError::Other(
                                     "Local music watcher disconnected.".to_string(),
                                 ));
@@ -122,9 +126,12 @@ impl LocalChangeFeed {
                         return Ok(());
                     }
                 }
-                Ok(FeedMessage::Failed(error)) => return Err(SourceError::Other(error)),
-                Err(mpsc::RecvTimeoutError::Timeout) => {}
-                Err(mpsc::RecvTimeoutError::Disconnected) => {
+                FeedWait::Message(FeedMessage::Failed(error)) => {
+                    return Err(SourceError::Other(error));
+                }
+                FeedWait::TimedOut => {}
+                FeedWait::Stopped => return Ok(()),
+                FeedWait::Disconnected => {
                     return Err(SourceError::Other(
                         "Local music watcher disconnected.".to_string(),
                     ));
@@ -135,6 +142,9 @@ impl LocalChangeFeed {
                 let mut still_failed = Vec::new();
                 let mut recovered = false;
                 for root in failed_roots.drain(..) {
+                    if should_stop() {
+                        return Ok(());
+                    }
                     match watcher.watch(&root, RecursiveMode::Recursive) {
                         Ok(()) => recovered = true,
                         Err(error) => {
@@ -161,7 +171,7 @@ fn wait_before_retry(delay: Duration, should_stop: &dyn Fn() -> bool) -> bool {
         if now >= deadline {
             return true;
         }
-        std::thread::sleep(POLL_INTERVAL.min(deadline.saturating_duration_since(now)));
+        std::thread::park_timeout(POLL_INTERVAL.min(deadline.saturating_duration_since(now)));
     }
     false
 }
@@ -169,6 +179,36 @@ fn wait_before_retry(delay: Duration, should_stop: &dyn Fn() -> bool) -> bool {
 enum FeedMessage {
     Event(Event),
     Failed(String),
+}
+
+enum FeedWait {
+    Message(FeedMessage),
+    TimedOut,
+    Stopped,
+    Disconnected,
+}
+
+fn wait_for_message(
+    receiver: &mpsc::Receiver<FeedMessage>,
+    timeout: Duration,
+    should_stop: &dyn Fn() -> bool,
+) -> FeedWait {
+    let deadline = Instant::now() + timeout;
+    loop {
+        if should_stop() {
+            return FeedWait::Stopped;
+        }
+        match receiver.try_recv() {
+            Ok(message) => return FeedWait::Message(message),
+            Err(mpsc::TryRecvError::Disconnected) => return FeedWait::Disconnected,
+            Err(mpsc::TryRecvError::Empty) => {}
+        }
+        let now = Instant::now();
+        if now >= deadline {
+            return FeedWait::TimedOut;
+        }
+        std::thread::park_timeout(deadline.saturating_duration_since(now));
+    }
 }
 
 fn ordered_roots(roots: Vec<PathBuf>) -> Vec<PathBuf> {

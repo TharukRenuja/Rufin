@@ -5,13 +5,13 @@ use std::rc::Rc;
 use adw::prelude::*;
 use library::{
     MetadataChange, MetadataDraft, MetadataEdit, MetadataError, MetadataField, MetadataItemId,
-    MetadataScope, MetadataValues,
+    MetadataScope, MetadataValues, SourceId,
 };
 use localization::{msgid, tr, trn_with};
+use playback::SourceSessionEpoch;
 use tracing::warn;
 
 use crate::layout::{large_popup_content_height, large_popup_content_width};
-use crate::preferences::dialogs::popup::present_light_dismiss_dialog;
 use crate::preferences::source::field_layout::{
     compact_field_row_group, install_compact_field_row_responsiveness_at, style_compact_field_row,
 };
@@ -23,38 +23,68 @@ const EDITOR_FIELD_STACK_WIDTH: i32 = 520;
 const FIELD_COLUMN_SPACING: i32 = 18;
 const FIELD_ROW_SPACING: i32 = 14;
 
-pub(crate) fn present_metadata_dialog(shell: &Rc<Shell>, item_id: MetadataItemId) {
-    let selected = shell.library.selected.borrow().clone();
-    let Some(selected) = selected else {
-        return;
-    };
-    present_metadata_dialog_for_selected(shell, selected, item_id);
+#[derive(Clone)]
+struct MetadataSource {
+    source_id: SourceId,
+    source_session_epoch: SourceSessionEpoch,
 }
 
-fn present_metadata_dialog_for_selected(
+impl MetadataSource {
+    fn new(selected: &crate::runtime::SelectedLibrary) -> Self {
+        Self {
+            source_id: selected.source_id.clone(),
+            source_session_epoch: selected.source_session_epoch,
+        }
+    }
+
+    fn current(&self, shell: &Shell) -> Option<crate::runtime::SelectedLibrary> {
+        shell
+            .selected_library()
+            .as_deref()
+            .filter(|selected| {
+                selected.source_id == self.source_id
+                    && selected.source_session_epoch == self.source_session_epoch
+            })
+            .cloned()
+    }
+}
+
+pub(crate) fn present_metadata_dialog(shell: &Rc<Shell>, item_id: MetadataItemId) {
+    let source = shell.selected_library().as_deref().map(MetadataSource::new);
+    let Some(source) = source else {
+        return;
+    };
+    present_metadata_dialog_for_source(shell, source, item_id);
+}
+
+fn present_metadata_dialog_for_source(
     shell: &Rc<Shell>,
-    selected: crate::runtime::SelectedLibrary,
+    source: MetadataSource,
     item_id: MetadataItemId,
 ) {
-    let still_selected = shell
-        .library
-        .selected
-        .borrow()
-        .as_ref()
-        .is_some_and(|current| {
-            current.source_id == selected.source_id
-                && current.source_session_epoch == selected.source_session_epoch
-        });
-    if !still_selected {
+    let Some(selected) = source.current(shell) else {
         return;
-    }
+    };
     let receiver = selected.operations.metadata(item_id.clone());
-    let shell = Rc::clone(shell);
+    let shell = Rc::downgrade(shell);
     gtk::glib::spawn_future_local(async move {
-        match receiver.recv().await {
-            Ok(Ok(draft)) => build_dialog(&shell, selected, draft),
+        let response = receiver.recv().await;
+        let Some(shell) = shell.upgrade() else {
+            return;
+        };
+        let Some(selected) = source.current(&shell) else {
+            return;
+        };
+        match response {
+            Ok(Ok(draft)) => build_dialog(&shell, source, draft),
             Ok(Err(MetadataError::LocalAccessRequired { source_path })) => {
-                present_local_access_recovery(&shell, selected, item_id, source_path.as_str());
+                present_local_access_recovery(
+                    &shell,
+                    source,
+                    selected,
+                    item_id,
+                    source_path.as_str(),
+                );
             }
             Ok(Err(error)) => present_metadata_error(&shell, &error.to_string()),
             Err(_) => {
@@ -66,6 +96,7 @@ fn present_metadata_dialog_for_selected(
 
 fn present_local_access_recovery(
     shell: &Rc<Shell>,
+    source: MetadataSource,
     selected: crate::runtime::SelectedLibrary,
     item_id: MetadataItemId,
     source_path: &str,
@@ -88,8 +119,8 @@ fn present_local_access_recovery(
     let toolbar = adw::ToolbarView::new();
     toolbar.add_top_bar(&header);
 
-    let shell_for_reload = Rc::clone(shell);
-    let selected_for_reload = selected.clone();
+    let shell_for_reload = Rc::downgrade(shell);
+    let source_for_reload = source.clone();
     let item_id_for_reload = item_id.clone();
     let dialog_for_reload = dialog.downgrade();
     let dismissed_for_reload = Rc::clone(&dismissed);
@@ -100,10 +131,16 @@ fn present_local_access_recovery(
         let Some(dialog) = dialog_for_reload.upgrade() else {
             return;
         };
+        let Some(shell) = shell_for_reload.upgrade() else {
+            return;
+        };
+        if source_for_reload.current(&shell).is_none() {
+            return;
+        }
         dialog.force_close();
-        present_metadata_dialog_for_selected(
-            &shell_for_reload,
-            selected_for_reload.clone(),
+        present_metadata_dialog_for_source(
+            &shell,
+            source_for_reload.clone(),
             item_id_for_reload.clone(),
         );
     });
@@ -116,7 +153,7 @@ fn present_local_access_recovery(
     );
     toolbar.set_content(Some(&fields));
     dialog.set_child(Some(&toolbar));
-    present_light_dismiss_dialog(&dialog, &shell.chrome.window);
+    shell.present_selected_dialog(&dialog);
 }
 
 #[derive(Default)]
@@ -132,7 +169,7 @@ struct MetadataRow {
     undo: gtk::Button,
 }
 
-struct EditorState {
+pub(crate) struct EditorState {
     draft: MetadataDraft,
     rows: MetadataRows,
     dialog: adw::Dialog,
@@ -144,6 +181,12 @@ struct EditorState {
     saving: Cell<bool>,
     identifying: Cell<bool>,
     identified_edits: RefCell<HashMap<MetadataField, IdentifiedEdit>>,
+}
+
+impl EditorState {
+    pub(crate) fn dialog(&self) -> &adw::Dialog {
+        &self.dialog
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -178,14 +221,10 @@ fn present_metadata_error(shell: &Rc<Shell>, message: &str) {
     toolbar.add_top_bar(&header);
     toolbar.set_content(Some(&message));
     dialog.set_child(Some(&toolbar));
-    present_light_dismiss_dialog(&dialog, &shell.chrome.window);
+    shell.present_selected_dialog(&dialog);
 }
 
-fn build_dialog(
-    shell: &Rc<Shell>,
-    selected: crate::runtime::SelectedLibrary,
-    draft: MetadataDraft,
-) {
+fn build_dialog(shell: &Rc<Shell>, source: MetadataSource, draft: MetadataDraft) {
     let dialog = adw::Dialog::builder()
         .title(tr("Edit metadata"))
         .content_width(large_popup_content_width(EDITOR_WIDTH))
@@ -271,10 +310,11 @@ fn build_dialog(
     });
     connect_field_changes(&state);
     connect_cancel(&state);
-    connect_identify(selected.clone(), &state);
-    connect_save(selected, &state);
+    connect_identify(shell, source.clone(), &state);
+    connect_save(shell, source, &state);
     refresh_save_state(&state);
-    present_light_dismiss_dialog(&dialog, &shell.chrome.window);
+    shell.own_selected_metadata_editor(Rc::clone(&state));
+    shell.present_selected_dialog(&dialog);
 }
 
 #[derive(Clone, Copy)]
@@ -497,8 +537,11 @@ fn connect_field_changes(state: &Rc<EditorState>) {
     for metadata_row in &state.rows.fields {
         let field = metadata_row.field;
         let row = metadata_row.entry.clone();
-        let state = Rc::clone(state);
+        let state = Rc::downgrade(state);
         row.connect_changed(move |_| {
+            let Some(state) = state.upgrade() else {
+                return;
+            };
             state.rows.touched.borrow_mut().insert(field);
             refresh_identify_undo_field(&state, field);
             refresh_save_state(&state);
@@ -507,8 +550,11 @@ fn connect_field_changes(state: &Rc<EditorState>) {
     for metadata_row in &state.rows.fields {
         let field = metadata_row.field;
         let undo = metadata_row.undo.clone();
-        let state = Rc::clone(state);
+        let state = Rc::downgrade(state);
         undo.connect_clicked(move |_| {
+            let Some(state) = state.upgrade() else {
+                return;
+            };
             let edit = state.identified_edits.borrow_mut().remove(&field);
             if let (Some(row), Some(edit)) = (state.rows.entry(field), edit) {
                 row.set_text(&edit.original);
@@ -523,8 +569,12 @@ fn connect_field_changes(state: &Rc<EditorState>) {
         });
     }
     if let Some(row) = &state.rows.lock_data {
-        let state = Rc::clone(state);
-        row.connect_active_notify(move |_| refresh_save_state(&state));
+        let state = Rc::downgrade(state);
+        row.connect_active_notify(move |_| {
+            if let Some(state) = state.upgrade() {
+                refresh_save_state(&state);
+            }
+        });
     }
 }
 
@@ -631,10 +681,14 @@ fn connect_cancel(state: &Rc<EditorState>) {
     });
 }
 
-fn connect_save(selected: crate::runtime::SelectedLibrary, state: &Rc<EditorState>) {
-    let source = selected.operations.clone();
-    let state_for_save = Rc::clone(state);
+fn connect_save(shell: &Rc<Shell>, source: MetadataSource, state: &Rc<EditorState>) {
+    let shell = Rc::downgrade(shell);
+    let state_for_save = Rc::downgrade(state);
     state.save.connect_clicked(move |_| {
+        let (Some(shell), Some(state_for_save)) = (shell.upgrade(), state_for_save.upgrade())
+        else {
+            return;
+        };
         let edit = match metadata_edit(&state_for_save.draft, &state_for_save.rows) {
             Ok(edit) if !edit.changes.is_empty() => edit,
             Ok(_) => return,
@@ -651,10 +705,18 @@ fn connect_save(selected: crate::runtime::SelectedLibrary, state: &Rc<EditorStat
             .rows
             .set_sensitive(false, &state_for_save.draft.editing);
         state_for_save.save.set_label(&tr("Saving..."));
-        let receiver = source.edit_metadata(edit);
-        let state = Rc::clone(&state_for_save);
+        let Some(selected) = source.current(&shell) else {
+            state_for_save.dialog.force_close();
+            return;
+        };
+        let receiver = selected.operations.edit_metadata(edit);
+        let state = Rc::downgrade(&state_for_save);
         gtk::glib::spawn_future_local(async move {
-            match receiver.recv().await {
+            let response = receiver.recv().await;
+            let Some(state) = state.upgrade() else {
+                return;
+            };
+            match response {
                 Ok(Ok(())) => state.dialog.force_close(),
                 Ok(Err(error @ MetadataError::SavedRefreshFailed(_))) => {
                     finish_committed_save(&state, &error.to_string())
@@ -668,10 +730,15 @@ fn connect_save(selected: crate::runtime::SelectedLibrary, state: &Rc<EditorStat
     });
 }
 
-fn connect_identify(selected: crate::runtime::SelectedLibrary, state: &Rc<EditorState>) {
-    let source = selected.operations.clone();
-    let state_for_identify = Rc::clone(state);
+fn connect_identify(shell: &Rc<Shell>, source: MetadataSource, state: &Rc<EditorState>) {
+    let shell = Rc::downgrade(shell);
+    let state_for_identify = Rc::downgrade(state);
     state.identify.connect_clicked(move |_| {
+        let (Some(shell), Some(state_for_identify)) =
+            (shell.upgrade(), state_for_identify.upgrade())
+        else {
+            return;
+        };
         let values = identification_values(&state_for_identify);
         if !identification_available(
             &state_for_identify.draft.item_id,
@@ -690,14 +757,22 @@ fn connect_identify(selected: crate::runtime::SelectedLibrary, state: &Rc<Editor
         state_for_identify
             .rows
             .set_sensitive(false, &state_for_identify.draft.editing);
-        let receiver = source.identify_metadata(
+        let Some(selected) = source.current(&shell) else {
+            state_for_identify.dialog.force_close();
+            return;
+        };
+        let receiver = selected.operations.identify_metadata(
             state_for_identify.draft.item_id.clone(),
             state_for_identify.draft.editing.clone(),
             values,
         );
-        let state = Rc::clone(&state_for_identify);
+        let state = Rc::downgrade(&state_for_identify);
         gtk::glib::spawn_future_local(async move {
-            match receiver.recv().await {
+            let response = receiver.recv().await;
+            let Some(state) = state.upgrade() else {
+                return;
+            };
+            match response {
                 Ok(Ok(Some(values))) => {
                     apply_identification(&state.rows, &state.draft.editing, &values);
                     remember_identified_changes(&state, &before, &touched_before);

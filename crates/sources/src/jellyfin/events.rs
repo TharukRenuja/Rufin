@@ -72,16 +72,13 @@ impl JellyfinSource {
 
     pub(crate) async fn listen_library_changes(
         &self,
-        catch_up: bool,
+        on_ready: &mut (dyn FnMut() -> bool + Send),
+        on_gap: &mut (dyn FnMut() -> bool + Send),
         on_change: &mut (dyn FnMut(ObservedSourceChange) -> bool + Send),
     ) -> SourceResult<()> {
         let mut delay = FEED_RETRY_MIN;
-        let mut reconnecting = false;
         loop {
-            let keep_listening = match self
-                .listen_library_changes_once(catch_up || reconnecting, on_change)
-                .await
-            {
+            let keep_listening = match self.listen_library_changes_once(on_ready, on_change).await {
                 Ok(keep_listening) => keep_listening,
                 Err(error) => {
                     warn!(%error, "Jellyfin library change feed disconnected");
@@ -91,7 +88,9 @@ impl JellyfinSource {
             if !keep_listening {
                 return Ok(());
             }
-            reconnecting = true;
+            if !on_gap() {
+                return Ok(());
+            }
             sleep(delay).await;
             delay = delay.saturating_mul(2).min(FEED_RETRY_MAX);
         }
@@ -99,11 +98,11 @@ impl JellyfinSource {
 
     async fn listen_library_changes_once(
         &self,
-        catch_up: bool,
+        on_ready: &mut (dyn FnMut() -> bool + Send),
         on_change: &mut (dyn FnMut(ObservedSourceChange) -> bool + Send),
     ) -> SourceResult<bool> {
         let mut socket = self.connect_library_socket().await?;
-        if catch_up && !on_change(ObservedSourceChange::full()) {
+        if !on_ready() {
             return Ok(false);
         }
         let mut keep_alive = interval(KEEP_ALIVE_INTERVAL);

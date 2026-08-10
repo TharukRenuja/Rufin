@@ -46,8 +46,24 @@ pub(crate) struct PlaylistPickerHandle {
     can_create: bool,
 }
 
+#[derive(Default)]
 pub(crate) struct PlaylistPickerState {
     pub(crate) active: RefCell<Option<PlaylistPickerHandle>>,
+}
+
+impl PlaylistPickerState {
+    fn close_active(&self) {
+        let Some(handle) = self.active.borrow_mut().take() else {
+            return;
+        };
+        close_context_surface(&handle.list);
+    }
+}
+
+impl Drop for PlaylistPickerState {
+    fn drop(&mut self) {
+        self.close_active();
+    }
 }
 
 #[derive(Clone)]
@@ -71,17 +87,12 @@ impl PlaylistSourceIdentity {
     }
 
     fn is_current(&self, shell: &Shell) -> bool {
-        shell
-            .library
-            .selected
-            .borrow()
-            .as_ref()
-            .is_some_and(|selected| {
-                selected.source_id == self.source_id
-                    && selected.source_session_epoch == self.source_session_epoch
-                    && selected.music_folder_id == self.music_folder_id
-                    && Arc::as_ptr(&selected.library) as usize == self.loaded_instance
-            })
+        shell.selected_library().as_deref().is_some_and(|selected| {
+            selected.source_id == self.source_id
+                && selected.source_session_epoch == self.source_session_epoch
+                && selected.music_folder_id == self.music_folder_id
+                && Arc::as_ptr(&selected.library) as usize == self.loaded_instance
+        })
     }
 }
 
@@ -143,9 +154,13 @@ fn present_context_playlist_picker_dialog(
         .content_height(ADD_TO_PLAYLIST_DIALOG_HEIGHT)
         .child(&toolbar)
         .build();
-    let shell_for_close = Rc::clone(shell);
+    let shell_for_close = Rc::downgrade(shell);
     dialog.connect_closed(move |_| {
-        *shell_for_close.playlist_picker.active.borrow_mut() = None;
+        if let Some(shell) = shell_for_close.upgrade()
+            && let Some(picker) = shell.selected_playlist_picker()
+        {
+            picker.active.borrow_mut().take();
+        }
     });
     present_light_dismiss_dialog(&dialog, &shell.chrome.window);
 }
@@ -182,10 +197,8 @@ fn context_playlist_picker(
     skip.set_active(true);
     skip.set_visible(
         shell
-            .library
-            .selected
-            .borrow()
-            .as_ref()
+            .selected_library()
+            .as_deref()
             .is_none_or(|selected| selected.playlist_tracks_can_repeat),
     );
     footer.append(&skip);
@@ -205,10 +218,12 @@ fn context_playlist_picker(
         create: create.clone(),
         search: search.clone(),
         add_button: add_button.clone(),
-        can_create: shell.library.selected.borrow().is_some(),
+        can_create: shell.selected_library().is_some(),
     };
     refresh_playlist_picker_rows(shell, &handle, &context_menu_playlists(shell));
-    *shell.playlist_picker.active.borrow_mut() = Some(handle.clone());
+    if let Some(picker) = shell.selected_playlist_picker() {
+        *picker.active.borrow_mut() = Some(handle.clone());
+    }
 
     let create_for_search = create.downgrade();
     let rows_for_search = Rc::clone(&rows);
@@ -309,9 +324,13 @@ fn context_playlist_picker(
     root
 }
 pub(crate) fn refresh_context_playlist_picker(shell: &Rc<Shell>) {
-    let Some(handle) = shell.playlist_picker.active.borrow().clone() else {
+    let Some(picker) = shell.selected_playlist_picker() else {
         return;
     };
+    let Some(handle) = picker.active.borrow().clone() else {
+        return;
+    };
+    drop(picker);
     if !handle.source.is_current(shell) {
         close_context_surface(&handle.list);
         return;
@@ -517,10 +536,10 @@ pub(crate) fn install_context_menu_picker_action(
 }
 
 pub(crate) fn context_menu_can_add_to_playlist(shell: &Rc<Shell>) -> bool {
-    shell.library.selected.borrow().is_some()
+    shell.selected_library().is_some()
 }
 fn context_menu_playlists(shell: &Rc<Shell>) -> Vec<PlaylistSummary> {
-    let selected = shell.library.selected.borrow();
+    let selected = shell.selected_library();
     let Some(selected) = selected.as_ref() else {
         return Vec::new();
     };

@@ -24,109 +24,71 @@ pub(crate) struct LyricsSearchDialog {
 
 pub(crate) fn connect_lyrics_search_controls(shell: &Rc<Shell>) {
     super::settings::connect_lyrics_settings_controls(shell);
-
-    let save_shell = Rc::clone(shell);
-    shell
-        .right_panel
-        .lyrics_pane
-        .connect_save_clicked(move || save_shell.present_current_lyrics_save_dialog());
-    let lyrics_shell = Rc::clone(shell);
-    shell
-        .right_panel
-        .lyrics_pane
-        .connect_search_clicked(move || {
-            if current_playback_track_id(&lyrics_shell.playback.player.borrow()).is_none() {
-                return;
+    let Some(lyrics) = shell.selected_lyrics() else {
+        return;
+    };
+    for pane in [lyrics.right_pane.clone(), lyrics.fullscreen_pane.clone()] {
+        let weak = Rc::downgrade(shell);
+        pane.connect_save_clicked(move || {
+            if let Some(shell) = weak.upgrade() {
+                shell.present_current_lyrics_save_dialog();
             }
-            lyrics_shell.present_lyrics_search_dialog();
         });
-    let lyrics_shell = Rc::clone(shell);
-    shell
-        .right_panel
-        .lyrics_pane
-        .connect_clear_auto_search_clicked(move || lyrics_shell.suppress_auto_lyrics_for_current());
-    let offset_shell = Rc::clone(shell);
-    shell
-        .right_panel
-        .lyrics_pane
-        .connect_offset_decrease_clicked(move || offset_shell.adjust_lyrics_offset(-50));
-    let offset_shell = Rc::clone(shell);
-    shell
-        .right_panel
-        .lyrics_pane
-        .connect_offset_increase_clicked(move || offset_shell.adjust_lyrics_offset(50));
-    let offset_shell = Rc::clone(shell);
-    shell
-        .right_panel
-        .lyrics_pane
-        .connect_offset_changed(move |value| offset_shell.apply_lyrics_offset_from_text(&value));
-    let offset_shell = Rc::clone(shell);
-    shell
-        .right_panel
-        .lyrics_pane
-        .connect_offset_committed(move |value| offset_shell.set_lyrics_offset_from_text(&value));
-
-    let fullscreen_save_shell = Rc::clone(shell);
-    shell
-        .player_view
-        .fullscreen_player
-        .lyrics_pane
-        .connect_save_clicked(move || fullscreen_save_shell.present_current_lyrics_save_dialog());
-    let fullscreen_lyrics_shell = Rc::clone(shell);
-    shell
-        .player_view
-        .fullscreen_player
-        .lyrics_pane
-        .connect_search_clicked(move || {
-            if current_playback_track_id(&fullscreen_lyrics_shell.playback.player.borrow())
-                .is_none()
-            {
+        let weak = Rc::downgrade(shell);
+        pane.connect_search_clicked(move || {
+            let Some(shell) = weak.upgrade() else {
                 return;
+            };
+            if current_playback_track_id(shell.selected_playback().as_deref()).is_some() {
+                shell.present_lyrics_search_dialog();
             }
-            fullscreen_lyrics_shell.present_lyrics_search_dialog();
         });
-    let fullscreen_lyrics_shell = Rc::clone(shell);
-    shell
-        .player_view
-        .fullscreen_player
-        .lyrics_pane
-        .connect_clear_auto_search_clicked(move || {
-            fullscreen_lyrics_shell.suppress_auto_lyrics_for_current()
+        let weak = Rc::downgrade(shell);
+        pane.connect_clear_auto_search_clicked(move || {
+            if let Some(shell) = weak.upgrade() {
+                shell.suppress_auto_lyrics_for_current();
+            }
         });
-    let offset_shell = Rc::clone(shell);
-    shell
-        .player_view
-        .fullscreen_player
-        .lyrics_pane
-        .connect_offset_decrease_clicked(move || offset_shell.adjust_lyrics_offset(-50));
-    let offset_shell = Rc::clone(shell);
-    shell
-        .player_view
-        .fullscreen_player
-        .lyrics_pane
-        .connect_offset_increase_clicked(move || offset_shell.adjust_lyrics_offset(50));
-    let offset_shell = Rc::clone(shell);
-    shell
-        .player_view
-        .fullscreen_player
-        .lyrics_pane
-        .connect_offset_changed(move |value| offset_shell.apply_lyrics_offset_from_text(&value));
-    let offset_shell = Rc::clone(shell);
-    shell
-        .player_view
-        .fullscreen_player
-        .lyrics_pane
-        .connect_offset_committed(move |value| offset_shell.set_lyrics_offset_from_text(&value));
+        let weak = Rc::downgrade(shell);
+        pane.connect_offset_decrease_clicked(move || {
+            if let Some(shell) = weak.upgrade() {
+                shell.adjust_lyrics_offset(-50);
+            }
+        });
+        let weak = Rc::downgrade(shell);
+        pane.connect_offset_increase_clicked(move || {
+            if let Some(shell) = weak.upgrade() {
+                shell.adjust_lyrics_offset(50);
+            }
+        });
+        let weak = Rc::downgrade(shell);
+        pane.connect_offset_changed(move |value| {
+            if let Some(shell) = weak.upgrade() {
+                shell.apply_lyrics_offset_from_text(&value);
+            }
+        });
+        let weak = Rc::downgrade(shell);
+        pane.connect_offset_committed(move |value| {
+            if let Some(shell) = weak.upgrade() {
+                shell.set_lyrics_offset_from_text(&value);
+            }
+        });
+    }
 }
 
 pub(crate) fn submit_lyrics_search(shell: &Rc<Shell>) {
-    let Some(dialog) = shell.lyrics.search_dialog.borrow().clone() else {
+    let Some(lyrics) = shell.selected_lyrics() else {
         return;
     };
+    let Some(dialog) = lyrics.search_dialog.borrow().clone() else {
+        return;
+    };
+    drop(lyrics);
     if let Some(source) = dialog.search_debounce_source.borrow_mut().take() {
         source.remove();
     }
-    if current_playback_media_id(&shell.playback.player.borrow()).as_ref() != Some(&dialog.media_id)
+    if current_playback_media_id(shell.selected_playback().as_deref()).as_ref()
+        != Some(&dialog.media_id)
     {
         dialog.dialog.close();
         return;

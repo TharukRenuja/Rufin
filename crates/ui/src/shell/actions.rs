@@ -348,7 +348,7 @@ fn add_window_action(
 
 fn seek_by(shell: &Shell, delta_seconds: i32) {
     let Some(seconds) = ({
-        let player = shell.playback.player.borrow();
+        let player = shell.selected_playback();
         let Some(player) = player.as_ref() else {
             return;
         };
@@ -370,10 +370,8 @@ fn seek_by(shell: &Shell, delta_seconds: i32) {
 
 fn adjust_volume(shell: &Rc<Shell>, delta: f64) {
     let Some(volume) = shell
-        .playback
-        .player
-        .borrow()
-        .as_ref()
+        .selected_playback()
+        .as_deref()
         .map(|player| (player.controls.volume + delta).clamp(0.0, 1.0))
     else {
         return;
@@ -383,10 +381,8 @@ fn adjust_volume(shell: &Rc<Shell>, delta: f64) {
 
 fn toggle_shuffle_shortcut(shell: &Shell) {
     let Some(enabled) = shell
-        .playback
-        .player
-        .borrow()
-        .as_ref()
+        .selected_playback()
+        .as_deref()
         .map(|player| !player.controls.shuffle_enabled)
     else {
         return;
@@ -402,10 +398,8 @@ fn toggle_shuffle_shortcut(shell: &Shell) {
 
 fn cycle_repeat_shortcut(shell: &Shell) {
     let Some(repeat_mode) = shell
-        .playback
-        .player
-        .borrow()
-        .as_ref()
+        .selected_playback()
+        .as_deref()
         .map(|player| player.controls.repeat_mode)
     else {
         return;
@@ -421,10 +415,8 @@ fn cycle_repeat_shortcut(shell: &Shell) {
 
 fn toggle_auto_dj_shortcut(shell: &Shell) {
     let Some(enabled) = shell
-        .playback
-        .player
-        .borrow()
-        .as_ref()
+        .selected_playback()
+        .as_deref()
         .map(|player| !player.controls.auto_dj_enabled)
     else {
         return;
@@ -440,10 +432,8 @@ fn toggle_auto_dj_shortcut(shell: &Shell) {
 
 fn toggle_mute_shortcut(shell: &Rc<Shell>) {
     let Some(muted) = shell
-        .playback
-        .player
-        .borrow()
-        .as_ref()
+        .selected_playback()
+        .as_deref()
         .map(|player| !player.controls.muted)
     else {
         return;

@@ -65,8 +65,6 @@ pub(crate) struct CollectionGridProjection {
 #[derive(Clone)]
 struct CollectionGridCacheBound {
     grid: glib::WeakRef<gtk::GridView>,
-    minimum_card_width: i32,
-    maximum_card_width: i32,
 }
 
 impl CollectionGridCacheBound {
@@ -74,13 +72,8 @@ impl CollectionGridCacheBound {
         let Some(grid) = self.grid.upgrade() else {
             return;
         };
-        let maximum_columns = collection_grid_column_limit(
-            allocation_width,
-            grid.margin_start(),
-            grid.margin_end(),
-            self.minimum_card_width,
-            self.maximum_card_width,
-        );
+        let maximum_columns =
+            collection_grid_column_limit(allocation_width, grid.margin_start(), grid.margin_end());
         if grid.max_columns() == maximum_columns {
             return;
         }
@@ -88,31 +81,20 @@ impl CollectionGridCacheBound {
     }
 }
 
-fn collection_grid_column_limit(
-    allocation_width: i32,
-    margin_start: i32,
-    margin_end: i32,
-    minimum_card_width: i32,
-    maximum_card_width: i32,
-) -> u32 {
+fn collection_grid_column_limit(allocation_width: i32, margin_start: i32, margin_end: i32) -> u32 {
     let available_width = allocation_width
         .saturating_sub(margin_start)
         .saturating_sub(margin_end)
         .max(1);
-    collection_grid_column_count(available_width, minimum_card_width, maximum_card_width)
-        .min(u32::MAX as usize) as u32
+    collection_grid_column_count(available_width).min(u32::MAX as usize) as u32
 }
 
-pub(super) fn collection_grid_column_count(
-    available_width: i32,
-    minimum_card_width: i32,
-    maximum_card_width: i32,
-) -> usize {
-    let minimum_slot_width = minimum_card_width
+pub(super) fn collection_grid_column_count(available_width: i32) -> usize {
+    let minimum_slot_width = COLLECTION_GRID_MIN_CARD_WIDTH
         .max(1)
         .saturating_add(COLLECTION_GRID_CARD_MARGIN.saturating_mul(2));
-    let maximum_slot_width = maximum_card_width
-        .max(minimum_card_width)
+    let maximum_slot_width = COLLECTION_GRID_MAX_CARD_WIDTH
+        .max(COLLECTION_GRID_MIN_CARD_WIDTH)
         .max(1)
         .saturating_add(COLLECTION_GRID_CARD_MARGIN.saturating_mul(2));
     let available_width = available_width.max(1);
@@ -190,54 +172,6 @@ impl CollectionGridProjection {
     pub(crate) fn navigate(&self, direction: gtk::DirectionType) -> glib::Propagation {
         (self.navigation)(direction)
     }
-}
-
-pub(super) fn collection_grid<T, Cell, Make, Activate, M>(
-    model: M,
-    fields: &[LibraryField],
-    make_cell: Make,
-    activate: Activate,
-) -> CollectionGridProjection
-where
-    T: Clone + 'static,
-    Cell: ReusableCollectionGridCell<T>,
-    Make: Fn(&[LibraryField]) -> Cell + 'static,
-    Activate: Fn(u32, T) + 'static,
-    M: IsA<gio::ListModel> + Clone + 'static,
-{
-    collection_grid_with_card_widths(
-        model,
-        COLLECTION_GRID_MIN_CARD_WIDTH,
-        COLLECTION_GRID_MAX_CARD_WIDTH,
-        fields,
-        make_cell,
-        activate,
-    )
-}
-
-pub(super) fn collection_grid_with_card_widths<T, Cell, Make, Activate, M>(
-    model: M,
-    minimum_card_width: i32,
-    maximum_card_width: i32,
-    fields: &[LibraryField],
-    make_cell: Make,
-    activate: Activate,
-) -> CollectionGridProjection
-where
-    T: Clone + 'static,
-    Cell: ReusableCollectionGridCell<T>,
-    Make: Fn(&[LibraryField]) -> Cell + 'static,
-    Activate: Fn(u32, T) + 'static,
-    M: IsA<gio::ListModel> + Clone + 'static,
-{
-    collection_grid_with_card_widths_inner(
-        model,
-        minimum_card_width,
-        maximum_card_width,
-        fields,
-        make_cell,
-        activate,
-    )
 }
 
 pub(super) fn fixed_page_collection_row<T, Make, Activate>(
@@ -322,10 +256,8 @@ where
     FixedPageCollectionRow { row, page_size }
 }
 
-fn collection_grid_with_card_widths_inner<T, Cell, Make, Activate, M>(
+pub(super) fn collection_grid<T, Cell, Make, Activate, M>(
     model: M,
-    minimum_card_width: i32,
-    maximum_card_width: i32,
     fields: &[LibraryField],
     make_cell: Make,
     activate: Activate,
@@ -351,7 +283,8 @@ where
             return;
         };
         let cell = make_cell(&setup_fields.borrow());
-        let child = cards::collection_grid_card_inset(&cell.widget(), minimum_card_width);
+        let child =
+            cards::collection_grid_card_inset(&cell.widget(), COLLECTION_GRID_MIN_CARD_WIDTH);
         item.set_child(Some(&child));
         let mut cells = setup_cells.borrow_mut();
         cells.insert(item.as_ptr() as usize, cell);
@@ -435,11 +368,8 @@ where
         }
         glib::Propagation::Stop
     }) as MountedRouteItemNavigation;
-    let grid_weak = grid.downgrade();
     let cache_bound = CollectionGridCacheBound {
-        grid: grid_weak.clone(),
-        minimum_card_width,
-        maximum_card_width,
+        grid: grid.downgrade(),
     };
     let apply_cells = Rc::clone(&cells);
     CollectionGridProjection {
@@ -475,7 +405,7 @@ fn album_playback_target(album_id: AlbumId, context: Option<&str>) -> PlaybackTa
 }
 
 fn play_one_track(shell: &Shell, track: Track, placement: QueuePlacement) {
-    let Some(selected) = shell.library.selected.borrow().as_ref().cloned() else {
+    let Some(selected) = shell.selected_library().as_deref().cloned() else {
         return;
     };
     shell
@@ -492,7 +422,6 @@ pub(super) struct TrackGridCell {
     favorite: gtk::Button,
     current_track: Rc<RefCell<Option<Track>>>,
     current_position: Rc<Cell<u32>>,
-    cover_size: i32,
     field_value: Rc<dyn Fn(u32, &Track, LibraryField) -> DetailLinks>,
 }
 
@@ -501,13 +430,11 @@ impl TrackGridCell {
         shell: Rc<Shell>,
         fields: &[LibraryField],
         play_from_collection: Rc<dyn Fn(u32)>,
-        cover_size: i32,
     ) -> Self {
         Self::new_with_field_value(
             shell,
             fields,
             play_from_collection,
-            cover_size,
             Rc::new(|_, track, field| track_grid_field_links(track, field)),
         )
     }
@@ -516,7 +443,6 @@ impl TrackGridCell {
         shell: Rc<Shell>,
         fields: &[LibraryField],
         play_from_collection: Rc<dyn Fn(u32)>,
-        cover_size: i32,
         field_value: Rc<dyn Fn(u32, &Track, LibraryField) -> DetailLinks>,
     ) -> Self {
         let current_track = Rc::new(RefCell::new(None::<Track>));
@@ -575,7 +501,7 @@ impl TrackGridCell {
         });
 
         let favorite_key_track = Rc::clone(&current_track);
-        shell.favorites.register_dynamic_button(
+        shell.register_dynamic_favorite_button(
             Rc::new(move || {
                 favorite_key_track
                     .borrow()
@@ -618,7 +544,6 @@ impl TrackGridCell {
             favorite,
             current_track,
             current_position,
-            cover_size,
             field_value,
         }
     }
@@ -635,7 +560,7 @@ impl ReusableCollectionGridCell<Track> for TrackGridCell {
             &self.cover_tile,
             artwork,
             stable_seed(track.id.as_str()),
-            self.cover_size,
+            COLLECTION_GRID_MAX_CARD_WIDTH,
             LARGE_COVER_SIZE,
         );
         self.body.bind(&track.title, |field| {
@@ -644,10 +569,8 @@ impl ReusableCollectionGridCell<Track> for TrackGridCell {
         self.body.set_downloaded(
             &self.shell,
             self.shell
-                .library
-                .selected
-                .borrow()
-                .as_ref()
+                .selected_library()
+                .as_deref()
                 .is_some_and(|selected| selected.library.is_downloaded(&track.id).unwrap_or(false)),
         );
         set_favorite_button_active(&self.favorite, track.favorite);
@@ -678,14 +601,12 @@ pub(super) struct AlbumGridCell {
     cover_tile: ArtworkTile,
     favorite: gtk::Button,
     current_album: Rc<RefCell<Option<AlbumSummary>>>,
-    cover_size: i32,
 }
 
 impl AlbumGridCell {
     pub(super) fn new(
         shell: Rc<Shell>,
         fields: &[LibraryField],
-        cover_size: i32,
         playback_context: Option<String>,
     ) -> Self {
         let current_album = Rc::new(RefCell::new(None::<AlbumSummary>));
@@ -772,7 +693,7 @@ impl AlbumGridCell {
         });
 
         let favorite_key_album = Rc::clone(&current_album);
-        shell.favorites.register_dynamic_button(
+        shell.register_dynamic_favorite_button(
             Rc::new(move || {
                 favorite_key_album
                     .borrow()
@@ -821,7 +742,6 @@ impl AlbumGridCell {
             cover_tile,
             favorite,
             current_album,
-            cover_size,
         }
     }
 }
@@ -836,7 +756,7 @@ impl ReusableCollectionGridCell<AlbumSummary> for AlbumGridCell {
             &self.cover_tile,
             ArtworkBinding::album_artwork(&album.artwork),
             album.album.color_seed,
-            self.cover_size,
+            COLLECTION_GRID_MAX_CARD_WIDTH,
             LARGE_COVER_SIZE,
         );
         self.body.bind(&album.album.title, |field| {
@@ -852,10 +772,8 @@ impl ReusableCollectionGridCell<AlbumSummary> for AlbumGridCell {
         self.body.set_downloaded(
             &self.shell,
             self.shell
-                .library
-                .selected
-                .borrow()
-                .as_ref()
+                .selected_library()
+                .as_deref()
                 .is_some_and(|selected| {
                     selected
                         .library
@@ -979,7 +897,7 @@ impl ArtistGridCell {
         });
 
         let favorite_key_artist = Rc::clone(&current_artist);
-        shell.favorites.register_dynamic_button(
+        shell.register_dynamic_favorite_button(
             Rc::new(move || {
                 favorite_key_artist
                     .borrow()
@@ -1046,10 +964,8 @@ impl ReusableCollectionGridCell<ArtistSummary> for ArtistGridCell {
         self.body.set_downloaded(
             &self.shell,
             self.shell
-                .library
-                .selected
-                .borrow()
-                .as_ref()
+                .selected_library()
+                .as_deref()
                 .is_some_and(|selected| {
                     selected
                         .library
@@ -1217,10 +1133,8 @@ impl ReusableCollectionGridCell<PlaylistSummary> for PlaylistGridCell {
         self.body.set_downloaded(
             &self.shell,
             self.shell
-                .library
-                .selected
-                .borrow()
-                .as_ref()
+                .selected_library()
+                .as_deref()
                 .is_some_and(|selected| {
                     selected
                         .library
@@ -1392,10 +1306,8 @@ impl ReusableCollectionGridCell<SmartPlaylistSummary> for SmartPlaylistGridCell 
         self.body.set_downloaded(
             &self.shell,
             self.shell
-                .library
-                .selected
-                .borrow()
-                .as_ref()
+                .selected_library()
+                .as_deref()
                 .is_some_and(|selected| {
                     selected
                         .library
@@ -1734,9 +1646,6 @@ impl CollectionGridFieldCell {
 
 #[cfg(test)]
 mod tests {
-    use super::super::library_fields::{
-        ALBUM_COLLECTION_GRID_MAX_CARD_WIDTH, ALBUM_COLLECTION_GRID_MIN_CARD_WIDTH,
-    };
     use super::*;
 
     fn fixed_slot(store: &gio::ListStore, position: u32) -> FixedPageSlot<u8> {
@@ -1769,101 +1678,16 @@ mod tests {
     }
 
     #[test]
-    fn ordinary_and_album_grids_use_their_card_minimums() {
-        let ordinary_slot = COLLECTION_GRID_MIN_CARD_WIDTH + COLLECTION_GRID_CARD_MARGIN * 2;
-        let ordinary_maximum_slot =
-            COLLECTION_GRID_MAX_CARD_WIDTH + COLLECTION_GRID_CARD_MARGIN * 2;
-        assert_eq!(
-            collection_grid_column_count(
-                435,
-                COLLECTION_GRID_MIN_CARD_WIDTH,
-                COLLECTION_GRID_MAX_CARD_WIDTH,
-            ),
-            3
-        );
-        assert_eq!(
-            collection_grid_column_count(
-                435,
-                ALBUM_COLLECTION_GRID_MIN_CARD_WIDTH,
-                ALBUM_COLLECTION_GRID_MAX_CARD_WIDTH,
-            ),
-            2
-        );
-        assert_eq!(
-            collection_grid_column_count(
-                450,
-                COLLECTION_GRID_MIN_CARD_WIDTH,
-                COLLECTION_GRID_MAX_CARD_WIDTH,
-            ),
-            3
-        );
-        assert_eq!(
-            collection_grid_column_count(
-                496,
-                COLLECTION_GRID_MIN_CARD_WIDTH,
-                COLLECTION_GRID_MAX_CARD_WIDTH,
-            ),
-            3
-        );
-        assert_eq!(
-            collection_grid_column_count(
-                496,
-                ALBUM_COLLECTION_GRID_MIN_CARD_WIDTH,
-                ALBUM_COLLECTION_GRID_MAX_CARD_WIDTH,
-            ),
-            2
-        );
-        assert_eq!(
-            collection_grid_column_count(
-                ordinary_slot * 3 - 1,
-                COLLECTION_GRID_MIN_CARD_WIDTH,
-                COLLECTION_GRID_MAX_CARD_WIDTH,
-            ),
-            2
-        );
-        assert_eq!(
-            collection_grid_column_count(
-                ordinary_maximum_slot * 2 + 1,
-                COLLECTION_GRID_MIN_CARD_WIDTH,
-                COLLECTION_GRID_MAX_CARD_WIDTH,
-            ),
-            3
-        );
-        assert_eq!(
-            collection_grid_column_limit(
-                600,
-                0,
-                0,
-                COLLECTION_GRID_MIN_CARD_WIDTH,
-                COLLECTION_GRID_MAX_CARD_WIDTH,
-            ),
-            3
-        );
-        assert_eq!(
-            collection_grid_column_limit(
-                600,
-                0,
-                0,
-                ALBUM_COLLECTION_GRID_MIN_CARD_WIDTH,
-                ALBUM_COLLECTION_GRID_MAX_CARD_WIDTH,
-            ),
-            2
-        );
-        assert_eq!(
-            collection_grid_column_count(
-                1_600,
-                COLLECTION_GRID_MIN_CARD_WIDTH,
-                COLLECTION_GRID_MAX_CARD_WIDTH,
-            ),
-            8
-        );
-        assert_eq!(
-            collection_grid_column_count(
-                3_200,
-                COLLECTION_GRID_MIN_CARD_WIDTH,
-                COLLECTION_GRID_MAX_CARD_WIDTH,
-            ),
-            16
-        );
+    fn collection_grid_columns_follow_the_shared_card_width_band() {
+        let minimum_slot = COLLECTION_GRID_MIN_CARD_WIDTH + COLLECTION_GRID_CARD_MARGIN * 2;
+        let maximum_slot = COLLECTION_GRID_MAX_CARD_WIDTH + COLLECTION_GRID_CARD_MARGIN * 2;
+        assert_eq!(collection_grid_column_count(435), 3);
+        assert_eq!(collection_grid_column_count(450), 3);
+        assert_eq!(collection_grid_column_count(496), 3);
+        assert_eq!(collection_grid_column_count(minimum_slot * 3 - 1), 2);
+        assert_eq!(collection_grid_column_count(maximum_slot * 2 + 1), 3);
+        assert_eq!(collection_grid_column_limit(600, 0, 0), 3);
+        assert_eq!(collection_grid_column_count(1_600), 8);
+        assert_eq!(collection_grid_column_count(3_200), 16);
     }
 }

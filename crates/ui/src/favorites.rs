@@ -29,32 +29,43 @@ struct DynamicFavoriteControl {
 }
 
 #[derive(Default)]
-pub(crate) struct FavoriteState {
+pub(crate) struct FavoriteSessionState {
     controls: FavoriteControls,
     pending_intents: RefCell<HashMap<FavoriteItemId, bool>>,
 }
 
-impl FavoriteState {
-    pub(crate) fn register_button(&self, key: FavoriteControlKey, button: &gtk::Button) {
-        register_favorite_control(&self.controls, key, button);
+impl Shell {
+    pub(crate) fn register_favorite_button(&self, key: FavoriteControlKey, button: &gtk::Button) {
+        if let Some(session) = self.selected_ui.session() {
+            register_favorite_control(&session.favorites.controls, key, button);
+        }
     }
 
-    pub(crate) fn register_dynamic_button(
+    pub(crate) fn register_dynamic_favorite_button(
         &self,
         key: Rc<dyn Fn() -> Option<FavoriteControlKey>>,
         button: &gtk::Button,
     ) {
-        register_dynamic_favorite_control(&self.controls, key, button);
+        if let Some(session) = self.selected_ui.session() {
+            register_dynamic_favorite_control(&session.favorites.controls, key, button);
+        }
     }
 
-    pub(crate) fn clear_controls(&self) {
-        self.controls.static_controls.borrow_mut().clear();
-        self.controls.dynamic_controls.borrow_mut().clear();
-    }
-
-    pub(crate) fn clear_all(&self) {
-        self.clear_controls();
-        self.pending_intents.borrow_mut().clear();
+    pub(crate) fn clear_favorite_controls(&self) {
+        if let Some(session) = self.selected_ui.session() {
+            session
+                .favorites
+                .controls
+                .static_controls
+                .borrow_mut()
+                .clear();
+            session
+                .favorites
+                .controls
+                .dynamic_controls
+                .borrow_mut()
+                .clear();
+        }
     }
 }
 
@@ -175,10 +186,8 @@ fn icon_image_from_widget(widget: gtk::Widget) -> Option<gtk::Image> {
 impl Shell {
     pub(crate) fn toggle_current_track_favorite(self: &Rc<Self>) {
         let Some((track_id, playback_fallback)) = self
-            .playback
-            .player
-            .borrow()
-            .as_ref()
+            .selected_playback()
+            .as_deref()
             .and_then(|player| player.transport.current.as_ref())
             .map(|entry| (entry.track.id.clone(), entry.track.favorite))
         else {
@@ -201,19 +210,18 @@ impl Shell {
     }
 
     pub(crate) fn projected_item_favorite(&self, item_id: &FavoriteItemId, fallback: bool) -> bool {
-        if let Some(pending) = self
-            .favorites
-            .pending_intents
-            .borrow()
-            .get(item_id)
-            .copied()
-        {
+        if let Some(pending) = self.selected_ui.session().and_then(|session| {
+            session
+                .favorites
+                .pending_intents
+                .borrow()
+                .get(item_id)
+                .copied()
+        }) {
             return pending;
         }
-        self.library
-            .selected
-            .borrow()
-            .as_ref()
+        self.selected_library()
+            .as_deref()
             .and_then(|selected| match item_id {
                 FavoriteItemId::Track(id) => selected
                     .library
@@ -239,7 +247,9 @@ impl Shell {
 
     pub(crate) fn update_visible_favorite_buttons(&self, item_id: &FavoriteItemId, favorite: bool) {
         let key = favorite_control_key(item_id);
-        update_favorite_controls(&self.favorites.controls, &key, favorite);
+        if let Some(session) = self.selected_ui.session() {
+            update_favorite_controls(&session.favorites.controls, &key, favorite);
+        }
     }
 
     pub(crate) fn set_favorite_with_feedback(
@@ -252,10 +262,13 @@ impl Shell {
             return;
         };
         let track_favorite_changed = matches!(item_id, FavoriteItemId::Track(_));
-        self.favorites
-            .pending_intents
-            .borrow_mut()
-            .insert(item_id.clone(), favorite);
+        if let Some(session) = self.selected_ui.session() {
+            session
+                .favorites
+                .pending_intents
+                .borrow_mut()
+                .insert(item_id.clone(), favorite);
+        }
         if let Some(button) = button {
             set_favorite_button_active(button, favorite);
         }
@@ -288,7 +301,10 @@ impl Shell {
     }
 
     fn favorite_response_matches_pending(&self, item_id: &FavoriteItemId, favorite: bool) -> bool {
-        let mut pending = self.favorites.pending_intents.borrow_mut();
+        let Some(session) = self.selected_ui.session() else {
+            return false;
+        };
+        let mut pending = session.favorites.pending_intents.borrow_mut();
         match pending.get(item_id).copied() {
             Some(intent) if intent == favorite => {
                 pending.remove(item_id);

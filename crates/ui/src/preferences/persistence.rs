@@ -27,12 +27,13 @@ impl Shell {
     }
 
     pub(crate) fn reconcile_lyrics_settings_ui(self: &Rc<Self>) {
-        let search_dialog = self
-            .lyrics
-            .search_dialog
-            .borrow()
-            .as_ref()
-            .map(|dialog| dialog.dialog.clone());
+        let search_dialog = self.selected_lyrics().and_then(|lyrics| {
+            lyrics
+                .search_dialog
+                .borrow()
+                .as_ref()
+                .map(|dialog| dialog.dialog.clone())
+        });
         if let Some(dialog) = search_dialog {
             dialog.close();
         }

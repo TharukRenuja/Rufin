@@ -532,47 +532,41 @@ impl Source {
         }
     }
 
-    pub async fn listen_selected_changes(
-        self: Arc<Self>,
+    pub fn listen_local_changes(
+        &self,
         catch_up: bool,
-        on_change: impl FnMut(ObservedSourceChange) -> bool + Send + 'static,
-        should_stop: impl Fn() -> bool + Send + Sync + 'static,
-    ) -> SourceResult<NativeSourceResult<()>> {
-        match &self.implementation {
-            Implementation::Jellyfin(source) => {
-                source.refresh_metadata_editing().await;
-                let mut on_change = on_change;
-                source
-                    .listen_library_changes(catch_up, &mut on_change)
-                    .await
-                    .map(NativeSourceResult::Available)
-            }
-            Implementation::Local(_) => tokio::task::spawn_blocking(move || {
-                let Implementation::Local(source) = &self.implementation else {
-                    unreachable!("selected source implementation changed")
-                };
-                let on_change = std::sync::Mutex::new(on_change);
-                let mut on_ready = |reconnecting| {
-                    let request = feed_needs_catch_up(catch_up, reconnecting);
-                    !request
-                        || on_change
-                            .lock()
-                            .unwrap_or_else(|poisoned| poisoned.into_inner())(
-                            ObservedSourceChange::LocalRescan,
-                        )
-                };
-                let mut on_change = |change| {
-                    on_change
-                        .lock()
-                        .unwrap_or_else(|poisoned| poisoned.into_inner())(change)
-                };
-                source.watch(&mut on_ready, &mut on_change, &should_stop)
-            })
+        on_change: impl FnMut(ObservedSourceChange) -> bool,
+        should_stop: impl Fn() -> bool,
+    ) -> SourceResult<()> {
+        let Implementation::Local(source) = &self.implementation else {
+            return Err(SourceError::InvalidRequest(
+                "the Local change feed belongs to another source",
+            ));
+        };
+        let on_change = std::cell::RefCell::new(on_change);
+        let mut on_ready = |reconnecting| {
+            let request = catch_up || reconnecting;
+            !request || on_change.borrow_mut()(ObservedSourceChange::LocalRescan)
+        };
+        let mut on_change = |change| on_change.borrow_mut()(change);
+        source.watch(&mut on_ready, &mut on_change, &should_stop)
+    }
+
+    pub async fn listen_jellyfin_changes(
+        self: Arc<Self>,
+        mut on_ready: impl FnMut() -> bool + Send + 'static,
+        mut on_gap: impl FnMut() -> bool + Send + 'static,
+        mut on_change: impl FnMut(ObservedSourceChange) -> bool + Send + 'static,
+    ) -> SourceResult<()> {
+        let Implementation::Jellyfin(source) = &self.implementation else {
+            return Err(SourceError::InvalidRequest(
+                "the change feed belongs to another source",
+            ));
+        };
+        source.refresh_metadata_editing().await;
+        source
+            .listen_library_changes(&mut on_ready, &mut on_gap, &mut on_change)
             .await
-            .map_err(|error| SourceError::Other(error.to_string()))?
-            .map(NativeSourceResult::Available),
-            Implementation::OpenSubsonic(_) => Ok(NativeSourceResult::Unavailable),
-        }
     }
 
     pub async fn prepare_change(
@@ -960,10 +954,6 @@ pub(crate) fn require_source_edit(current: &SourceConfiguration, kind: &str) -> 
 
 pub(crate) fn comparable_address(value: &str) -> &str {
     value.trim().trim_end_matches('/')
-}
-
-fn feed_needs_catch_up(catch_up: bool, reconnecting: bool) -> bool {
-    catch_up || reconnecting
 }
 
 pub(crate) fn edited_source_name(requested: &str, current: &str) -> String {

@@ -51,8 +51,8 @@ pub(crate) fn install_source_menu_actions(shell: &Rc<Shell>) {
 
 pub(crate) fn source_submenu(shell: &Rc<Shell>) -> (String, &'static str, gio::Menu) {
     let configured = shell.source.configured.borrow();
-    let selected = shell.library.selected.borrow();
-    let content = source_menu_content(&configured, selected.as_ref());
+    let selected = shell.selected_library();
+    let content = source_menu_content(&configured, selected.as_deref());
     replace_selection_actions(shell, &content);
 
     let menu = gio::Menu::new();
@@ -222,10 +222,8 @@ fn choice_action(name: &str, active: bool, select: impl Fn() + 'static) -> gio::
 fn select_music_folder(shell: &Shell, folder_id: Option<MusicFolderId>) {
     popdown_primary_menu(shell);
     let selected_folder_id = shell
-        .library
-        .selected
-        .borrow()
-        .as_ref()
+        .selected_library()
+        .as_deref()
         .and_then(|selected| selected.music_folder_id.clone());
     if selected_folder_id.as_ref() == folder_id.as_ref() {
         return;

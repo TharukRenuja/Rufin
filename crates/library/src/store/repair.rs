@@ -13,7 +13,7 @@ use rusqlite::types::Value;
 use rusqlite::{Connection, Error as SqliteError, ErrorCode, OpenFlags, params, params_from_iter};
 
 use crate::{
-    PlaybackCheckpoint, PlaybackOccurrenceId, PlaybackQueueSnapshot, PlaybackState, SourceId,
+    PlaybackCheckpoint, PlaybackOccurrenceId, PlaybackQueueRowsSnapshot, PlaybackState, SourceId,
 };
 
 use super::{StoreError, StoreResult, schema};
@@ -400,8 +400,9 @@ fn salvage_playback(
     const FAMILY: &str = "Playback checkpoints";
     let mut statement = match source.prepare(
         "SELECT
-            queue.source_id, queue.revision, queue.payload_json,
-            state.selected_occurrence_id, state.progress_millis
+            queue.source_id, queue.revision, queue.rows_json,
+            queue.traversal_json, state.selected_occurrence_id,
+            state.progress_millis
          FROM playback_queues AS queue
          JOIN playback_state AS state
            ON state.source_id = queue.source_id
@@ -435,18 +436,22 @@ fn salvage_playback(
                 row.get::<_, String>(0)?,
                 row.get::<_, i64>(1)?,
                 row.get::<_, String>(2)?,
-                row.get::<_, Option<String>>(3)?,
-                row.get::<_, i64>(4)?,
+                row.get::<_, String>(3)?,
+                row.get::<_, Option<String>>(4)?,
+                row.get::<_, i64>(5)?,
             ))
         })();
-        let Ok((source_id, revision, payload_json, selected, progress_millis)) = values else {
+        let Ok((source_id, revision, rows_json, traversal_json, selected, progress_millis)) =
+            values
+        else {
             report.skipped_rows += 1;
             continue;
         };
         let checkpoint = playback_checkpoint(
             &source_id,
             revision,
-            &payload_json,
+            &rows_json,
+            &traversal_json,
             selected.as_deref(),
             progress_millis,
         );
@@ -458,9 +463,10 @@ fn salvage_playback(
         let transaction = destination.unchecked_transaction()?;
         let result = transaction
             .execute(
-                "INSERT INTO playback_queues(source_id, revision, payload_json)
-                 VALUES (?1, ?2, ?3)",
-                params![source_id, revision, payload_json],
+                "INSERT INTO playback_queues(
+                    source_id, revision, rows_json, traversal_json
+                 ) VALUES (?1, ?2, ?3, ?4)",
+                params![source_id, revision, rows_json, traversal_json],
             )
             .and_then(|_| {
                 transaction.execute(
@@ -496,17 +502,21 @@ fn salvage_playback(
 fn playback_checkpoint(
     source_id: &str,
     revision: i64,
-    payload_json: &str,
+    rows_json: &str,
+    traversal_json: &str,
     selected: Option<&str>,
     progress_millis: i64,
 ) -> Option<PlaybackCheckpoint> {
     if source_id.is_empty() || selected.is_some_and(str::is_empty) {
         return None;
     }
+    let rows = serde_json::from_str::<PlaybackQueueRowsSnapshot>(rows_json).ok()?;
     let checkpoint = PlaybackCheckpoint {
         source_id: SourceId::new(source_id),
         revision: revision.try_into().ok()?,
-        queue: serde_json::from_str::<PlaybackQueueSnapshot>(payload_json).ok()?,
+        queue: rows.with_traversal(
+            serde_json::from_str::<Vec<PlaybackOccurrenceId>>(traversal_json).ok()?,
+        ),
         state: PlaybackState {
             selected: selected.map(PlaybackOccurrenceId::new),
             progress_millis: progress_millis.try_into().ok()?,

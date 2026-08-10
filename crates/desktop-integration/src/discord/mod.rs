@@ -217,7 +217,15 @@ impl Presence {
             )
         {
             if view.transport.state == TransportStatus::Resolving
-                && matches!(state.artwork, ArtworkState::Pending { .. })
+                && matches!(
+                    &state.artwork,
+                    ArtworkState::Pending { key, .. }
+                        if Some(key) != ArtworkKey::from_view(
+                            view,
+                            &state.lastfm_api_key,
+                            state.settings.link_type,
+                        ).as_ref()
+                )
             {
                 state.artwork = ArtworkState::Empty;
                 self.inner.artwork.clear();
@@ -476,7 +484,9 @@ pub(crate) mod tests {
             .try_recv()
             .unwrap_or_else(|| panic!("first album should request artwork"));
 
-        let second_view = test_view(2, "Album Two", TransportStatus::Playing, 0);
+        let mut second_view = test_view(2, "Album Two", TransportStatus::Resolving, 0);
+        presence.observe(Some(&second_view), false);
+        second_view.transport.state = TransportStatus::Playing;
         presence.observe(Some(&second_view), false);
         first.complete(Ok(Some("https://example.invalid/old.jpg".to_string())));
         let second = requests
@@ -500,6 +510,40 @@ pub(crate) mod tests {
                 .as_ref()
                 .map(|activity| activity.large_image.as_str()),
             Some("https://images.example/new.jpg"),
+        );
+    }
+
+    #[test]
+    fn pending_artwork_follows_the_same_album_to_a_new_run() {
+        let (presence, requests) = Presence::new();
+        let first_view = test_view(1, "Album", TransportStatus::Playing, 0);
+        refresh_presence(&presence, &first_view, "key", 100_000);
+        let request = requests
+            .try_recv()
+            .unwrap_or_else(|| panic!("album should request artwork"));
+
+        let mut second_view = test_view(2, "Album", TransportStatus::Resolving, 0);
+        presence.observe(Some(&second_view), false);
+        second_view.transport.state = TransportStatus::Playing;
+        presence.observe(Some(&second_view), false);
+        assert!(requests.try_recv().is_none());
+
+        request.complete(Ok(Some("https://images.example/cover.jpg".to_string())));
+        let state = presence
+            .inner
+            .state
+            .lock()
+            .expect("presence state lock poisoned");
+        assert_eq!(
+            state.activity.as_ref().map(|activity| activity.run()),
+            Some(RunId::new(2))
+        );
+        assert_eq!(
+            state
+                .activity
+                .as_ref()
+                .map(|activity| activity.large_image.as_str()),
+            Some("https://images.example/cover.jpg")
         );
     }
 

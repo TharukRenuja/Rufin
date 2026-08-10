@@ -281,7 +281,7 @@ where
     }
 
     pub(crate) fn remove(&mut self, id: &Id) -> Option<Value> {
-        let slot = self.by_id.get(id).copied()?;
+        let slot = self.by_id.remove(id)?;
         let removed = self.values[slot.index as usize].take();
         if removed.is_some() {
             self.live -= 1;
@@ -543,6 +543,7 @@ impl Library {
         let activity = input
             .activity
             .into_iter()
+            .filter(|activity| tracks.contains_key(&activity.track_id))
             .map(|activity| (activity.track_id.clone(), activity))
             .collect::<HashMap<_, _>>();
         if home_facts.is_rufin_defined() {
@@ -1083,6 +1084,7 @@ impl Library {
         let mut state = self.write()?;
         let activity = activity
             .into_iter()
+            .filter(|activity| state.tracks.contains_key(&activity.track_id))
             .map(|activity| (activity.track_id.clone(), activity))
             .collect::<HashMap<_, _>>();
         if state.home_facts.is_rufin_defined() {
@@ -1165,7 +1167,8 @@ impl Library {
         recent_play: Option<RecentPlay>,
     ) -> LibraryQueryResult<Option<AcceptedLibraryChange>> {
         let mut state = self.write()?;
-        let previous_activity = state.activity.get(&activity.track_id).cloned();
+        let track_id = activity.track_id.clone();
+        let previous_activity = state.activity.get(&track_id).cloned();
         let activity_changed = previous_activity.as_ref() != Some(&activity);
         let mut recent_changed = false;
         if let Some(recent_play) = recent_play {
@@ -1188,28 +1191,33 @@ impl Library {
                 }
             }
         }
+        let Some(current) = state.tracks.get(&track_id).cloned() else {
+            state.activity.remove(&track_id);
+            return Ok(None);
+        };
         if !activity_changed && !recent_changed {
             return Ok(None);
         }
 
-        let track_id = activity.track_id.clone();
         state.activity.insert(track_id.clone(), activity.clone());
-        let Some(current) = state.tracks.get(&track_id).cloned() else {
-            return Ok(None);
-        };
-        let affected_smart_playlists = crate::smart_playlists::changed_by_activity(
-            &state.smart_playlists,
-            &current,
-            previous_activity.as_ref(),
-            &activity,
-        );
+        let (affected_smart_playlists, smart_playlist_memberships) =
+            crate::smart_playlists::changed_by_activity(
+                &state.smart_playlists,
+                &current,
+                previous_activity.as_ref(),
+                &activity,
+            );
         let mut replacement = current.clone();
         if state.home_facts.is_rufin_defined() {
             apply_track_activity_value(&mut replacement, &activity);
             state.tracks.insert(track_id.clone(), replacement.clone());
         }
-        if activity_changed {
-            crate::download_coverage::rebuild_smart_playlist_download_coverage(&mut state);
+        if activity_changed && !smart_playlist_memberships.is_empty() {
+            crate::download_coverage::replace_smart_playlist_download_memberships(
+                &mut state,
+                &current,
+                &smart_playlist_memberships,
+            );
         }
 
         Ok(Some(AcceptedLibraryChange {
@@ -1737,6 +1745,7 @@ fn apply_item_replacement(
     }
     for track_id in &removed_track_ids {
         state.tracks.remove(track_id);
+        state.activity.remove(track_id);
     }
     let touched_album_ids = albums
         .iter()
@@ -3756,12 +3765,194 @@ fn nonempty_or(value: &str, fallback: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use std::mem::size_of;
+    use std::{collections::HashMap, mem::size_of, sync::Arc};
 
-    use super::TrackSlot;
+    use crate::{
+        HomeFacts, SourceId, Track, TrackData, TrackId, TrackRelations, activity::TrackActivity,
+        home::HomeSessions, store::StoreLane,
+    };
+
+    use super::{ItemReplacement, Library, LibraryInput, LoadedItems, TrackSlot};
+
+    fn track(id: TrackId) -> Track {
+        Track::new(TrackData {
+            id,
+            album_id: None,
+            title: "Test track".to_string(),
+            artist: "Test artist".to_string(),
+            album: "Test album".to_string(),
+            album_artwork: None,
+            year: 2026,
+            release_date: None,
+            date_added: None,
+            last_played: None,
+            play_count: None,
+            user_rating: None,
+            duration_seconds: 180,
+            favorite: false,
+            disc_number: 1,
+            track_number: 1,
+            image_ref: None,
+            local_artwork: None,
+            musicbrainz_recording_id: None,
+            musicbrainz_release_track_id: None,
+            source_path: None,
+            cue: None,
+            source_format: None,
+            comment: None,
+            skip_count: None,
+            bpm: None,
+            relations: TrackRelations::default(),
+        })
+    }
+
+    fn activity(track_id: &TrackId) -> TrackActivity {
+        TrackActivity {
+            track_id: track_id.clone(),
+            play_count: 3,
+            skip_count: 1,
+            last_played: Some("2026-08-09T10:00:00Z".to_string()),
+        }
+    }
+
+    fn library_with(tracks: Vec<Track>, activity: Vec<TrackActivity>) -> Arc<Library> {
+        let mut input = LibraryInput::new(SourceId::new("test:loaded"), 1, 1, [1; 32], None);
+        input.home = Some(HomeFacts::RufinDefined);
+        input.tracks = tracks;
+        input.activity = activity;
+        Library::build(
+            input,
+            StoreLane::memory().expect("open test Store"),
+            Arc::new(HomeSessions::new()),
+        )
+        .expect("build test Library")
+    }
 
     #[test]
     fn loaded_track_slot_is_one_compact_index() {
         assert_eq!(size_of::<TrackSlot>(), size_of::<u32>());
+    }
+
+    #[test]
+    fn removed_item_slots_stay_tombstoned_when_the_id_is_reinserted() {
+        let id = "item".to_string();
+        let mut items = LoadedItems::<String, usize>::from_values(HashMap::new());
+        items.insert(id.clone(), 1);
+        let removed_slot = items.slot(&id).expect("inserted item slot");
+
+        assert_eq!(items.remove(&id), Some(1));
+        assert!(items.slot(&id).is_none());
+        assert!(items.get_slot(removed_slot).is_none());
+
+        items.insert(id.clone(), 2);
+        let replacement_slot = items.slot(&id).expect("replacement item slot");
+        assert_ne!(replacement_slot, removed_slot);
+        assert!(items.get_slot(removed_slot).is_none());
+        assert_eq!(items.get_slot(replacement_slot), Some(&2));
+    }
+
+    #[test]
+    fn activity_snapshots_contain_only_current_tracks() {
+        let current_id = TrackId::new("test:track:current");
+        let missing_id = TrackId::new("test:track:missing");
+        let library = library_with(
+            vec![track(current_id.clone())],
+            vec![activity(&current_id), activity(&missing_id)],
+        );
+
+        {
+            let state = library.read_state().expect("read built Library");
+            assert_eq!(state.activity.len(), 1);
+            assert!(state.activity.contains_key(&current_id));
+            assert!(!state.activity.contains_key(&missing_id));
+        }
+
+        library
+            .replace_activity_snapshot(vec![activity(&missing_id)], Vec::new())
+            .expect("replace activity snapshot");
+        assert!(
+            library
+                .read_state()
+                .expect("read replaced activity snapshot")
+                .activity
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn replacing_activity_does_not_cache_a_missing_track() {
+        let current_id = TrackId::new("test:track:current");
+        let missing_id = TrackId::new("test:track:missing");
+        let library = library_with(vec![track(current_id)], Vec::new());
+
+        assert!(
+            library
+                .replace_track_activity(activity(&missing_id), None)
+                .expect("replace missing Track activity")
+                .is_none()
+        );
+        assert!(
+            library
+                .read_state()
+                .expect("read missing Track activity")
+                .activity
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn activity_sort_changes_do_not_rebuild_smart_playlist_download_coverage() {
+        let track_id = TrackId::new("test:track:activity-sort");
+        let library = library_with(vec![track(track_id.clone())], Vec::new());
+        library
+            .initialize_smart_playlists()
+            .expect("initialize smart playlists");
+        library
+            .replace_track_activity(activity(&track_id), None)
+            .expect("apply initial activity")
+            .expect("initial activity changes smart playlist membership");
+        let initial_writes = library
+            .read_state()
+            .expect("read initial coverage")
+            .download_coverage
+            .smart_playlist_membership_writes();
+        assert!(initial_writes > 0);
+
+        let mut reordered = activity(&track_id);
+        reordered.skip_count += 1;
+        let change = library
+            .replace_track_activity(reordered, None)
+            .expect("apply changed skip count")
+            .expect("skip count changes Most Skipped order");
+        assert!(!change.smart_playlists.is_empty());
+        assert_eq!(
+            library
+                .read_state()
+                .expect("read reordered coverage")
+                .download_coverage
+                .smart_playlist_membership_writes(),
+            initial_writes
+        );
+    }
+
+    #[test]
+    fn removing_a_track_removes_its_current_activity() {
+        let track_id = TrackId::new("test:track:removed");
+        let library = library_with(vec![track(track_id.clone())], vec![activity(&track_id)]);
+
+        library
+            .replace_source_update(
+                ItemReplacement {
+                    removed_tracks: vec![track_id.clone()],
+                    ..ItemReplacement::default()
+                },
+                Vec::new(),
+                Vec::new(),
+                Vec::new(),
+            )
+            .expect("remove Track");
+        let state = library.read_state().expect("read removed Track");
+        assert!(!state.tracks.contains_key(&track_id));
+        assert!(!state.activity.contains_key(&track_id));
     }
 }
