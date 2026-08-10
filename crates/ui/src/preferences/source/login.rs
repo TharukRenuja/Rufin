@@ -19,8 +19,8 @@ use super::{
 };
 use crate::layout::large_popup_content_width;
 use crate::preferences::dialogs::popup::present_light_dismiss_dialog;
+use crate::shell::Shell;
 use crate::shell::actions::text_button;
-use crate::shell::{Shell, chrome::window_close_controls};
 use localization::{msgid, tr, tr_with};
 
 const ADD_SERVER_CLAMP_WIDTH: i32 = 560;
@@ -908,11 +908,7 @@ fn finish_setup_scaffold(
         content.append(&privacy_group);
     }
     let view = scroller.upcast::<gtk::Widget>();
-    if embedded {
-        connect_view_with_close_controls(view)
-    } else {
-        view
-    }
+    view
 }
 
 fn source_choice_selector(
@@ -1539,7 +1535,7 @@ fn local_folder_title(path: &Path) -> String {
 }
 
 pub(super) fn connect_folder_button(
-    window: &adw::ApplicationWindow,
+    window: &gtk::ApplicationWindow,
     button: &gtk::Button,
     row: &adw::ActionRow,
     target: Rc<RefCell<Option<PathBuf>>>,
@@ -1580,7 +1576,7 @@ pub(super) fn connect_folder_button(
 }
 
 fn connect_add_local_folder_button(
-    window: &adw::ApplicationWindow,
+    window: &gtk::ApplicationWindow,
     button: &gtk::Button,
     folders: Rc<RefCell<Vec<PathBuf>>>,
     on_changed: impl Fn() + 'static,
@@ -1623,17 +1619,6 @@ fn replace_add_server_content(content: &gtk::Box, child: gtk::Widget) {
         content.remove(&current);
     }
     content.append(&child);
-}
-
-fn connect_view_with_close_controls(view: gtk::Widget) -> gtk::Widget {
-    let overlay = gtk::Overlay::new();
-    overlay.set_hexpand(true);
-    overlay.set_vexpand(true);
-    overlay.set_child(Some(&view));
-    let controls = window_close_controls();
-    overlay.add_overlay(&controls);
-    overlay.set_measure_overlay(&controls, false);
-    overlay.upcast()
 }
 
 #[cfg(test)]

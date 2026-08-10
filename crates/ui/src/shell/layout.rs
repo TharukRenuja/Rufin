@@ -404,6 +404,9 @@ impl Shell {
         let app_active = presentation.app_active;
         let full_sidebar = resolved.left_sidebar == ResolvedLeftSidebarMode::Full;
         let hidden_sidebar = resolved.left_sidebar == ResolvedLeftSidebarMode::Hidden;
+        self.chrome.window_controls.set_compact_start_alignment(
+            app_active && resolved.left_sidebar == ResolvedLeftSidebarMode::Compact,
+        );
         let overlay_sidebar_width = if hidden_sidebar {
             self.settings
                 .current
@@ -489,7 +492,6 @@ impl Shell {
         set_widget_visible(&self.player_view.player_controls.root, app_active);
 
         if right_visibility_changed || previous_right_visible != right_visible {
-            self.sync_library_toolbar_end_margin();
             self.update_right_panel_button();
             let lyrics_shell = Rc::clone(self);
             glib::idle_add_local_once(move || {

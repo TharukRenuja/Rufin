@@ -359,6 +359,72 @@ row:focus {
   box-shadow: none;
 }
 
+.platform-window-bar {
+  min-height: 30px;
+  padding: 0;
+  background: var(--window-bg-color);
+  border-bottom: 1px solid color-mix(in srgb, var(--window-fg-color) 14%, transparent);
+}
+
+.platform-window-bar-title {
+  margin: 0 8px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.platform-window-bar-action {
+  min-width: 30px;
+  min-height: 30px;
+  padding: 0;
+  margin: 0;
+  border-radius: 0;
+}
+
+.macos-platform-window-bar .platform-window-bar-end {
+  margin-right: 4px;
+}
+
+.windows-platform-window-bar .platform-window-bar-start {
+  margin-left: 4px;
+}
+
+.macos-window-bar-preview-controls {
+  margin-left: 12px;
+}
+
+.macos-window-bar-preview-control {
+  min-width: 12px;
+  min-height: 12px;
+  border-radius: 999px;
+  box-shadow: inset 0 0 0 1px rgb(0 0 0 / 18%);
+}
+
+.macos-window-bar-preview-control.close {
+  background: #ff5f57;
+}
+
+.macos-window-bar-preview-control.minimize {
+  background: #febc2e;
+}
+
+.macos-window-bar-preview-control.maximize {
+  background: #28c840;
+}
+
+.windows-window-bar-preview-control {
+  min-width: 46px;
+  min-height: 30px;
+  font-size: 16px;
+}
+
+.windows-window-bar-preview-control.close {
+  font-size: 20px;
+}
+
+.left-opening-primary-menu arrow.right {
+  -gtk-icon-source: -gtk-icontheme("go-previous-symbolic");
+}
+
 .album-detail-track-cells {
   border-radius: 8px;
 }

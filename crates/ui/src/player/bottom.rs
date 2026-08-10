@@ -522,6 +522,12 @@ impl Shell {
         self.playback.updating_controls.set(true);
 
         if update_identity {
+            let window_title = crate::shell::chrome::playback_window_title(
+                current.map(|entry| entry.track.title.as_str()),
+                current.map(|entry| entry.track.artist.as_str()),
+            );
+            self.chrome.window.set_title(Some(&window_title));
+
             let cover_seed = current
                 .map(|entry| entry.track.duration_seconds)
                 .unwrap_or(42);

@@ -602,7 +602,6 @@ struct SearchRouteProjection {
     library: Arc<Library>,
     music_folder_id: Option<MusicFolderId>,
     search: gtk::SearchEntry,
-    toolbar_controls: gtk::Box,
     status: gtk::Stack,
     error: gtk::Label,
     result_pages: [gtk::Stack; 3],
@@ -689,13 +688,12 @@ impl SearchRouteProjection {
         });
         let controls = gtk::Box::new(gtk::Orientation::Horizontal, 0);
         controls.append(&controls_stack);
-        shell.set_current_library_toolbar_controls(&controls);
         let toolbar = gtk::Box::new(gtk::Orientation::Horizontal, 6);
         toolbar.add_css_class("track-toolbar");
         toolbar.set_hexpand(true);
         toolbar.set_width_request(1);
         toolbar.append(&search);
-        toolbar.append(&controls);
+        toolbar.append(&shell.window_controls_end_area(&controls, 6));
         let search_header = gtk::Box::new(gtk::Orientation::Vertical, 8);
         search_header.set_hexpand(true);
         search_header.append(&toolbar);
@@ -741,7 +739,6 @@ impl SearchRouteProjection {
             library: Arc::clone(&selected.library),
             music_folder_id: selected.music_folder_id.clone(),
             search,
-            toolbar_controls: controls,
             status,
             error,
             result_pages,
@@ -885,7 +882,6 @@ impl SearchRouteProjection {
     fn resume(&self) {
         if let Some(shell) = self.shell.upgrade() {
             self.apply_display_settings(&shell);
-            shell.set_current_library_toolbar_controls(&self.toolbar_controls);
             shell.set_route_search(Some(self.search.clone()));
         }
     }
