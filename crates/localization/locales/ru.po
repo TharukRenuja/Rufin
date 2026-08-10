@@ -7,7 +7,7 @@ msgstr ""
 "Project-Id-Version: Rufin 0.6.0\n"
 "Report-Msgid-Bugs-To: https://github.com/screwys/Rufin/issues\n"
 "POT-Creation-Date: YEAR-MO-DA HO:MI+ZONE\n"
-"PO-Revision-Date: 2026-07-15 14:20+0000\n"
+"PO-Revision-Date: 2026-08-10 14:51+0000\n"
 "Last-Translator: Александр Стельмах <aguhadug@gmail.com>\n"
 "Language-Team: Russian <https://hosted.weblate.org/projects/rufin/app/ru/>\n"
 "Language: ru\n"
@@ -16,7 +16,7 @@ msgstr ""
 "Content-Transfer-Encoding: 8bit\n"
 "Plural-Forms: nplurals=3; plural=(n%10==1 && n%100!=11 ? 0 : n%10>=2 && "
 "n%10<=4 && (n%100<10 || n%100>=20) ? 1 : 2);\n"
-"X-Generator: Weblate 2026.8.dev0\n"
+"X-Generator: Weblate 2026.9.dev0\n"
 
 msgid ""
 "Downloads from this server will be removed, and automatic rules will be "
@@ -241,9 +241,8 @@ msgstr "Любой жанр"
 msgid "App settings"
 msgstr "Настройки приложения"
 
-#, fuzzy
 msgid "Appearance"
-msgstr "Появляется в"
+msgstr "Появление"
 
 msgid "Appears On"
 msgstr "Появляется в"
@@ -335,9 +334,8 @@ msgstr[0] "Изменения применяются к {count} треку"
 msgstr[1] "Изменения применяются к {count} трекам"
 msgstr[2] "Изменения применяются к {count} трекам"
 
-#, fuzzy
 msgid "Checking..."
-msgstr "Выполняется поиск..."
+msgstr "Проверка..."
 
 msgid "Choose a local music folder"
 msgstr "Выбрать локальную папку с музыкой"
@@ -368,10 +366,8 @@ msgstr "Удалить загруженные тексты песен для э�
 msgid "Clear queue"
 msgstr "Очистить очередь"
 
-#, fuzzy
-#| msgid "Close app window"
 msgid "Close Window"
-msgstr "Закрыть окно приложения"
+msgstr "Закрыть окно"
 
 msgid "Close app window"
 msgstr "Закрыть окно приложения"
@@ -717,7 +713,7 @@ msgid "Grid"
 msgstr "Сетка"
 
 msgid "Help"
-msgstr ""
+msgstr "Помощь"
 
 msgid "Hidden"
 msgstr "Скрыт"
@@ -886,7 +882,7 @@ msgid "Lock metadata"
 msgstr "Заблокировать метаданные"
 
 msgid "Loudness normalization"
-msgstr ""
+msgstr "Нормализация громкости"
 
 msgid "Lyrics loaded"
 msgstr "Текст песни загружен"
@@ -1167,9 +1163,8 @@ msgstr "Запуск авторизации в Last.fm…"
 msgid "Opening Libre.fm authorization..."
 msgstr "Открытие окна авторизации Libre.fm…"
 
-#, fuzzy
 msgid "Orange"
-msgstr "диапазон"
+msgstr "Оранжевый"
 
 msgid "Original"
 msgstr "Оригинал"
@@ -1368,9 +1363,8 @@ msgstr "Недавно выпущенные"
 msgid "Reconnect"
 msgstr "Повторное подключение"
 
-#, fuzzy
 msgid "Red"
-msgstr "Готово"
+msgstr "Красный"
 
 msgid "Refresh section"
 msgstr "Обновить раздел"
@@ -1534,9 +1528,8 @@ msgstr "Сохранено"
 msgid "Saved, sync to preview matches"
 msgstr "Сохранено, синхронизируйте для предварительного просмотра соответствий"
 
-#, fuzzy
 msgid "Saving..."
-msgstr "Выполняется поиск..."
+msgstr "Сохранение..."
 
 msgid "Scrobbling"
 msgstr "Скробблинг"
@@ -1628,10 +1621,8 @@ msgstr "Настройки Сервера"
 msgid "Server discovery failed: {error}"
 msgstr "Не удалось выполнить поиск сервера: {error}"
 
-#, fuzzy
-#| msgid "Server selector"
 msgid "Server is unreachable"
-msgstr "Выбор сервера"
+msgstr "Выбор недоступен"
 
 msgid "Server lyrics are off in private mode"
 msgstr "Тексты песен с сервера выключены в приватном режиме"
@@ -1775,9 +1766,8 @@ msgstr "Синхронизированные тексты песен"
 msgid "System default"
 msgstr "Системные настройки по умолчанию"
 
-#, fuzzy
 msgid "System"
-msgstr "Системные настройки по умолчанию"
+msgstr "Система"
 
 msgid "Teal"
 msgstr "Цвет морской волны"
@@ -1909,10 +1899,8 @@ msgstr "Уменьшить громкость"
 msgid "Volume Up"
 msgstr "Увеличить громкость"
 
-#, fuzzy
-#| msgid "Volume Up"
 msgid "Volume scale"
-msgstr "Увеличить громкость"
+msgstr "Шкала громкости"
 
 msgid "WASAPI"
 msgstr "WASAPI"
