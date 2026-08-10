@@ -146,17 +146,17 @@ impl AudioGraph {
     }
 
     fn update_output(&self, selected: Option<&str>) -> Result<bool, String> {
-        let Some(selected) = selected else {
-            return Ok(false);
-        };
-        let Some(target) = audio_output_device_target(selected) else {
-            if gst::ElementFactory::find(selected).is_none() {
+        let target = selected.and_then(audio_output_device_target);
+        if let Some(selected) = selected {
+            if target.is_none() {
+                if gst::ElementFactory::find(selected).is_none() {
+                    return Err(selected_output_unavailable(selected));
+                }
+                return Ok(false);
+            }
+            if device_output_factory().is_none() {
                 return Err(selected_output_unavailable(selected));
             }
-            return Ok(false);
-        };
-        if device_output_factory().is_none() {
-            return Err(selected_output_unavailable(selected));
         }
         Ok(set_output_target(&self.output, target))
     }
@@ -481,28 +481,25 @@ fn device_output_factory() -> Option<&'static str> {
         .find(|factory| gst::ElementFactory::find(factory).is_some())
 }
 
-fn set_output_target(output: &gst::Element, target: &str) -> bool {
-    if output.find_property("device").is_some() {
-        output.set_property("device", target);
+fn set_output_target(output: &gst::Element, target: Option<&str>) -> bool {
+    let apply = |element: &gst::glib::Object| {
+        if element.find_property("device").is_some() {
+            element.set_property("device", target.unwrap_or("@DEFAULT_SINK@"));
+            true
+        } else if element.find_property("target-object").is_some() {
+            element.set_property("target-object", target);
+            true
+        } else {
+            false
+        }
+    };
+    if apply(output.upcast_ref()) {
         return true;
     }
-    if output.find_property("target-object").is_some() {
-        output.set_property("target-object", target);
-        return true;
-    }
-    if let Some(proxy) = output.dynamic_cast_ref::<gst::ChildProxy>()
-        && let Some(child) = proxy.child_by_index(0)
-    {
-        if child.find_property("device").is_some() {
-            child.set_property("device", target);
-            return true;
-        }
-        if child.find_property("target-object").is_some() {
-            child.set_property("target-object", target);
-            return true;
-        }
-    }
-    false
+    output
+        .dynamic_cast_ref::<gst::ChildProxy>()
+        .and_then(|proxy| proxy.child_by_index(0))
+        .is_some_and(|child| apply(&child))
 }
 
 fn selected_output_unavailable(selected: &str) -> String {
@@ -604,6 +601,53 @@ mod tests {
             "target-object"
         };
         assert_eq!(output.property::<String>(property), "alsa_output.test");
+    }
+
+    #[test]
+    fn system_default_does_not_block_a_later_device_change() {
+        initialize_gstreamer();
+        if device_output_factory().is_none() {
+            return;
+        }
+        let settings = BackendAudioSettings {
+            audio_output: Some(audio_output_device_id("alsa_output.selected")),
+            ..BackendAudioSettings::default()
+        };
+        let mut graph = AudioGraph::new(&settings).expect("selected device graph");
+        let mut default_settings = settings;
+        default_settings.audio_output = None;
+
+        assert!(
+            graph
+                .reconfigure(&default_settings)
+                .expect("restore system default")
+        );
+        let property = if graph.output.find_property("device").is_some() {
+            "device"
+        } else {
+            "target-object"
+        };
+        let default_target = if property == "device" {
+            Some("@DEFAULT_SINK@".to_string())
+        } else {
+            None
+        };
+        assert_eq!(
+            graph.output.property::<Option<String>>(property),
+            default_target
+        );
+
+        let mut later_settings = default_settings;
+        later_settings.audio_output = Some(audio_output_device_id("alsa_output.later"));
+        assert!(
+            graph
+                .reconfigure(&later_settings)
+                .expect("select a later device")
+        );
+        assert_eq!(
+            graph.output.property::<Option<String>>(property),
+            Some("alsa_output.later".to_string())
+        );
     }
 
     #[test]
