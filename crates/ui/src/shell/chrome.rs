@@ -3,10 +3,14 @@ use adw::prelude::*;
 use crate::layout::configure_fill_width_clip;
 use localization::tr;
 
+#[cfg(not(any(target_os = "windows", target_os = "macos")))]
 use super::layout::{COMPACT_RAIL_WIDTH, WINDOW_CHROME_MARGIN_END};
 
+#[cfg(not(any(target_os = "windows", target_os = "macos")))]
 const WINDOW_START_CONTROLS_MARGIN_TOP: i32 = 6;
+#[cfg(not(any(target_os = "windows", target_os = "macos")))]
 const WINDOW_END_CONTROLS_MARGIN_TOP: i32 = 10;
+#[cfg(not(any(target_os = "windows", target_os = "macos")))]
 const WINDOW_CHROME_MARGIN_START: i32 = 8;
 const WINDOW_DRAG_HANDLE_HEIGHT: i32 = 10;
 const WINDOW_DRAG_HANDLE_MARGIN_START: i32 = 56;
