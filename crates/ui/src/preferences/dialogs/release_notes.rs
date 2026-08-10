@@ -139,7 +139,7 @@ fn release_row_status(history: &ReleaseHistory, note: &ReleaseNote) -> ReleaseRo
 }
 
 fn release_note_row(
-    window: &adw::ApplicationWindow,
+    window: &gtk::ApplicationWindow,
     note: &ReleaseNote,
     history: &ReleaseHistory,
     updating_version: Option<&str>,
@@ -241,7 +241,7 @@ fn release_note_row(
 }
 
 fn present_release_notes_dialog(
-    window: &adw::ApplicationWindow,
+    window: &gtk::ApplicationWindow,
     history: &ReleaseHistory,
     updating_version: Option<&str>,
     release_updates: &ReleaseUpdateHandle,
@@ -279,7 +279,7 @@ fn present_release_notes_dialog(
 }
 
 fn populate_release_notes_list(
-    window: &adw::ApplicationWindow,
+    window: &gtk::ApplicationWindow,
     list: &gtk::Box,
     history: &ReleaseHistory,
     updating_version: Option<&str>,

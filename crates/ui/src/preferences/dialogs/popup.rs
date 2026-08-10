@@ -2,7 +2,7 @@ use adw::prelude::*;
 
 const LIGHT_DISMISS_CLASS: &str = "light-dismiss-dialog";
 
-pub(crate) fn present_light_dismiss_dialog<D>(dialog: &D, parent: &adw::ApplicationWindow)
+pub(crate) fn present_light_dismiss_dialog<D>(dialog: &D, parent: &gtk::ApplicationWindow)
 where
     D: IsA<adw::Dialog> + Clone + 'static,
 {

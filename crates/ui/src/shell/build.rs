@@ -32,7 +32,8 @@ use localization::{effective_language_preference, set_language_preference, tr};
 use super::Shell;
 use super::actions::{ControlFeedbackState, connect_shell_actions};
 use super::chrome::{
-    WindowChrome, build_content_chrome, build_main_area, window_drag_handle_with_child,
+    WindowChrome, WindowControlLayout, build_content_chrome, build_main_area,
+    window_drag_handle_with_child,
 };
 use super::cover::ArtworkState;
 use super::events::install_product_event_receivers;
@@ -87,6 +88,7 @@ pub fn build(
     inputs: RuntimeInputs,
     force_initial_presentation: bool,
     presented: Option<Box<dyn FnOnce()>>,
+    window_bar_preview: Option<crate::application::WindowBarPreview>,
 ) {
     let appearance = crate::application::style::ApplicationAppearance::install();
 
@@ -170,12 +172,8 @@ pub fn build(
     };
     let (window_width, window_height) =
         initial_window_size(settings.window_width, settings.window_height);
-    let window = adw::ApplicationWindow::builder()
-        .application(app)
-        .title("Rufin")
-        .default_width(window_width)
-        .default_height(window_height)
-        .build();
+    let window_bar_platform = crate::application::platform_window_bar(window_bar_preview);
+    let window_controls = WindowControlLayout::new(window_bar_platform.is_some());
 
     let root_stack = gtk::Stack::new();
     root_stack.add_css_class("app-root");
@@ -258,12 +256,14 @@ pub fn build(
     compact_nav_slot.add_css_class("compact-rail-slot");
     let normal_main_menu = gtk::MenuButton::new();
     let compact_main_menu = gtk::Button::new();
+    let window_bar_search = gtk::Button::from_icon_name("system-search-symbolic");
 
     let main_area_parts = build_main_area();
     let main_area = main_area_parts.root;
     let route_host = main_area_parts.route_host;
 
-    let right_panel_parts = build_right_panel();
+    let queue_window_controls = window_controls.end_width_reservation();
+    let right_panel_parts = build_right_panel(&queue_window_controls);
     let right_panel = right_panel_parts.root;
     let queue_panel = right_panel_parts.queue_panel;
     let queue_search = right_panel_parts.queue_search;
@@ -386,12 +386,24 @@ pub fn build(
     let layout_state = ShellLayoutState::new(&root_stack);
     let toast_overlay = adw::ToastOverlay::new();
     toast_overlay.add_css_class("app-toast-overlay");
-    toast_overlay.set_child(Some(&layout_state.owner));
-    window.set_content(Some(&toast_overlay));
+    let window_content = window_controls.wrap_content(&layout_state.owner);
+    toast_overlay.set_child(Some(&window_content));
+    let window = crate::application::application_window(
+        app,
+        "Rufin",
+        window_width,
+        window_height,
+        &toast_overlay,
+        window_bar_preview,
+        window_bar_platform.map(|_| &window_bar_search),
+        window_bar_platform.map(|_| &normal_main_menu),
+    );
+    window_controls.bind_window(&window);
 
     let chrome = WindowChrome {
         application: app.clone(),
         window,
+        window_controls,
         toast_overlay,
         control_feedback_label,
         operation_feedback,
@@ -483,10 +495,17 @@ pub fn build(
             }
         });
     }
-    shell
-        .navigation_view
-        .normal_nav_panel
-        .prepend(&normal_sidebar_header(&shell));
+    if let Some(platform) = window_bar_platform {
+        super::navigation::configure_platform_window_bar(&shell, &window_bar_search, platform);
+    } else {
+        shell
+            .navigation_view
+            .normal_nav_panel
+            .prepend(&normal_sidebar_header(
+                &shell,
+                &shell.chrome.window_controls.start_width_reservation(),
+            ));
+    }
     install_normal_navigation_activation(&shell);
     build_normal_navigation(&shell);
     build_compact_navigation(&shell);

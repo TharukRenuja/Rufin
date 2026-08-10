@@ -45,6 +45,7 @@ const COMPACT_RAIL_LABEL_WIDTH_CHARS: i32 = 8;
 const NAV_SELECTED_CLASS: &str = "selected";
 const NAV_ROUTE_HOME_CLASS: &str = "nav-route-home";
 const NAV_ROUTE_SEARCH_CLASS: &str = "nav-route-search";
+const LEFT_OPENING_PRIMARY_MENU_CLASS: &str = "left-opening-primary-menu";
 const NAV_ROUTE_FAVORITES_CLASS: &str = "nav-route-favorites";
 const NAV_ROUTE_HISTORY_CLASS: &str = "nav-route-history";
 const NAV_ROUTE_ALBUMS_CLASS: &str = "nav-route-albums";
@@ -167,15 +168,21 @@ pub(super) fn build_normal_navigation(shell: &Rc<Shell>) {
 }
 
 pub(super) fn build_compact_navigation(shell: &Rc<Shell>) {
-    shell
-        .navigation_view
-        .compact_nav
-        .append(&primary_menu_button(
-            &shell.navigation_view.compact_main_menu.button,
-            &shell.navigation_view.compact_main_menu.popover,
-            shell,
-            true,
-        ));
+    if !shell.chrome.window_controls.uses_platform_bar() {
+        shell
+            .navigation_view
+            .compact_nav
+            .append(&shell.chrome.window_controls.compact_start_reservation());
+        shell
+            .navigation_view
+            .compact_nav
+            .append(&primary_menu_button(
+                &shell.navigation_view.compact_main_menu.button,
+                &shell.navigation_view.compact_main_menu.popover,
+                shell,
+                true,
+            ));
+    }
     for item in nav_items(shell) {
         shell.navigation_view.compact_nav.append(&rail_button(
             shell,
@@ -389,7 +396,10 @@ fn sidebar_spacer() -> gtk::Box {
     spacer
 }
 
-pub(super) fn normal_sidebar_header(shell: &Rc<Shell>) -> adw::HeaderBar {
+pub(super) fn normal_sidebar_header(
+    shell: &Rc<Shell>,
+    start_window_controls: &impl IsA<gtk::Widget>,
+) -> adw::HeaderBar {
     let search = gtk::Button::from_icon_name("system-search-symbolic");
     bind_widget_tooltip(&search, msgid("Search"));
     let search_shell = Rc::clone(shell);
@@ -408,10 +418,52 @@ pub(super) fn normal_sidebar_header(shell: &Rc<Shell>) -> adw::HeaderBar {
     header.add_css_class("flat");
     header.set_show_start_title_buttons(false);
     header.set_show_end_title_buttons(false);
+    header.pack_start(start_window_controls);
     header.pack_start(&search);
     header.set_title_widget(Some(&title));
     header.pack_end(&menu);
     header
+}
+
+pub(super) fn configure_platform_window_bar(
+    shell: &Rc<Shell>,
+    search: &gtk::Button,
+    platform: crate::application::WindowBarPreview,
+) {
+    search.add_css_class("flat");
+    search.add_css_class("platform-window-bar-action");
+    bind_widget_tooltip(search, msgid("Search"));
+    let search_shell = Rc::downgrade(shell);
+    search.connect_clicked(move |_| {
+        if let Some(shell) = search_shell.upgrade() {
+            shell.navigate(Route::Search);
+        }
+    });
+
+    let menu = normal_primary_menu_button(
+        &shell.navigation_view.normal_main_menu.button,
+        &shell.navigation_view.normal_main_menu.popover,
+        shell,
+    );
+    if let Some(popover) = shell
+        .navigation_view
+        .normal_main_menu
+        .popover
+        .borrow()
+        .as_ref()
+    {
+        match platform {
+            crate::application::WindowBarPreview::Macos => {
+                popover.add_css_class(LEFT_OPENING_PRIMARY_MENU_CLASS);
+                mirror_primary_menu_cascade(popover);
+            }
+            crate::application::WindowBarPreview::Windows => {
+                popover.set_halign(gtk::Align::Start);
+            }
+        }
+    }
+    menu.add_css_class("flat");
+    menu.add_css_class("platform-window-bar-action");
 }
 
 fn update_pin_selection(container: &gtk::Box, active_route: &Route) -> bool {
@@ -667,6 +719,26 @@ fn style_primary_menu(popover: &gtk::PopoverMenu) {
     show_native_menu_icons(popover);
     replace_native_menu_checkmarks(popover);
     keep_parent_grab_for_nested_native_menus(popover);
+    if popover.has_css_class(LEFT_OPENING_PRIMARY_MENU_CLASS) {
+        mirror_primary_menu_cascade(popover);
+    }
+}
+
+fn mirror_primary_menu_cascade(popover: &gtk::PopoverMenu) {
+    popover.set_halign(gtk::Align::End);
+    mirror_nested_primary_menus(popover.upcast_ref());
+}
+
+fn mirror_nested_primary_menus(widget: &gtk::Widget) {
+    let mut child = widget.first_child();
+    while let Some(current) = child {
+        child = current.next_sibling();
+        if let Some(submenu) = current.downcast_ref::<gtk::PopoverMenu>() {
+            submenu.add_css_class(LEFT_OPENING_PRIMARY_MENU_CLASS);
+            submenu.set_position(gtk::PositionType::Left);
+        }
+        mirror_nested_primary_menus(&current);
+    }
 }
 
 fn replace_primary_menu_model(menu: &gio::Menu, shell: &Rc<Shell>) {

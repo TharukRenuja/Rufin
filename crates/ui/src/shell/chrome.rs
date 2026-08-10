@@ -3,9 +3,11 @@ use adw::prelude::*;
 use crate::layout::configure_fill_width_clip;
 use localization::tr;
 
-use super::layout::WINDOW_CHROME_MARGIN_END;
+use super::layout::{COMPACT_RAIL_WIDTH, WINDOW_CHROME_MARGIN_END};
 
-const WINDOW_CONTROLS_MARGIN_TOP: i32 = 10;
+const WINDOW_START_CONTROLS_MARGIN_TOP: i32 = 6;
+const WINDOW_END_CONTROLS_MARGIN_TOP: i32 = 10;
+const WINDOW_CHROME_MARGIN_START: i32 = 8;
 const WINDOW_DRAG_HANDLE_HEIGHT: i32 = 10;
 const WINDOW_DRAG_HANDLE_MARGIN_START: i32 = 56;
 pub(super) const RIGHT_RESIZE_HANDLE_WIDTH: i32 = 4;
@@ -13,7 +15,8 @@ pub(crate) const ROUTE_VIEWPORT_CLASS: &str = "route-viewport";
 
 pub(crate) struct WindowChrome {
     pub(crate) application: adw::Application,
-    pub(crate) window: adw::ApplicationWindow,
+    pub(crate) window: gtk::ApplicationWindow,
+    pub(crate) window_controls: WindowControlLayout,
     pub(crate) toast_overlay: adw::ToastOverlay,
     pub(super) control_feedback_label: gtk::Label,
     pub(crate) operation_feedback: gtk::Box,
@@ -26,6 +29,195 @@ pub(crate) struct WindowChrome {
     pub(crate) app_content_stack: gtk::Stack,
     pub(super) login_host: gtk::Box,
     pub(super) startup_loading_host: gtk::Box,
+}
+
+pub(crate) struct WindowControlLayout {
+    platform_bar: bool,
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+    start: gtk::WindowControls,
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+    start_alignment: gtk::CenterBox,
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+    start_host: gtk::Box,
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+    end: gtk::WindowControls,
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+    end_host: gtk::Box,
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+    start_width: gtk::SizeGroup,
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+    start_height: gtk::SizeGroup,
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+    end_width: gtk::SizeGroup,
+}
+
+impl WindowControlLayout {
+    pub(crate) fn new(platform_bar_preview: bool) -> Self {
+        #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+        {
+            let start = gtk::WindowControls::new(gtk::PackType::Start);
+            if platform_bar_preview {
+                start.set_decoration_layout(Some(":"));
+            }
+            let start_host = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+            start_host.add_css_class("window-controls");
+            start_host.set_halign(gtk::Align::Start);
+            start_host.set_valign(gtk::Align::Start);
+            start_host.set_margin_top(WINDOW_START_CONTROLS_MARGIN_TOP);
+            start_host.set_margin_start(WINDOW_CHROME_MARGIN_START);
+            let start_alignment = gtk::CenterBox::new();
+            start_alignment.set_center_widget(Some(&start));
+            start_host.append(&start_alignment);
+
+            let end = gtk::WindowControls::new(gtk::PackType::End);
+            if platform_bar_preview {
+                end.set_decoration_layout(Some(":"));
+            }
+            let end_host = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+            end_host.add_css_class("window-controls");
+            end_host.set_halign(gtk::Align::End);
+            end_host.set_valign(gtk::Align::Start);
+            end_host.set_margin_top(WINDOW_END_CONTROLS_MARGIN_TOP);
+            end_host.set_margin_end(WINDOW_CHROME_MARGIN_END);
+            end_host.append(&end);
+
+            let start_width = gtk::SizeGroup::new(gtk::SizeGroupMode::Horizontal);
+            start_width.add_widget(&start);
+            let start_height = gtk::SizeGroup::new(gtk::SizeGroupMode::Vertical);
+            start_height.add_widget(&start);
+            let end_width = gtk::SizeGroup::new(gtk::SizeGroupMode::Horizontal);
+            end_width.add_widget(&end);
+
+            Self {
+                platform_bar: platform_bar_preview,
+                start,
+                start_alignment,
+                start_host,
+                end,
+                end_host,
+                start_width,
+                start_height,
+                end_width,
+            }
+        }
+
+        #[cfg(any(target_os = "windows", target_os = "macos"))]
+        {
+            Self {
+                platform_bar: platform_bar_preview,
+            }
+        }
+    }
+
+    pub(crate) fn uses_platform_bar(&self) -> bool {
+        self.platform_bar
+    }
+
+    pub(crate) fn wrap_content(&self, content: &impl IsA<gtk::Widget>) -> gtk::Widget {
+        #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+        {
+            let root = gtk::Overlay::new();
+            root.set_hexpand(true);
+            root.set_vexpand(true);
+            root.set_child(Some(content));
+            root.add_overlay(&self.start_host);
+            root.set_measure_overlay(&self.start_host, false);
+            root.add_overlay(&self.end_host);
+            root.set_measure_overlay(&self.end_host, false);
+            root.upcast()
+        }
+
+        #[cfg(any(target_os = "windows", target_os = "macos"))]
+        content.as_ref().clone()
+    }
+
+    pub(crate) fn bind_window(&self, window: &gtk::ApplicationWindow) {
+        #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+        for controls in [&self.start_host, &self.end_host] {
+            window
+                .bind_property("fullscreened", controls, "visible")
+                .sync_create()
+                .invert_boolean()
+                .build();
+        }
+
+        #[cfg(any(target_os = "windows", target_os = "macos"))]
+        let _ = window;
+    }
+
+    pub(crate) fn start_width_reservation(&self) -> gtk::Box {
+        #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+        {
+            control_reservation(&self.start, &self.start_width, 0)
+        }
+
+        #[cfg(any(target_os = "windows", target_os = "macos"))]
+        hidden_control_reservation()
+    }
+
+    pub(crate) fn set_compact_start_alignment(&self, compact: bool) {
+        #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+        {
+            self.start_host.set_margin_start(if compact {
+                0
+            } else {
+                WINDOW_CHROME_MARGIN_START
+            });
+            self.start_alignment
+                .set_width_request(if compact { COMPACT_RAIL_WIDTH } else { -1 });
+        }
+
+        #[cfg(any(target_os = "windows", target_os = "macos"))]
+        let _ = compact;
+    }
+
+    pub(crate) fn compact_start_reservation(&self) -> gtk::Box {
+        #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+        {
+            control_reservation(
+                &self.start,
+                &self.start_height,
+                WINDOW_START_CONTROLS_MARGIN_TOP,
+            )
+        }
+
+        #[cfg(any(target_os = "windows", target_os = "macos"))]
+        hidden_control_reservation()
+    }
+
+    pub(crate) fn end_width_reservation(&self) -> gtk::Box {
+        #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+        {
+            control_reservation(&self.end, &self.end_width, 0)
+        }
+
+        #[cfg(any(target_os = "windows", target_os = "macos"))]
+        hidden_control_reservation()
+    }
+}
+
+#[cfg(not(any(target_os = "windows", target_os = "macos")))]
+fn control_reservation(
+    controls: &gtk::WindowControls,
+    size_group: &gtk::SizeGroup,
+    margin_top: i32,
+) -> gtk::Box {
+    let reservation = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+    reservation.set_margin_top(margin_top);
+    size_group.add_widget(&reservation);
+    controls
+        .bind_property("empty", &reservation, "visible")
+        .sync_create()
+        .invert_boolean()
+        .build();
+    reservation
+}
+
+#[cfg(any(target_os = "windows", target_os = "macos"))]
+fn hidden_control_reservation() -> gtk::Box {
+    let reservation = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+    reservation.set_visible(false);
+    reservation
 }
 
 pub(super) struct MainAreaParts {
@@ -120,19 +312,6 @@ pub(super) fn build_content_chrome(
     root.add_overlay(&right_resize_handle);
     root.set_measure_overlay(&right_resize_handle, false);
 
-    let window_controls = gtk::Box::new(gtk::Orientation::Horizontal, 6);
-    window_controls.add_css_class("window-controls");
-    window_controls.set_halign(gtk::Align::End);
-    window_controls.set_valign(gtk::Align::Start);
-    window_controls.set_margin_top(WINDOW_CONTROLS_MARGIN_TOP);
-    window_controls.set_margin_end(WINDOW_CHROME_MARGIN_END);
-
-    let close_button = gtk::WindowControls::new(gtk::PackType::End);
-    close_button.set_decoration_layout(Some(":close"));
-    window_controls.append(&close_button);
-    root.add_overlay(&window_controls);
-    root.set_measure_overlay(&window_controls, false);
-
     ContentChromeParts {
         root,
         right_split,
@@ -158,24 +337,50 @@ fn configure_right_split(right_split: &gtk::Paned) {
     right_split.set_shrink_end_child(false);
 }
 
-pub(crate) fn window_close_controls() -> gtk::Box {
-    let controls = gtk::Box::new(gtk::Orientation::Horizontal, 6);
-    controls.add_css_class("window-controls");
-    controls.set_halign(gtk::Align::End);
-    controls.set_valign(gtk::Align::Start);
-    controls.set_margin_top(WINDOW_CONTROLS_MARGIN_TOP);
-    controls.set_margin_end(WINDOW_CHROME_MARGIN_END);
-
-    let close_button = gtk::WindowControls::new(gtk::PackType::End);
-    close_button.set_decoration_layout(Some(":close"));
-    controls.append(&close_button);
-    controls
-}
-
 pub(super) fn configure_primary_menu_button(button: &gtk::Button) {
     let label = tr("Menu");
     button.set_tooltip_text(Some(&label));
     button.update_property(&[gtk::accessible::Property::Label(&label)]);
+}
+
+pub(crate) fn playback_window_title(title: Option<&str>, artist: Option<&str>) -> String {
+    title
+        .into_iter()
+        .chain(artist)
+        .filter(|part| !part.trim().is_empty())
+        .chain(std::iter::once("Rufin"))
+        .collect::<Vec<_>>()
+        .join(" · ")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::playback_window_title;
+
+    #[test]
+    fn playback_title_contains_track_artist_and_app() {
+        assert_eq!(
+            playback_window_title(Some("North Star"), Some("The Satellites")),
+            "North Star · The Satellites · Rufin"
+        );
+    }
+
+    #[test]
+    fn playback_title_omits_blank_metadata() {
+        assert_eq!(
+            playback_window_title(Some("North Star"), Some("  ")),
+            "North Star · Rufin"
+        );
+        assert_eq!(
+            playback_window_title(Some(""), Some("The Satellites")),
+            "The Satellites · Rufin"
+        );
+    }
+
+    #[test]
+    fn playback_title_falls_back_to_app_name() {
+        assert_eq!(playback_window_title(None, None), "Rufin");
+    }
 }
 
 pub(crate) fn window_drag_handle_with_child(

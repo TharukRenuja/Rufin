@@ -21,7 +21,7 @@ use super::library_fields::{
     smart_playlist_field, sort_tracks, track_field,
 };
 use super::route_shell::{
-    library_toolbar_end_margin, library_toolbar_sort_width_for_labels,
+    library_toolbar_sort_width_for_labels, responsive_toolbar_sort_width,
     toolbar_sort_width_for_labels,
 };
 use super::table_sizing::fitted_column_widths;
@@ -763,13 +763,8 @@ fn route_sort_dropdown_reserves_longest_label() {
 }
 
 #[test]
-fn primary_library_sort_dropdowns_share_one_width() {
-    let widths = [
-        LibraryListKey::Tracks,
-        LibraryListKey::Albums,
-        LibraryListKey::Artists,
-    ]
-    .map(|key| {
+fn library_sort_dropdowns_share_one_preferred_width() {
+    let widths = LibraryListKey::all().map(|key| {
         library_toolbar_sort_width_for_labels(
             available_sort_fields(key).iter().map(|field| field.title()),
         )
@@ -777,10 +772,14 @@ fn primary_library_sort_dropdowns_share_one_width() {
 
     assert!(widths.windows(2).all(|pair| pair[0] == pair[1]));
 }
+
 #[test]
-fn route_toolbar_reserves_window_controls_when_queue_hidden() {
-    assert_eq!(library_toolbar_end_margin(true), 10);
-    assert_eq!(library_toolbar_end_margin(false), 44);
+fn library_sort_dropdown_yields_space_for_neighboring_controls() {
+    let preferred = 184;
+
+    assert_eq!(responsive_toolbar_sort_width(450, preferred), 112);
+    assert_eq!(responsive_toolbar_sort_width(640, preferred), 160);
+    assert_eq!(responsive_toolbar_sort_width(900, preferred), preferred);
 }
 #[test]
 fn route_shrink_width() {

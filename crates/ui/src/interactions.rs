@@ -40,7 +40,7 @@ pub(crate) fn connect_transient_entry_focus_dismissal(shell: &Shell) {
     );
 }
 
-fn install_focus_dismissal(window: &adw::ApplicationWindow, targets: Vec<gtk::Widget>) {
+fn install_focus_dismissal(window: &gtk::ApplicationWindow, targets: Vec<gtk::Widget>) {
     let click_root = window.clone();
     let click = gtk::GestureClick::new();
     click.set_button(0);

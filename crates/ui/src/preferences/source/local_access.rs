@@ -112,7 +112,7 @@ impl LocalAccessEditor {
 
     fn connect_folder_button(
         self: &Rc<Self>,
-        window: &adw::ApplicationWindow,
+        window: &gtk::ApplicationWindow,
         button: &gtk::Button,
         row: &adw::ActionRow,
         source_path: Option<String>,

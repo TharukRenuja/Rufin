@@ -15,10 +15,6 @@ use super::bottom::BOTTOM_PLAYER_HEIGHT;
 const QUEUE_LYRICS_DEFAULT_LYRICS_HEIGHT: i32 = 300;
 const QUEUE_LYRICS_RESIZE_HANDLE_HEIGHT: i32 = 10;
 const QUEUE_HEADER_TOP_MARGIN: i32 = 10;
-const QUEUE_HEADER_BUTTON_SIZE: i32 = 34;
-const QUEUE_HEADER_BUTTON_SPACING: i32 = 6;
-const QUEUE_HEADER_END_MARGIN: i32 =
-    WINDOW_CHROME_MARGIN_END + QUEUE_HEADER_BUTTON_SIZE + QUEUE_HEADER_BUTTON_SPACING;
 
 pub(crate) struct RightPanelWidgets {
     pub(crate) right_split: gtk::Paned,
@@ -45,7 +41,7 @@ pub(crate) struct RightPanelParts {
     pub(crate) lyrics_host: gtk::Box,
 }
 
-pub(crate) fn build_right_panel() -> RightPanelParts {
+pub(crate) fn build_right_panel(end_window_controls: &impl IsA<gtk::Widget>) -> RightPanelParts {
     let root = gtk::Box::new(gtk::Orientation::Vertical, 0);
     root.add_css_class("right-panel");
     root.set_hexpand(true);
@@ -58,7 +54,7 @@ pub(crate) fn build_right_panel() -> RightPanelParts {
     queue_header.set_margin_top(QUEUE_HEADER_TOP_MARGIN);
     queue_header.set_margin_bottom(0);
     queue_header.set_margin_start(12);
-    queue_header.set_margin_end(QUEUE_HEADER_END_MARGIN);
+    queue_header.set_margin_end(WINDOW_CHROME_MARGIN_END);
 
     let queue_search = gtk::SearchEntry::new();
     queue_search.add_css_class("queue-search");
@@ -70,6 +66,7 @@ pub(crate) fn build_right_panel() -> RightPanelParts {
 
     let queue_clear_button = icon_button("edit-clear-symbolic", "Clear queue");
     queue_header.append(&queue_clear_button);
+    queue_header.append(end_window_controls);
     let queue_panel = gtk::Box::new(gtk::Orientation::Vertical, 6);
     queue_panel.add_css_class("queue-panel");
     queue_panel.set_vexpand(true);

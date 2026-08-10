@@ -313,12 +313,16 @@ pub(crate) fn install_main_menu_shortcut(shell: &Rc<Shell>) {
     let shortcut_shell = Rc::clone(shell);
     key_controller.connect_key_pressed(move |_, key, _, state| {
         if key == gtk::gdk::Key::F10 && !state.contains(gtk::gdk::ModifierType::SHIFT_MASK) {
-            match shortcut_shell.left_sidebar_mode() {
-                ResolvedLeftSidebarMode::Compact => {
-                    navigation::popup_compact_primary_menu(&shortcut_shell);
-                }
-                _ => {
-                    navigation::popup_normal_primary_menu(&shortcut_shell);
+            if shortcut_shell.chrome.window_controls.uses_platform_bar() {
+                navigation::popup_normal_primary_menu(&shortcut_shell);
+            } else {
+                match shortcut_shell.left_sidebar_mode() {
+                    ResolvedLeftSidebarMode::Compact => {
+                        navigation::popup_compact_primary_menu(&shortcut_shell);
+                    }
+                    _ => {
+                        navigation::popup_normal_primary_menu(&shortcut_shell);
+                    }
                 }
             }
             glib::Propagation::Stop

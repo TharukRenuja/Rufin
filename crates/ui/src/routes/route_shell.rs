@@ -16,7 +16,6 @@ use crate::localization::{
 use crate::preferences::dialogs::popup::present_light_dismiss_dialog;
 use crate::shell::Shell;
 use crate::shell::actions::{ADD_ICON, MORE_ICON, sort_order_icon};
-use crate::shell::layout::WINDOW_CHROME_MARGIN_END;
 use crate::shell::route::{MountedRoute, MountedRouteItemNavigation, MountedRouteResume};
 use crate::{
     LibraryField, LibraryLayout, LibraryListKey, LibraryListSettings, available_sort_fields,
@@ -34,22 +33,13 @@ use super::route_layout::ROUTE_TOP_MARGIN;
 const LIBRARY_CONFIG_DIALOG_WIDTH: i32 = 620;
 const LIBRARY_CONFIG_DIALOG_HEIGHT: i32 = 560;
 const LIBRARY_ROUTE_BOTTOM_MARGIN: i32 = 8;
-const LIBRARY_TOOLBAR_END_MARGIN: i32 = 10;
 const LIBRARY_TOOLBAR_CONTROL_SPACING: i32 = 12;
 const LIBRARY_TOOLBAR_ICON_BUTTON_WIDTH: i32 = 34;
-const LIBRARY_TOOLBAR_CLOSE_VISIBLE_SIZE: i32 = 24;
 const LIBRARY_TOOLBAR_SORT_MIN_WIDTH: i32 = 112;
 const LIBRARY_TOOLBAR_SORT_CHAR_WIDTH: i32 = 8;
 const LIBRARY_TOOLBAR_SORT_HORIZONTAL_PADDING: i32 = 44;
+const LIBRARY_TOOLBAR_SORT_WIDTH_SHARE: i32 = 4;
 const LIBRARY_TOOLBAR_COMPACT_COMMAND_WIDTH: i32 = 760;
-const PRIMARY_LIBRARY_SORT_KEYS: [LibraryListKey; 3] = [
-    LibraryListKey::Tracks,
-    LibraryListKey::Albums,
-    LibraryListKey::Artists,
-];
-const LIBRARY_TOOLBAR_WINDOW_CONTROLS_RESERVE: i32 =
-    WINDOW_CHROME_MARGIN_END + LIBRARY_TOOLBAR_CLOSE_VISIBLE_SIZE + LIBRARY_TOOLBAR_CONTROL_SPACING;
-
 pub(crate) struct LibraryPageShellOptions {
     pub(crate) key: LibraryListKey,
     pub(crate) empty: bool,
@@ -174,7 +164,6 @@ impl Shell {
         wrapper.set_hexpand(true);
         wrapper.set_vexpand(true);
         let toolbar = self.library_toolbar_projection(key, search.clone());
-        self.set_current_library_toolbar_controls(&toolbar.controls);
         wrapper.append(&library_route_inset(toolbar.widget()));
         self.set_route_search(Some(search.clone()));
 
@@ -418,9 +407,14 @@ impl Shell {
             .collect::<Vec<_>>();
         let sort_options = gtk::StringList::new(&[]);
         let sort_dropdown = gtk::DropDown::new(Some(sort_options), None::<gtk::Expression>);
-        bind_drop_down_options(&sort_dropdown, sort_messages, |labels| {
-            library_toolbar_sort_width_for_labels(labels.iter().map(String::as_str))
+        let preferred_sort_width = Rc::new(Cell::new(LIBRARY_TOOLBAR_SORT_MIN_WIDTH));
+        let preferred_sort_width_for_locale = Rc::clone(&preferred_sort_width);
+        bind_drop_down_options(&sort_dropdown, sort_messages, move |labels| {
+            let width = library_toolbar_sort_width_for_labels(labels.iter().map(String::as_str));
+            preferred_sort_width_for_locale.set(width);
+            width
         });
+        configure_sort_dropdown_factory(&sort_dropdown);
         sort_dropdown.set_sensitive(sort_fields.len() > 1);
         sort_dropdown.set_hexpand(false);
         sort_dropdown.set_halign(gtk::Align::End);
@@ -507,17 +501,23 @@ impl Shell {
             });
         }
         controls.append(&configure);
-        toolbar.append(&controls);
-        let widget = if let Some(command_button) = command_button {
-            let command_compact = Rc::new(Cell::new(false));
+        toolbar.append(&self.window_controls_end_area(&controls, LIBRARY_TOOLBAR_CONTROL_SPACING));
+        let command_compact = Cell::new(false);
+        if let Some(command_button) = command_button.as_ref() {
             apply_library_command_button_layout(&command_button, &command_compact, 1);
-            let owner = width_allocation_owner(&toolbar, move |width| {
+        }
+        let applied_sort_width = Cell::new(sort_dropdown.width_request());
+        let sort_dropdown_for_width = sort_dropdown.clone();
+        let owner = width_allocation_owner(&toolbar, move |width| {
+            if let Some(command_button) = command_button.as_ref() {
                 apply_library_command_button_layout(&command_button, &command_compact, width);
-            });
-            owner.upcast()
-        } else {
-            toolbar.upcast()
-        };
+            }
+            let sort_width = responsive_toolbar_sort_width(width, preferred_sort_width.get());
+            if applied_sort_width.replace(sort_width) != sort_width {
+                sort_dropdown_for_width.set_width_request(sort_width);
+            }
+        });
+        let widget = owner.upcast();
         LibraryToolbarProjection {
             key,
             widget,
@@ -531,24 +531,26 @@ impl Shell {
             sort_fields,
         }
     }
-    pub(crate) fn sync_library_toolbar_end_margin(&self) {
-        let Some(controls) = self
-            .route_viewport
-            .current_library_toolbar_controls
-            .borrow()
-            .as_ref()
-            .and_then(glib::WeakRef::upgrade)
-        else {
-            return;
-        };
-        let margin = library_toolbar_end_margin(self.right_sidebar_visible());
-        controls.set_margin_end(margin);
-    }
-    pub(crate) fn set_current_library_toolbar_controls(&self, controls: &gtk::Box) {
-        self.route_viewport
-            .current_library_toolbar_controls
-            .replace(Some(controls.downgrade()));
-        self.sync_library_toolbar_end_margin();
+    pub(crate) fn window_controls_end_area(
+        &self,
+        controls: &impl IsA<gtk::Widget>,
+        spacing: i32,
+    ) -> gtk::Box {
+        let reservation = self.chrome.window_controls.end_width_reservation();
+        reservation.set_margin_start(spacing);
+        let reservation_host = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+        reservation_host.append(&reservation);
+        self.right_panel
+            .right_panel_slot
+            .bind_property("visible", &reservation_host, "visible")
+            .sync_create()
+            .invert_boolean()
+            .build();
+
+        let area = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+        area.append(controls);
+        area.append(&reservation_host);
+        area
     }
     fn present_library_config_dialog_with_detail(
         self: &Rc<Self>,
@@ -832,13 +834,17 @@ pub(crate) fn library_toolbar_sort_width_for_labels<'a>(
     labels: impl IntoIterator<Item = &'a str>,
 ) -> i32 {
     let route_width = toolbar_sort_width_for_labels(labels);
-    let primary_library_width = PRIMARY_LIBRARY_SORT_KEYS
+    let shared_library_width = LibraryListKey::all()
         .into_iter()
-        .flat_map(available_sort_fields)
-        .map(|field| toolbar_sort_label_width(&tr(field.title())))
+        .flat_map(|key| {
+            available_sort_fields(key)
+                .iter()
+                .map(move |field| library_sort_title(key, *field))
+        })
+        .map(|title| toolbar_sort_label_width(&tr(title)))
         .max()
         .unwrap_or(LIBRARY_TOOLBAR_SORT_MIN_WIDTH);
-    route_width.max(primary_library_width)
+    route_width.max(shared_library_width)
 }
 
 fn toolbar_sort_label_width(label: &str) -> i32 {
@@ -847,12 +853,45 @@ fn toolbar_sort_label_width(label: &str) -> i32 {
         .max(LIBRARY_TOOLBAR_SORT_MIN_WIDTH)
 }
 
-pub(crate) fn library_toolbar_end_margin(right_sidebar_visible: bool) -> i32 {
-    if right_sidebar_visible {
-        LIBRARY_TOOLBAR_END_MARGIN
-    } else {
-        LIBRARY_TOOLBAR_WINDOW_CONTROLS_RESERVE
-    }
+pub(crate) fn responsive_toolbar_sort_width(toolbar_width: i32, preferred_width: i32) -> i32 {
+    (toolbar_width / LIBRARY_TOOLBAR_SORT_WIDTH_SHARE)
+        .max(LIBRARY_TOOLBAR_SORT_MIN_WIDTH)
+        .min(preferred_width.max(LIBRARY_TOOLBAR_SORT_MIN_WIDTH))
+}
+
+fn configure_sort_dropdown_factory(dropdown: &gtk::DropDown) {
+    let factory = gtk::SignalListItemFactory::new();
+    factory.connect_setup(|_, item| {
+        let Some(item) = item.downcast_ref::<gtk::ListItem>() else {
+            return;
+        };
+        let label = gtk::Label::new(None);
+        label.set_xalign(0.0);
+        label.set_wrap(true);
+        label.set_wrap_mode(gtk::pango::WrapMode::WordChar);
+        label.set_lines(2);
+        label.set_ellipsize(gtk::pango::EllipsizeMode::End);
+        item.set_child(Some(&label));
+    });
+    factory.connect_bind(|_, item| {
+        let Some(item) = item.downcast_ref::<gtk::ListItem>() else {
+            return;
+        };
+        let Some(label) = item
+            .child()
+            .and_then(|child| child.downcast::<gtk::Label>().ok())
+        else {
+            return;
+        };
+        let Some(value) = item
+            .item()
+            .and_then(|value| value.downcast::<gtk::StringObject>().ok())
+        else {
+            return;
+        };
+        label.set_text(&value.string());
+    });
+    dropdown.set_factory(Some(&factory));
 }
 
 fn apply_library_command_button_layout(

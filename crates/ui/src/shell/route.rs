@@ -370,7 +370,6 @@ pub(crate) struct RouteViewport {
     mounted_route: RefCell<Option<MountedRouteEntry>>,
     projection_lane: RefCell<LatestIntentLane<RouteProjectionIdentity, RouteProjectionIntent>>,
     position_memory: RefCell<RoutePositionMemory>,
-    pub(crate) current_library_toolbar_controls: RefCell<Option<glib::WeakRef<gtk::Box>>>,
     current_track_selections: RefCell<Vec<RouteCurrentTrackSelection>>,
     pub(crate) route_search: RefCell<Option<gtk::SearchEntry>>,
     pub(crate) route_search_focus: RefCell<Option<Rc<dyn Fn()>>>,
@@ -378,7 +377,6 @@ pub(crate) struct RouteViewport {
 
 #[derive(Default)]
 struct RouteActivationContext {
-    library_toolbar_controls: Option<glib::WeakRef<gtk::Box>>,
     current_track_selections: Vec<RouteCurrentTrackSelection>,
     route_search: Option<gtk::SearchEntry>,
     route_search_focus: Option<Rc<dyn Fn()>>,
@@ -399,7 +397,6 @@ impl RouteViewport {
             mounted_route: RefCell::new(None),
             projection_lane: RefCell::new(LatestIntentLane::default()),
             position_memory: RefCell::new(RoutePositionMemory::default()),
-            current_library_toolbar_controls: RefCell::new(None),
             current_track_selections: RefCell::new(Vec::new()),
             route_search: RefCell::new(None),
             route_search_focus: RefCell::new(None),
@@ -1398,7 +1395,6 @@ impl Shell {
         self.install_current_route_context(context);
         view.resume();
         self.route_viewport.route_host.set_visible_child(&surface);
-        self.sync_library_toolbar_end_margin();
         let mount_ms = elapsed_ms(mount_started);
         let total_ms = elapsed_ms(render_started);
         debug!(
@@ -1478,11 +1474,6 @@ impl Shell {
 
     fn take_current_route_context(&self) -> RouteActivationContext {
         RouteActivationContext {
-            library_toolbar_controls: self
-                .route_viewport
-                .current_library_toolbar_controls
-                .borrow_mut()
-                .take(),
             current_track_selections: std::mem::take(
                 &mut *self.route_viewport.current_track_selections.borrow_mut(),
             ),
@@ -1492,9 +1483,6 @@ impl Shell {
     }
 
     fn install_current_route_context(&self, context: RouteActivationContext) {
-        self.route_viewport
-            .current_library_toolbar_controls
-            .replace(context.library_toolbar_controls);
         self.route_viewport
             .current_track_selections
             .replace(context.current_track_selections);
@@ -1507,10 +1495,6 @@ impl Shell {
     }
 
     fn clear_current_route_context(&self) {
-        self.route_viewport
-            .current_library_toolbar_controls
-            .borrow_mut()
-            .take();
         self.route_viewport.route_search.borrow_mut().take();
         self.route_viewport.route_search_focus.borrow_mut().take();
         self.route_viewport
