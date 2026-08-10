@@ -23,8 +23,6 @@ use tracing::error;
 use tracing::info;
 
 fn main() -> ExitCode {
-    #[cfg(target_os = "windows")]
-    configure_windows_native_decorations();
     if let Some(result) = verify_media_argument() {
         return result;
     }
@@ -51,12 +49,6 @@ fn main() -> ExitCode {
     } else {
         ui::run_application(bootstrap)
     }
-}
-
-#[cfg(target_os = "windows")]
-fn configure_windows_native_decorations() {
-    // Rufin is still single-threaded here and GTK has not been initialized.
-    unsafe { env::set_var("GTK_CSD", "0") };
 }
 
 #[cfg(target_os = "windows")]
