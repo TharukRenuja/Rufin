@@ -25,7 +25,70 @@
     "--talk-name=org.freedesktop.Notifications",
     "--filesystem=xdg-run/app/com.discordapp.Discord:create"
   ],
+  "cleanup": [
+    "/include",
+    "/lib/cmake",
+    "/lib/pkgconfig",
+    "/lib/*.a",
+    "/lib/*.la",
+    "/share/doc"
+  ],
   "modules": [
+    {
+      "name": "game-music-emu",
+      "buildsystem": "cmake-ninja",
+      "config-opts": [
+        "-DGME_BUILD_STATIC=OFF",
+        "-DGME_BUILD_TESTING=OFF",
+        "-DGME_BUILD_EXAMPLES=OFF",
+        "-DGME_YM2612_EMU=Nuked"
+      ],
+      "post-install": [
+        "install -Dm644 gme/ext/LICENSE $FLATPAK_DEST/share/licenses/$FLATPAK_ID/game-music-emu/emu2413-LICENSE"
+      ],
+      "sources": [
+        {
+          "type": "archive",
+          "url": "https://github.com/libgme/game-music-emu/archive/refs/tags/0.6.5.tar.gz",
+          "sha256": "8531678502451c2cf04248cda45c8b4645e19fcfb63e6a7ec2549641c47bb392"
+        }
+      ]
+    },
+    {
+      "name": "libopenmpt",
+      "buildsystem": "autotools",
+      "config-opts": [
+        "--without-portaudio",
+        "--disable-openmpt123",
+        "--disable-examples",
+        "--disable-tests",
+        "--disable-static"
+      ],
+      "sources": [
+        {
+          "type": "archive",
+          "url": "https://lib.openmpt.org/files/libopenmpt/src/libopenmpt-0.8.7+release.autotools.tar.gz",
+          "sha256": "275c29ef47be9992f62a35fcc96f7ca05c06d2fd05c9298b8dee9f743f75b089"
+        }
+      ]
+    },
+    {
+      "name": "gstreamer-openmpt-gme",
+      "buildsystem": "simple",
+      "build-commands": [
+        "meson setup build -Dauto_features=disabled -Dgme=enabled -Dopenmpt=enabled --buildtype=release",
+        "meson compile -C build gstgme gstopenmpt",
+        "install -Dm755 build/ext/gme/libgstgme.so /app/lib/gstreamer-1.0/libgstgme.so",
+        "install -Dm755 build/ext/openmpt/libgstopenmpt.so /app/lib/gstreamer-1.0/libgstopenmpt.so"
+      ],
+      "sources": [
+        {
+          "type": "archive",
+          "url": "https://gstreamer.freedesktop.org/src/gst-plugins-bad/gst-plugins-bad-1.26.11.tar.xz",
+          "sha256": "110fb82795f0e569b1e27b12ab9699d35c7762e1ff4db95335d6ac8d1442af3d"
+        }
+      ]
+    },
     {
       "name": "rufin",
       "buildsystem": "simple",

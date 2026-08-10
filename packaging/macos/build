@@ -156,6 +156,46 @@ if [[ ! -f "$wavpack_plugin" ]]; then
     exit 1
 fi
 
+extra_audio_source_archive="$work_root/gst-plugins-bad-${gstreamer_version}.tar.xz"
+extra_audio_source_checksum="${extra_audio_source_archive}.sha256sum"
+extra_audio_source_dir="$work_root/gst-plugins-bad-${gstreamer_version}"
+extra_audio_build_dir="$work_root/gst-plugins-bad-build"
+extra_audio_source_url="https://gstreamer.freedesktop.org/src/gst-plugins-bad"
+
+curl --fail --location --silent --show-error --retry 3 \
+    "$extra_audio_source_url/$(basename "$extra_audio_source_archive")" \
+    --output "$extra_audio_source_archive"
+curl --fail --location --silent --show-error --retry 3 \
+    "$extra_audio_source_url/$(basename "$extra_audio_source_checksum")" \
+    --output "$extra_audio_source_checksum"
+(
+    cd "$work_root"
+    shasum -a 256 --check "$(basename "$extra_audio_source_checksum")"
+)
+rm -rf "$extra_audio_source_dir" "$extra_audio_build_dir"
+tar -xJf "$extra_audio_source_archive" -C "$work_root"
+gme_prefix="$(brew --prefix game-music-emu)"
+openmpt_prefix="$(brew --prefix libopenmpt)"
+CFLAGS="-I${gme_prefix}/include ${CFLAGS:-}" \
+LDFLAGS="-L${gme_prefix}/lib ${LDFLAGS:-}" \
+PKG_CONFIG_PATH="${openmpt_prefix}/lib/pkgconfig:${PKG_CONFIG_PATH:-}" \
+    meson setup \
+    "$extra_audio_build_dir" \
+    "$extra_audio_source_dir" \
+    -Dauto_features=disabled \
+    -Dgme=enabled \
+    -Dopenmpt=enabled \
+    --buildtype=release
+meson compile -C "$extra_audio_build_dir" gstgme gstopenmpt
+gme_plugin="$extra_audio_build_dir/ext/gme/libgstgme.dylib"
+openmpt_plugin="$extra_audio_build_dir/ext/openmpt/libgstopenmpt.dylib"
+for plugin_path in "$gme_plugin" "$openmpt_plugin"; do
+    if [[ ! -f "$plugin_path" ]]; then
+        echo "The GStreamer audio plugin was not produced: ${plugin_path}" >&2
+        exit 1
+    fi
+done
+
 version="$(sed -n 's/^version = "\([^"]*\)"/\1/p' "${repo_root}/Cargo.toml" | head -n 1)"
 deployment_target="${MACOSX_DEPLOYMENT_TARGET:-15.0}"
 package_arch="$(uname -m)"
@@ -246,6 +286,10 @@ for plugin_name in "${gstreamer_plugin_names[@]}"; do
 done
 cp -L "$wavpack_plugin" \
     "$app_path/Contents/Resources/lib/gstreamer-1.0/libgstwavpack.dylib"
+cp -L "$gme_plugin" \
+    "$app_path/Contents/Resources/lib/gstreamer-1.0/libgstgme.dylib"
+cp -L "$openmpt_plugin" \
+    "$app_path/Contents/Resources/lib/gstreamer-1.0/libgstopenmpt.dylib"
 copy_directory "$pixbuf_loaders" \
     "$app_path/Contents/Resources/lib/gdk-pixbuf-2.0/loaders"
 copy_directory "${brew_prefix}/lib/gio/modules" \

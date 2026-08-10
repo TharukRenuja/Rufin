@@ -8,19 +8,18 @@ use std::time::UNIX_EPOCH;
 use library::{
     Album, AlbumId, AlbumRelations, Artist, ArtistCredit, ArtistId, CandidateBatch, Genre, GenreId,
     LocalComponentBaseline, LocalComponentReplacement, LocalComponentSeed, LocalFile,
-    LocalFileBaseline, LocalFileKind, LocalFileSeed, LocalReadState, Track,
+    LocalFileBaseline, LocalFileKind, LocalFileSeed, LocalFileState, Track,
 };
 use walkdir::WalkDir;
 
 use super::artwork;
 use super::cue::{CueFile, CueSheet, CueTrack, parse_cue_sheet};
-use super::format::{AudioFormat, audio_format};
-use super::tags::{self, AudioRead, ScannedTrack};
+use super::media::{self, MediaRead, ScannedTrack};
 use crate::source::{BatchEmitter, SourceReadProgress, SourceReadStage};
 use crate::{SourceError, SourceResult};
 
-const LOCAL_LIBRARY_PARSER_VERSION: u32 = 4;
-const LOCAL_ACCESS_PARSER_VERSION: u32 = 3;
+const LOCAL_LIBRARY_PARSER_VERSION: u32 = 7;
+const LOCAL_ACCESS_PARSER_VERSION: u32 = 6;
 const LOCAL_CUE_MAX_BYTES: usize = 1024 * 1024;
 const LOCAL_BATCH_SIZE: usize = 1024;
 
@@ -53,13 +52,12 @@ impl LocalChange {
 struct Inventory {
     entries: BTreeMap<String, InventoryEntry>,
     artwork_by_directory: BTreeMap<PathBuf, library::LocalArtworkRef>,
-    audio_counts_by_directory: BTreeMap<PathBuf, usize>,
+    accepted_media_counts_by_directory: BTreeMap<PathBuf, usize>,
 }
 
 struct InventoryEntry {
     path: PathBuf,
     file: LocalFile,
-    audio_format: Option<&'static AudioFormat>,
 }
 
 #[derive(Clone)]
@@ -75,13 +73,13 @@ struct ParsedCues {
     plans: Vec<CuePlan>,
 }
 
-struct AudioJob {
+struct MediaJob {
     paths: Vec<PathBuf>,
     cues: Vec<CuePlan>,
 }
 
-struct AudioJobResult {
-    reads: Vec<(PathBuf, AudioRead)>,
+struct MediaJobResult {
+    reads: Vec<(PathBuf, MediaRead)>,
     cues: Vec<CuePlan>,
 }
 
@@ -152,7 +150,7 @@ pub(super) fn acquire_local_access(
 ) -> SourceResult<Vec<library::LocalAccessFile>> {
     let inventory = inventory_entries(
         &[root.to_path_buf()],
-        |kind| kind == LocalFileKind::Audio,
+        |kind| kind == LocalFileKind::Media,
         progress,
         cancelled,
     )?;
@@ -169,12 +167,7 @@ pub(super) fn acquire_local_access(
             Some(previous) if local_access_file_matches(&entry.file, previous) => {
                 accepted.insert(path.clone(), (*previous).clone());
             }
-            _ => changed.push((
-                entry.path.clone(),
-                entry
-                    .audio_format
-                    .expect("a Local-access audio entry has one format"),
-            )),
+            _ => changed.push(entry.path.clone()),
         }
     }
     if changed.is_empty() {
@@ -189,9 +182,9 @@ pub(super) fn acquire_local_access(
     let mut completed = 0;
     run_ordered_jobs(
         changed,
-        tags::Worker::default,
-        |worker, (path, format)| {
-            let metadata = tags::read_basic_audio(worker, path.clone(), format);
+        media::Worker::default,
+        |worker, path| {
+            let metadata = media::read_basic_audio(worker, path.clone());
             Ok((path, metadata))
         },
         |(path, metadata)| {
@@ -199,7 +192,7 @@ pub(super) fn acquire_local_access(
             if let Some(metadata) = metadata {
                 let entry = inventory
                     .get(path.to_string_lossy().as_ref())
-                    .expect("a Local-access audio path comes from its inventory");
+                    .expect("a Local-access media path comes from its inventory");
                 let file = library::LocalAccessFile {
                     path: entry.file.path.clone(),
                     root: entry.file.root.clone(),
@@ -280,20 +273,14 @@ pub(super) fn confirm_change(
 ) -> SourceResult<Option<LocalChange>> {
     let LocalFileBaseline {
         files: accepted_files,
-        artwork_directory_audio_counts,
+        tracked_media_paths,
+        accepted_media_counts_by_directory,
     } = baseline;
     observe_accepted_files(&mut check.inventory, &accepted_files, cancelled)?;
     let changed_paths = changed_paths(&check.inventory, &accepted_files);
     if changed_paths.is_empty() {
         return Ok(None);
     }
-    apply_accepted_audio_counts(
-        &mut check.inventory,
-        &artwork_directory_audio_counts,
-        &accepted_files,
-        &changed_paths,
-    );
-
     read_changed_cues(
         &changed_paths,
         &check.inventory,
@@ -321,6 +308,13 @@ pub(super) fn confirm_change(
         progress,
         cancelled,
     )?;
+    apply_accepted_media_counts(
+        &mut check.inventory,
+        &accepted_media_counts_by_directory,
+        &tracked_media_paths,
+        &changed_paths,
+        &changed_facts.files,
+    );
     let component_seeds = component_seeds(
         &changed_paths,
         &accepted_files,
@@ -481,7 +475,7 @@ fn inventory_for_file_seeds(
                 ))
             })?;
             let path = entry.path();
-            let Some((kind, audio_format)) = recognized_file(
+            let Some(kind) = recognized_file(
                 path,
                 entry.file_type().is_dir(),
                 entry.file_type().is_file(),
@@ -496,7 +490,6 @@ fn inventory_for_file_seeds(
             entries.entry(path_text).or_insert_with(|| InventoryEntry {
                 file: local_file(root, &path, kind, &metadata),
                 path,
-                audio_format,
             });
         }
     }
@@ -505,7 +498,6 @@ fn inventory_for_file_seeds(
 
 fn inventory_from_entries(entries: BTreeMap<String, InventoryEntry>) -> Inventory {
     let mut images_by_directory = BTreeMap::<PathBuf, Vec<PathBuf>>::new();
-    let mut audio_counts_by_directory = BTreeMap::<PathBuf, usize>::new();
     for entry in entries.values() {
         if entry.file.kind == LocalFileKind::Image
             && let Some(directory) = entry.path.parent()
@@ -514,13 +506,6 @@ fn inventory_from_entries(entries: BTreeMap<String, InventoryEntry>) -> Inventor
                 .entry(directory.to_path_buf())
                 .or_default()
                 .push(entry.path.clone());
-        }
-        if entry.file.kind == LocalFileKind::Audio {
-            for directory in entry.file.directories_to_root() {
-                *audio_counts_by_directory
-                    .entry(directory.to_path_buf())
-                    .or_default() += 1;
-            }
         }
     }
     for images in images_by_directory.values_mut() {
@@ -541,7 +526,7 @@ fn inventory_from_entries(entries: BTreeMap<String, InventoryEntry>) -> Inventor
     Inventory {
         entries,
         artwork_by_directory,
-        audio_counts_by_directory,
+        accepted_media_counts_by_directory: BTreeMap::new(),
     }
 }
 
@@ -578,7 +563,7 @@ fn inventory_entries(
                 entry.file_type().is_dir(),
                 entry.file_type().is_file(),
             );
-            let Some((kind, audio_format)) = recognized.filter(|(kind, _)| include(*kind)) else {
+            let Some(kind) = recognized.filter(|kind| include(*kind)) else {
                 continue;
             };
             let metadata = entry.metadata().map_err(|error| {
@@ -587,11 +572,9 @@ fn inventory_entries(
             let path = path.to_path_buf();
             let path_text = path.to_string_lossy().into_owned();
             let file = local_file(root, &path, kind, &metadata);
-            entries.entry(path_text).or_insert_with(|| InventoryEntry {
-                path,
-                file,
-                audio_format,
-            });
+            entries
+                .entry(path_text)
+                .or_insert_with(|| InventoryEntry { path, file });
             visited += 1;
             if visited % LOCAL_BATCH_SIZE == 0 {
                 progress(SourceReadProgress {
@@ -624,12 +607,12 @@ fn local_file(root: &Path, path: &Path, kind: LocalFileKind, metadata: &fs::Meta
         mtime_ns: modified_ns(metadata),
         device_id: metadata_device(metadata),
         inode: metadata_inode(metadata),
-        parse_version: matches!(kind, LocalFileKind::Audio | LocalFileKind::Cue)
+        parse_version: matches!(kind, LocalFileKind::Media | LocalFileKind::Cue)
             .then_some(LOCAL_LIBRARY_PARSER_VERSION),
-        read_state: if kind == LocalFileKind::Directory || kind == LocalFileKind::Image {
-            LocalReadState::Observed
+        state: if kind == LocalFileKind::Directory || kind == LocalFileKind::Image {
+            LocalFileState::Observed
         } else {
-            LocalReadState::Parsed
+            LocalFileState::Accepted
         },
         dependencies: Vec::new(),
     }
@@ -656,9 +639,7 @@ fn observe_accepted_files(
                 )));
             }
         };
-        let Some((kind, audio_format)) =
-            recognized_file(&path, metadata.is_dir(), metadata.is_file())
-        else {
+        let Some(kind) = recognized_file(&path, metadata.is_dir(), metadata.is_file()) else {
             continue;
         };
         let current = local_file(Path::new(&accepted.root), &path, kind, &metadata);
@@ -667,57 +648,52 @@ fn observe_accepted_files(
         } else {
             current
         };
-        inventory.entries.insert(
-            accepted.path.clone(),
-            InventoryEntry {
-                path,
-                file,
-                audio_format,
-            },
-        );
+        inventory
+            .entries
+            .insert(accepted.path.clone(), InventoryEntry { path, file });
     }
     let entries = std::mem::take(&mut inventory.entries);
-    let accepted_audio_counts = std::mem::take(&mut inventory.audio_counts_by_directory);
+    let accepted_media_counts = std::mem::take(&mut inventory.accepted_media_counts_by_directory);
     *inventory = inventory_from_entries(entries);
     inventory
-        .audio_counts_by_directory
-        .extend(accepted_audio_counts);
+        .accepted_media_counts_by_directory
+        .extend(accepted_media_counts);
     Ok(())
 }
 
-fn apply_accepted_audio_counts(
+fn apply_accepted_media_counts(
     inventory: &mut Inventory,
     accepted_counts: &BTreeMap<String, usize>,
-    accepted_files: &[LocalFile],
+    tracked_media_paths: &BTreeSet<String>,
     changed_paths: &BTreeSet<String>,
+    changed_files: &[LocalFile],
 ) {
-    let accepted_files = accepted_files
+    let changed_files = changed_files
         .iter()
         .map(|file| (file.path.as_str(), file))
         .collect::<HashMap<_, _>>();
     for (directory, accepted_count) in accepted_counts {
-        let directory_path = Path::new(directory);
-        let mut current_count = *accepted_count;
+        let directory = Path::new(directory);
+        let mut count = *accepted_count;
         for path in changed_paths
             .iter()
-            .filter(|path| Path::new(path).starts_with(directory_path))
+            .filter(|path| Path::new(path).starts_with(directory))
         {
-            let was_audio = accepted_files
-                .get(path.as_str())
-                .is_some_and(|file| file.kind == LocalFileKind::Audio);
-            let is_audio = inventory
-                .entries
-                .get(path)
-                .is_some_and(|entry| entry.file.kind == LocalFileKind::Audio);
-            match (was_audio, is_audio) {
-                (true, false) => current_count = current_count.saturating_sub(1),
-                (false, true) => current_count += 1,
+            let was_accepted = tracked_media_paths.contains(path);
+            let is_accepted = changed_files.get(path.as_str()).is_some_and(|file| {
+                file.kind == LocalFileKind::Media
+                    && (file.state == LocalFileState::Accepted
+                        || (file.state == LocalFileState::Unreadable && was_accepted))
+            });
+            match (was_accepted, is_accepted) {
+                (true, false) => count = count.saturating_sub(1),
+                (false, true) => count += 1,
                 _ => {}
             }
         }
         inventory
-            .audio_counts_by_directory
-            .insert(directory_path.to_path_buf(), current_count);
+            .accepted_media_counts_by_directory
+            .insert(directory.to_path_buf(), count);
     }
 }
 
@@ -958,7 +934,7 @@ fn build_local_replacement(
         .files
         .iter()
         .filter(|file| {
-            file.kind == LocalFileKind::Audio && file.read_state == LocalReadState::Unreadable
+            file.kind == LocalFileKind::Media && file.state == LocalFileState::Unreadable
         })
         .map(|file| file.path.as_str())
         .collect::<HashSet<_>>();
@@ -1254,7 +1230,7 @@ fn scan_inventory(
         .entries
         .iter()
         .filter(|(path, entry)| {
-            path_is_selected(selected.as_ref(), path) && entry.file.kind == LocalFileKind::Audio
+            path_is_selected(selected.as_ref(), path) && entry.file.kind == LocalFileKind::Media
         })
         .filter_map(|(_, entry)| entry.path.parent().map(Path::to_path_buf))
         .collect::<HashSet<_>>();
@@ -1276,20 +1252,20 @@ fn scan_inventory(
     let mut aggregates = Aggregates::new(inventory, HashMap::new());
     let mut track_batch = Vec::new();
 
-    let audio_total = inventory
+    let media_total = inventory
         .entries
         .iter()
         .filter(|(path, entry)| {
-            path_is_selected(selected.as_ref(), path) && entry.file.kind == LocalFileKind::Audio
+            path_is_selected(selected.as_ref(), path) && entry.file.kind == LocalFileKind::Media
         })
         .count();
     progress(SourceReadProgress {
         stage: SourceReadStage::Tracks,
         completed: 0,
-        total: Some(audio_total),
+        total: Some(media_total),
     });
 
-    let successful_cues = stream_audio(
+    let successful_cues = stream_media(
         inventory,
         selected.as_ref(),
         std::mem::take(&mut cues.plans),
@@ -1297,7 +1273,7 @@ fn scan_inventory(
         &mut track_batch,
         output,
         progress,
-        audio_total,
+        media_total,
         cancelled,
     )?;
     if !track_batch.is_empty() {
@@ -1305,8 +1281,8 @@ fn scan_inventory(
     }
 
     for file in &mut cues.files {
-        if file.read_state == LocalReadState::Parsed && !successful_cues.contains(&file.path) {
-            file.read_state = LocalReadState::Invalid;
+        if file.state == LocalFileState::Accepted && !successful_cues.contains(&file.path) {
+            file.state = LocalFileState::Rejected;
         }
     }
     emit_chunks(cues.files, CandidateBatch::LocalFiles, output)?;
@@ -1367,7 +1343,7 @@ fn parse_cues(
             .cloned()
             .unwrap_or_else(|| read_cue(&entry.path));
         let Some(sheet) = sheet else {
-            file.read_state = LocalReadState::Invalid;
+            file.state = LocalFileState::Rejected;
             files.push(file);
             continue;
         };
@@ -1383,23 +1359,23 @@ fn parse_cues(
             inventory
                 .entries
                 .get(dependency)
-                .is_some_and(|entry| entry.file.kind == LocalFileKind::Audio)
+                .is_some_and(|entry| entry.file.kind == LocalFileKind::Media)
         });
         if let Some(selected) = selected.as_mut() {
             selected.extend(dependencies.iter().filter_map(|dependency| {
                 inventory
                     .entries
                     .get(dependency)
-                    .is_some_and(|entry| entry.file.kind == LocalFileKind::Audio)
+                    .is_some_and(|entry| entry.file.kind == LocalFileKind::Media)
                     .then(|| dependency.clone())
             }));
         }
         if !all_backing_files_exist {
-            file.read_state = LocalReadState::Invalid;
+            file.state = LocalFileState::Rejected;
             files.push(file);
             continue;
         }
-        file.read_state = LocalReadState::Parsed;
+        file.state = LocalFileState::Accepted;
         plans.push(CuePlan {
             cue_path: entry.path.clone(),
             album_title: sheet.album_title,
@@ -1457,7 +1433,7 @@ where
                     let job = {
                         let receive = job_receive
                             .lock()
-                            .expect("Local audio job receiver is not poisoned");
+                            .expect("Local media job receiver is not poisoned");
                         receive.recv()
                     };
                     let Ok((order, job)) = job else {
@@ -1482,7 +1458,7 @@ where
                 };
                 job_send
                     .send(job)
-                    .map_err(|_| SourceError::Other("Local audio readers stopped.".to_string()))?;
+                    .map_err(|_| SourceError::Other("Local media readers stopped.".to_string()))?;
                 sent += 1;
             }
             if sent == 0 {
@@ -1492,7 +1468,7 @@ where
             for _ in 0..sent {
                 wave.push(
                     result_receive.recv().map_err(|_| {
-                        SourceError::Other("Local audio readers stopped.".to_string())
+                        SourceError::Other("Local media readers stopped.".to_string())
                     })?,
                 );
             }
@@ -1511,7 +1487,7 @@ fn local_worker_count(available_parallelism: usize) -> usize {
     available_parallelism.clamp(1, 4)
 }
 
-fn stream_audio(
+fn stream_media(
     inventory: &Inventory,
     selected: Option<&HashSet<String>>,
     plans: Vec<CuePlan>,
@@ -1519,17 +1495,17 @@ fn stream_audio(
     track_batch: &mut Vec<Track>,
     output: &mut dyn FactOutput,
     progress: &(dyn Fn(SourceReadProgress) + Send + Sync),
-    audio_total: usize,
+    media_total: usize,
     cancelled: &(dyn Fn() -> bool + Send + Sync),
 ) -> SourceResult<HashSet<String>> {
-    let (cue_jobs, cue_audio) = cue_jobs(plans);
+    let (cue_jobs, cue_media) = cue_jobs(plans);
     let mut completed = 0;
     let mut successful_cues = HashSet::new();
     let ordinary_jobs = inventory.entries.iter().filter_map(|(path, entry)| {
-        (entry.file.kind == LocalFileKind::Audio
+        (entry.file.kind == LocalFileKind::Media
             && path_is_selected(selected, path)
-            && !cue_audio.contains(path))
-        .then(|| AudioJob {
+            && !cue_media.contains(path))
+        .then(|| MediaJob {
             paths: vec![entry.path.clone()],
             cues: Vec::new(),
         })
@@ -1537,21 +1513,21 @@ fn stream_audio(
     let jobs = cue_jobs.into_iter().chain(ordinary_jobs);
     run_ordered_jobs(
         jobs,
-        tags::Worker::default,
+        media::Worker::default,
         |worker, job| {
             let mut reads = Vec::with_capacity(job.paths.len());
             for path in &job.paths {
                 check_cancelled(cancelled)?;
-                reads.push((path.clone(), read_audio(worker, inventory, path)));
+                reads.push((path.clone(), read_media(worker, inventory, path)));
             }
-            Ok(AudioJobResult {
+            Ok(MediaJobResult {
                 reads,
                 cues: job.cues,
             })
         },
         |result| {
             completed += result.reads.len();
-            accept_audio_result(
+            accept_media_result(
                 inventory,
                 result,
                 aggregates,
@@ -1562,21 +1538,21 @@ fn stream_audio(
             progress(SourceReadProgress {
                 stage: SourceReadStage::Tracks,
                 completed,
-                total: Some(audio_total),
+                total: Some(media_total),
             });
             Ok(())
         },
         cancelled,
     )?;
-    if completed != audio_total {
+    if completed != media_total {
         return Err(SourceError::Other(
-            "Local audio readers did not finish the selected files.".to_string(),
+            "Local media readers did not finish the selected files.".to_string(),
         ));
     }
     Ok(successful_cues)
 }
 
-fn cue_jobs(plans: Vec<CuePlan>) -> (Vec<AudioJob>, HashSet<String>) {
+fn cue_jobs(plans: Vec<CuePlan>) -> (Vec<MediaJob>, HashSet<String>) {
     if plans.is_empty() {
         return (Vec::new(), HashSet::new());
     }
@@ -1620,7 +1596,7 @@ fn cue_jobs(plans: Vec<CuePlan>) -> (Vec<AudioJob>, HashSet<String>) {
                 }
             }
         }
-        jobs.push(AudioJob {
+        jobs.push(MediaJob {
             paths: paths.into_iter().map(PathBuf::from).collect(),
             cues: indices
                 .into_iter()
@@ -1635,22 +1611,19 @@ fn cue_jobs(plans: Vec<CuePlan>) -> (Vec<AudioJob>, HashSet<String>) {
     (jobs, all_audio)
 }
 
-fn read_audio(worker: &mut tags::Worker, inventory: &Inventory, path: &Path) -> AudioRead {
+fn read_media(worker: &mut media::Worker, inventory: &Inventory, path: &Path) -> MediaRead {
     let path_text = path.to_string_lossy();
     let entry = inventory
         .entries
         .get(path_text.as_ref())
-        .expect("a queued Local audio path comes from the inventory");
+        .expect("a queued Local media path comes from the inventory");
     let sidecar = path
         .parent()
         .and_then(|directory| inventory.artwork_by_directory.get(directory))
         .cloned();
-    tags::read_audio(
+    media::read_media(
         worker,
         path.to_path_buf(),
-        entry
-            .audio_format
-            .expect("a queued Local audio path has one format"),
         sidecar,
         file_revision(&entry.file),
     )
@@ -1670,9 +1643,9 @@ fn file_revision(file: &LocalFile) -> String {
     )
 }
 
-fn accept_audio_result(
+fn accept_media_result(
     inventory: &Inventory,
-    result: AudioJobResult,
+    result: MediaJobResult,
     aggregates: &mut Aggregates,
     track_batch: &mut Vec<Track>,
     output: &mut dyn FactOutput,
@@ -1685,15 +1658,18 @@ fn accept_audio_result(
         .collect::<HashMap<_, _>>();
     let scanned = reads
         .iter()
-        .filter_map(|(path, read)| read.scanned.as_ref().map(|scanned| (path.clone(), scanned)))
+        .filter_map(|(path, read)| match read {
+            MediaRead::Accepted(scanned) => Some((path.clone(), scanned)),
+            MediaRead::Rejected | MediaRead::Unreadable => None,
+        })
         .collect::<HashMap<_, _>>();
-    let mut suppressed_audio = HashSet::new();
+    let mut suppressed_media = HashSet::new();
     for plan in &result.cues {
         let Some(cue_tracks) = cue_tracks_for_plan(plan, &scanned) else {
             continue;
         };
         successful_cues.insert(plan.cue_path.to_string_lossy().into_owned());
-        suppressed_audio.extend(
+        suppressed_media.extend(
             plan.files
                 .iter()
                 .map(|file| file.path.to_string_lossy().into_owned()),
@@ -1706,18 +1682,22 @@ fn accept_audio_result(
     let mut file_batch = Vec::with_capacity(result.reads.len().min(LOCAL_BATCH_SIZE));
     for (path, read) in result.reads {
         let path_text = path.to_string_lossy();
-        if !suppressed_audio.contains(path_text.as_ref()) {
-            if let Some(scanned) = read.scanned {
-                accept_scanned(scanned, aggregates, track_batch, output)?;
-            }
-        }
         let mut file = inventory
             .entries
             .get(path_text.as_ref())
-            .expect("a read Local audio path comes from the inventory")
+            .expect("a read Local media path comes from the inventory")
             .file
             .clone();
-        file.read_state = read.state;
+        file.state = match read {
+            MediaRead::Accepted(scanned) => {
+                if !suppressed_media.contains(path_text.as_ref()) {
+                    accept_scanned(scanned, aggregates, track_batch, output)?;
+                }
+                LocalFileState::Accepted
+            }
+            MediaRead::Rejected => LocalFileState::Rejected,
+            MediaRead::Unreadable => LocalFileState::Unreadable,
+        };
         file_batch.push(file);
         if file_batch.len() == LOCAL_BATCH_SIZE {
             output.emit(CandidateBatch::LocalFiles(std::mem::take(&mut file_batch)))?;
@@ -1794,15 +1774,15 @@ fn cue_track_from(
         .performer
         .clone()
         .unwrap_or_else(|| album_artist.clone());
-    let artists = tags::split_names(&artist)
+    let artists = media::split_names(&artist)
         .iter()
-        .map(|name| tags::artist_credit(name, None))
+        .map(|name| media::artist_credit(name, None))
         .collect::<Vec<_>>();
-    let album_artists = tags::split_names(&album_artist)
+    let album_artists = media::split_names(&album_artist)
         .iter()
-        .map(|name| tags::artist_credit(name, None))
+        .map(|name| media::artist_credit(name, None))
         .collect::<Vec<_>>();
-    let album_id = tags::album_id(
+    let album_id = media::album_id(
         &album_artists,
         &album,
         backing.musicbrainz_album_id.as_deref(),
@@ -1814,7 +1794,7 @@ fn cue_track_from(
         .max(1)
         .min(u64::from(u32::MAX)) as u32;
     let mut track = backing.track.clone();
-    track.id = tags::cue_track_id(&plan.cue_path, cue_track.number);
+    track.id = media::cue_track_id(&plan.cue_path, cue_track.number);
     track.album_id = Some(album_id);
     track.title = cue_track
         .title
@@ -2002,10 +1982,15 @@ impl Aggregates {
     }
 
     fn finish(self, inventory: &Inventory, output: &mut dyn FactOutput) -> SourceResult<()> {
+        let accepted_media = self
+            .albums
+            .values()
+            .flat_map(|aggregate| aggregate.source_paths.iter().cloned())
+            .collect::<BTreeSet<_>>();
         let albums = self.albums.into_values().map(|mut aggregate| {
             if aggregate.album.local_artwork.is_none() {
                 aggregate.album.local_artwork =
-                    common_album_artwork(inventory, &aggregate.source_paths);
+                    common_album_artwork(inventory, &aggregate.source_paths, &accepted_media);
             }
             aggregate.album.relations = AlbumRelations {
                 album_artists: aggregate.album_artists.into_values().collect(),
@@ -2047,23 +2032,24 @@ fn merge_compilation(current: Option<bool>, incoming: Option<bool>) -> Option<bo
 fn common_album_artwork(
     inventory: &Inventory,
     source_paths: &BTreeSet<PathBuf>,
+    accepted_media: &BTreeSet<PathBuf>,
 ) -> Option<library::LocalArtworkRef> {
     let first_directory = source_paths.first()?.parent()?;
     let directory = first_directory.ancestors().find(|directory| {
         inventory.artwork_by_directory.contains_key(*directory)
             && source_paths.iter().all(|path| path.starts_with(directory))
     })?;
-    if inventory
-        .audio_counts_by_directory
+    let accepted_count = inventory
+        .accepted_media_counts_by_directory
         .get(directory)
-        .is_some_and(|count| *count == source_paths.len())
-        && source_paths.iter().all(|path| {
-            inventory
-                .entries
-                .get(path.to_string_lossy().as_ref())
-                .is_some_and(|entry| entry.file.kind == LocalFileKind::Audio)
-        })
-    {
+        .copied()
+        .unwrap_or_else(|| {
+            accepted_media
+                .iter()
+                .filter(|path| path.starts_with(directory))
+                .count()
+        });
+    if accepted_count == source_paths.len() && source_paths.is_subset(accepted_media) {
         inventory.artwork_by_directory.get(directory).cloned()
     } else {
         None
@@ -2123,22 +2109,39 @@ fn require_root(root: &Path) -> SourceResult<()> {
     Ok(())
 }
 
-fn recognized_file(
-    path: &Path,
-    is_directory: bool,
-    is_file: bool,
-) -> Option<(LocalFileKind, Option<&'static AudioFormat>)> {
+fn recognized_file(path: &Path, is_directory: bool, is_file: bool) -> Option<LocalFileKind> {
     if is_directory {
-        Some((LocalFileKind::Directory, None))
-    } else if is_file && let Some(format) = audio_format(path) {
-        Some((LocalFileKind::Audio, Some(format)))
+        Some(LocalFileKind::Directory)
     } else if is_file && is_cue(path) {
-        Some((LocalFileKind::Cue, None))
+        Some(LocalFileKind::Cue)
     } else if is_file && artwork::supported_image(path) {
-        Some((LocalFileKind::Image, None))
+        Some(LocalFileKind::Image)
+    } else if is_file && !ignored_file(path) {
+        Some(LocalFileKind::Media)
     } else {
         None
     }
+}
+
+fn ignored_file(path: &Path) -> bool {
+    if path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| name.eq_ignore_ascii_case("qt_temp"))
+    {
+        return true;
+    }
+    path.extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| {
+            [
+                "tmp", "tar", "gz", "bz2", "xz", "tbz", "tgz", "z", "zip", "rar", "wvc", "zst",
+                "lrc", "amz", "asx", "asxini", "m3u", "m3u8", "pla", "pls", "ram", "vlc", "wax",
+                "wmx", "wvx", "xspf",
+            ]
+            .iter()
+            .any(|candidate| extension.eq_ignore_ascii_case(candidate))
+        })
 }
 
 fn is_cue(path: &Path) -> bool {

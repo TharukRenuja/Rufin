@@ -626,6 +626,11 @@ impl Shell {
             .set_text(&format_duration(displayed_seconds));
         let max = f64::from(duration_seconds.max(1));
         controls.progress.set_range(0.0, max);
+        let can_seek = player
+            .as_ref()
+            .is_some_and(|player| player.transport.can_seek && duration_seconds > 0);
+        controls.progress.set_sensitive(can_seek);
+        controls.waveform.widget().set_sensitive(can_seek);
         controls
             .progress
             .set_value(f64::from(displayed_seconds.min(duration_seconds)));
@@ -696,6 +701,7 @@ impl Shell {
             player.transport.position_millis,
             track_changed,
             player.transport.current.is_some(),
+            player.transport.can_seek,
         ) {
             self.clear_player_seek_preview();
         }
@@ -718,8 +724,12 @@ fn should_clear_seek_preview(
     position_millis: u64,
     track_changed: bool,
     has_current: bool,
+    can_seek: bool,
 ) -> bool {
-    track_changed || !has_current || seek_preview_matches_position(target_seconds, position_millis)
+    track_changed
+        || !has_current
+        || !can_seek
+        || seek_preview_matches_position(target_seconds, position_millis)
 }
 
 pub(crate) fn build_bottom_player() -> PlayerControls {
@@ -1593,7 +1603,10 @@ pub(crate) fn connect_player_controls(shell: &Rc<Shell>) {
                 };
                 let duration_seconds =
                     (player.transport.duration_millis / 1_000).min(u64::from(u32::MAX)) as u32;
-                if player.transport.current.is_none() || duration_seconds == 0 {
+                if player.transport.current.is_none()
+                    || !player.transport.can_seek
+                    || duration_seconds == 0
+                {
                     return glib::Propagation::Stop;
                 }
                 duration_seconds
@@ -1904,9 +1917,20 @@ mod tests {
 
     #[test]
     fn seek_preview_waits_for_backend_acknowledgement() {
-        assert!(!super::should_clear_seek_preview(19, 5_000, false, true));
-        assert!(super::should_clear_seek_preview(19, 19_000, false, true));
-        assert!(super::should_clear_seek_preview(19, 5_000, true, true));
-        assert!(super::should_clear_seek_preview(19, 5_000, false, false));
+        assert!(!super::should_clear_seek_preview(
+            19, 5_000, false, true, true
+        ));
+        assert!(super::should_clear_seek_preview(
+            19, 19_000, false, true, true
+        ));
+        assert!(super::should_clear_seek_preview(
+            19, 5_000, true, true, true
+        ));
+        assert!(super::should_clear_seek_preview(
+            19, 5_000, false, false, true
+        ));
+        assert!(super::should_clear_seek_preview(
+            19, 5_000, false, true, false
+        ));
     }
 }

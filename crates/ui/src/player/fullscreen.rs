@@ -2025,6 +2025,7 @@ mod tests {
                 ),
                 position_millis,
                 duration_millis: 180_000,
+                can_seek: true,
                 buffering_percent: None,
                 error: None,
             },

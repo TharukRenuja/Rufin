@@ -85,9 +85,11 @@ jobs:
             adwaita-icon-theme \
             dylibbundler \
             gettext \
+            game-music-emu \
             gstreamer \
             gtk4 \
             libadwaita \
+            libopenmpt \
             librsvg \
             meson \
             ninja \
@@ -126,7 +128,8 @@ jobs:
           media_dir="$RUNNER_TEMP/rufin-package-media"
           mount_dir="$RUNNER_TEMP/rufin-dmg"
           dmg_path="dist/Rufin-macos-${{ matrix.architecture }}.dmg"
-          cargo run --locked -p xtask -- generate media-verification-files "$media_dir"
+          cargo run --locked -p xtask -- generate media-verification-files \
+            "$media_dir" --with-openmpt-gme
           mkdir -p "$mount_dir"
           hdiutil verify "$dmg_path"
           hdiutil attach "$dmg_path" -nobrowse -readonly -mountpoint "$mount_dir"

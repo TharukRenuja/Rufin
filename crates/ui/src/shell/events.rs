@@ -893,6 +893,7 @@ mod tests {
                 desired_playing: false,
                 position_millis: 0,
                 duration_millis: 0,
+                can_seek: false,
                 buffering_percent: None,
                 error: None,
             },

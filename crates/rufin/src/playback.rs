@@ -1246,7 +1246,12 @@ impl PlaybackOwner {
                 });
             let result = prepare_stream(Some(Arc::clone(&loaded)), source, request)
                 .await
-                .map(|stream| PreparedStream::new(stream, loudness));
+                .map(|stream| {
+                    prepare_for_source_format(
+                        PreparedStream::new(stream, loudness),
+                        source_format.as_deref(),
+                    )
+                });
             match &result {
                 Ok(stream) => debug!(
                     %source_id,
@@ -1476,6 +1481,50 @@ impl PlaybackOwner {
         if let Err(error) = active.playback.command(command) {
             warn!(%error, "Playback command failed");
         }
+    }
+}
+
+fn module_music_format(source_format: &str) -> bool {
+    matches!(
+        source_format.trim().to_ascii_lowercase().as_str(),
+        "669"
+            | "amf"
+            | "ams"
+            | "dbm"
+            | "digi"
+            | "dmf"
+            | "dsm"
+            | "far"
+            | "gdm"
+            | "imf"
+            | "it"
+            | "j2b"
+            | "mdl"
+            | "med"
+            | "mod"
+            | "mptm"
+            | "mt2"
+            | "mtm"
+            | "okt"
+            | "psm"
+            | "ptm"
+            | "s3m"
+            | "stm"
+            | "stx"
+            | "ult"
+            | "umx"
+            | "xm"
+    )
+}
+
+fn prepare_for_source_format(
+    prepared: PreparedStream,
+    source_format: Option<&str>,
+) -> PreparedStream {
+    if source_format.is_some_and(module_music_format) {
+        prepared.without_preloading().without_timing_queries()
+    } else {
+        prepared
     }
 }
 
@@ -2136,10 +2185,43 @@ mod source_report_tests {
 }
 
 #[cfg(test)]
+mod playback_format_tests {
+    use super::{module_music_format, prepare_for_source_format};
+    use library::ResolvedStream;
+    use playback::PreparedStream;
+
+    #[test]
+    fn every_openmpt_family_uses_the_isolated_playback_path() {
+        for format in ["mod", "s3m", "xm", "it", "mptm", "669", "okt", "umx"] {
+            assert!(module_music_format(format), "{format}");
+        }
+        assert!(!module_music_format("flac"));
+        assert!(!module_music_format("vgm"));
+    }
+
+    #[test]
+    fn module_music_keeps_safe_files_recoverable() {
+        let module = prepare_for_source_format(
+            PreparedStream::from(ResolvedStream::new("file:///music/test.it")),
+            Some("it"),
+        );
+        assert!(!module.allows_preloading);
+        assert!(!module.allows_timing_queries);
+
+        let flac = prepare_for_source_format(
+            PreparedStream::from(ResolvedStream::new("file:///music/test.flac")),
+            Some("flac"),
+        );
+        assert!(flac.allows_preloading);
+        assert!(flac.allows_timing_queries);
+    }
+}
+
+#[cfg(test)]
 mod loaded_play_tests {
     use library::{
         CandidateBatch, CandidateFinish, CandidateHeader, HomeFacts, HomeSnapshot, LocalFile,
-        LocalFileKind, LocalReadState, Playlist, PlaylistEntry, PlaylistId, PlaylistSnapshot,
+        LocalFileKind, LocalFileState, Playlist, PlaylistEntry, PlaylistId, PlaylistSnapshot,
         RadioSeed, TrackData, TrackRelations,
     };
     use playback::{
@@ -2649,13 +2731,13 @@ mod loaded_play_tests {
                 path: missing_text.clone(),
                 root: directory.path().to_string_lossy().into_owned(),
                 relative_path: "missing.mp3".to_string(),
-                kind: LocalFileKind::Audio,
+                kind: LocalFileKind::Media,
                 size_bytes: Some(1),
                 mtime_ns: 1,
                 device_id: None,
                 inode: None,
                 parse_version: Some(1),
-                read_state: LocalReadState::Parsed,
+                state: LocalFileState::Accepted,
                 dependencies: Vec::new(),
             }]))
             .expect("write Local file");

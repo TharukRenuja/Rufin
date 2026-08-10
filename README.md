@@ -26,6 +26,7 @@
 - Optional waveform seekbar; waveforms are generated for the current track and cached
 - Fullscreen player with visualizer
 - CUE sheet support with separate playable tracks
+- Broad local format support: AAC and ALAC (including M4A/MP4), AIFF and WAV, APE, FLAC, TTA and WavPack, MP1/MP2/MP3 and Musepack, Ogg Vorbis/Opus/Speex, MKA and audio-only WebM, WMA/ASF, DSD, tracker modules such as MOD/XM/IT/S3M/MPTM, and emulated game music such as NSF/VGM[^codecs]
 - Audio output device selection
 
 ## 📚 Library
@@ -37,9 +38,6 @@
 - Metadata editing for supported servers and local formats, with bulk editing and `Identify` available with auto-fill
 - Automatic metadata, artwork and lyrics caching
 - Normal browsing for large libraries with non-paginated pages
-- Broad local format support: AAC, AIFF, APE, FLAC, M4A/MP4, MP1/MP2/MP3, Musepack, Ogg Vorbis/Opus/Speex, WAV, WavPack, MKA and WMA/ASF[^codecs]
-
-[^codecs]: Some formats are dependent on available GStreamer plugins, which shouldn't be an issue for any of the currently supported packages except RPM. 
 
 ## 🌍️ Discovery, playlists and lyrics
 
@@ -203,11 +201,11 @@ sudo dnf install \
   gcc rust cargo just pkgconf-pkg-config gettext gtk4-devel \
   libadwaita-devel gstreamer1-devel gstreamer1-plugins-base-devel \
   gstreamer1-plugins-base gstreamer1-plugins-good \
-  gstreamer1-plugins-bad-free
+  gstreamer1-plugins-bad-free gstreamer1-plugins-bad-free-extras \
+  gstreamer1-plugins-ugly-free gstreamer1-plugin-libav
 ```
 
-For full codec coverage, enable RPM Fusion and install `gstreamer1-plugins-ugly`
-and `gstreamer1-plugin-libav`.
+For additional codecs, install the matching GStreamer plugins.
 
 **Windows:** Windows builds run natively in the MSYS2 UCRT64 environment. From its Windows
 UCRT64 terminal, use MSYS2's `pacman.exe` to install the build and packaging
@@ -227,7 +225,7 @@ pacman -S --needed base-devel git \
 ```bash
 brew install \
   rust just pkgconf gettext gtk4 libadwaita gstreamer \
-  dylibbundler librsvg
+  dylibbundler librsvg game-music-emu libopenmpt meson ninja wavpack
 ```
 
 **Building:** After you installed dependencies for your operating system, you can build and run:
@@ -326,3 +324,5 @@ Player backend design and Smart Playlists are inspired from [Strawberry](https:/
 # License
 
 [LICENSE](LICENSE)
+
+[^codecs]: All supported packages have the required plugins. You may need additional GStreamer plugins if you are building Rufin natively; after installing them, restart Rufin and Resync the local library to retry rejected files.

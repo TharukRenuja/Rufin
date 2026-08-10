@@ -5,7 +5,7 @@ use std::sync::Mutex;
 
 use library::{
     CandidateBatch, CandidateFinish, CandidateHeader, HomeFacts, Libraries, LocalFile,
-    LocalReadState, SourceId, Track, TrackSort,
+    LocalFileState, SourceId, Track, TrackSort,
 };
 use lofty::config::WriteOptions;
 use lofty::file::TaggedFileExt;
@@ -185,6 +185,7 @@ fn metadata_availability_uses_accepted_paths_and_registered_lofty_writers() {
         fs::write(&path, []).expect("write discoverer-backed format");
         let mut discoverer_track = track.clone();
         discoverer_track.make_mut().source_path = Some(path.to_string_lossy().into_owned());
+        discoverer_track.make_mut().source_format = Some(extension.to_string());
         assert!(matches!(
             source.read_metadata(&library::MetadataSubject::track(discoverer_track.clone())),
             Err(library::MetadataError::Unavailable)
@@ -513,15 +514,10 @@ fn metadata_write_preserves_unrelated_tags_and_artwork() {
         )
         .expect("write metadata");
 
-    let format = super::format::audio_format(&path).expect("registered WAV format");
-    let tagged = super::format::read_lofty_for_edit(
-        &path,
-        match format.metadata_writer().expect("WAV writer") {
-            super::format::MetadataWriter::Lofty(types) => types,
-        },
-    )
-    .expect("read written WAV")
-    .expect("matching WAV contents");
+    let writer = super::lofty_metadata::MetadataWriter::for_path(&path).expect("WAV writer");
+    let tagged = super::lofty_metadata::read_lofty_for_edit(&path, writer.file_type())
+        .expect("read written WAV")
+        .expect("matching WAV contents");
     let tag = tagged.primary_tag().expect("written primary tag");
     assert_eq!(tag.title().as_deref(), Some("Updated title"));
     assert_eq!(
@@ -883,8 +879,8 @@ fn complete_scan_maps_lofty_metadata_and_embedded_artwork() {
 #[test]
 fn local_access_reuses_unchanged_files_and_drops_deleted_files() {
     let root = tempfile::tempdir().expect("local access root");
-    let path = root.path().join("No Tags.mp3");
-    fs::write(&path, []).expect("write metadata fallback file");
+    let path = root.path().join("No Tags.unknown");
+    write_silent_wav(&path, 1).expect("write extensionless-capable WAV");
 
     let first =
         read_local_access(root.path(), &[], &|_| {}, &|| false).expect("read local access files");
@@ -898,7 +894,7 @@ fn local_access_reuses_unchanged_files_and_drops_deleted_files() {
         .expect("reuse unchanged local access file");
     assert_eq!(unchanged, accepted);
 
-    fs::write(&path, [0_u8]).expect("change local access file");
+    write_silent_wav(&path, 2).expect("change local access file");
     let changed = read_local_access(root.path(), &unchanged, &|_| {}, &|| false)
         .expect("reread changed local access file");
     assert_eq!(changed[0].title, "No Tags");
@@ -960,13 +956,13 @@ fn local_access_honors_cancellation_before_reading_tags() {
 }
 
 #[test]
-fn complete_scan_streams_roots_and_isolates_metadata_fallback() {
+fn complete_scan_streams_roots_and_rejects_invalid_media() {
     let first = tempfile::tempdir().expect("first Local root");
     let nested = first.path().join("nested");
     let second = tempfile::tempdir().expect("second Local root");
     fs::create_dir_all(&nested).expect("create nested root");
     write_silent_wav(&nested.join("Good.wav"), 1).expect("write WAV");
-    fs::write(second.path().join("No Tags.mp3"), []).expect("write readable fallback file");
+    fs::write(second.path().join("Not Audio.mp3"), []).expect("write invalid candidate");
     let source = LocalSource::from_roots(vec![
         first.path().to_path_buf(),
         nested,
@@ -978,27 +974,20 @@ fn complete_scan_streams_roots_and_isolates_metadata_fallback() {
     let mut tracks = facts.tracks();
     tracks.sort_by(|left, right| left.title.cmp(&right.title));
 
-    assert_eq!(tracks.len(), 2);
-    assert_eq!(
-        tracks
-            .iter()
-            .map(|track| track.title.as_str())
-            .collect::<Vec<_>>(),
-        ["Good", "No Tags"]
-    );
-    assert!(tracks.iter().any(|track| track.artist == "Unknown Artist"));
+    assert_eq!(tracks.len(), 1);
+    assert_eq!(tracks[0].title, "Good");
     let files = facts.files();
     assert_eq!(
         files
             .iter()
-            .filter(|file| file.read_state == LocalReadState::MetadataFallback)
+            .filter(|file| file.state == LocalFileState::Rejected)
             .count(),
         1
     );
     assert!(
         files
             .iter()
-            .all(|file| file.read_state != LocalReadState::Unreadable)
+            .all(|file| file.state != LocalFileState::Unreadable)
     );
     assert!(facts.batches.iter().all(|batch| batch.len() <= 1_024));
     assert!(facts.progress.iter().any(|progress| {
@@ -1006,6 +995,41 @@ fn complete_scan_streams_roots_and_isolates_metadata_fallback() {
             && progress.completed == 1
             && progress.total == Some(1)
     }));
+}
+
+#[test]
+fn complete_scan_discovers_content_without_an_audio_suffix() {
+    let root = tempfile::tempdir().expect("Local root");
+    let audio = root.path().join("Extensionless Track");
+    let non_media = root.path().join("notes.pdf");
+    let playlist = root.path().join("queue.m3u8");
+    write_silent_wav(&audio, 1).expect("write extensionless WAV");
+    fs::write(&non_media, b"not media").expect("write non-media candidate");
+    fs::write(&playlist, audio.to_string_lossy().as_bytes()).expect("write ignored playlist");
+    let source =
+        LocalSource::from_roots(vec![root.path().to_path_buf()]).expect("open Local source");
+
+    let facts = complete_scan(&source);
+    let tracks = facts.tracks();
+    assert_eq!(tracks.len(), 1);
+    assert_eq!(tracks[0].title, "Extensionless Track");
+    assert_eq!(
+        tracks[0].source_path.as_deref(),
+        Some(audio.to_string_lossy().as_ref())
+    );
+    assert_eq!(tracks[0].source_format.as_deref(), Some("wav"));
+    assert!(source.metadata_entry_available(&library::MetadataItem::Track(tracks[0].clone())));
+    let files = facts.files();
+    assert!(files.iter().any(|file| {
+        file.path == non_media.to_string_lossy()
+            && file.kind == library::LocalFileKind::Media
+            && file.state == LocalFileState::Rejected
+    }));
+    assert!(
+        files
+            .iter()
+            .all(|file| file.path != playlist.to_string_lossy())
+    );
 }
 
 #[test]
@@ -1080,7 +1104,7 @@ fn unchanged_file_identity_keeps_an_accepted_unreadable_file() {
         if let CandidateBatch::LocalFiles(files) = batch {
             for file in files {
                 if file.path == path.to_string_lossy() {
-                    file.read_state = LocalReadState::Unreadable;
+                    file.state = LocalFileState::Unreadable;
                 }
             }
         }
@@ -1186,7 +1210,7 @@ fn exact_reread_failure_keeps_the_accepted_path_backed_track() {
 
     assert!(replacement.removed_track_ids.is_empty());
     assert!(replacement.files.iter().any(|file| {
-        file.path == path.to_string_lossy() && file.read_state == LocalReadState::Unreadable
+        file.path == path.to_string_lossy() && file.state == LocalFileState::Unreadable
     }));
     accepted
         .library
@@ -1198,6 +1222,71 @@ fn exact_reread_failure_keeps_the_accepted_path_backed_track() {
             .track(&track_id)
             .expect("read retained Track")
             .is_some()
+    );
+}
+
+#[test]
+fn exact_change_to_rejected_media_removes_the_old_track() {
+    let root = tempfile::tempdir().expect("Local root");
+    let root_path = fs::canonicalize(root.path()).expect("canonical Local root");
+    let path = root_path.join("Track.wav");
+    write_silent_wav(&path, 1).expect("write WAV");
+    let source = LocalSource::from_roots(vec![root_path]).expect("open Local source");
+    let facts = complete_scan(&source);
+    let track_id = facts.tracks()[0].id.clone();
+    let store = tempfile::tempdir().expect("Store directory");
+    let libraries = Libraries::open(store.path().join("library.db")).expect("open Library");
+    let mut candidate = libraries
+        .begin_source_candidate(CandidateHeader {
+            source_id: SourceId::new(LOCAL_LIBRARY_SOURCE_ID),
+            input_version: 1,
+            input_digest: [8; 32],
+        })
+        .expect("begin Local candidate");
+    for batch in facts.batches {
+        candidate.write(batch).expect("write Local facts");
+    }
+    let accepted = candidate
+        .finish(
+            CandidateFinish {
+                freshness: None,
+                home: HomeFacts::RufinDefined,
+                accepted_at: 1,
+            },
+            None,
+        )
+        .and_then(library::PreparedSourceCandidate::accept)
+        .expect("accept Local library");
+
+    fs::write(&path, b"not media").expect("replace WAV with invalid media");
+    let replacement = source
+        .prepare_change(
+            &accepted.library,
+            crate::ObservedSourceChange::LocalPaths(BTreeSet::from([path.clone()])),
+            2,
+            &|_| {},
+            &|| false,
+        )
+        .expect("prepare invalid-media change")
+        .expect("changed Local component");
+
+    assert_eq!(
+        replacement.removed_track_ids,
+        std::slice::from_ref(&track_id)
+    );
+    assert!(replacement.files.iter().any(|file| {
+        file.path == path.to_string_lossy() && file.state == LocalFileState::Rejected
+    }));
+    accepted
+        .library
+        .accept_local_component(replacement)
+        .expect("accept rejected media");
+    assert!(
+        accepted
+            .library
+            .track(&track_id)
+            .expect("read removed Track")
+            .is_none()
     );
 }
 
@@ -1362,8 +1451,8 @@ FILE "album.wav" WAVE
     assert_eq!(tracks[1].title, "Second");
     assert_eq!(tracks[0].duration_seconds, 4);
     assert_eq!(tracks[1].duration_seconds, 4);
-    assert_eq!(tracks[0].id, tags::cue_track_id(&cue, 1));
-    assert_eq!(tracks[1].id, tags::cue_track_id(&cue, 2));
+    assert_eq!(tracks[0].id, media::cue_track_id(&cue, 1));
+    assert_eq!(tracks[1].id, media::cue_track_id(&cue, 2));
     assert!(tracks.iter().all(|track| {
         track.source_path.as_deref() == Some(audio.to_string_lossy().as_ref())
             && track
@@ -1392,7 +1481,7 @@ FILE "album.wav" WAVE
         .into_iter()
         .find(|file| file.path == cue.to_string_lossy())
         .expect("accepted CUE observation");
-    assert_eq!(cue_file.read_state, LocalReadState::Parsed);
+    assert_eq!(cue_file.state, LocalFileState::Accepted);
     assert_eq!(
         cue_file.dependencies,
         vec![audio.to_string_lossy().into_owned()]

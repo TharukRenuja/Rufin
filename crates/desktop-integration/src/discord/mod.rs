@@ -1011,6 +1011,7 @@ pub(crate) mod tests {
                 ),
                 position_millis,
                 duration_millis: 42_500,
+                can_seek: true,
                 buffering_percent: None,
                 error: None,
             },

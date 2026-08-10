@@ -157,7 +157,8 @@ jobs:
           done
           test -n "$x86_rpm_path"
           dnf -y install "$x86_rpm_path"
-          cargo run --locked -p xtask -- generate media-verification-files /tmp/rufin-package-media
+          cargo run --locked -p xtask -- generate media-verification-files \
+            /tmp/rufin-package-media --with-openmpt-gme
           for media in /tmp/rufin-package-media/*; do
             /usr/bin/rufin --verify-media "$media"
           done

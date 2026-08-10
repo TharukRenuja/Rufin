@@ -6,7 +6,7 @@ use library::{
     CueSegment, FavoriteAcceptance, FavoriteItemId, FolderId, Genre, GenreCredit, GenreId,
     HomeFacts, HomeItemId, HomeSectionKind, ImageRef, Libraries, LoadedHomeItem, LocalArtworkRef,
     LocalComponentReplacement, LocalComponentSeed, LocalFile, LocalFileKind, LocalFileSeed,
-    LocalReadState, LoudnessItemId, LoudnessMeasurement, LoudnessMeasurementWrite, MoodCredit,
+    LocalFileState, LoudnessItemId, LoudnessMeasurement, LoudnessMeasurementWrite, MoodCredit,
     MoodId, MusicFolder, MusicFolderId, NewScrobble, PendingScrobbleId, PlayedFilter, Playlist,
     PlaylistAcceptance, PlaylistEdit, PlaylistEntry, PlaylistId, PlaylistSnapshot,
     RadioComposition, RadioSeed, RandomComposition, RandomCriteria, ScrobbleService, SearchRequest,
@@ -2537,7 +2537,7 @@ fn local_file_readiness_rebinds_attached_tracks_and_matches_reopen() {
     );
 
     let mut unreadable = local_audio_file(&audio_path, "Artist/Album/Track.flac");
-    unreadable.read_state = LocalReadState::Unreadable;
+    unreadable.state = LocalFileState::Unreadable;
     accepted
         .library
         .accept_local_component(LocalComponentReplacement {
@@ -2561,16 +2561,15 @@ fn local_file_readiness_rebinds_attached_tracks_and_matches_reopen() {
             .is_none()
     );
 
-    let mut fallback = local_audio_file(&audio_path, "Artist/Album/Track.flac");
-    fallback.read_state = LocalReadState::MetadataFallback;
+    let accepted_again = local_audio_file(&audio_path, "Artist/Album/Track.flac");
     accepted
         .library
         .accept_local_component(LocalComponentReplacement {
             observed_at: 4,
-            files: vec![fallback],
+            files: vec![accepted_again],
             ..LocalComponentReplacement::default()
         })
-        .expect("accept metadata fallback");
+        .expect("accept readable media again");
     assert!(
         accepted
             .library
@@ -2652,10 +2651,10 @@ fn full_local_rescan_drops_unreadable_music_until_the_source_recovers() {
     let mut previously_accepted =
         local_audio_file("/music/Artist/Album/Track.flac", "Artist/Album/Track.flac");
     previously_accepted.mtime_ns = 2;
-    previously_accepted.read_state = LocalReadState::Unreadable;
+    previously_accepted.state = LocalFileState::Unreadable;
     let mut new_unreadable =
         local_audio_file("/music/Artist/Album/New.flac", "Artist/Album/New.flac");
-    new_unreadable.read_state = LocalReadState::Unreadable;
+    new_unreadable.state = LocalFileState::Unreadable;
     let mut rescanned = library
         .begin_source_candidate(CandidateHeader {
             source_id: source_id.clone(),
@@ -3746,7 +3745,7 @@ fn local_cue_component_and_baseline_follow_backing_file_transitions() {
             observed_at: 2,
             files: vec![
                 local_audio_file(&audio_path, "Artist/Album/Track.flac"),
-                local_cue_file(cue_path, vec![audio_path.clone()], LocalReadState::Parsed),
+                local_cue_file(cue_path, vec![audio_path.clone()], LocalFileState::Accepted),
             ],
             tracks: vec![first.clone(), second.clone()],
             removed_track_ids: vec![raw.id.clone()],
@@ -3799,7 +3798,7 @@ fn local_cue_component_and_baseline_follow_backing_file_transitions() {
             files: vec![local_cue_file(
                 missing_cue_path,
                 vec![missing_audio_path.to_string()],
-                LocalReadState::Invalid,
+                LocalFileState::Rejected,
             )],
             ..LocalComponentReplacement::default()
         })
@@ -3818,7 +3817,7 @@ fn local_cue_component_and_baseline_follow_backing_file_transitions() {
     );
 
     let mut unreadable = local_audio_file(&audio_path, "Artist/Album/Track.flac");
-    unreadable.read_state = LocalReadState::Unreadable;
+    unreadable.state = LocalFileState::Unreadable;
     accepted
         .library
         .accept_local_component(LocalComponentReplacement {
@@ -3848,7 +3847,7 @@ fn local_cue_component_and_baseline_follow_backing_file_transitions() {
             observed_at: 5,
             files: vec![
                 local_audio_file(&audio_path, "Artist/Album/Track.flac"),
-                local_cue_file(cue_path, vec![audio_path.clone()], LocalReadState::Invalid),
+                local_cue_file(cue_path, vec![audio_path.clone()], LocalFileState::Rejected),
             ],
             tracks: vec![raw.clone()],
             removed_track_ids: vec![first.id.clone(), second.id.clone()],
@@ -3942,7 +3941,7 @@ fn local_folders_follow_directory_facts_track_moves_and_reopen() {
             local_cue_file(
                 "/music/Artist/Album/Disc.cue",
                 vec!["/music/Artist/Album/Disc.flac".to_string()],
-                LocalReadState::Parsed,
+                LocalFileState::Accepted,
             ),
         ],
         47,
@@ -6113,13 +6112,13 @@ fn local_audio_file_in_root(path: &str, root: &str, relative_path: &str) -> Loca
         path: path.to_string(),
         root: root.to_string(),
         relative_path: relative_path.to_string(),
-        kind: LocalFileKind::Audio,
+        kind: LocalFileKind::Media,
         size_bytes: Some(1_024),
         mtime_ns: 1,
         device_id: None,
         inode: None,
         parse_version: Some(1),
-        read_state: LocalReadState::Parsed,
+        state: LocalFileState::Accepted,
         dependencies: Vec::new(),
     }
 }
@@ -6139,12 +6138,12 @@ fn local_directory_file(path: &str, root: &str) -> LocalFile {
         device_id: None,
         inode: None,
         parse_version: None,
-        read_state: LocalReadState::Observed,
+        state: LocalFileState::Observed,
         dependencies: Vec::new(),
     }
 }
 
-fn local_cue_file(path: &str, dependencies: Vec<String>, read_state: LocalReadState) -> LocalFile {
+fn local_cue_file(path: &str, dependencies: Vec<String>, state: LocalFileState) -> LocalFile {
     LocalFile {
         path: path.to_string(),
         root: "/music".to_string(),
@@ -6155,7 +6154,7 @@ fn local_cue_file(path: &str, dependencies: Vec<String>, read_state: LocalReadSt
         device_id: None,
         inode: None,
         parse_version: Some(1),
-        read_state,
+        state,
         dependencies,
     }
 }

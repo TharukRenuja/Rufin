@@ -224,6 +224,16 @@ impl PlayerPipeline {
         self.session.as_ref().and_then(PipelineSession::duration)
     }
 
+    pub(super) fn running_time(&self) -> Option<gst::ClockTime> {
+        self.session
+            .as_ref()
+            .and_then(PipelineSession::running_time)
+    }
+
+    pub(super) fn seekable(&self) -> Option<bool> {
+        self.session.as_ref().map(PipelineSession::seekable)
+    }
+
     pub(super) fn audio_output_factory(&self) -> Option<String> {
         self.session
             .as_ref()
@@ -458,6 +468,15 @@ impl PipelineSession {
 
     pub(super) fn duration(&self) -> Option<gst::ClockTime> {
         self.pipeline.query_duration::<gst::ClockTime>()
+    }
+
+    pub(super) fn running_time(&self) -> Option<gst::ClockTime> {
+        self.pipeline.current_running_time()
+    }
+
+    pub(super) fn seekable(&self) -> bool {
+        let mut query = gst::query::Seeking::new(gst::Format::Time);
+        self.pipeline.query(&mut query) && query.result().0
     }
 
     pub(super) fn audio_output_factory(&self) -> Option<String> {

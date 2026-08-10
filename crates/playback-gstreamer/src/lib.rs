@@ -6,7 +6,7 @@ use playback::*;
 use std::collections::VecDeque;
 use std::f64::consts::FRAC_PI_2;
 use std::path::Path;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::thread;
@@ -40,6 +40,19 @@ pub fn verify_audio_file(path: &Path) -> Result<(), String> {
         ..BackendAudioSettings::default()
     };
     let audio_graph = audio::AudioGraph::new(&settings)?;
+    let decoded_audio_buffers = Arc::new(AtomicUsize::new(0));
+    let decoded_audio_buffers_for_probe = Arc::clone(&decoded_audio_buffers);
+    audio_graph
+        .root()
+        .static_pad("sink")
+        .ok_or_else(|| "GStreamer media verification audio chain has no input pad".to_string())?
+        .add_probe(
+            gst::PadProbeType::BUFFER | gst::PadProbeType::BUFFER_LIST,
+            move |_, _| {
+                decoded_audio_buffers_for_probe.fetch_add(1, Ordering::Relaxed);
+                gst::PadProbeReturn::Ok
+            },
+        );
     pipeline::configure_playbin_for_audio(&pipeline);
     pipeline.set_property("video-sink", &video_sink);
     pipeline.set_property("audio-sink", audio_graph.root());
@@ -56,7 +69,9 @@ pub fn verify_audio_file(path: &Path) -> Result<(), String> {
             gst::ClockTime::from_seconds(30),
             &[gst::MessageType::Eos, gst::MessageType::Error],
         ) {
-            Some(message) if matches!(message.view(), gst::MessageView::Eos(_)) => Ok(()),
+            Some(message) if matches!(message.view(), gst::MessageView::Eos(_)) => {
+                verified_eos(decoded_audio_buffers.load(Ordering::Relaxed))
+            }
             Some(message) => {
                 Err(
                     gstreamer_error_details(&message, "media verification", Some("fakesink"))
@@ -70,6 +85,15 @@ pub fn verify_audio_file(path: &Path) -> Result<(), String> {
     };
     let _ = pipeline.set_state(gst::State::Null);
     result
+}
+
+fn verified_eos(decoded_audio_buffers: usize) -> Result<(), String> {
+    if decoded_audio_buffers == 0 {
+        return Err(
+            "GStreamer media verification reached end of stream without decoded audio".to_string(),
+        );
+    }
+    Ok(())
 }
 
 fn gstreamer_error_details(
@@ -138,6 +162,18 @@ fn lock_recover<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn media_verification_requires_decoded_audio_before_end_of_stream() {
+        assert!(verified_eos(1).is_ok());
+        assert_eq!(
+            verified_eos(0),
+            Err(
+                "GStreamer media verification reached end of stream without decoded audio"
+                    .to_string()
+            )
+        );
+    }
 
     #[test]
     fn http_source_uses_the_prepared_certificate_policy() {

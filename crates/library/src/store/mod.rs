@@ -19,7 +19,7 @@ use crate::{
     AlbumRelations, AlbumReleaseCandidate, AlbumReleaseResult, Artist, ArtistId, CandidateBatch,
     CandidateChange, CandidateFinish, CandidateHeader, CueSegment, FavoriteItemId, Genre, GenreId,
     HomeFacts, ImageRef, LibraryInput, LocalAccessFile, LocalArtworkRef, LocalFile, LocalFileKind,
-    LocalImport, LocalReadState, LoudnessItemId, LoudnessMeasurement, LoudnessMeasurementWrite,
+    LocalFileState, LocalImport, LoudnessItemId, LoudnessMeasurement, LoudnessMeasurementWrite,
     LyricsCacheAuthority, LyricsCacheInput, LyricsCacheKey, LyricsCacheTrim, LyricsCacheWrite,
     MusicFolder, MusicFolderId, NewScrobble, PendingFavorite, PendingScrobble, PendingScrobbleId,
     PlaybackCheckpoint, PlaybackLoad, PlaybackOccurrenceId, PlaybackProgressUpdate,
@@ -3068,7 +3068,7 @@ fn write_local_file(
     transaction.execute(
         "INSERT INTO local_files(
             library_id, path, root, relative_path, kind, size_bytes, mtime_ns,
-            device_id, inode, parse_version, read_state,
+            device_id, inode, parse_version, state,
             dependencies_json
          ) VALUES (
             ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12
@@ -3084,7 +3084,7 @@ fn write_local_file(
             file.device_id.map(sqlite_filesystem_identity),
             file.inode.map(sqlite_filesystem_identity),
             file.parse_version.map(i64::from),
-            file.read_state.as_str(),
+            file.state.as_str(),
             dependencies_json,
         ],
     )?;
@@ -4248,7 +4248,7 @@ fn load_local_files(connection: &Connection, library_id: i64) -> StoreResult<Vec
     let mut statement = connection.prepare(
         "SELECT
             path, root, relative_path, kind, size_bytes, mtime_ns,
-            device_id, inode, parse_version, read_state, dependencies_json
+            device_id, inode, parse_version, state, dependencies_json
          FROM local_files
          WHERE library_id = ?1
          ORDER BY path",
@@ -4257,7 +4257,7 @@ fn load_local_files(connection: &Connection, library_id: i64) -> StoreResult<Vec
     let mut files = Vec::new();
     while let Some(row) = rows.next()? {
         let kind = row.get::<_, String>(3)?;
-        let read_state = row.get::<_, String>(9)?;
+        let state = row.get::<_, String>(9)?;
         files.push(LocalFile {
             path: row.get(0)?,
             root: row.get(1)?,
@@ -4275,11 +4275,9 @@ fn load_local_files(connection: &Connection, library_id: i64) -> StoreResult<Vec
                 .get::<_, Option<i64>>(7)?
                 .map(filesystem_identity_from_sqlite),
             parse_version: row.get::<_, Option<i64>>(8)?.map(checked_u32).transpose()?,
-            read_state: LocalReadState::from_stored(&read_state).ok_or_else(|| {
-                StoreError::InvalidValue {
-                    kind: "Local read state",
-                    value: read_state,
-                }
+            state: LocalFileState::from_stored(&state).ok_or_else(|| StoreError::InvalidValue {
+                kind: "Local file state",
+                value: state,
             })?,
             dependencies: serde_json::from_str(&row.get::<_, String>(10)?)?,
         });

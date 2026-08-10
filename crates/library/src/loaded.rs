@@ -439,7 +439,7 @@ pub(crate) struct LoadedState {
     pub(crate) cue_dependents: HashMap<String, HashSet<String>>,
     pub(crate) directory_children: HashMap<String, HashSet<String>>,
     pub(crate) directory_images: HashMap<String, HashSet<String>>,
-    pub(crate) directory_audio_counts: HashMap<String, usize>,
+    pub(crate) directory_media_counts: HashMap<String, usize>,
     pub(crate) artwork_items: HashMap<String, HashSet<LocalArtworkItemId>>,
     pub(crate) local_access_mapping: Option<LocalAccessMapping>,
     pub(crate) local_access: Vec<LocalAccessFile>,
@@ -551,7 +551,8 @@ impl Library {
         }
         let (cue_dependents, directory_children, directory_images) =
             index_local_file_relations(&input.local_files);
-        let directory_audio_counts = index_local_audio_directories(&input.local_files);
+        let directory_media_counts =
+            index_local_media_directories(tracks.values(), &input.local_files);
         let local_files = values_by_id(input.local_files, |file| file.path.clone());
         let (local_folders, local_folder_children) = index_local_folders(local_files.values());
         let (local_access_paths, local_access_index) =
@@ -583,7 +584,7 @@ impl Library {
             cue_dependents,
             directory_children,
             directory_images,
-            directory_audio_counts,
+            directory_media_counts,
             artwork_items: HashMap::new(),
             local_access_mapping: None,
             local_access: input.local_access,
@@ -1227,6 +1228,7 @@ impl Library {
                 .then_some(AcceptedTrackReplacement {
                     id: track_id,
                     track: Some(replacement),
+                    activity_only: true,
                 })
                 .into_iter()
                 .collect(),
@@ -1434,6 +1436,9 @@ impl Library {
         let mut affected_local_folders = HashSet::new();
         for path in removed_paths {
             if let Some(file) = state.local_files.remove(&path) {
+                if file.kind == LocalFileKind::Media && path_has_source_track(&state, &path) {
+                    remove_media_directory_file(&mut state, &file);
+                }
                 collect_local_folder_effects(&file, &mut affected_local_folders);
                 remove_local_file_relations(&mut state, &file);
             }
@@ -1598,6 +1603,7 @@ fn replace_track_favorite(
             tracks: vec![AcceptedTrackReplacement {
                 id: track_id.clone(),
                 track: Some(current),
+                activity_only: false,
             }],
             ..AcceptedLibraryChange::default()
         });
@@ -1615,6 +1621,7 @@ fn replace_track_favorite(
         tracks: vec![AcceptedTrackReplacement {
             id: track_id.clone(),
             track: Some(replacement),
+            activity_only: false,
         }],
         smart_playlists: sorted_set(affected_smart_playlists),
         ..AcceptedLibraryChange::default()
@@ -1656,6 +1663,12 @@ fn apply_item_replacement(
     let incoming_tracks = tracks
         .iter()
         .map(|track| (track.id.clone(), track))
+        .collect::<HashMap<_, _>>();
+    let media_path_presence = old_tracks
+        .values()
+        .chain(tracks.iter())
+        .filter_map(|track| track.source_path.as_deref())
+        .map(|path| (path.to_string(), path_has_source_track(state, path)))
         .collect::<HashMap<_, _>>();
     let directly_affected_albums = albums
         .iter()
@@ -1854,6 +1867,13 @@ fn apply_item_replacement(
     add_current_artwork_items(state, &affected_albums, &affected_artists);
     relink_tracks_to_albums(state, &affected_albums, &mut published_track_ids);
     crate::browse::organize_artwork_bindings(state, &affected_albums, &affected_artists);
+    for (path, was_present) in media_path_presence {
+        match (was_present, path_has_source_track(state, &path)) {
+            (true, false) => remove_media_directory_path(state, &path),
+            (false, true) => add_media_directory_path(state, &path),
+            _ => {}
+        }
+    }
 
     let published_playlists = affected_playlists(state, &changed_track_ids);
     let affected_smart_playlists = crate::smart_playlists::changed_by_tracks(
@@ -1942,6 +1962,7 @@ fn accepted_track_replacements(
         .map(|id| AcceptedTrackReplacement {
             track: state.tracks.get(&id).cloned(),
             id,
+            activity_only: false,
         })
         .collect::<Vec<_>>();
     tracks.sort_by(|left, right| left.id.cmp(&right.id));
@@ -2412,20 +2433,6 @@ fn local_folder_track_ids(state: &LoadedState, directory: &str) -> Vec<TrackSlot
 }
 
 fn remove_local_file_relations(state: &mut LoadedState, file: &LocalFile) {
-    if file.kind == LocalFileKind::Audio {
-        for directory in file.directories_to_root() {
-            let key = directory.to_string_lossy();
-            let remove = if let Some(count) = state.directory_audio_counts.get_mut(key.as_ref()) {
-                *count = count.saturating_sub(1);
-                *count == 0
-            } else {
-                false
-            };
-            if remove {
-                state.directory_audio_counts.remove(key.as_ref());
-            }
-        }
-    }
     if file.kind == LocalFileKind::Directory {
         remove_local_folder(state, file);
     }
@@ -2451,14 +2458,6 @@ fn remove_local_file_relations(state: &mut LoadedState, file: &LocalFile) {
 }
 
 fn add_local_file_relations(state: &mut LoadedState, file: &LocalFile) {
-    if file.kind == LocalFileKind::Audio {
-        for directory in file.directories_to_root() {
-            *state
-                .directory_audio_counts
-                .entry(directory.to_string_lossy().into_owned())
-                .or_default() += 1;
-        }
-    }
     if file.kind == LocalFileKind::Cue {
         for dependency in &file.dependencies {
             state
@@ -3336,12 +3335,27 @@ fn index_local_file_relations(
     (cue_dependents, directory_children, directory_images)
 }
 
-fn index_local_audio_directories(files: &[LocalFile]) -> HashMap<String, usize> {
-    let mut counts = HashMap::new();
-    for file in files
+fn index_local_media_directories<'a>(
+    tracks: impl IntoIterator<Item = &'a Track>,
+    files: &[LocalFile],
+) -> HashMap<String, usize> {
+    let files = files
         .iter()
-        .filter(|file| file.kind == LocalFileKind::Audio)
+        .map(|file| (file.path.as_str(), file))
+        .collect::<HashMap<_, _>>();
+    let mut counts = HashMap::new();
+    let mut paths = HashSet::new();
+    for path in tracks
+        .into_iter()
+        .filter_map(|track| track.source_path.as_deref())
+        .filter(|path| paths.insert(*path))
     {
+        let Some(file) = files
+            .get(path)
+            .filter(|file| file.kind == LocalFileKind::Media)
+        else {
+            continue;
+        };
         for directory in file.directories_to_root() {
             *counts
                 .entry(directory.to_string_lossy().into_owned())
@@ -3349,6 +3363,59 @@ fn index_local_audio_directories(files: &[LocalFile]) -> HashMap<String, usize> 
         }
     }
     counts
+}
+
+fn path_has_source_track(state: &LoadedState, path: &str) -> bool {
+    state
+        .path_tracks
+        .get(path)
+        .into_iter()
+        .flatten()
+        .filter_map(|slot| state.tracks.get_slot(*slot))
+        .any(|track| track.source_path.as_deref() == Some(path))
+}
+
+fn add_media_directory_path(state: &mut LoadedState, path: &str) {
+    let Some(file) = state
+        .local_files
+        .get(path)
+        .filter(|file| file.kind == LocalFileKind::Media)
+    else {
+        return;
+    };
+    let directories = file
+        .directories_to_root()
+        .map(|directory| directory.to_string_lossy().into_owned())
+        .collect::<Vec<_>>();
+    for directory in directories {
+        *state.directory_media_counts.entry(directory).or_default() += 1;
+    }
+}
+
+fn remove_media_directory_path(state: &mut LoadedState, path: &str) {
+    let Some(file) = state.local_files.get(path) else {
+        return;
+    };
+    let file = file.clone();
+    remove_media_directory_file(state, &file);
+}
+
+fn remove_media_directory_file(state: &mut LoadedState, file: &LocalFile) {
+    let directories = file
+        .directories_to_root()
+        .map(|directory| directory.to_string_lossy().into_owned())
+        .collect::<Vec<_>>();
+    for directory in directories {
+        let remove = if let Some(count) = state.directory_media_counts.get_mut(&directory) {
+            *count = count.saturating_sub(1);
+            *count == 0
+        } else {
+            false
+        };
+        if remove {
+            state.directory_media_counts.remove(&directory);
+        }
+    }
 }
 
 fn index_local_artwork(

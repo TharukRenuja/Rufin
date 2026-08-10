@@ -98,6 +98,7 @@ pub struct TransportView {
     pub desired_playing: bool,
     pub position_millis: u64,
     pub duration_millis: u64,
+    pub can_seek: bool,
     pub buffering_percent: Option<u8>,
     pub error: Option<String>,
 }
@@ -239,6 +240,7 @@ impl PlaybackSession {
                 desired_playing: self.desired_playing(),
                 position_millis: self.position_millis(),
                 duration_millis: self.duration_millis(),
+                can_seek: self.can_seek(),
                 buffering_percent: self.buffering_percent(),
                 error: self.last_error().map(str::to_string),
             },

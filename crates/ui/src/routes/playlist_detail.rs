@@ -392,12 +392,16 @@ impl Shell {
             let identity = identity.clone();
             Rc::new(move |update: &crate::runtime::SelectedLibraryUpdate| {
                 let replacements = update.change.tracks.as_slice();
+                let request = tracks.projection_request();
+                let replacement_changes_visible_facts = replacements.iter().any(|replacement| {
+                    !replacement.activity_only || request.settings.uses_track_activity()
+                });
                 if update.change.smart_playlists.contains(&smart_playlist_id)
-                    || !replacements.is_empty()
+                    || replacement_changes_visible_facts
                 {
                     read.request_with(SmartPlaylistDetailReadRequest {
                         identity: identity.clone(),
-                        tracks: tracks.projection_request(),
+                        tracks: request,
                     });
                 }
             })

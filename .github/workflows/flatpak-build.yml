@@ -77,7 +77,9 @@ jobs:
         run: packaging/flatpak/build
 
       - name: Create media verification files
-        run: cargo run --locked -p xtask -- generate media-verification-files "$RUNNER_TEMP/rufin-package-media"
+        run: >-
+          cargo run --locked -p xtask -- generate media-verification-files
+          "$RUNNER_TEMP/rufin-package-media" --with-openmpt-gme
 
       - name: Verify Flatpak bundle
         run: |
