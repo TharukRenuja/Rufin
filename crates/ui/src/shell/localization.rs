@@ -77,12 +77,7 @@ impl Shell {
         }
         self.bind_locale({
             let stack = self.player_view.fullscreen_player.stack.clone();
-            let child = self
-                .player_view
-                .fullscreen_player
-                .lyrics_pane
-                .widget()
-                .clone();
+            let child = self.player_view.fullscreen_player.lyrics_host.clone();
             move || stack.page(&child).set_title(Some(&tr("Lyrics")))
         });
         self.bind_locale({

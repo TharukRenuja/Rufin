@@ -33,10 +33,6 @@ mod table_links;
 mod table_sizing;
 mod track_model;
 
-use std::cell::RefCell;
-
-use crate::runtime::SelectedLibrary;
-
 pub(crate) use album_detail_view::load_album_detail;
 pub(crate) use artist::{load_artist_discography, load_artist_overview, load_artist_tracks};
 pub(crate) use genre_detail::load_genre_detail;
@@ -47,10 +43,6 @@ pub(crate) use routes::{
     load_albums, load_artists, load_favorite_tracks, load_history_tracks, load_playlists,
     load_smart_playlists, load_tracks,
 };
-
-pub(crate) struct LibraryState {
-    pub(crate) selected: RefCell<Option<SelectedLibrary>>,
-}
 
 #[cfg(test)]
 mod route_tests;

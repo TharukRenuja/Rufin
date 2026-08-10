@@ -646,7 +646,7 @@ fn larger_decoded_cover_satisfies_a_smaller_request_without_another_fetch() {
 }
 
 #[test]
-fn smaller_decoded_cover_does_not_satisfy_a_larger_request() {
+fn smaller_decoded_cover_previews_a_larger_request_without_satisfying_it() {
     let temporary = TempDir::new().expect("temporary artwork directory");
     let images = Arc::new(StaticImages {
         calls: AtomicUsize::new(0),
@@ -667,17 +667,20 @@ fn smaller_decoded_cover_does_not_satisfy_a_larger_request() {
         _ => panic!("small artwork was not ready"),
     };
     assert_eq!(small.width(), 48);
+    let prepared = artwork.prepare(source.clone(), large.clone());
     assert!(
-        artwork
-            .prepare(source.clone(), large.clone())
-            .ready
-            .is_none(),
+        prepared.ready.is_none(),
         "the small decode must not be presented as a large cover"
     );
+    let preview = prepared
+        .preview
+        .as_ref()
+        .expect("the small decode can be shown while the large cover loads");
+    assert!(Arc::ptr_eq(&small, preview));
 
     let large = match finish(
         artwork
-            .request_prepared(artwork.prepare(source, large))
+            .request_prepared(prepared)
             .expect("large artwork request"),
     ) {
         ArtworkOutcome::Ready(image) => image,

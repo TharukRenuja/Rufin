@@ -2,7 +2,7 @@ use std::collections::{HashMap, HashSet};
 
 use crate::{
     AlbumId, ArtistId, GenreId, LoadedState, MoodId, MusicFolderId, PlaylistId, SmartPlaylistId,
-    TrackId,
+    Track, TrackId,
 };
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
@@ -33,6 +33,8 @@ pub(crate) struct DownloadCoverage {
     memberships: HashMap<TrackId, Vec<DownloadCoverageKey>>,
     #[cfg(test)]
     status_reads: std::sync::atomic::AtomicUsize,
+    #[cfg(test)]
+    smart_playlist_membership_writes: std::sync::atomic::AtomicUsize,
 }
 
 impl DownloadCoverage {
@@ -120,6 +122,32 @@ impl DownloadCoverage {
         }
         self.memberships.retain(|_, keys| !keys.is_empty());
         self.add_smart_playlists(state);
+    }
+
+    fn replace_smart_playlist_memberships(
+        &mut self,
+        track: &Track,
+        changes: &[(SmartPlaylistId, bool)],
+        downloaded: bool,
+    ) {
+        #[cfg(test)]
+        self.smart_playlist_membership_writes
+            .fetch_add(changes.len(), std::sync::atomic::Ordering::Relaxed);
+        for (id, member) in changes {
+            for music_folder_id in
+                std::iter::once(None).chain(track.relations.music_folders.iter().cloned().map(Some))
+            {
+                let key = DownloadCoverageKey {
+                    collection: DownloadCollection::SmartPlaylist(id.clone()),
+                    music_folder_id,
+                };
+                if *member {
+                    self.add(track.id.clone(), key, downloaded);
+                } else {
+                    self.remove(&track.id, &key, downloaded);
+                }
+            }
+        }
     }
 
     fn add_smart_playlists(&mut self, state: &LoadedState) {
@@ -234,6 +262,31 @@ impl DownloadCoverage {
         }
     }
 
+    fn remove(&mut self, track_id: &TrackId, key: &DownloadCoverageKey, downloaded: bool) {
+        let Some(memberships) = self.memberships.get_mut(track_id) else {
+            return;
+        };
+        let Some(index) = memberships.iter().position(|accepted| accepted == key) else {
+            return;
+        };
+        memberships.swap_remove(index);
+        let remove_memberships = memberships.is_empty();
+        if remove_memberships {
+            self.memberships.remove(track_id);
+        }
+
+        let Some(count) = self.counts.get_mut(key) else {
+            return;
+        };
+        count.total = count.total.saturating_sub(1);
+        if downloaded {
+            count.downloaded = count.downloaded.saturating_sub(1);
+        }
+        if count.total == 0 {
+            self.counts.remove(key);
+        }
+    }
+
     fn is_downloaded(
         &self,
         collection: DownloadCollection,
@@ -261,6 +314,12 @@ impl DownloadCoverage {
             count.total > 0 && count.downloaded == count.total,
         )
     }
+
+    #[cfg(test)]
+    pub(crate) fn smart_playlist_membership_writes(&self) -> usize {
+        self.smart_playlist_membership_writes
+            .load(std::sync::atomic::Ordering::Relaxed)
+    }
 }
 
 pub(crate) fn rebuild_download_coverage(state: &mut LoadedState) {
@@ -270,6 +329,17 @@ pub(crate) fn rebuild_download_coverage(state: &mut LoadedState) {
 pub(crate) fn rebuild_smart_playlist_download_coverage(state: &mut LoadedState) {
     let mut coverage = std::mem::take(&mut state.download_coverage);
     coverage.rebuild_smart_playlists(state);
+    state.download_coverage = coverage;
+}
+
+pub(crate) fn replace_smart_playlist_download_memberships(
+    state: &mut LoadedState,
+    track: &Track,
+    changes: &[(SmartPlaylistId, bool)],
+) {
+    let downloaded = state.downloaded_files.contains_key(&track.id);
+    let mut coverage = std::mem::take(&mut state.download_coverage);
+    coverage.replace_smart_playlist_memberships(track, changes, downloaded);
     state.download_coverage = coverage;
 }
 

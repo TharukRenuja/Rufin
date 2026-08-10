@@ -282,10 +282,12 @@ fn insert_source_and_user_rows(connection: &Connection) {
              );
              INSERT INTO local_imports(source_id, track_id, first_seen_at)
              VALUES ('local', 'track:1', 10);
-             INSERT INTO playback_queues(source_id, revision, payload_json)
+             INSERT INTO playback_queues(
+                source_id, revision, rows_json, traversal_json
+             )
              VALUES (
                 'local', 1,
-                '{\"occurrences\":[],\"fallback_tracks\":[],\"traversal\":[]}'
+                '{\"occurrences\":[],\"fallback_tracks\":[]}', '[]'
              );
              INSERT INTO playback_state(
                 source_id, revision, selected_occurrence_id, progress_millis

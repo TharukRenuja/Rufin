@@ -1,8 +1,8 @@
 use std::rc::Rc;
 use std::sync::Arc;
 
-use adw::prelude::AdwDialogExt;
 use gtk::glib;
+use gtk::prelude::EditableExt;
 use localization::tr;
 use playback::QueuePageQuery;
 use tracing::warn;
@@ -117,15 +117,10 @@ fn apply_source_event(shell: &Rc<Shell>, event: SourceEvent) {
 }
 
 fn apply_playback_publication(shell: &Rc<Shell>, publication: crate::runtime::PlaybackPublication) {
-    let matches_selected = shell
-        .library
-        .selected
-        .borrow()
-        .as_ref()
-        .is_some_and(|selected| {
-            selected.source_id == publication.source_id
-                && selected.source_session_epoch == publication.source_session_epoch
-        });
+    let matches_selected = shell.selected_library().as_deref().is_some_and(|selected| {
+        selected.source_id == publication.source_id
+            && selected.source_session_epoch == publication.source_session_epoch
+    });
     if matches_selected {
         apply_playback_projection(shell, publication.projection);
     }
@@ -133,48 +128,20 @@ fn apply_playback_publication(shell: &Rc<Shell>, publication: crate::runtime::Pl
 
 fn release_selected_source(shell: &Rc<Shell>) {
     let released_source = shell
-        .library
-        .selected
-        .borrow()
-        .as_ref()
+        .selected_library()
+        .as_deref()
         .map(|selected| selected.source_id.clone());
     shell.clear_mounted_routes();
+    shell.release_selected_navigation();
     shell.reset_cover_pipeline_state();
-    shell.library.selected.borrow_mut().take();
+    shell.close_fullscreen_player();
+    shell.detach_selected_ui_roots();
     if let Some(source_id) = released_source.as_ref() {
         shell.release_artwork_textures(source_id);
     }
-    shell.playback.player.borrow_mut().take();
-    *shell.playback.waveform.borrow_mut() = WaveformProjection::default();
-    shell.playback.seek_preview_seconds.set(None);
-    shell
-        .playback
-        .seek_generation
-        .set(shell.playback.seek_generation.get().saturating_add(1));
-
-    shell.queue.page.borrow_mut().take();
-    shell.queue.page_request.borrow_mut().take();
-    shell.queue.filter.borrow_mut().clear();
-    if let Some(source) = shell.queue.search_source.borrow_mut().take() {
-        source.remove();
-    }
-    shell.invalidate_queue_panel_render_state();
-
-    *shell.lyrics.projection.borrow_mut() = lyrics::CurrentLyrics::Cleared;
-    shell.lyrics.offset_millis.set(0);
-    shell.cancel_scheduled_lyrics_highlight();
-    if let Some(dialog) = shell.lyrics.search_dialog.borrow_mut().take() {
-        if let Some(source) = dialog.search_debounce_source.borrow_mut().take() {
-            source.remove();
-        }
-        dialog.dialog.close();
-    }
-    let settings_dialog = shell.lyrics.settings_dialog.borrow_mut().take();
-    if let Some(dialog) = settings_dialog {
-        dialog.dialog.close();
-    }
-
-    shell.favorites.clear_all();
+    let released = shell.selected_ui.take();
+    drop(released);
+    shell.right_panel.queue_search.set_text("");
     shell.sync_bottom_player_favorite();
     shell.rebuild_sidebar_navigation();
     shell.update_bottom_player();
@@ -182,7 +149,6 @@ fn release_selected_source(shell: &Rc<Shell>) {
     shell.render_lyrics_panel();
     shell.apply_fullscreen_visualizer_levels(Vec::new());
     shell.clear_fullscreen_player_cover();
-    shell.close_fullscreen_player();
     shell.withdraw_now_playing_notification();
     shell.update_media_controls();
 }
@@ -209,7 +175,7 @@ fn apply_configured_sources(
 fn current_source_presentation(shell: &Shell) -> SourcePresentation {
     SourcePresentation {
         first_run: shell.source.configured.borrow().first_run,
-        selected: shell.library.selected.borrow().clone(),
+        selected: shell.selected_library().as_deref().cloned(),
     }
 }
 
@@ -298,7 +264,7 @@ fn finish_source_assignment(
     if source_changed {
         shell.clear_mounted_routes();
         shell.reset_cover_pipeline_state();
-        shell.navigate(Route::Home);
+        shell.reset_navigation_to_home();
     } else if scope_changed {
         shell.replace_current_route_when_ready();
     } else if session_changed || library_changed {
@@ -336,7 +302,7 @@ fn apply_selected_source(
         first_run: configured.first_run,
         selected: Some(selected.clone()),
     };
-    let previous_player = shell.playback.player.borrow().clone();
+    let previous_player = shell.selected_playback().as_deref().cloned();
     let playback::PlaybackProjection {
         view,
         queue_page,
@@ -344,11 +310,14 @@ fn apply_selected_source(
     } = playback;
 
     *shell.source.configured.borrow_mut() = configured;
-    *shell.library.selected.borrow_mut() = Some(selected);
-    *shell.playback.player.borrow_mut() = Some(view.clone());
-    shell.queue.page_request.borrow_mut().take();
-    *shell.queue.page.borrow_mut() = queue_page;
-    shell.invalidate_queue_panel_render_state();
+    shell
+        .selected_ui
+        .install(super::selected_ui::SelectedUiSession::new(
+            selected,
+            view.clone(),
+            queue_page,
+        ));
+    shell.attach_selected_ui_roots();
 
     finish_source_assignment(shell, previous_source, next_source);
     finish_playback_projection(shell, previous_player, view, notices, true);
@@ -365,16 +334,16 @@ fn apply_selected_library_replacement(
         selected: Some(selected.clone()),
     };
     *shell.source.configured.borrow_mut() = configured;
-    *shell.library.selected.borrow_mut() = Some(selected);
+    shell.selected_ui.replace_library(selected);
     finish_source_assignment(shell, previous, next);
 }
 
 fn apply_home_publication(shell: &Rc<Shell>, publication: HomePublication) {
     let matches_selected = {
-        let mut selected = shell.library.selected.borrow_mut();
-        let Some(selected) = selected.as_mut() else {
+        let Some(mut session) = shell.selected_ui.session_mut() else {
             return;
         };
+        let selected = &mut session.library;
         if selected.source_id != publication.source_id
             || selected.source_session_epoch != publication.source_session_epoch
         {
@@ -395,20 +364,21 @@ fn apply_home_replacement(
     source_session_epoch: playback::SourceSessionEpoch,
     home: Arc<library::HomeSnapshot>,
 ) {
-    let mut selected = shell.library.selected.borrow_mut();
-    if let Some(selected) = selected.as_mut().filter(|selected| {
-        selected.source_id == source_id && selected.source_session_epoch == source_session_epoch
-    }) {
+    let Some(mut session) = shell.selected_ui.session_mut() else {
+        return;
+    };
+    let selected = &mut session.library;
+    if selected.source_id == source_id && selected.source_session_epoch == source_session_epoch {
         selected.home = home;
     }
 }
 
 fn apply_selected_library_update(shell: &Rc<Shell>, update: SelectedLibraryUpdate) {
     {
-        let mut selected = shell.library.selected.borrow_mut();
-        let Some(selected) = selected.as_mut() else {
+        let Some(mut session) = shell.selected_ui.session_mut() else {
             return;
         };
+        let selected = &mut session.library;
         if selected.source_id != update.source_id
             || selected.source_session_epoch != update.source_session_epoch
         {
@@ -434,15 +404,10 @@ fn apply_selected_library_update(shell: &Rc<Shell>, update: SelectedLibraryUpdat
 }
 
 fn apply_source_notice(shell: &Rc<Shell>, notice: SourceNotice) {
-    let matches_selected = shell
-        .library
-        .selected
-        .borrow()
-        .as_ref()
-        .is_some_and(|selected| {
-            selected.source_id == notice.source_id
-                && selected.source_session_epoch == notice.source_session_epoch
-        });
+    let matches_selected = shell.selected_library().as_deref().is_some_and(|selected| {
+        selected.source_id == notice.source_id
+            && selected.source_session_epoch == notice.source_session_epoch
+    });
     if !matches_selected {
         return;
     }
@@ -523,7 +488,7 @@ fn apply_source_operation(shell: &Rc<Shell>, operation: SourceOperation) {
                 shell.complete_add_server_dialog();
             }
             shell.update_add_server_dialog();
-            if shell.library.selected.borrow().is_some()
+            if shell.selected_library().is_some()
                 && !shell.startup.route_revealed.get()
                 && !shell.source.login_screen_active()
             {
@@ -555,7 +520,7 @@ fn apply_source_discovery(shell: &Rc<Shell>, update: DiscoveryUpdate) {
 }
 
 fn apply_playback_projection(shell: &Rc<Shell>, projection: playback::PlaybackProjection) {
-    let previous_player = shell.playback.player.borrow().clone();
+    let previous_player = shell.selected_playback().as_deref().cloned();
     let playback::PlaybackProjection {
         view,
         queue_page,
@@ -564,7 +529,7 @@ fn apply_playback_projection(shell: &Rc<Shell>, projection: playback::PlaybackPr
     let queue_page_changed = queue_page
         .map(|queue_page| shell.apply_queue_page_projection(queue_page))
         .unwrap_or(false);
-    *shell.playback.player.borrow_mut() = Some(view.clone());
+    shell.selected_ui.replace_player(view.clone());
     finish_playback_projection(shell, previous_player, view, notices, queue_page_changed);
 }
 
@@ -615,14 +580,18 @@ fn finish_playback_projection(
         next_player.queue.current_occurrence.as_ref(),
     );
 
-    if shell.queue.filter.borrow().trim().is_empty()
+    if shell
+        .selected_queue()
+        .is_some_and(|queue| queue.filter.borrow().trim().is_empty())
         && let Some(current_index) = next_player.queue.current_index
-        && shell.queue.page.borrow().as_ref().is_none_or(|page| {
-            page.query.follows_current()
-                && !page
-                    .rows
-                    .iter()
-                    .any(|row| row.absolute_index == current_index)
+        && shell.selected_queue().is_some_and(|queue| {
+            queue.page.borrow().as_ref().is_none_or(|page| {
+                page.query.follows_current()
+                    && !page
+                        .rows
+                        .iter()
+                        .any(|row| row.absolute_index == current_index)
+            })
         })
     {
         shell.request_queue_page(QueuePageQuery::current());
@@ -669,13 +638,11 @@ fn finish_playback_projection(
         shell.withdraw_now_playing_notification();
     }
     if media_changed {
-        shell.lyrics.offset_millis.set(0);
-        shell.right_panel.lyrics_pane.clear_follow_scroll_pause();
-        shell
-            .player_view
-            .fullscreen_player
-            .lyrics_pane
-            .clear_follow_scroll_pause();
+        if let Some(lyrics) = shell.selected_lyrics() {
+            lyrics.offset_millis.set(0);
+            lyrics.right_pane.clear_follow_scroll_pause();
+            lyrics.fullscreen_pane.clear_follow_scroll_pause();
+        }
         shell.cancel_scheduled_lyrics_highlight();
         shell.render_lyrics_panel();
     }
@@ -754,7 +721,7 @@ fn media_controls_static_state_changed(
 }
 
 fn apply_waveform(shell: &Rc<Shell>, waveform: WaveformProjection) {
-    *shell.playback.waveform.borrow_mut() = waveform;
+    shell.selected_ui.set_waveform(waveform);
     shell.update_bottom_player_transport();
 }
 
@@ -780,7 +747,7 @@ fn apply_lyrics_event(shell: &Rc<Shell>, event: lyrics::LyricsEvent) {
             ),
         },
         lyrics::LyricsEvent::Saved { media_id, path } => {
-            if current_playback_media_id(&shell.playback.player.borrow()).as_ref()
+            if current_playback_media_id(shell.selected_playback().as_deref()).as_ref()
                 == Some(&media_id)
             {
                 shell.apply_lyrics_saved(media_id, path);

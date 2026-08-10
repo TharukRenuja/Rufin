@@ -43,13 +43,12 @@ use super::columns::{
 };
 use super::detail_links::DetailLinks;
 use super::grid_cells::{
-    CollectionGridCardCell, ReusableCollectionGridCell, collection_grid_cover_shell,
-    collection_grid_with_card_widths,
+    CollectionGridCardCell, ReusableCollectionGridCell, collection_grid,
+    collection_grid_cover_shell,
 };
 use super::library_fields::{
-    ALBUM_COLLECTION_GRID_MAX_CARD_WIDTH, ALBUM_COLLECTION_GRID_MIN_CARD_WIDTH,
-    COLLECTION_GRID_MAX_CARD_WIDTH, COLLECTION_GRID_MIN_CARD_WIDTH, album_item_field, apply_desc,
-    artist_item_field, column_width, item_at, item_at_from_item, track_field,
+    COLLECTION_GRID_MAX_CARD_WIDTH, album_item_field, apply_desc, artist_item_field, column_width,
+    item_at, item_at_from_item, track_field,
 };
 use super::route::Route;
 use super::route_layout::ROUTE_TOP_MARGIN;
@@ -379,7 +378,7 @@ impl SearchGridItem for SearchTrack {
 }
 
 fn play_search_track(shell: &Rc<Shell>, track: Track, placement: QueuePlacement) {
-    let Some(selected) = shell.library.selected.borrow().as_ref().cloned() else {
+    let Some(selected) = shell.selected_library().as_deref().cloned() else {
         return;
     };
     shell
@@ -406,11 +405,10 @@ struct SearchGridCell<T: SearchGridItem> {
     cover_button: gtk::Button,
     current: Rc<RefCell<Option<T>>>,
     controls: cards::CoverHoverControls,
-    cover_size: i32,
 }
 
 impl<T: SearchGridItem> SearchGridCell<T> {
-    fn new(shell: Rc<Shell>, fields: &[LibraryField], cover_size: i32) -> Self {
+    fn new(shell: Rc<Shell>, fields: &[LibraryField]) -> Self {
         let current = Rc::new(RefCell::new(None::<T>));
         let cover_button = collection_grid_cover_shell();
         let cover = ArtworkTile::new_elastic_square(0);
@@ -428,7 +426,7 @@ impl<T: SearchGridItem> SearchGridCell<T> {
         let (mut controls, favorite) =
             cards::cover_hover_controls_with_favorite(0, msgid("Play"), false);
         let favorite_key_item = Rc::clone(&current);
-        shell.favorites.register_dynamic_button(
+        shell.register_dynamic_favorite_button(
             Rc::new(move || {
                 favorite_key_item
                     .borrow()
@@ -510,7 +508,6 @@ impl<T: SearchGridItem> SearchGridCell<T> {
             cover_button,
             current,
             controls,
-            cover_size,
         }
     }
 }
@@ -529,7 +526,7 @@ impl<T: SearchGridItem> ReusableCollectionGridCell<T> for SearchGridCell<T> {
             &self.cover,
             item.artwork(),
             item.seed(),
-            self.cover_size,
+            COLLECTION_GRID_MAX_CARD_WIDTH,
             LARGE_COVER_SIZE,
         );
         self.body
@@ -640,20 +637,10 @@ impl SearchRouteProjection {
         let albums = gio::ListStore::new::<glib::BoxedAnyObject>();
         let artists = gio::ListStore::new::<glib::BoxedAnyObject>();
         let track_collection = search_track_collection(shell, &tracks);
-        let album_collection = search_grid_collection::<SearchAlbum>(
-            shell,
-            &albums,
-            LibraryListKey::Albums,
-            ALBUM_COLLECTION_GRID_MIN_CARD_WIDTH,
-            ALBUM_COLLECTION_GRID_MAX_CARD_WIDTH,
-        );
-        let artist_collection = search_grid_collection::<SearchArtist>(
-            shell,
-            &artists,
-            LibraryListKey::Artists,
-            COLLECTION_GRID_MIN_CARD_WIDTH,
-            COLLECTION_GRID_MAX_CARD_WIDTH,
-        );
+        let album_collection =
+            search_grid_collection::<SearchAlbum>(shell, &albums, LibraryListKey::Albums);
+        let artist_collection =
+            search_grid_collection::<SearchArtist>(shell, &artists, LibraryListKey::Artists);
         let track_navigation = track_collection.item_navigation();
         let album_navigation = album_collection.item_navigation();
         let artist_navigation = artist_collection.item_navigation();
@@ -864,15 +851,10 @@ impl SearchRouteProjection {
         if shell.navigation.routes.borrow().current() != &Route::Search {
             return false;
         }
-        shell
-            .library
-            .selected
-            .borrow()
-            .as_ref()
-            .is_some_and(|selected| {
-                selected.source_id == self.source_id
-                    && selected.source_session_epoch == self.source_session_epoch
-            })
+        shell.selected_library().as_deref().is_some_and(|selected| {
+            selected.source_id == self.source_id
+                && selected.source_session_epoch == self.source_session_epoch
+        })
     }
 
     fn apply(&self, results: PreparedSearchResults) {
@@ -1117,13 +1099,9 @@ fn search_track_collection(
     LibraryCollectionProjection::new(
         settings,
         Rc::new(move |layout| match layout {
-            LibraryLayout::Grid => search_grid_presentation::<SearchTrack>(
-                &build_shell,
-                &build_model,
-                COLLECTION_GRID_MIN_CARD_WIDTH,
-                COLLECTION_GRID_MAX_CARD_WIDTH,
-                &fields,
-            ),
+            LibraryLayout::Grid => {
+                search_grid_presentation::<SearchTrack>(&build_shell, &build_model, &fields)
+            }
             LibraryLayout::Row | LibraryLayout::Detail => {
                 LibraryPresentationProjection::Row(search_track_table(&build_shell, &build_model))
             }
@@ -1137,7 +1115,7 @@ fn search_track_table(shell: &Rc<Shell>, model: &gio::ListStore) -> CollectionTa
     install_search_track_playing_state(shell, model, &playing);
     let fields = shell.settings.current.borrow().library_list(key).row_fields;
     let queue = shell.products.playback.queue.clone();
-    let selected = shell.library.selected.borrow().as_ref().cloned();
+    let selected = shell.selected_library().as_deref().cloned();
     let activate = Box::new(move |_, track: SearchTrack| {
         if let Some(selected) = selected.as_ref() {
             queue.play_loaded(selected.one_track(track.track, playback::QueuePlacement::Now));
@@ -1214,10 +1192,8 @@ fn install_search_track_playing_state(
         changed_indicator.set_paused(current.as_ref().is_some_and(|(_, paused)| *paused));
     });
     let source_id = shell
-        .library
-        .selected
-        .borrow()
-        .as_ref()
+        .selected_library()
+        .as_deref()
         .map(|selected| selected.source_id.clone());
     let selection_model = model.clone();
     let selection_current = Rc::clone(&current);
@@ -1380,8 +1356,6 @@ fn search_grid_collection<T: SearchGridItem>(
     shell: &Rc<Shell>,
     model: &gio::ListStore,
     key: LibraryListKey,
-    minimum_card_width: i32,
-    maximum_card_width: i32,
 ) -> LibraryCollectionProjection {
     let settings = shell.settings.current.borrow().library_list(key);
     let fields = settings.grid_fields.clone();
@@ -1395,13 +1369,9 @@ fn search_grid_collection<T: SearchGridItem>(
                 &build_model,
                 key,
             )),
-            LibraryLayout::Grid | LibraryLayout::Detail => search_grid_presentation::<T>(
-                &build_shell,
-                &build_model,
-                minimum_card_width,
-                maximum_card_width,
-                &fields,
-            ),
+            LibraryLayout::Grid | LibraryLayout::Detail => {
+                search_grid_presentation::<T>(&build_shell, &build_model, &fields)
+            }
         }),
     )
 }
@@ -1409,18 +1379,14 @@ fn search_grid_collection<T: SearchGridItem>(
 fn search_grid_presentation<T: SearchGridItem>(
     shell: &Rc<Shell>,
     model: &gio::ListStore,
-    minimum_card_width: i32,
-    maximum_card_width: i32,
     fields: &[LibraryField],
 ) -> LibraryPresentationProjection {
     let cell_shell = Rc::clone(shell);
     let activate_shell = Rc::clone(shell);
-    let grid = collection_grid_with_card_widths(
+    let grid = collection_grid(
         model.clone(),
-        minimum_card_width,
-        maximum_card_width,
         fields,
-        move |fields| SearchGridCell::<T>::new(Rc::clone(&cell_shell), fields, maximum_card_width),
+        move |fields| SearchGridCell::<T>::new(Rc::clone(&cell_shell), fields),
         move |_, item: T| item.activate(&activate_shell),
     );
     LibraryPresentationProjection::Grid(grid)

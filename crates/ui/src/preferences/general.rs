@@ -744,7 +744,7 @@ pub(crate) fn playback_page(shell: &Rc<Shell>) -> adw::PreferencesPage {
 pub(crate) fn appearance_page(shell: &Rc<Shell>) -> adw::PreferencesPage {
     let page = adw::PreferencesPage::builder()
         .title(tr("Appearance"))
-        .icon_name("preferences-desktop-appearance-symbolic")
+        .icon_name("rufin-preferences-appearance-symbolic")
         .build();
 
     page.add(&theme_group(shell));

@@ -200,8 +200,8 @@ impl Pipeline {
         let mut state = lock_state(&self.shared);
         let request_id = RequestId(state.next_request);
         state.next_request = state.next_request.wrapping_add(1).max(1);
-        if let Some(image) = decoded_for_request(&mut state, &self.shared.cache, &source, &request)
-        {
+        let (ready, _) = decoded_for_request(&mut state, &self.shared.cache, &source, &request);
+        if let Some(image) = ready {
             return Ok(ArtworkLoad::Ready(image));
         }
         let Some(candidate) = request.binding.candidates().first().cloned() else {
@@ -281,6 +281,7 @@ impl Pipeline {
                         SOURCE_ARTWORK_SIZE,
                     );
                     if decoded_for_request(&mut state, &self.shared.cache, &source, &request)
+                        .0
                         .is_some()
                     {
                         let _ = completion.send(BackgroundResult::Ready);
@@ -362,13 +363,17 @@ impl Pipeline {
         None
     }
 
-    pub(crate) fn binding_identity_and_ready(
+    pub(crate) fn binding_identity_and_images(
         &self,
         source: &SourceImages,
         request: &ArtworkRequest,
-    ) -> (ArtworkBindingIdentity, Option<Arc<DecodedImage>>) {
+    ) -> (
+        ArtworkBindingIdentity,
+        Option<Arc<DecodedImage>>,
+        Option<Arc<DecodedImage>>,
+    ) {
         let mut state = lock_state(&self.shared);
-        binding_identity_and_ready_from_state(&mut state, &self.shared.cache, source, request)
+        binding_identity_and_images_from_state(&mut state, &self.shared.cache, source, request)
     }
 
     pub(crate) fn retry_external(&self) -> Result<(), ArtworkError> {
@@ -453,15 +458,19 @@ fn binding_identity_from_state(
     }
 }
 
-fn binding_identity_and_ready_from_state(
+fn binding_identity_and_images_from_state(
     state: &mut State,
     cache: &FilesystemCache,
     source: &SourceImages,
     request: &ArtworkRequest,
-) -> (ArtworkBindingIdentity, Option<Arc<DecodedImage>>) {
+) -> (
+    ArtworkBindingIdentity,
+    Option<Arc<DecodedImage>>,
+    Option<Arc<DecodedImage>>,
+) {
     let identity = binding_identity_from_state(state, source, request);
-    let ready = decoded_for_request(state, cache, source, request);
-    (identity, ready)
+    let (ready, preview) = decoded_for_request(state, cache, source, request);
+    (identity, ready, preview)
 }
 
 fn artwork_visual_identity(
@@ -484,7 +493,7 @@ fn decoded_for_request(
     cache: &FilesystemCache,
     source: &SourceImages,
     request: &ArtworkRequest,
-) -> Option<Arc<DecodedImage>> {
+) -> (Option<Arc<DecodedImage>>, Option<Arc<DecodedImage>>) {
     let source_epoch = source_epoch(state, &source.source_id);
     for candidate in request.binding.candidates() {
         let external = candidate.is_external();
@@ -493,19 +502,23 @@ fn decoded_for_request(
         let family =
             decoded_candidate_family(&source.source_id, candidate, source_epoch, external_epoch);
         let exact = decoded_key(&family, request.fetch_size, request.render_size);
+        let mut preview = None;
         if may_read_cache {
             if let Some(image) =
                 state
                     .decoded_index
                     .get_for_request(&exact, &family, request.render_size)
             {
-                return Some(image);
+                return (Some(image), None);
             }
+            preview = state
+                .decoded_index
+                .get_preview(&family, request.render_size);
             if cache
                 .ready_entry(&source.source_id, candidate, request.fetch_size)
                 .is_some()
             {
-                return None;
+                return (None, preview);
             }
             if cache.is_missing(&source.source_id, candidate, request.fetch_size) {
                 continue;
@@ -515,10 +528,10 @@ fn decoded_for_request(
             continue;
         }
         if source.can_fetch() {
-            return None;
+            return (None, preview);
         }
     }
-    None
+    (None, None)
 }
 
 fn decoded_candidate_family(
@@ -579,6 +592,23 @@ impl DecodedIndex {
             .get(family)
             .into_iter()
             .flat_map(|sizes| sizes.range(render_size..))
+            .flat_map(|(_, keys)| keys.iter().cloned())
+            .collect::<Vec<_>>();
+        reusable
+            .into_iter()
+            .find_map(|reusable| self.get(&reusable))
+    }
+
+    fn get_preview(
+        &mut self,
+        family: &DecodedFamily,
+        render_size: u32,
+    ) -> Option<Arc<DecodedImage>> {
+        let reusable = self
+            .families
+            .get(family)
+            .into_iter()
+            .flat_map(|sizes| sizes.range(..render_size).rev())
             .flat_map(|(_, keys)| keys.iter().cloned())
             .collect::<Vec<_>>();
         reusable

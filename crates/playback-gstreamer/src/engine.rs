@@ -2386,7 +2386,7 @@ impl GstEngine {
     }
 
     pub(super) fn push_duration(&self, millis: u64) {
-        if let Some(run) = self.timing_run_id() {
+        if let Some(run) = self.duration_run_id() {
             push_event(&self.events, BackendEvent::Duration { run, millis });
         }
     }
@@ -2408,6 +2408,14 @@ impl GstEngine {
             .current
             .as_ref()
             .map(|item| item.run)
+    }
+
+    fn duration_run_id(&self) -> Option<RunId> {
+        let shared = lock_recover(&self.shared);
+        if shared.gapless_pending.is_some() {
+            return None;
+        }
+        shared.current.as_ref().map(|item| item.run)
     }
 
     fn run_is_current(&self, run: RunId) -> bool {
@@ -3987,6 +3995,40 @@ mod tests {
                 },
                 BackendEvent::Ended { run: first },
             ]
+        );
+    }
+
+    #[test]
+    fn gapless_preload_cannot_relabel_the_next_duration_as_current() {
+        let events = Arc::new(Mutex::new(EventMailbox::default()));
+        let mut engine = GstEngine::new(Arc::clone(&events));
+        let current_run = RunId::new(1);
+        let next_run = RunId::new(2);
+        {
+            let mut shared = lock_recover(&engine.shared);
+            shared.current = Some(PreparedRun {
+                run: current_run,
+                stream: ResolvedStream::new("file:///music/current.flac").into(),
+            });
+            shared.gapless_pending = Some(PreparedNext::new(
+                next_run,
+                ResolvedStream::new("file:///music/next.flac"),
+                NextTransition::Gapless,
+            ));
+        }
+
+        engine.push_duration(240_000);
+        assert!(lock_recover(&events).drain().is_empty());
+
+        engine.handle_stream_start();
+        lock_recover(&events).drain();
+        engine.push_duration(240_000);
+        assert_eq!(
+            lock_recover(&events).drain(),
+            vec![BackendEvent::Duration {
+                run: next_run,
+                millis: 240_000,
+            }]
         );
     }
 }

@@ -1,3 +1,4 @@
+use std::cell::RefCell;
 use std::path::Path;
 use std::rc::Rc;
 use std::sync::Arc;
@@ -32,6 +33,29 @@ const DOWNLOAD_QUALITIES: [StreamQuality; 5] = [
     StreamQuality::MaxBitrateKbps(192),
     StreamQuality::MaxBitrateKbps(128),
 ];
+
+struct DownloadQueuesView {
+    queue: gtk::glib::WeakRef<adw::PreferencesGroup>,
+    rendered_rows: Rc<RefCell<Vec<gtk::Widget>>>,
+    refresh: Rc<dyn Fn()>,
+}
+
+impl DownloadQueuesView {
+    fn refresh(&self) {
+        (self.refresh)();
+    }
+}
+
+impl Drop for DownloadQueuesView {
+    fn drop(&mut self) {
+        let rows = self.rendered_rows.take();
+        if let Some(queue) = self.queue.upgrade() {
+            for row in rows {
+                queue.remove(&row);
+            }
+        }
+    }
+}
 
 pub(super) fn library_page(
     shell: &Rc<Shell>,
@@ -578,10 +602,8 @@ fn remove_download_rule(
         .is_some();
     if removed {
         let loaded = shell
-            .library
-            .selected
-            .borrow()
-            .as_ref()
+            .selected_library()
+            .as_deref()
             .filter(|selected| selected.source_id == source_id)
             .map(|selected| Arc::clone(&selected.library));
         shell
@@ -834,13 +856,26 @@ fn add_download_queue(
             queue_rows.borrow_mut().push(row.upcast());
         }
     });
-    *shell.downloads.queue_refresh.borrow_mut() = Some(Rc::clone(&refresh));
-    refresh();
-    rendered_rows
+    let view = DownloadQueuesView {
+        queue: queue.downgrade(),
+        rendered_rows: Rc::clone(&rendered_rows),
+        refresh: Rc::clone(&refresh),
+    };
+    shell.downloads.set_queue_refresh(&refresh);
+    view.refresh();
+    let focus = rendered_rows
         .borrow()
         .first()
         .cloned()
-        .expect("the download queue always renders one row")
+        .expect("the download queue always renders one row");
+    let view = Rc::new(std::cell::RefCell::new(Some(view)));
+    let view_for_root = Rc::clone(&view);
+    queue.connect_root_notify(move |queue| {
+        if queue.root().is_none() {
+            view_for_root.borrow_mut().take();
+        }
+    });
+    focus
 }
 
 fn download_queue_item_subtitle(job: &downloads::DownloadQueueItem) -> String {
@@ -898,10 +933,8 @@ fn confirm_remove_all_downloads(
                     .is_some();
             if rules_disabled {
                 let loaded = shell
-                    .library
-                    .selected
-                    .borrow()
-                    .as_ref()
+                    .selected_library()
+                    .as_deref()
                     .filter(|selected| selected.source_id == source_id)
                     .map(|selected| Arc::clone(&selected.library));
                 shell
@@ -1098,5 +1131,60 @@ fn download_quality_label(quality: StreamQuality) -> String {
         StreamQuality::MaxBitrateKbps(192) => tr("192 kbps"),
         StreamQuality::MaxBitrateKbps(128) => tr("128 kbps"),
         StreamQuality::MaxBitrateKbps(bitrate) => format!("{bitrate} kbps"),
+    }
+}
+
+#[cfg(test)]
+mod download_queue_lifecycle_tests {
+    use std::cell::{Cell, RefCell};
+    use std::rc::Rc;
+
+    use super::DownloadQueuesView;
+    use crate::downloads::DownloadsState;
+
+    struct RowDropProbe(Rc<Cell<usize>>);
+
+    impl Drop for RowDropProbe {
+        fn drop(&mut self) {
+            self.0.set(self.0.get() + 1);
+        }
+    }
+
+    #[test]
+    fn closing_download_queues_view_releases_rows_and_shell_refresh_is_weak() {
+        let dropped_rows = Rc::new(Cell::new(0));
+        let refresh_count = Rc::new(Cell::new(0));
+        let rows = (0..3)
+            .map(|_| RowDropProbe(Rc::clone(&dropped_rows)))
+            .collect::<Vec<_>>();
+        let refresh_count_for_view = Rc::clone(&refresh_count);
+        let rendered_rows = Rc::new(RefCell::new(Vec::<gtk::Widget>::new()));
+        let weak_rendered_rows = Rc::downgrade(&rendered_rows);
+        let rendered_rows_for_view = Rc::clone(&rendered_rows);
+        let refresh: Rc<dyn Fn()> = Rc::new(move || {
+            assert_eq!(rows.len(), 3);
+            assert!(rendered_rows_for_view.borrow().is_empty());
+            refresh_count_for_view.set(refresh_count_for_view.get() + 1);
+        });
+        let view = DownloadQueuesView {
+            queue: gtk::glib::WeakRef::new(),
+            rendered_rows: Rc::clone(&rendered_rows),
+            refresh: Rc::clone(&refresh),
+        };
+        let shell_downloads = DownloadsState::default();
+        shell_downloads.set_queue_refresh(&refresh);
+        drop(refresh);
+        drop(rendered_rows);
+
+        shell_downloads.refresh_queue();
+        assert_eq!(refresh_count.get(), 1);
+        assert_eq!(dropped_rows.get(), 0);
+        assert!(weak_rendered_rows.upgrade().is_some());
+
+        drop(view);
+        assert_eq!(dropped_rows.get(), 3);
+        assert!(weak_rendered_rows.upgrade().is_none());
+        shell_downloads.refresh_queue();
+        assert_eq!(refresh_count.get(), 1);
     }
 }

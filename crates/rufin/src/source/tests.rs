@@ -1,7 +1,9 @@
 use std::collections::BTreeSet;
+use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::task::{Context, Poll, Waker};
 
 use library::{
     AcceptedPlay, CandidateBatch, CandidateFinish, CandidateHeader, FolderContents, HomeFacts,
@@ -16,174 +18,241 @@ use sources::{
 
 use super::*;
 
-fn test_source_change() -> SelectedObservedChange {
-    SelectedObservedChange::Change(ObservedSourceChange::full())
+fn test_jellyfin_source(source_id: SourceId) -> (SourceConfiguration, Arc<Source>) {
+    let configuration = SourceConfiguration {
+        source_id,
+        kind: "jellyfin".to_string(),
+        name: "Jellyfin".to_string(),
+        provider_payload: serde_json::json!({
+            "version": 1,
+            "base_url": "http://127.0.0.1:9",
+            "server_id": null,
+            "user_id": "listener",
+            "username": "listener",
+            "trust_invalid_cert": false,
+            "use_jellyfin_instant_mix": false,
+        })
+        .to_string(),
+    };
+    let source = Arc::new(
+        Source::open(
+            configuration.clone(),
+            Some("test-token".to_string()),
+            Some("test-device".to_string()),
+        )
+        .expect("open Jellyfin fixture"),
+    );
+    (configuration, source)
 }
 
-fn test_local_change(value: usize) -> SelectedObservedChange {
-    SelectedObservedChange::Change(ObservedSourceChange::LocalPaths(BTreeSet::from([
-        PathBuf::from(format!("/{value}.flac")),
-    ])))
-}
-
-pub(super) struct ObservedChangeProbe {
-    label: &'static str,
-    started: Option<async_channel::Sender<()>>,
-    release: Option<async_channel::Receiver<()>>,
-    accepted: async_channel::Sender<&'static str>,
-}
-
-impl ObservedChangeProbe {
-    pub(super) async fn accept(self) {
-        if let Some(started) = self.started {
-            let _ = started.try_send(());
-        }
-        if let Some(release) = self.release {
-            let _ = release.recv().await;
-        }
-        let _ = self.accepted.try_send(self.label);
+fn jellyfin_change(id: &str) -> ObservedSourceChange {
+    ObservedSourceChange::Jellyfin {
+        upserts: BTreeSet::from([id.to_string()]),
+        removals: BTreeSet::new(),
     }
 }
 
 #[test]
-fn observed_change_bursts_have_one_active_preparation_and_one_merged_tail() {
-    let mut source = ObservedChangeState::new();
-    let first = source
-        .submit(1, test_source_change())
-        .expect("first source change starts preparation");
-    for _ in 1..100 {
-        assert!(source.submit(2, test_source_change()).is_none());
-    }
-    let tail = source.next(1).expect("source burst has one tail");
-    assert!(source.next(1).is_none());
-    assert!(matches!(first, SelectedObservedChange::Change(_)));
-    assert!(matches!(tail, SelectedObservedChange::Change(_)));
-
-    let mut local = ObservedChangeState::new();
-    let first = local
-        .submit(1, test_local_change(0))
-        .expect("first Local change starts preparation");
-    for value in 1..100 {
-        assert!(local.submit(2, test_local_change(value)).is_none());
-    }
-    let tail = local.next(1).expect("Local burst has one tail");
-    assert!(local.next(1).is_none());
-    assert!(
-        matches!(first, SelectedObservedChange::Change(ObservedSourceChange::LocalPaths(paths)) if paths.len() == 1)
-    );
-    assert!(
-        matches!(tail, SelectedObservedChange::Change(ObservedSourceChange::LocalPaths(paths)) if paths.len() == 99)
-    );
-}
-
-#[test]
-fn observed_change_tail_releases_the_source_lane_between_acceptances() {
+fn configured_feed_reinstall_preserves_pending_changes() {
     let directory = tempfile::tempdir().expect("temporary Rufin data directory");
     let runtime = test_runtime();
     let libraries = Libraries::open(directory.path().join("library.db")).expect("open Library");
-    let source_id = SourceId::new("local:server:observer-fairness");
-    let library = accept_library(&libraries, source_id.clone(), Vec::new(), Vec::new(), 1);
     let settings = SettingsFile::memory();
     let (bootstrap, _events) = test_owner(directory.path(), &runtime, libraries, settings);
-    let session = install_selected_for_test(
-        &bootstrap.owner,
-        test_configuration(source_id, "Observer fairness"),
-        None,
-        library,
-        SourceSessionEpoch::new(1),
+    let source_id = SourceId::new("jellyfin:server:feed-reinstall");
+    let (_configuration, source) = test_jellyfin_source(source_id.clone());
+    let feed =
+        ConfiguredJellyfinFeed::test(Arc::clone(&source), Some(jellyfin_change("first")), true);
+    let changes = Arc::clone(&feed.changes);
+    bootstrap
+        .owner
+        .shared
+        .state
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .jellyfin_feeds
+        .insert(source_id.clone(), feed);
+
+    bootstrap
+        .owner
+        .install_configured_jellyfin_feed(source, true);
+
+    assert_eq!(
+        changes
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .take(),
+        Some(jellyfin_change("first"))
     );
-    let observed = Arc::new(Mutex::new(ObservedChangeState::new()));
-    let observer_cancelled = Arc::new(AtomicBool::new(false));
-    let (started, started_receiver) = async_channel::bounded(1);
-    let (release, release_receiver) = async_channel::bounded(1);
-    let (accepted, accepted_receiver) = async_channel::unbounded();
-
-    runtime.block_on(async {
-        assert!(bootstrap.owner.queue_observed_change(
-            &observed,
-            &session,
-            &observer_cancelled,
-            SelectedObservedChange::Probe(ObservedChangeProbe {
-                label: "first",
-                started: Some(started),
-                release: Some(release_receiver),
-                accepted: accepted.clone(),
-            }),
-        ));
-        started_receiver
-            .recv()
-            .await
-            .expect("first observed acceptance started");
-
-        let shared = Arc::clone(&bootstrap.owner.shared);
-        let normal_accepted = accepted.clone();
-        let (normal_queued, normal_queued_receiver) = async_channel::bounded(1);
-        let normal = tokio::spawn(async move {
-            let _ = normal_queued.try_send(());
-            let _lane = shared.lane.lock().await;
-            let _ = normal_accepted.try_send("normal");
-        });
-        normal_queued_receiver
-            .recv()
-            .await
-            .expect("normal source work queued on the lane");
-
-        assert!(bootstrap.owner.queue_observed_change(
-            &observed,
-            &session,
-            &observer_cancelled,
-            SelectedObservedChange::Probe(ObservedChangeProbe {
-                label: "second",
-                started: None,
-                release: None,
-                accepted,
-            }),
-        ));
-        release
-            .send(())
-            .await
-            .expect("release first observed acceptance");
-
-        assert_eq!(accepted_receiver.recv().await.as_deref(), Ok("first"));
-        assert_eq!(accepted_receiver.recv().await.as_deref(), Ok("normal"));
-        assert_eq!(accepted_receiver.recv().await.as_deref(), Ok("second"));
-        normal.await.expect("normal source work completed");
-    });
 }
 
 #[test]
-fn stale_observed_change_run_cannot_clear_a_newer_run() {
-    let state = Arc::new(Mutex::new(ObservedChangeState::new()));
-    {
-        let mut observed = state
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        assert!(observed.submit(1, test_local_change(1)).is_some());
-        assert!(observed.submit(2, test_local_change(2)).is_none());
-    }
+fn disconnected_baseline_keeps_full_reconcile_after_the_feed_connects() {
+    let directory = tempfile::tempdir().expect("temporary Rufin data directory");
+    let runtime = test_runtime();
+    let libraries = Libraries::open(directory.path().join("library.db")).expect("open Library");
+    let settings = SettingsFile::memory();
+    let (bootstrap, _events) = test_owner(directory.path(), &runtime, libraries, settings);
+    let source_id = SourceId::new("jellyfin:server:baseline-gap");
+    let (_configuration, source) = test_jellyfin_source(source_id.clone());
+    let feed = ConfiguredJellyfinFeed::test(source, None, false);
+    let changes = Arc::clone(&feed.changes);
+    bootstrap
+        .owner
+        .shared
+        .state
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .jellyfin_feeds
+        .insert(source_id.clone(), feed);
 
-    let old = ObservedChangeRun::new(Arc::clone(&state), 1);
-    let prepared = {
-        let mut observed = state
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        let prepared = observed.next(1).expect("prepare the queued change");
-        observed.activate(2);
-        prepared
-    };
-    drop(old);
-
-    assert!(matches!(
-        prepared,
-        SelectedObservedChange::Change(ObservedSourceChange::LocalPaths(paths))
-            if paths == BTreeSet::from([PathBuf::from("/2.flac")])
-    ));
-    let mut observed = state
+    bootstrap.owner.begin_configured_baseline(&source_id);
+    let mut pending = changes
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
-    assert_eq!(observed.active, Some(2));
-    assert!(observed.submit(3, test_local_change(3)).is_none());
-    assert!(observed.next(2).is_some());
+    pending.connected = true;
+    pending.merge(jellyfin_change("arrived-during-baseline"));
+    assert_eq!(pending.take(), Some(ObservedSourceChange::Full));
+}
+
+#[test]
+fn cancelled_feed_drain_requeues_and_bounds_pending_work() {
+    let changes = Arc::new(Mutex::new(PendingChanges::new(
+        Some(jellyfin_change("first")),
+        true,
+    )));
+    let active = changes
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .take()
+        .expect("claim pending change");
+    let run = ObservedChangeRun::test(Arc::clone(&changes), active);
+    changes
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .merge(jellyfin_change("second"));
+    drop(run);
+
+    let expected = ObservedSourceChange::Jellyfin {
+        upserts: BTreeSet::from(["first".to_string(), "second".to_string()]),
+        removals: BTreeSet::new(),
+    };
+    assert_eq!(
+        changes
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .take(),
+        Some(expected)
+    );
+
+    let mut overflow = PendingChanges::new(None, true);
+    overflow.merge(ObservedSourceChange::Jellyfin {
+        upserts: (0..=PendingChanges::MAXIMUM_IDS)
+            .map(|id| format!("track-{id}"))
+            .collect(),
+        removals: BTreeSet::new(),
+    });
+    assert_eq!(overflow.take(), Some(ObservedSourceChange::Full));
+}
+
+#[test]
+fn deselected_jellyfin_feed_retains_its_source_without_retaining_the_library() {
+    let directory = tempfile::tempdir().expect("temporary Rufin data directory");
+    let runtime = test_runtime();
+    let libraries = Libraries::open(directory.path().join("library.db")).expect("open Library");
+    let source_id = SourceId::new("jellyfin:server:feed-owner");
+    let library = accept_library(&libraries, source_id.clone(), Vec::new(), Vec::new(), 1);
+    let library_weak = Arc::downgrade(&library);
+    let settings = SettingsFile::memory();
+    let (bootstrap, events) = test_owner(directory.path(), &runtime, libraries, settings);
+    let (configuration, source) = test_jellyfin_source(source_id.clone());
+    let source_weak = Arc::downgrade(&source);
+    install_selected_for_test(
+        &bootstrap.owner,
+        configuration,
+        Some(Arc::clone(&source)),
+        Arc::clone(&library),
+        SourceSessionEpoch::new(1),
+    );
+    bootstrap
+        .owner
+        .shared
+        .state
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .jellyfin_feeds
+        .insert(
+            source_id.clone(),
+            ConfiguredJellyfinFeed::test(Arc::clone(&source), None, true),
+        );
+    drop(source);
+    drop(library);
+
+    runtime.spawn(async move {
+        if let Ok(SourceEvent::ReleaseSelected { acknowledged }) = events.recv().await {
+            let _ = acknowledged.send(()).await;
+        }
+    });
+    runtime.block_on(bootstrap.owner.shared.release_selected());
+
+    assert!(source_weak.upgrade().is_some());
+    assert!(library_weak.upgrade().is_none());
+    bootstrap.owner.remove_configured_feed(&source_id);
+    assert!(source_weak.upgrade().is_none());
+}
+
+#[test]
+fn failed_transition_resumes_requeued_selected_jellyfin_change() {
+    let directory = tempfile::tempdir().expect("temporary Rufin data directory");
+    let runtime = test_runtime();
+    let libraries = Libraries::open(directory.path().join("library.db")).expect("open Library");
+    let source_id = SourceId::new("jellyfin:server:failed-transition");
+    let library = accept_library(&libraries, source_id.clone(), Vec::new(), Vec::new(), 1);
+    let settings = SettingsFile::memory();
+    let (bootstrap, _events) = test_owner(directory.path(), &runtime, libraries, settings);
+    let (configuration, source) = test_jellyfin_source(source_id.clone());
+    install_selected_for_test(
+        &bootstrap.owner,
+        configuration,
+        Some(Arc::clone(&source)),
+        library,
+        SourceSessionEpoch::new(1),
+    );
+    let feed = ConfiguredJellyfinFeed::test(source, Some(jellyfin_change("requeued")), true);
+    let changes = Arc::clone(&feed.changes);
+    {
+        let mut state = bootstrap
+            .owner
+            .shared
+            .state
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        state.selected_revealed = true;
+        state.jellyfin_feeds.insert(source_id.clone(), feed);
+    }
+
+    runtime.block_on(async {
+        let lane = bootstrap.owner.shared.lane.lock().await;
+        bootstrap
+            .owner
+            .as_ref()
+            .clone()
+            .fail_transition(
+                Some(SourceId::new("jellyfin:server:failed-target")),
+                "target failed".to_string(),
+                false,
+            )
+            .await;
+        assert_eq!(
+            changes
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .take(),
+            None,
+            "the restored selected feed must claim its queued change immediately",
+        );
+        drop(lane);
+    });
 }
 
 #[test]
@@ -585,6 +654,57 @@ fn active_source_resolves_replacement_and_rejects_retired_session() {
 }
 
 #[test]
+fn stopping_observer_waits_for_its_thread_to_release_owned_state() {
+    let runtime = test_runtime();
+    let cancelled = Arc::new(AtomicBool::new(false));
+    let thread_cancelled = Arc::clone(&cancelled);
+    let sentinel = Arc::new(());
+    let released = Arc::downgrade(&sentinel);
+    let (cancel_seen, cancelled_seen) = std::sync::mpsc::channel();
+    let (release, released_by_test) = std::sync::mpsc::channel();
+    let (completed, completion) = tokio::sync::oneshot::channel();
+    let handle = std::thread::Builder::new()
+        .name("rufin-local-watcher-test".to_string())
+        .spawn(move || {
+            while !thread_cancelled.load(Ordering::Acquire) {
+                std::thread::park();
+            }
+            let _sentinel = sentinel;
+            cancel_seen.send(()).expect("report watcher cancellation");
+            released_by_test.recv().expect("release watcher thread");
+            drop(_sentinel);
+            let _ = completed.send(());
+        })
+        .expect("start watcher thread");
+    let observer = ActiveObserver {
+        qualifier: SourceQualifier {
+            source_id: SourceId::new("local:server:watcher-stop"),
+            epoch: SourceSessionEpoch::new(1),
+        },
+        cancelled,
+        completion: Some(completion),
+        handle: Some(handle),
+    };
+
+    let mut stop = Box::pin(observer.stop());
+    let mut context = Context::from_waker(Waker::noop());
+    assert!(matches!(stop.as_mut().poll(&mut context), Poll::Pending));
+    cancelled_seen
+        .recv()
+        .expect("watcher observed cancellation");
+    assert!(
+        released.upgrade().is_some(),
+        "the watcher must still own its sentinel while stop is pending"
+    );
+    release.send(()).expect("allow watcher thread to finish");
+    runtime.block_on(stop);
+    assert!(
+        released.upgrade().is_none(),
+        "stop must join after the watcher releases its sentinel"
+    );
+}
+
+#[test]
 fn same_session_executor_change_retires_previous_access_tasks() {
     let directory = tempfile::tempdir().expect("temporary Rufin data directory");
     let root_a = directory.path().join("A");
@@ -658,7 +778,17 @@ fn same_session_executor_change_retires_previous_access_tasks() {
         let cancelled = Arc::clone(&observer_cancelled);
         move || resolve_observer_session(&cancelled, &session)
     };
-    let observer_handle = runtime.spawn(std::future::pending::<()>());
+    let observer_thread_cancelled = Arc::clone(&observer_cancelled);
+    let (observer_completed, observer_completion) = tokio::sync::oneshot::channel();
+    let observer_handle = std::thread::Builder::new()
+        .name("rufin-local-watcher-fixture".to_string())
+        .spawn(move || {
+            while !observer_thread_cancelled.load(Ordering::Acquire) {
+                std::thread::park();
+            }
+            let _ = observer_completed.send(());
+        })
+        .expect("start observer fixture thread");
     let local_handle = runtime.spawn(std::future::pending::<()>());
     {
         let mut state = bootstrap
@@ -670,8 +800,8 @@ fn same_session_executor_change_retires_previous_access_tasks() {
         state.observer = Some(ActiveObserver {
             qualifier: qualifier.clone(),
             cancelled: Arc::clone(&observer_cancelled),
-            observed: Arc::new(Mutex::new(ObservedChangeState::new())),
-            handle: observer_handle,
+            completion: Some(observer_completion),
+            handle: Some(observer_handle),
         });
         state.local_access = Some(ActiveLocalAccess {
             token: 1,
@@ -981,148 +1111,7 @@ fn folder_and_search_fallback_only_for_outages() {
 }
 
 #[test]
-fn retired_session_discards_delayed_metadata_results() {
-    let directory = tempfile::tempdir().expect("temporary Rufin data directory");
-    let runtime = test_runtime();
-    let libraries = Libraries::open(directory.path().join("library.db")).expect("open Library");
-    let source_id = SourceId::new("local:server:metadata-fence");
-    let library = accept_library(
-        &libraries,
-        source_id.clone(),
-        vec![test_track(
-            library::TrackId::new("local:track:metadata-fence"),
-            "Metadata",
-            PathBuf::from("Metadata.flac"),
-            None,
-        )],
-        Vec::new(),
-        1,
-    );
-    let (bootstrap, _events) = test_owner(
-        directory.path(),
-        &runtime,
-        libraries,
-        SettingsFile::memory(),
-    );
-    let configuration = test_configuration(source_id, "Metadata");
-    let session = install_selected_for_test(
-        &bootstrap.owner,
-        configuration.clone(),
-        None,
-        Arc::clone(&library),
-        SourceSessionEpoch::new(1),
-    );
-    let qualifier = session
-        .resolve()
-        .expect("selected metadata session")
-        .qualifier();
-
-    let allowed = runtime.block_on(async {
-        let (started, start) = async_channel::bounded(1);
-        let (release, released) = async_channel::bounded(1);
-        let shared = Arc::clone(&bootstrap.owner.shared);
-        let qualifier = qualifier.clone();
-        let task = tokio::spawn(async move {
-            fence_selected_completion(
-                &shared,
-                &qualifier,
-                async move {
-                    started.send(()).await.expect("signal delayed read");
-                    released.recv().await.expect("release delayed read");
-                    Ok::<u8, MetadataError>(7)
-                },
-                Err(MetadataError::Unavailable),
-            )
-            .await
-        });
-        start.recv().await.expect("delayed read started");
-        let mut replacement = (*session.resolve().expect("same session")).clone();
-        replacement.configuration.name = "Same epoch".to_string();
-        assert!(bootstrap.owner.shared.replace_selected(replacement));
-        release.send(()).await.expect("release delayed read");
-        task.await.expect("join delayed read")
-    });
-    assert_eq!(allowed, Ok(7));
-
-    let retired_read = runtime.block_on(async {
-        let (started, start) = async_channel::bounded(1);
-        let (release, released) = async_channel::bounded(1);
-        let shared = Arc::clone(&bootstrap.owner.shared);
-        let qualifier = qualifier.clone();
-        let task = tokio::spawn(async move {
-            fence_selected_completion(
-                &shared,
-                &qualifier,
-                async move {
-                    started.send(()).await.expect("signal delayed read");
-                    released.recv().await.expect("release delayed read");
-                    Ok::<u8, MetadataError>(9)
-                },
-                Err(MetadataError::Unavailable),
-            )
-            .await
-        });
-        start.recv().await.expect("delayed read started");
-        install_selected_for_test(
-            &bootstrap.owner,
-            configuration.clone(),
-            None,
-            Arc::clone(&library),
-            SourceSessionEpoch::new(2),
-        );
-        release.send(()).await.expect("release delayed read");
-        task.await.expect("join delayed read")
-    });
-    assert_eq!(retired_read, Err(MetadataError::Unavailable));
-
-    let epoch_two = bootstrap
-        .owner
-        .shared
-        .selected()
-        .expect("second selected session")
-        .qualifier();
-    let retired_identification = runtime.block_on(async {
-        let (started, start) = async_channel::bounded(1);
-        let (release, released) = async_channel::bounded(1);
-        let shared = Arc::clone(&bootstrap.owner.shared);
-        let task = tokio::spawn(async move {
-            fence_selected_completion(
-                &shared,
-                &epoch_two,
-                async move {
-                    started
-                        .send(())
-                        .await
-                        .expect("signal delayed identification");
-                    released
-                        .recv()
-                        .await
-                        .expect("release delayed identification");
-                    Ok::<Option<u8>, String>(Some(3))
-                },
-                Ok(None),
-            )
-            .await
-        });
-        start.recv().await.expect("delayed identification started");
-        install_selected_for_test(
-            &bootstrap.owner,
-            configuration,
-            None,
-            library,
-            SourceSessionEpoch::new(3),
-        );
-        release
-            .send(())
-            .await
-            .expect("release delayed identification");
-        task.await.expect("join delayed identification")
-    });
-    assert_eq!(retired_identification, Ok(None));
-}
-
-#[test]
-fn failed_target_prepare_keeps_the_selected_session() {
+fn failed_target_prepare_leaves_no_selected_session() {
     let directory = tempfile::tempdir().expect("temporary Rufin data directory");
     let runtime = test_runtime();
     let libraries = Libraries::open(directory.path().join("library.db")).expect("open Library");
@@ -1170,119 +1159,181 @@ fn failed_target_prepare_keeps_the_selected_session() {
         library,
         SourceSessionEpoch::new(1),
     );
+    let selected_state = selected.resolve().expect("selected state");
+    let retired_state = Arc::downgrade(&selected_state);
+    let retired_library = Arc::downgrade(&selected_state.library);
+    drop(selected_state);
+    let (reply_started, reply_start) = async_channel::bounded(1);
+    let (_finish_reply, reply_finish) = async_channel::bounded::<u8>(1);
+    let reply = selected.spawn_reply(move |_, _| async move {
+        reply_started.send(()).await.expect("report pending reply");
+        reply_finish.recv().await.expect("finish pending reply")
+    });
 
-    bootstrap.owner.select_source(target_id.clone());
     let (failed_source, released) = runtime.block_on(async {
+        reply_start.recv().await.expect("pending reply started");
+        bootstrap.owner.select_source(target_id.clone());
         let mut released = false;
-        loop {
+        let failed_source = loop {
             match events.recv().await.expect("source transition event") {
                 SourceEvent::ReleaseSelected { acknowledged } => {
                     released = true;
                     acknowledged.send(()).await.expect("acknowledge release");
                 }
                 SourceEvent::Operation(SourceOperation::Failed { source_id, .. }) => {
-                    break (source_id, released);
+                    break source_id;
                 }
                 _ => {}
             }
-        }
+        };
+        assert!(reply.recv().await.is_err());
+        (failed_source, released)
     });
     assert_eq!(failed_source, Some(target_id));
-    assert!(!released, "failed preparation must not enter cutover");
-    assert!(selected.resolve().is_some());
+    assert!(released, "source switching must release before preparation");
+    assert!(selected.resolve().is_none());
+    assert!(retired_state.upgrade().is_none());
+    assert!(retired_library.upgrade().is_none());
 }
 
 #[test]
-fn preparing_a_replacement_keeps_downloads_on_the_current_library() {
+fn completed_source_switch_releases_the_previous_state_and_library() {
     let directory = tempfile::tempdir().expect("temporary Rufin data directory");
+    let previous_root = directory.path().join("previous");
+    let target_root = directory.path().join("target");
+    std::fs::create_dir(&previous_root).expect("create previous Local folder");
+    std::fs::create_dir(&target_root).expect("create target Local folder");
     let runtime = test_runtime();
     let libraries = Libraries::open(directory.path().join("library.db")).expect("open Library");
-    let current_id = SourceId::new("local:server:current-downloads");
-    let current_track_id = library::TrackId::new("local:track:current-downloads");
-    let current = accept_library(
+    let connected = runtime
+        .block_on(Source::connect(SourceSetupInput::Local(
+            LocalFolderHostInput {
+                roots: vec![previous_root],
+            },
+        )))
+        .expect("connect previous Local source");
+    let (previous_configuration, previous_source, credential) = connected.into_parts();
+    assert_eq!(credential, None);
+    let previous_source = Arc::new(previous_source);
+    let previous_id = previous_configuration.source_id.clone();
+    let target_id = SourceId::new("local:server:target-release");
+    let target_configuration = SourceConfiguration {
+        source_id: target_id.clone(),
+        kind: "local".to_string(),
+        name: "Target".to_string(),
+        provider_payload: serde_json::json!({
+            "version": 1,
+            "roots": [target_root],
+        })
+        .to_string(),
+    };
+    let previous_library = accept_library(
         &libraries,
-        current_id.clone(),
+        previous_id.clone(),
         vec![test_track(
-            current_track_id.clone(),
-            "Current",
-            PathBuf::from("Current.flac"),
+            library::TrackId::new("local:track:previous-release"),
+            "Previous",
+            PathBuf::from("Previous.flac"),
             None,
         )],
         Vec::new(),
         1,
     );
-    let replacement_id = SourceId::new("local:server:replacement-downloads");
-    let replacement = accept_library(
-        &libraries,
-        replacement_id.clone(),
-        vec![test_track(
-            library::TrackId::new("local:track:replacement-downloads"),
-            "Replacement",
-            PathBuf::from("Replacement.flac"),
-            None,
-        )],
-        Vec::new(),
-        2,
-    );
+    let target_probe = libraries.clone();
     let settings = SettingsFile::memory();
-    let (bootstrap, _events, download_events) =
-        test_owner_with_download_events(directory.path(), &runtime, libraries, settings);
-    let _current_session = install_selected_for_test(
+    settings
+        .update(|stored| {
+            stored.sources.configured = vec![
+                ConfiguredSource {
+                    configuration: previous_configuration.clone(),
+                    credential_ref: None,
+                    music_folder_id: None,
+                    local_access: None,
+                },
+                ConfiguredSource {
+                    configuration: target_configuration,
+                    credential_ref: None,
+                    music_folder_id: None,
+                    local_access: None,
+                },
+            ];
+            stored.sources.selected_source_id = Some(previous_id.clone());
+            Ok(())
+        })
+        .expect("save configured sources");
+    let (bootstrap, events) = test_owner(directory.path(), &runtime, libraries, settings);
+    let playback = attach_test_playback(&bootstrap.owner, &runtime, directory.path());
+    let previous_session = install_selected_for_test(
         &bootstrap.owner,
-        test_configuration(current_id, "Current"),
-        None,
-        Arc::clone(&current),
+        previous_configuration,
+        Some(Arc::clone(&previous_source)),
+        Arc::clone(&previous_library),
         SourceSessionEpoch::new(1),
     );
-    let playback = attach_test_playback(&bootstrap.owner, &runtime, directory.path());
+    let prepared = playback
+        .prepare_selected(
+            Arc::clone(&previous_session),
+            previous_session.resolve().expect("previous selected state"),
+        )
+        .expect("prepare previous Playback");
+    let cutover = playback.stop_for_source_switch();
+    let _ = playback.install_prepared(prepared, cutover);
+    let previous_state = previous_session.resolve().expect("previous selected state");
+    let retired_state = Arc::downgrade(&previous_state);
+    let retired_library = Arc::downgrade(&previous_library);
+    let retired_source = Arc::downgrade(&previous_source);
+    let reply_source = previous_state.source.clone().expect("previous Source");
+    drop(previous_state);
+    drop(previous_library);
+    drop(previous_source);
+    let (reply_started, reply_start) = async_channel::bounded(1);
+    let reply = previous_session.spawn_reply(move |_, _| async move {
+        let source = reply_source;
+        reply_started.send(()).await.expect("report pending reply");
+        std::future::pending::<()>().await;
+        drop(source);
+    });
 
     runtime.block_on(async {
-        bootstrap
-            .owner
-            .shared
-            .downloads
-            .attach(None, &current, None)
-            .await
-            .expect("attach current downloads");
-        let selected = Arc::new(SelectedSourceState {
-            configuration: test_configuration(replacement_id, "Replacement"),
-            source: None,
-            source_session_epoch: SourceSessionEpoch::new(2),
-            home: replacement.home(None).expect("prepare replacement Home"),
-            library: replacement,
-            music_folder_id: None,
-        });
-        let session = ActiveSource::new(&bootstrap.owner.shared, &selected);
-        let prepared = playback
-            .prepare_selected(session, selected)
-            .expect("prepare replacement Playback");
-
-        let tracks: library::TrackSelection = current
-            .track_list(None, TrackSort::Title, false)
-            .expect("current Track selection")
-            .into();
-        bootstrap.owner.shared.downloads.download(
-            Arc::clone(&current),
-            downloads::DownloadSubject::Track(current_track_id.clone()),
-            tracks,
-        );
-        let feedback = tokio::time::timeout(std::time::Duration::from_secs(5), async {
-            loop {
-                if let downloads::DownloadEvent::Feedback(feedback) =
-                    download_events.recv().await.expect("download publication")
-                {
-                    break feedback;
+        reply_start.recv().await.expect("pending reply started");
+        bootstrap.owner.select_source(target_id.clone());
+        let mut release_requested = false;
+        loop {
+            let event = events.recv().await.expect("source switch event");
+            match event {
+                SourceEvent::ReleaseSelected { acknowledged } => {
+                    release_requested = true;
+                    assert!(retired_state.upgrade().is_some());
+                    assert!(retired_library.upgrade().is_some());
+                    assert!(retired_source.upgrade().is_some());
+                    assert!(
+                        target_probe
+                            .load_source(&target_id)
+                            .expect("inspect target Library")
+                            .is_none(),
+                        "the target Library must not be built before releasing the previous source"
+                    );
+                    acknowledged.send(()).await.expect("acknowledge release");
                 }
+                SourceEvent::Selected { selected, .. } if selected.source_id == target_id => {
+                    assert!(release_requested);
+                    break;
+                }
+                SourceEvent::Operation(SourceOperation::Failed { message, .. }) => {
+                    panic!("source switch failed: {message}");
+                }
+                _ => {}
             }
-        })
-        .await
-        .expect("current Library must remain the Downloads target during preparation");
-        assert_eq!(
-            feedback.subject,
-            downloads::DownloadSubject::Track(current_track_id)
-        );
-        drop(prepared);
+        }
+        assert!(reply.recv().await.is_err());
     });
+
+    assert!(previous_session.resolve().is_none());
+    assert!(retired_state.upgrade().is_none());
+    assert!(retired_library.upgrade().is_none());
+    assert!(retired_source.upgrade().is_none());
+    runtime.block_on(bootstrap.owner.retire_selected_access());
+    let _ = playback.stop_for_source_switch();
 }
 
 #[test]

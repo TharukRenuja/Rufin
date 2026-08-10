@@ -160,7 +160,7 @@ impl PreferencesPageKind {
     fn icon_name(self) -> &'static str {
         match self {
             Self::General => "preferences-system-symbolic",
-            Self::Appearance => "preferences-desktop-appearance-symbolic",
+            Self::Appearance => "rufin-preferences-appearance-symbolic",
             Self::Scrobbling => SCROBBLING_ICON_NAME,
             Self::Playback => "media-playback-start-symbolic",
             Self::Library => "rufin-route-tracks-symbolic",

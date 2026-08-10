@@ -1,133 +1,162 @@
-use std::collections::VecDeque;
-
-use tokio::task::JoinHandle;
-
 use super::*;
 
-pub(super) struct ActiveObserver {
-    pub(super) qualifier: SourceQualifier,
-    pub(super) cancelled: Arc<AtomicBool>,
-    pub(super) observed: Arc<Mutex<ObservedChangeState>>,
-    pub(super) handle: JoinHandle<()>,
+pub(super) struct ConfiguredJellyfinFeed {
+    pub(super) source: Arc<Source>,
+    pub(super) changes: Arc<Mutex<PendingChanges>>,
+    handle: Option<tokio::task::AbortHandle>,
 }
 
-pub(super) enum SelectedObservedChange {
-    Change(ObservedSourceChange),
-    #[cfg(test)]
-    Probe(tests::ObservedChangeProbe),
-}
-
-pub(super) struct ObservedChangeState {
-    pub(super) active: Option<u64>,
-    pending: VecDeque<SelectedObservedChange>,
-}
-
-impl ObservedChangeState {
-    pub(super) fn new() -> Self {
+#[cfg(test)]
+impl ConfiguredJellyfinFeed {
+    pub(super) fn test(
+        source: Arc<Source>,
+        pending: Option<ObservedSourceChange>,
+        connected: bool,
+    ) -> Self {
         Self {
-            active: None,
-            pending: VecDeque::new(),
+            source,
+            changes: Arc::new(Mutex::new(PendingChanges::new(pending, connected))),
+            handle: None,
+        }
+    }
+}
+
+pub(super) struct PendingChanges {
+    pub(super) connected: bool,
+    active: bool,
+    pending: Option<ObservedSourceChange>,
+}
+
+impl PendingChanges {
+    pub(super) const MAXIMUM_IDS: usize = 1024;
+
+    pub(super) fn new(pending: Option<ObservedSourceChange>, connected: bool) -> Self {
+        Self {
+            connected,
+            active: false,
+            pending,
         }
     }
 
-    pub(super) fn submit(
-        &mut self,
-        token: u64,
-        change: SelectedObservedChange,
-    ) -> Option<SelectedObservedChange> {
-        if self.active.is_none() {
-            self.active = Some(token);
-            return Some(change);
+    pub(super) fn merge(&mut self, change: ObservedSourceChange) {
+        if let Some(pending) = &mut self.pending {
+            if pending.merge(change).is_err() {
+                *pending = ObservedSourceChange::full();
+            }
+        } else {
+            self.pending = Some(change);
         }
-        let change = match (self.pending.back_mut(), change) {
-            (
-                Some(SelectedObservedChange::Change(current)),
-                SelectedObservedChange::Change(incoming),
-            ) => match current.merge(incoming) {
-                Ok(()) => None,
-                Err(incoming) => Some(SelectedObservedChange::Change(incoming)),
-            },
-            (_, change) => Some(change),
-        };
-        if let Some(change) = change {
-            self.pending.push_back(change);
+        if matches!(
+            self.pending.as_ref(),
+            Some(ObservedSourceChange::Jellyfin { upserts, removals })
+                if upserts.len() + removals.len() > Self::MAXIMUM_IDS
+        ) {
+            self.pending = Some(ObservedSourceChange::full());
         }
-        None
     }
 
-    pub(super) fn next(&mut self, token: u64) -> Option<SelectedObservedChange> {
-        if self.active != Some(token) {
+    pub(super) fn take(&mut self) -> Option<ObservedSourceChange> {
+        if self.active || !self.connected {
             return None;
         }
-        if let Some(change) = self.pending.pop_front() {
-            self.active = None;
-            Some(change)
-        } else {
-            self.active = None;
-            None
+        let pending = self.pending.take()?;
+        self.active = true;
+        Some(pending)
+    }
+
+    pub(super) fn finish(&mut self, retry: Option<ObservedSourceChange>) {
+        self.active = false;
+        if let Some(change) = retry {
+            self.merge(change);
         }
     }
+}
 
-    pub(super) fn activate(&mut self, token: u64) {
-        self.active = Some(token);
-    }
-
-    fn cancel(&mut self, token: u64) {
-        if self.active != Some(token) {
-            return;
+impl Drop for ConfiguredJellyfinFeed {
+    fn drop(&mut self) {
+        if let Some(handle) = self.handle.take() {
+            handle.abort();
         }
-        self.stop();
-    }
-
-    pub(super) fn stop(&mut self) {
-        self.active = None;
-        self.pending.clear();
     }
 }
 
 pub(super) struct ObservedChangeRun {
-    state: Arc<Mutex<ObservedChangeState>>,
-    token: u64,
-    clear_on_drop: bool,
+    changes: Arc<Mutex<PendingChanges>>,
+    change: Option<ObservedSourceChange>,
 }
 
 impl ObservedChangeRun {
-    pub(super) fn new(state: Arc<Mutex<ObservedChangeState>>, token: u64) -> Self {
+    #[cfg(test)]
+    pub(super) fn test(changes: Arc<Mutex<PendingChanges>>, change: ObservedSourceChange) -> Self {
         Self {
-            state,
-            token,
-            clear_on_drop: true,
+            changes,
+            change: Some(change),
         }
     }
 
-    pub(super) fn token(&self) -> u64 {
-        self.token
-    }
-
-    pub(super) fn finish(mut self) {
-        self.clear_on_drop = false;
+    fn finish(mut self) {
+        self.change = None;
+        self.changes
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .finish(None);
     }
 }
 
 impl Drop for ObservedChangeRun {
     fn drop(&mut self) {
-        if self.clear_on_drop {
-            self.state
-                .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner())
-                .cancel(self.token);
+        let Some(change) = self.change.take() else {
+            return;
+        };
+        self.changes
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .finish(Some(change));
+    }
+}
+
+impl Shared {
+    pub(super) fn configured_feed_source(&self, source_id: &SourceId) -> Option<Arc<Source>> {
+        self.state
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .jellyfin_feeds
+            .get(source_id)
+            .map(|feed| Arc::clone(&feed.source))
+    }
+}
+
+pub(super) struct ActiveObserver {
+    pub(super) qualifier: SourceQualifier,
+    pub(super) cancelled: Arc<AtomicBool>,
+    pub(super) completion: Option<tokio::sync::oneshot::Receiver<()>>,
+    pub(super) handle: Option<std::thread::JoinHandle<()>>,
+}
+
+impl ActiveObserver {
+    fn cancel(&self) {
+        self.cancelled.store(true, Ordering::Release);
+        if let Some(handle) = &self.handle {
+            handle.thread().unpark();
+        }
+    }
+
+    pub(super) async fn stop(mut self) {
+        self.cancel();
+        if let Some(completion) = self.completion.take() {
+            let _ = completion.await;
+        }
+        if let Some(handle) = self.handle.take()
+            && handle.join().is_err()
+        {
+            warn!("Local library watcher thread panicked");
         }
     }
 }
 
 impl Drop for ActiveObserver {
     fn drop(&mut self) {
-        self.cancelled.store(true, Ordering::Release);
-        self.observed
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .stop();
-        self.handle.abort();
+        self.cancel();
     }
 }
 
@@ -193,6 +222,187 @@ impl Drop for PendingFreshnessCheck {
 }
 
 impl SourceOwner {
+    pub(super) fn install_configured_jellyfin_feed(&self, source: Arc<Source>, cold: bool) {
+        let source_id = source.source_id().clone();
+        if self
+            .shared
+            .configured_feed_source(&source_id)
+            .is_some_and(|current| Arc::ptr_eq(&current, &source))
+        {
+            return;
+        }
+        let (start, started) = tokio::sync::oneshot::channel();
+        let changes = Arc::new(Mutex::new(PendingChanges::new(
+            cold.then(ObservedSourceChange::full),
+            false,
+        )));
+        let shared = Arc::downgrade(&self.shared);
+        let ready_shared = shared.clone();
+        let ready_id = source_id.clone();
+        let ready_changes = Arc::clone(&changes);
+        let gap_shared = shared.clone();
+        let gap_changes = Arc::clone(&changes);
+        let change_id = source_id.clone();
+        let change_changes = Arc::clone(&changes);
+        let socket_source = Arc::clone(&source);
+        let handle = self.shared.runtime.spawn(async move {
+            if started.await.is_err() {
+                return;
+            }
+            let result = socket_source
+                .listen_jellyfin_changes(
+                    move || {
+                        ready_changes
+                            .lock()
+                            .unwrap_or_else(|poisoned| poisoned.into_inner())
+                            .connected = true;
+                        ready_shared.upgrade().is_some_and(|shared| {
+                            SourceOwner { shared }.resume_configured_feed(&ready_id);
+                            true
+                        })
+                    },
+                    move || {
+                        let mut changes = gap_changes
+                            .lock()
+                            .unwrap_or_else(|poisoned| poisoned.into_inner());
+                        changes.connected = false;
+                        changes.merge(ObservedSourceChange::full());
+                        gap_shared.upgrade().is_some()
+                    },
+                    move |change| {
+                        change_changes
+                            .lock()
+                            .unwrap_or_else(|poisoned| poisoned.into_inner())
+                            .merge(change);
+                        shared.upgrade().is_some_and(|shared| {
+                            SourceOwner { shared }.resume_configured_feed(&change_id);
+                            true
+                        })
+                    },
+                )
+                .await;
+            if let Err(error) = result {
+                warn!(%error, %source_id, "configured Jellyfin change feed stopped");
+            }
+        });
+        let feed = ConfiguredJellyfinFeed {
+            source,
+            changes,
+            handle: Some(handle.abort_handle()),
+        };
+        let previous = self
+            .shared
+            .state
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .jellyfin_feeds
+            .insert(feed.source.source_id().clone(), feed);
+        drop(previous);
+        let _ = start.send(());
+    }
+
+    pub(super) fn remove_configured_feed(&self, source_id: &SourceId) {
+        self.shared
+            .state
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .jellyfin_feeds
+            .remove(source_id);
+    }
+
+    pub(super) fn clear_configured_feeds(&self) {
+        self.shared
+            .state
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .jellyfin_feeds
+            .clear();
+    }
+
+    pub(super) fn begin_configured_baseline(&self, source_id: &SourceId) {
+        let state = self
+            .shared
+            .state
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let Some(feed) = state.jellyfin_feeds.get(source_id) else {
+            return;
+        };
+        let mut changes = feed
+            .changes
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if !changes.connected {
+            changes.merge(ObservedSourceChange::full());
+        }
+    }
+
+    pub(super) fn resume_configured_feed(&self, source_id: &SourceId) {
+        let work = {
+            let state = self
+                .shared
+                .state
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            let Some(feed) = state.jellyfin_feeds.get(source_id).filter(|_| {
+                state.selected_revealed
+                    && state
+                        .selected
+                        .as_ref()
+                        .is_some_and(|selected| selected.current.source_id() == source_id)
+            }) else {
+                return;
+            };
+            (Arc::clone(&feed.source), Arc::clone(&feed.changes))
+        };
+        let (source, changes) = work;
+        let change = {
+            let mut state = changes
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            let Some(change) = state.take() else {
+                return;
+            };
+            change
+        };
+        let registration = self.shared.reserve_interruptible();
+        let cancelled = Arc::new(AtomicBool::new(false));
+        self.shared
+            .register_reserved_interruptible(registration, Arc::clone(&cancelled));
+        let run = ObservedChangeRun {
+            changes,
+            change: Some(change.clone()),
+        };
+        let source_id = source_id.clone();
+        self.spawn_registered(
+            Some(registration),
+            cancelled,
+            move |mut operations, cancelled| async move {
+                let Some(selected) = operations
+                    .shared
+                    .selected()
+                    .filter(|selected| selected.source_id() == &source_id)
+                else {
+                    return;
+                };
+                if !operations
+                    .shared
+                    .configured_feed_source(&source_id)
+                    .is_some_and(|current| Arc::ptr_eq(&current, &source))
+                {
+                    return;
+                }
+                if operations
+                    .accept_observed_change(selected, change, cancelled)
+                    .await
+                {
+                    run.finish();
+                    operations.resume_configured_feed(&source_id);
+                }
+            },
+        );
+    }
+
     pub(super) fn request_refresh(&self, source_id: SourceId, visible: bool) {
         self.request_refresh_while_active(source_id, visible, None);
     }
@@ -271,10 +481,9 @@ impl SourceOwner {
         let Some(session) = self.shared.selected_session() else {
             return;
         };
-        let Some(selected) = session
-            .resolve()
-            .filter(|selected| selected.source.is_some())
-        else {
+        let Some(selected) = session.resolve().filter(|selected| {
+            selected.source.is_some() && selected.configuration.kind != "jellyfin"
+        }) else {
             return;
         };
         let qualifier = selected.qualifier();
@@ -317,49 +526,50 @@ impl SourceOwner {
     }
     pub(super) fn queue_observed_change(
         &self,
-        state: &Arc<Mutex<ObservedChangeState>>,
+        changes: &Arc<Mutex<PendingChanges>>,
         session: &Arc<ActiveSource>,
         observer_cancelled: &Arc<AtomicBool>,
-        change: SelectedObservedChange,
+        change: ObservedSourceChange,
     ) -> bool {
         if resolve_observer_session(observer_cancelled, session).is_none() {
             return false;
         }
-        let mut observed = state
+        changes
             .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        if observer_cancelled.load(Ordering::Acquire) {
-            return false;
-        }
-        let registration = self.shared.reserve_interruptible();
-        let first = observed.submit(registration.token, change);
-        if let Some(first) = first {
-            let cancelled = Arc::new(AtomicBool::new(false));
-            self.shared
-                .register_reserved_interruptible(registration, Arc::clone(&cancelled));
-            self.start_observed_changes(
-                Arc::clone(state),
-                Arc::clone(session),
-                Arc::clone(observer_cancelled),
-                cancelled,
-                registration,
-                first,
-            );
-        }
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .merge(change);
+        self.resume_observed_changes(
+            Arc::clone(changes),
+            Arc::clone(session),
+            Arc::clone(observer_cancelled),
+        );
         true
     }
 
-    pub(super) fn start_observed_changes(
+    fn resume_observed_changes(
         &self,
-        state: Arc<Mutex<ObservedChangeState>>,
+        changes: Arc<Mutex<PendingChanges>>,
         session: Arc<ActiveSource>,
         observer_cancelled: Arc<AtomicBool>,
-        cancelled: Arc<AtomicBool>,
-        registration: InterruptibleRegistration,
-        change: SelectedObservedChange,
     ) {
-        let next_state = Arc::clone(&state);
-        let run = ObservedChangeRun::new(state, registration.token);
+        if resolve_observer_session(&observer_cancelled, &session).is_none() {
+            return;
+        }
+        let Some(change) = changes
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .take()
+        else {
+            return;
+        };
+        let registration = self.shared.reserve_interruptible();
+        let cancelled = Arc::new(AtomicBool::new(false));
+        self.shared
+            .register_reserved_interruptible(registration, Arc::clone(&cancelled));
+        let run = ObservedChangeRun {
+            changes: Arc::clone(&changes),
+            change: Some(change.clone()),
+        };
         self.spawn_registered(
             Some(registration),
             cancelled,
@@ -367,47 +577,18 @@ impl SourceOwner {
                 let Some(selected) = resolve_observer_session(&observer_cancelled, &session) else {
                     return;
                 };
-                match change {
-                    SelectedObservedChange::Change(change) => {
-                        operations
-                            .accept_observed_change(selected, change, Arc::clone(&cancelled))
-                            .await;
-                    }
-                    #[cfg(test)]
-                    SelectedObservedChange::Probe(probe) => probe.accept().await,
-                }
-                if cancelled.load(Ordering::Acquire)
-                    || resolve_observer_session(&observer_cancelled, &session).is_none()
+                if operations
+                    .accept_observed_change(selected, change, Arc::clone(&cancelled))
+                    .await
                 {
-                    return;
+                    run.finish();
+                    operations.resume_observed_changes(changes, session, observer_cancelled);
                 }
-                let mut observed = next_state
-                    .lock()
-                    .unwrap_or_else(|poisoned| poisoned.into_inner());
-                let next = observed.next(run.token());
-                if let Some(next) = next {
-                    let registration = operations.shared.reserve_interruptible();
-                    let next_cancelled = Arc::new(AtomicBool::new(false));
-                    operations
-                        .shared
-                        .register_reserved_interruptible(registration, Arc::clone(&next_cancelled));
-                    observed.activate(registration.token);
-                    operations.start_observed_changes(
-                        Arc::clone(&next_state),
-                        session,
-                        observer_cancelled,
-                        next_cancelled,
-                        registration,
-                        next,
-                    );
-                }
-                drop(observed);
-                run.finish();
             },
         );
     }
 
-    pub(super) fn stop_observer(&mut self) {
+    pub(super) async fn stop_observer(&mut self) {
         let observer = self
             .shared
             .state
@@ -415,7 +596,9 @@ impl SourceOwner {
             .unwrap_or_else(|poisoned| poisoned.into_inner())
             .observer
             .take();
-        drop(observer);
+        if let Some(observer) = observer {
+            observer.stop().await;
+        }
     }
 
     pub(super) async fn refresh(
@@ -516,49 +699,57 @@ impl SourceOwner {
         selected: Arc<SelectedSourceState>,
         change: ObservedSourceChange,
         cancelled: Arc<AtomicBool>,
-    ) {
+    ) -> bool {
         let Some(source) = selected.source.as_ref().cloned() else {
-            return;
+            return false;
         };
-        let progress = Arc::new(|_: SourceReadProgress| {});
-        match source
-            .prepare_change(
-                Arc::clone(&selected.library),
-                change,
-                progress,
-                Arc::clone(&cancelled),
-            )
-            .await
-            .map_err(string_error)
-        {
-            Ok(
-                prepared @ (PreparedSourceChange::SourceUpdate(_)
-                | PreparedSourceChange::LocalReplacement(_)),
-            ) => {
-                let acceptance_owner = Arc::clone(&self.shared);
-                let _acceptance = acceptance_owner.acceptance_lane.lock().await;
-                if !self.shared.protect_interruptible_commit(&cancelled) {
-                    return;
+        let result: Result<(), String> = async {
+            let progress: Arc<dyn Fn(SourceReadProgress) + Send + Sync> =
+                Arc::new(|_: SourceReadProgress| {});
+            let prepared = source
+                .prepare_change(
+                    Arc::clone(&selected.library),
+                    change,
+                    Arc::clone(&progress),
+                    Arc::clone(&cancelled),
+                )
+                .await
+                .map_err(string_error)?;
+            let prepared = match prepared {
+                PreparedSourceChange::Full => {
+                    let mut context = (*selected).clone();
+                    context.source = Some(source);
+                    let candidate = prepare_refresh_candidate(
+                        Arc::clone(&self.shared),
+                        context,
+                        progress,
+                        Arc::clone(&cancelled),
+                    )
+                    .await?;
+                    let acceptance_owner = Arc::clone(&self.shared);
+                    let _acceptance = acceptance_owner.acceptance_lane.lock().await;
+                    if !self.shared.protect_interruptible_commit(&cancelled) {
+                        return Err("the source update was interrupted".to_string());
+                    }
+                    return self.commit_refresh(selected, candidate).await;
                 }
-                if let Err(error) = self
-                    .accept_prepared_change(Arc::clone(&selected), prepared)
-                    .await
-                {
-                    warn!(%error, "could not accept a selected source update");
-                }
+                PreparedSourceChange::Ignored => return Ok(()),
+                prepared => prepared,
+            };
+            let acceptance_owner = Arc::clone(&self.shared);
+            let _acceptance = acceptance_owner.acceptance_lane.lock().await;
+            if !self.shared.protect_interruptible_commit(&cancelled) {
+                return Err("the source update was interrupted".to_string());
             }
-            Ok(PreparedSourceChange::Full) => {
-                SourceOwner {
-                    shared: Arc::clone(&self.shared),
-                }
-                .request_refresh_while_active(
-                    selected.source_id().clone(),
-                    false,
-                    Some(&cancelled),
-                );
+            self.accept_prepared_change(selected, prepared).await
+        }
+        .await;
+        match result {
+            Ok(()) => true,
+            Err(error) => {
+                warn!(%error, "background selected source update failed");
+                false
             }
-            Ok(PreparedSourceChange::Ignored) => {}
-            Err(error) => warn!(%error, "background selected source update failed"),
         }
     }
 

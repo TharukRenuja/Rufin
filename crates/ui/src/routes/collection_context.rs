@@ -18,7 +18,6 @@ use crate::interactions::{
 };
 use crate::player::state::current_playback_track;
 use crate::preferences::dialogs::metadata::present_metadata_dialog;
-use crate::preferences::dialogs::popup::present_light_dismiss_dialog;
 use crate::settings::ContextMenuItem;
 use crate::shell::Shell;
 use crate::shell::actions::{
@@ -158,7 +157,7 @@ pub(crate) fn install_current_track_context_menu(
     install_context_menu_openers(
         target,
         Rc::new(move |target, position| {
-            if let Some(track) = current_playback_track(&shell.playback.player.borrow()) {
+            if let Some(track) = current_playback_track(shell.selected_playback().as_deref()) {
                 present_track_context_menu(target, &shell, track, position);
             }
         }),
@@ -169,7 +168,7 @@ pub(crate) fn present_current_track_context_menu(
     target: &impl IsA<gtk::Widget>,
     shell: &Rc<Shell>,
 ) {
-    if let Some(track) = current_playback_track(&shell.playback.player.borrow()) {
+    if let Some(track) = current_playback_track(shell.selected_playback().as_deref()) {
         present_track_context_menu_above(target.as_ref(), shell, track, None);
     }
 }
@@ -229,17 +228,12 @@ fn present_resolved_track_context_menu(
     popover_position: Option<gtk::PositionType>,
     metadata_editable: bool,
 ) {
-    let library_backed = shell
-        .library
-        .selected
-        .borrow()
-        .as_ref()
-        .is_some_and(|selected| {
-            selected
-                .library
-                .track(&track.id)
-                .is_ok_and(|track| track.is_some())
-        });
+    let library_backed = shell.selected_library().as_deref().is_some_and(|selected| {
+        selected
+            .library
+            .track(&track.id)
+            .is_ok_and(|track| track.is_some())
+    });
     let favorite =
         shell.projected_item_favorite(&FavoriteItemId::Track(track.id.clone()), track.favorite);
     let playback_target = PlaybackTarget::Track(track.id.clone());
@@ -265,7 +259,7 @@ fn present_resolved_track_context_menu(
     );
     let playlist_source = library_backed
         .then(|| {
-            shell.library.selected.borrow().as_ref().map(|selected| {
+            shell.selected_library().as_deref().map(|selected| {
                 PlaylistTrackSource::ready(
                     selected,
                     DownloadSubject::Track(track.id.clone()),
@@ -548,10 +542,8 @@ fn present_resolved_album_context_menu_inner(
         &surface,
         shell,
         shell
-            .library
-            .selected
-            .borrow()
-            .as_ref()
+            .selected_library()
+            .as_deref()
             .map(|selected| SidebarPin::Album {
                 source_id: selected.source_id.clone(),
                 album_id: album.album.id.clone(),
@@ -749,10 +741,8 @@ fn present_resolved_artist_context_menu(
         &surface,
         shell,
         shell
-            .library
-            .selected
-            .borrow()
-            .as_ref()
+            .selected_library()
+            .as_deref()
             .map(|selected| SidebarPin::Artist {
                 source_id: selected.source_id.clone(),
                 artist_id: artist.artist.id.clone(),
@@ -842,10 +832,8 @@ pub(crate) fn present_genre_context_menu(
         &surface,
         shell,
         shell
-            .library
-            .selected
-            .borrow()
-            .as_ref()
+            .selected_library()
+            .as_deref()
             .map(|selected| SidebarPin::Genre {
                 source_id: selected.source_id.clone(),
                 genre_id: genre.genre.id.clone(),
@@ -898,10 +886,8 @@ pub(crate) fn present_playlist_context_menu(
         &surface,
         shell,
         shell
-            .library
-            .selected
-            .borrow()
-            .as_ref()
+            .selected_library()
+            .as_deref()
             .map(|selected| SidebarPin::Playlist {
                 source_id: selected.source_id.clone(),
                 playlist_id: playlist.playlist.id.clone(),
@@ -923,8 +909,8 @@ pub(crate) fn present_playlist_context_menu(
         move || shell.rename_playlist_dialog(playlist_id.clone(), playlist_name.clone())
     });
     let current_track_id = {
-        let player = shell.playback.player.borrow();
-        current_playback_track(&player).map(|track| track.id.clone())
+        let player = shell.selected_playback();
+        current_playback_track(player.as_deref()).map(|track| track.id.clone())
     };
     surface.add_action_enabled("add-current", current_track_id.is_some(), {
         let source = shell.selected_source_operations();
@@ -945,7 +931,6 @@ pub(crate) fn present_playlist_context_menu(
     surface.add_action("delete", {
         let source = shell.selected_source_operations();
         let shell = Rc::clone(shell);
-        let window = shell.chrome.window.clone();
         let playlist_id = playlist.playlist.id.clone();
         let playlist_name = playlist.playlist.name.clone();
         move || {
@@ -957,7 +942,7 @@ pub(crate) fn present_playlist_context_menu(
             dialog.add_response("delete", &tr("Delete"));
             dialog.set_response_appearance("delete", adw::ResponseAppearance::Destructive);
             let source = source.clone();
-            let shell = Rc::clone(&shell);
+            let response_shell = Rc::clone(&shell);
             let playlist_id = playlist_id.clone();
             dialog.connect_response(None, move |_, response| {
                 if response == "delete"
@@ -966,10 +951,10 @@ pub(crate) fn present_playlist_context_menu(
                     source.edit_playlist(PlaylistEdit::Delete {
                         playlist_id: playlist_id.clone(),
                     });
-                    shell.navigate(Route::Playlists);
+                    response_shell.navigate(Route::Playlists);
                 }
             });
-            present_light_dismiss_dialog(&dialog, &window);
+            shell.present_selected_dialog(&dialog);
         }
     });
     surface.popup(&shell.settings.current.borrow().context_menu);
@@ -989,10 +974,8 @@ pub(crate) fn present_smart_playlist_context_menu(
         &surface,
         shell,
         shell
-            .library
-            .selected
-            .borrow()
-            .as_ref()
+            .selected_library()
+            .as_deref()
             .map(|selected| SidebarPin::SmartPlaylist {
                 source_id: selected.source_id.clone(),
                 playlist_id: playlist.smart_playlist.id.clone(),
@@ -1106,7 +1089,7 @@ fn install_live_track_playback_actions(
         let shell = Rc::clone(shell);
         let track = track.clone();
         surface.add_action(action, move || {
-            let Some(selected) = shell.library.selected.borrow().as_ref().cloned() else {
+            let Some(selected) = shell.selected_library().as_deref().cloned() else {
                 return;
             };
             shell
@@ -1123,7 +1106,7 @@ pub(crate) fn install_download_actions(
     shell: &Rc<Shell>,
     target: &PlaybackTarget,
 ) {
-    let Some(selected) = shell.library.selected.borrow().as_ref().cloned() else {
+    let Some(selected) = shell.selected_library().as_deref().cloned() else {
         return;
     };
     let remote = shell

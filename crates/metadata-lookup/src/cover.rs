@@ -3,7 +3,7 @@
 use reqwest::Url;
 use serde_json::Value;
 
-use crate::http::{client, download, fetch_json};
+use crate::http::{client, download, fetch_optional_json};
 use crate::musicbrainz::{search_album_release_group_ids, search_album_release_ids, usable_mbid};
 
 const LASTFM_API_URL: &str = "https://ws.audioscrobbler.com/2.0/";
@@ -219,7 +219,16 @@ fn lastfm_url(
         ],
     )
     .map_err(|error| error.to_string())?;
-    let value = fetch_json(client, url, "Last.fm album lookup")?;
+    lastfm_image_url(client, url)
+}
+
+fn lastfm_image_url(
+    client: &reqwest::blocking::Client,
+    url: Url,
+) -> Result<Option<String>, String> {
+    let Some(value) = fetch_optional_json(client, url, "Last.fm album lookup")? else {
+        return Ok(None);
+    };
     let images = value
         .pointer("/album/image")
         .and_then(Value::as_array)
@@ -287,7 +296,30 @@ fn missing_or_errors<T>(failures: Vec<String>) -> Result<Option<T>, String> {
 
 #[cfg(test)]
 mod tests {
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
+    use std::thread;
+
     use super::*;
+
+    fn serve_status(status: &'static str) -> (Url, thread::JoinHandle<()>) {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind metadata server");
+        let address = listener.local_addr().expect("metadata server address");
+        let server = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("accept metadata request");
+            let mut request = [0_u8; 1024];
+            let _ = stream.read(&mut request).expect("read metadata request");
+            write!(
+                stream,
+                "HTTP/1.1 {status}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+            )
+            .expect("write metadata response");
+        });
+        (
+            Url::parse(&format!("http://{address}/2.0/")).expect("metadata URL"),
+            server,
+        )
+    }
 
     #[test]
     fn lastfm_urls_are_limited_to_the_public_image_host() {
@@ -322,5 +354,21 @@ mod tests {
                 "https://coverartarchive.org/release-group/11111111-1111-1111-1111-111111111111/front-250"
             )
         );
+    }
+
+    #[test]
+    fn lastfm_not_found_is_missing_but_server_failures_remain_errors() {
+        let (not_found, server) = serve_status("404 Not Found");
+        assert_eq!(
+            lastfm_image_url(client().expect("HTTP client"), not_found),
+            Ok(None)
+        );
+        server.join().expect("404 metadata server");
+
+        let (server_error, server) = serve_status("500 Internal Server Error");
+        let error = lastfm_image_url(client().expect("HTTP client"), server_error)
+            .expect_err("server failure must remain visible");
+        assert!(error.contains("status 500"));
+        server.join().expect("500 metadata server");
     }
 }

@@ -519,6 +519,12 @@ impl RouteStack {
         self.forward.clear();
     }
 
+    pub(crate) fn reset_to_home(&mut self) {
+        self.back.clear();
+        self.current = Route::Home;
+        self.forward.clear();
+    }
+
     pub(crate) fn back(&mut self) -> Option<&Route> {
         let previous = self.back.pop()?;
         let current = std::mem::replace(&mut self.current, previous);
@@ -559,7 +565,7 @@ impl Shell {
         &self,
         selection: RouteCurrentTrackSelection,
     ) {
-        let current = route_current_track(self.playback.player.borrow().as_ref());
+        let current = route_current_track(self.selected_playback().as_deref());
         if selection(current.as_ref()) {
             self.route_viewport
                 .current_track_selections
@@ -569,7 +575,7 @@ impl Shell {
     }
 
     pub(crate) fn refresh_current_route_now_playing_selections(&self) {
-        let current = route_current_track(self.playback.player.borrow().as_ref());
+        let current = route_current_track(self.selected_playback().as_deref());
         self.route_viewport
             .current_track_selections
             .borrow_mut()
@@ -581,6 +587,18 @@ impl Shell {
         self.close_fullscreen_player();
         self.navigation.routes.borrow_mut().navigate(route);
         self.render_current_route();
+    }
+
+    pub(crate) fn reset_navigation_to_home(self: &Rc<Self>) {
+        debug!("reset navigation to Home");
+        self.close_fullscreen_player();
+        self.release_selected_navigation();
+        self.render_current_route();
+    }
+
+    pub(crate) fn release_selected_navigation(&self) {
+        self.route_viewport.position_memory.borrow_mut().clear();
+        self.navigation.routes.borrow_mut().reset_to_home();
     }
 
     pub(crate) fn go_back(self: &Rc<Self>) {
@@ -651,7 +669,7 @@ impl Shell {
         }
 
         let render_started = Instant::now();
-        let Some(selected) = self.library.selected.borrow().clone() else {
+        let Some(selected) = self.selected_library().as_deref().cloned() else {
             self.invalidate_route_projection_lane();
             self.replace_mounted_route(route, None, render_started, 0, || {
                 MountedRoute::static_widget(
@@ -1218,24 +1236,20 @@ impl Shell {
 
     fn route_projection_context_is_current(&self, context: &RouteProjectionContext) -> bool {
         let route = self.navigation.routes.borrow();
-        self.library
-            .selected
-            .borrow()
-            .as_ref()
-            .is_some_and(|selected| {
-                context.matches(
-                    &selected.source_id,
-                    selected.source_session_epoch,
-                    route.current(),
-                )
-            })
+        self.selected_library().as_deref().is_some_and(|selected| {
+            context.matches(
+                &selected.source_id,
+                selected.source_session_epoch,
+                route.current(),
+            )
+        })
     }
 
     fn route_projection_is_current(&self, identity: &RouteProjectionIdentity) -> bool {
         if !self.route_projection_context_is_current(&identity.selected.context) {
             return false;
         }
-        let selected = self.library.selected.borrow();
+        let selected = self.selected_library();
         let Some(selected) = selected.as_ref() else {
             return false;
         };
@@ -1261,7 +1275,7 @@ impl Shell {
         loaded: &Arc<library::Library>,
         music_folder_id: Option<MusicFolderId>,
     ) -> SelectedRouteIdentity {
-        let selected = self.library.selected.borrow();
+        let selected = self.selected_library();
         let selected = selected
             .as_ref()
             .expect("a mounted music route requires one selected Library");
@@ -1287,7 +1301,7 @@ impl Shell {
         let Some(mounted_route) = mounted_route.as_ref() else {
             return false;
         };
-        let selected = self.library.selected.borrow();
+        let selected = self.selected_library();
         let Some(selected) = selected.as_ref() else {
             return false;
         };
@@ -1335,7 +1349,7 @@ impl Shell {
     ) {
         let replacement_started = Instant::now();
         if let Some(previous) = self.begin_mounted_route_replacement() {
-            self.favorites.clear_controls();
+            self.clear_favorite_controls();
             self.route_viewport.route_host.remove(&previous.surface);
             drop(previous);
         }
@@ -1351,7 +1365,7 @@ impl Shell {
         let scroll_adjustment = primary_route_scroll_adjustment(&widget);
         let position_key = source_id
             .filter(|_| scroll_adjustment.is_some())
-            .map(|source_id| RoutePositionKey::new(source_id, route.clone()));
+            .map(|_| RoutePositionKey::new(route.clone()));
         let restore_position = position_key.as_ref().and_then(|key| {
             self.route_viewport
                 .position_memory
@@ -1512,7 +1526,7 @@ impl Shell {
             self.cancel_route_artwork_interaction();
             return;
         }
-        self.favorites.clear_controls();
+        self.clear_favorite_controls();
         while let Some(child) = self.route_viewport.route_host.first_child() {
             self.route_viewport.route_host.remove(&child);
         }
@@ -1754,6 +1768,20 @@ mod tests {
         stack.navigate(Route::Favorites);
         assert!(!stack.can_forward());
         assert_eq!(stack.current(), &Route::Favorites);
+    }
+
+    #[test]
+    fn resetting_navigation_forgets_back_and_forward_routes() {
+        let mut stack = RouteStack::new(Route::Home);
+        stack.navigate(Route::Albums);
+        stack.navigate(Route::Tracks);
+        assert_eq!(stack.back(), Some(&Route::Albums));
+
+        stack.reset_to_home();
+
+        assert_eq!(stack.current(), &Route::Home);
+        assert_eq!(stack.back(), None);
+        assert_eq!(stack.forward(), None);
     }
 
     #[test]

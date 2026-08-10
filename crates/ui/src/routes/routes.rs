@@ -1022,10 +1022,8 @@ impl Shell {
         options: SearchableTrackOptions,
     ) -> TrackListProjection {
         let selected = self
-            .library
-            .selected
-            .borrow()
-            .as_ref()
+            .selected_library()
+            .as_deref()
             .map(|selected| (selected.source_id.clone(), selected.source_session_epoch))
             .expect("a music route requires one selected source");
         let mut settings = self.settings.current.borrow().library_list(key);

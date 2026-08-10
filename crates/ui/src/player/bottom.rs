@@ -440,7 +440,7 @@ fn set_waveform_source(context: &gtk::cairo::Context, color: &gtk::gdk::RGBA, op
 
 impl Shell {
     pub(crate) fn sync_bottom_player_favorite(&self) {
-        let player = self.playback.player.borrow();
+        let player = self.selected_playback();
         let current = player
             .as_ref()
             .and_then(|player| player.transport.current.as_ref());
@@ -460,10 +460,8 @@ impl Shell {
 
     pub(crate) fn update_bottom_player_position(&self) {
         let (position_seconds, duration_seconds) = self
-            .playback
-            .player
-            .borrow()
-            .as_ref()
+            .selected_playback()
+            .as_deref()
             .map(|player| {
                 (
                     (player.transport.position_millis / 1_000).min(u64::from(u32::MAX)) as u32,
@@ -473,9 +471,8 @@ impl Shell {
             .unwrap_or_default();
         let controls = &self.player_view.player_controls;
         let displayed_seconds = self
-            .playback
-            .seek_preview_seconds
-            .get()
+            .selected_ui
+            .seek_preview_seconds()
             .unwrap_or(position_seconds);
         self.playback.updating_controls.set(true);
         controls
@@ -494,7 +491,7 @@ impl Shell {
     }
 
     fn update_bottom_player_view(self: &Rc<Self>, update_identity: bool) {
-        let player = self.playback.player.borrow().clone();
+        let player = self.selected_playback().as_deref().cloned();
         let current = player
             .as_ref()
             .and_then(|player| player.transport.current.as_ref());
@@ -616,7 +613,7 @@ impl Shell {
             .repeat_button
             .set_tooltip_text(Some(&repeat_label(repeat_mode)));
 
-        let preview_seconds = self.playback.seek_preview_seconds.get();
+        let preview_seconds = self.selected_ui.seek_preview_seconds();
         let displayed_seconds = preview_seconds.unwrap_or(position_seconds);
         controls
             .elapsed
@@ -633,7 +630,7 @@ impl Shell {
         };
         controls.waveform.set_position_fraction(position_fraction);
         let waveform_enabled = self.settings.current.borrow().seekbar_waveform_enabled;
-        let waveform = self.playback.waveform.borrow();
+        let waveform = self.selected_ui.waveform().unwrap_or_default();
         let current_media_id = current.map(|media| &media.id);
         let waveform_matches = waveform_enabled
             && waveform.media_id.as_ref() == current_media_id
@@ -685,7 +682,7 @@ impl Shell {
         player: &PlaybackView,
         track_changed: bool,
     ) {
-        let Some(target_seconds) = self.playback.seek_preview_seconds.get() else {
+        let Some(target_seconds) = self.selected_ui.seek_preview_seconds() else {
             return;
         };
         if should_clear_seek_preview(
@@ -699,7 +696,7 @@ impl Shell {
     }
 
     fn clear_player_seek_preview(&self) {
-        self.playback.seek_preview_seconds.set(None);
+        self.selected_ui.set_seek_preview_seconds(None);
     }
 }
 
@@ -1343,7 +1340,7 @@ fn repeat_label(repeat_mode: RepeatMode) -> String {
 }
 
 fn preview_player_seek(shell: &Rc<Shell>, seconds: u32) {
-    shell.playback.seek_preview_seconds.set(Some(seconds));
+    shell.selected_ui.set_seek_preview_seconds(Some(seconds));
     shell
         .player_view
         .player_controls
@@ -1355,10 +1352,8 @@ fn preview_player_seek(shell: &Rc<Shell>, seconds: u32) {
         .elapsed
         .set_text(&format_duration(seconds));
     let duration_seconds = shell
-        .playback
-        .player
-        .borrow()
-        .as_ref()
+        .selected_playback()
+        .as_deref()
         .map(|player| (player.transport.duration_millis / 1_000).min(u64::from(u32::MAX)) as u32)
         .unwrap_or_default();
     let position = if duration_seconds == 0 {
@@ -1375,7 +1370,7 @@ fn preview_player_seek(shell: &Rc<Shell>, seconds: u32) {
 
 fn preview_player_seek_fraction(shell: &Rc<Shell>, position: f64) {
     let duration_seconds = {
-        let player = shell.playback.player.borrow();
+        let player = shell.selected_playback();
         let Some(player) = player.as_ref() else {
             return;
         };
@@ -1391,25 +1386,23 @@ fn preview_player_seek_fraction(shell: &Rc<Shell>, position: f64) {
 }
 
 fn queue_player_seek_preview_commit(shell: &Rc<Shell>) {
-    let generation = shell.playback.seek_generation.get().saturating_add(1);
-    shell.playback.seek_generation.set(generation);
+    let generation = shell.playback.next_seek_generation();
 
     let shell = Rc::clone(shell);
     glib::timeout_add_local_once(SEEK_PREVIEW_COMMIT_DELAY, move || {
-        if shell.playback.seek_generation.get() == generation {
+        if shell.playback.seek_generation() == generation {
             commit_player_seek_preview(&shell);
         }
     });
 }
 
 fn commit_player_seek_preview_now(shell: &Rc<Shell>) {
-    let generation = shell.playback.seek_generation.get().saturating_add(1);
-    shell.playback.seek_generation.set(generation);
+    shell.playback.next_seek_generation();
     commit_player_seek_preview(shell);
 }
 
 fn commit_player_seek_preview(shell: &Rc<Shell>) {
-    let Some(seconds) = shell.playback.seek_preview_seconds.get() else {
+    let Some(seconds) = shell.selected_ui.seek_preview_seconds() else {
         return;
     };
     shell.products.playback.transport.seek_seconds(seconds);
@@ -1470,10 +1463,8 @@ pub(crate) fn connect_player_controls(shell: &Rc<Shell>) {
         .shuffle_button
         .connect_clicked(move |_| {
             let Some(enabled) = feedback_shell
-                .playback
-                .player
-                .borrow()
-                .as_ref()
+                .selected_playback()
+                .as_deref()
                 .map(|player| !player.controls.shuffle_enabled)
             else {
                 return;
@@ -1493,10 +1484,8 @@ pub(crate) fn connect_player_controls(shell: &Rc<Shell>) {
         .repeat_button
         .connect_clicked(move |_| {
             let Some(repeat_mode) = feedback_shell
-                .playback
-                .player
-                .borrow()
-                .as_ref()
+                .selected_playback()
+                .as_deref()
                 .map(|player| player.controls.repeat_mode)
             else {
                 return;
@@ -1517,10 +1506,8 @@ pub(crate) fn connect_player_controls(shell: &Rc<Shell>) {
         .dj_button
         .connect_clicked(move |_| {
             let Some(enabled) = feedback_shell
-                .playback
-                .player
-                .borrow()
-                .as_ref()
+                .selected_playback()
+                .as_deref()
                 .map(|player| !player.controls.auto_dj_enabled)
             else {
                 return;
@@ -1568,10 +1555,8 @@ pub(crate) fn connect_player_controls(shell: &Rc<Shell>) {
         .mute_button
         .connect_clicked(move |_| {
             let Some(muted) = mute_shell
-                .playback
-                .player
-                .borrow()
-                .as_ref()
+                .selected_playback()
+                .as_deref()
                 .map(|player| !player.controls.muted)
             else {
                 return;
@@ -1596,7 +1581,7 @@ pub(crate) fn connect_player_controls(shell: &Rc<Shell>) {
                 return glib::Propagation::Proceed;
             }
             let duration_seconds = {
-                let player = seek_shell.playback.player.borrow();
+                let player = seek_shell.selected_playback();
                 let Some(player) = player.as_ref() else {
                     return glib::Propagation::Stop;
                 };

@@ -1549,11 +1549,12 @@ pub(super) fn connect_folder_button(
     let row = row.downgrade();
     let on_changed: Rc<dyn Fn(PathBuf)> = Rc::new(on_changed);
     button.connect_clicked(move |_| {
-        let (Some(window), Some(row)) = (window.upgrade(), row.upgrade()) else {
+        let Some(window) = window.upgrade() else {
             return;
         };
         let target = Rc::clone(&target);
-        let on_changed = Rc::clone(&on_changed);
+        let row = row.clone();
+        let on_changed = Rc::downgrade(&on_changed);
         gtk::glib::spawn_future_local(async move {
             let selected_folder = target.borrow().as_ref().map(gtk::gio::File::for_path);
             let dialog = gtk::FileDialog::builder()
@@ -1566,6 +1567,9 @@ pub(super) fn connect_folder_button(
                 return;
             };
             let Some(path) = folder.path() else {
+                return;
+            };
+            let (Some(row), Some(on_changed)) = (row.upgrade(), on_changed.upgrade()) else {
                 return;
             };
             row.set_subtitle(&path_subtitle(&path));

@@ -6,13 +6,10 @@ use std::sync::Arc;
 use adw::prelude::*;
 use tracing::info;
 
-use crate::favorites::FavoriteState;
 use crate::interactions::connect_transient_entry_focus_dismissal;
 use crate::player::desktop::DesktopState;
 use crate::player::desktop::lifecycle::install_application_quit;
-use crate::player::lyrics::search::connect_lyrics_search_controls;
 use crate::player::lyrics::state::LyricsState;
-use crate::player::queue::QueueState;
 use crate::player::right_panel::RightPanelWidgets;
 use crate::player::state::PlaybackState;
 use crate::player::{
@@ -27,14 +24,10 @@ use crate::preferences::dialogs::release_notes::{
     check_for_release_update, schedule_periodic_release_checks,
 };
 use crate::preferences::source::SourceState;
-use crate::routes::LibraryState;
-use crate::routes::playlist_picker::PlaylistPickerState;
 use crate::routes::route::Route;
 use crate::runtime::RuntimeInputs;
-use crate::runtime::WaveformProjection;
 use crate::settings::SettingsState;
 use localization::{effective_language_preference, set_language_preference, tr};
-use lyrics::CurrentLyrics;
 
 use super::Shell;
 use super::actions::{ControlFeedbackState, connect_shell_actions};
@@ -54,6 +47,7 @@ use super::navigation::{
     normal_sidebar_header,
 };
 use super::route::{RouteStack, RouteViewport};
+use super::selected_ui::SelectedUiState;
 use super::startup::StartupState;
 use super::window_state::{initial_window_size, install_window_state_persistence};
 
@@ -124,9 +118,7 @@ pub fn build(
     let navigation = NavigationState {
         routes: RefCell::new(RouteStack::new(Route::Home)),
     };
-    let library_state = LibraryState {
-        selected: RefCell::new(None),
-    };
+    let selected_ui = SelectedUiState::new();
     let source = SourceState {
         configured: RefCell::new(configured_sources),
         operation: RefCell::new(source_operation),
@@ -143,28 +135,16 @@ pub fn build(
         reveal_deadline: RefCell::new(None),
     };
     let playback_state = PlaybackState {
-        player: RefCell::new(None),
-        waveform: RefCell::new(WaveformProjection::default()),
         updating_controls: Cell::new(false),
-        volume_persist_source: RefCell::new(None),
-        seek_preview_seconds: Cell::new(None),
         seek_generation: Cell::new(0),
+        volume_persist_source: RefCell::new(None),
         audio_output_options: RefCell::new(default_audio_output_options()),
         audio_output_refresh_running: Cell::new(false),
         audio_output_refresh_generation: Cell::new(0),
         audio_output_refreshed_at: Cell::new(None),
     };
-    let queue_state = QueueState::new(None);
     let lyrics_state = LyricsState {
-        projection: RefCell::new(CurrentLyrics::Cleared),
-        offset_millis: Cell::new(0),
-        timing_generation: Cell::new(0),
-        timing_source: RefCell::new(None),
         panel_visible: Cell::new(settings.lyrics_panel_visible),
-        right_pane_dirty: Cell::new(true),
-        fullscreen_pane_dirty: Cell::new(true),
-        search_dialog: RefCell::new(None),
-        settings_dialog: RefCell::new(None),
     };
     let preferences = PreferencesState {
         dialog: RefCell::new(None),
@@ -172,9 +152,6 @@ pub fn build(
         release_history_list: RefCell::new(None),
         release_notification_toast: RefCell::new(None),
         release_updating: RefCell::new(None),
-    };
-    let playlist_picker = PlaylistPickerState {
-        active: RefCell::new(None),
     };
     let downloads = crate::downloads::DownloadsState::default();
     let control_feedback = ControlFeedbackState {
@@ -191,8 +168,6 @@ pub fn build(
         route_interaction: Rc::new(Default::default()),
         textures: RefCell::new(Default::default()),
     };
-    let favorites = FavoriteState::default();
-
     let (window_width, window_height) =
         initial_window_size(settings.window_width, settings.window_height);
     let window = adw::ApplicationWindow::builder()
@@ -296,7 +271,7 @@ pub fn build(
     let queue_lyrics_overlay = right_panel_parts.queue_lyrics_overlay;
     let lyrics_surface = right_panel_parts.lyrics_surface;
     let lyrics_resize_handle = right_panel_parts.lyrics_resize_handle;
-    let lyrics_pane = right_panel_parts.lyrics_pane;
+    let lyrics_host = right_panel_parts.lyrics_host;
 
     let content_chrome = build_content_chrome(&main_area, &right_panel);
     let right_split = content_chrome.right_split;
@@ -446,8 +421,6 @@ pub fn build(
         compact_main_menu: PrimaryMenuWidgets {
             button: compact_main_menu,
             popover: RefCell::new(None),
-            click_handler: RefCell::new(None),
-            unmap_handler: RefCell::new(None),
         },
     };
     let route_viewport = RouteViewport::new(route_host);
@@ -462,7 +435,7 @@ pub fn build(
         queue_lyrics_overlay,
         lyrics_surface,
         lyrics_resize_handle,
-        lyrics_pane,
+        lyrics_host,
     };
     let player_view = PlayerDesktopWidgets {
         fullscreen_player,
@@ -475,20 +448,17 @@ pub fn build(
         appearance,
         settings: settings_state,
         navigation,
-        library: library_state,
         source,
         startup,
         playback: playback_state,
-        queue: queue_state,
         lyrics: lyrics_state,
         preferences,
-        playlist_picker,
         downloads,
         control_feedback,
         localization,
         desktop,
         artwork,
-        favorites,
+        selected_ui,
         products,
         chrome,
         layout_state,
@@ -536,7 +506,6 @@ pub fn build(
     connect_queue_lyrics_overlay(&shell);
     shell.connect_route_keyboard();
     connect_transient_entry_focus_dismissal(&shell);
-    connect_lyrics_search_controls(&shell);
     connect_fullscreen_player_controls(&shell);
     connect_player_controls(&shell);
     warm_audio_output_cache(&shell);

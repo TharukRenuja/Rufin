@@ -1,6 +1,5 @@
 use std::rc::Rc;
 
-use crate::preferences::dialogs::popup::present_light_dismiss_dialog;
 use crate::shell::Shell;
 use ::library::{PlaylistEdit, PlaylistId, SmartPlaylist};
 use adw::prelude::*;
@@ -56,6 +55,6 @@ impl Shell {
                 }
             }
         });
-        present_light_dismiss_dialog(&dialog, &self.chrome.window);
+        self.present_selected_dialog(&dialog);
     }
 }

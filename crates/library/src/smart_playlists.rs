@@ -882,21 +882,25 @@ pub(crate) fn changed_by_activity(
     track: &Track,
     previous: Option<&TrackActivity>,
     current: &TrackActivity,
-) -> HashSet<SmartPlaylistId> {
-    playlists
-        .iter()
-        .filter_map(|(id, playlist)| {
-            if !definition_uses_activity(&playlist.definition) {
-                return None;
-            }
-            let old_matches = matches_definition(track, previous, &playlist.definition);
-            let new_matches = matches_definition(track, Some(current), &playlist.definition);
-            (old_matches != new_matches
-                || (new_matches
-                    && activity_sort_changed(playlist.definition.sort_field, previous, current)))
-            .then(|| id.clone())
-        })
-        .collect()
+) -> (HashSet<SmartPlaylistId>, Vec<(SmartPlaylistId, bool)>) {
+    let mut affected = HashSet::new();
+    let mut membership_changes = Vec::new();
+    for (id, playlist) in playlists {
+        if !definition_uses_activity(&playlist.definition) {
+            continue;
+        }
+        let old_matches = matches_definition(track, previous, &playlist.definition);
+        let new_matches = matches_definition(track, Some(current), &playlist.definition);
+        if old_matches != new_matches {
+            affected.insert(id.clone());
+            membership_changes.push((id.clone(), new_matches));
+        } else if new_matches
+            && activity_sort_changed(playlist.definition.sort_field, previous, current)
+        {
+            affected.insert(id.clone());
+        }
+    }
+    (affected, membership_changes)
 }
 
 fn activity_sort_changed(

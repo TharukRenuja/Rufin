@@ -5,6 +5,8 @@ use library::{SourceId, Track};
 use crate::sequence::{OccurrenceId, RepeatMode, Sequence, SequenceEntry};
 use crate::{PlaybackSession, Provenance, RunId, SourceSessionEpoch, TransportStatus};
 
+pub const MAX_QUEUE_PAGE_SIZE: usize = 100;
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct QueuePageQuery {
     kind: QueuePageQueryKind,
@@ -61,7 +63,7 @@ pub struct QueueSummaryView {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct QueuePageRow {
     pub absolute_index: usize,
-    pub entry: Arc<SequenceEntry>,
+    pub entry: SequenceEntry,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -162,14 +164,22 @@ impl Sequence {
 
     pub fn page(&self, query: QueuePageQuery) -> QueuePage {
         let total = self.entries().len();
-        let rows = match &query.kind {
+        let start = match query.kind {
             QueuePageQueryKind::Current => self
-                .entries()
+                .selected_index()
+                .map(|index| index.saturating_sub(20))
+                .unwrap_or_default(),
+            QueuePageQueryKind::Search { .. } => 0,
+        }
+        .min(total);
+        let rows = match &query.kind {
+            QueuePageQueryKind::Current => self.entries()[start..]
                 .iter()
+                .take(MAX_QUEUE_PAGE_SIZE)
                 .enumerate()
-                .map(|(absolute_index, entry)| QueuePageRow {
-                    absolute_index,
-                    entry: Arc::new(entry.clone()),
+                .map(|(offset, entry)| QueuePageRow {
+                    absolute_index: start + offset,
+                    entry: entry.clone(),
                 })
                 .collect(),
             QueuePageQueryKind::Search { text } => self
@@ -177,9 +187,10 @@ impl Sequence {
                 .iter()
                 .enumerate()
                 .filter(|(_, entry)| queue_entry_matches_search(entry, text))
+                .take(MAX_QUEUE_PAGE_SIZE)
                 .map(|(absolute_index, entry)| QueuePageRow {
                     absolute_index,
-                    entry: Arc::new(entry.clone()),
+                    entry: entry.clone(),
                 })
                 .collect(),
         };
@@ -271,7 +282,7 @@ mod tests {
     }
 
     #[test]
-    fn queue_view_exposes_the_complete_sequence() {
+    fn queue_pages_bound_projection_work_without_truncating_the_sequence() {
         let mut sequence = Sequence::new(SourceId::fake(1));
         sequence
             .apply_batch(
@@ -286,9 +297,9 @@ mod tests {
 
         let page = sequence.current_page();
         assert_eq!(sequence.entries().len(), 219);
-        assert_eq!(page.rows.len(), 219);
+        assert_eq!(page.rows.len(), 89);
         assert_eq!(page.current_absolute_index, Some(150));
-        assert_eq!(page.rows.first().map(|row| row.absolute_index), Some(0));
+        assert_eq!(page.rows.first().map(|row| row.absolute_index), Some(130));
         assert_eq!(page.rows.last().map(|row| row.absolute_index), Some(218));
 
         let summary = sequence.summary();
@@ -298,7 +309,7 @@ mod tests {
     }
 
     #[test]
-    fn queue_search_scans_the_full_sequence_case_insensitively() {
+    fn queue_search_scans_the_full_sequence_but_bounds_its_projection() {
         let mut sequence = Sequence::new(SourceId::fake(1));
         sequence
             .apply_batch(
@@ -320,9 +331,9 @@ mod tests {
         let page = sequence.page(QueuePageQuery::search("  nEeDlE "));
 
         assert_eq!(page.total, 300);
-        assert_eq!(page.rows.len(), 150);
+        assert_eq!(page.rows.len(), MAX_QUEUE_PAGE_SIZE);
         assert_eq!(page.rows.first().map(|row| row.absolute_index), Some(150));
-        assert_eq!(page.rows.last().map(|row| row.absolute_index), Some(299));
+        assert_eq!(page.rows.last().map(|row| row.absolute_index), Some(249));
     }
 
     fn track(number: u32) -> Track {

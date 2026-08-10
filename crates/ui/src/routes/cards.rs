@@ -140,9 +140,7 @@ pub(crate) fn album_cover_overlay(
     });
 
     if let Some(favorite) = controls.favorite.as_ref() {
-        shell
-            .favorites
-            .register_button(album_favorite_key(&album_value.id), favorite);
+        shell.register_favorite_button(album_favorite_key(&album_value.id), favorite);
         let shell = Rc::clone(shell);
         let album_id = album_value.id.clone();
         favorite.connect_clicked(move |button| {
@@ -228,9 +226,7 @@ pub(crate) fn track_cover_overlay(
         play_loaded_track(&last_shell, last_track.clone(), QueuePlacement::Last);
     });
     if let Some(favorite) = controls.favorite.as_ref() {
-        shell
-            .favorites
-            .register_button(track_favorite_key(&track.id), favorite);
+        shell.register_favorite_button(track_favorite_key(&track.id), favorite);
         let favorite_shell = Rc::clone(shell);
         let favorite_id = track.id.clone();
         favorite.connect_clicked(move |button| {
@@ -278,7 +274,7 @@ fn play_loaded_album(
 }
 
 fn play_loaded_track(shell: &Shell, track: Track, placement: QueuePlacement) {
-    let Some(selected) = shell.library.selected.borrow().as_ref().cloned() else {
+    let Some(selected) = shell.selected_library().as_deref().cloned() else {
         return;
     };
     shell

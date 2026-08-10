@@ -1,6 +1,6 @@
 use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
-use std::rc::Rc;
+use std::rc::{Rc, Weak};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -40,10 +40,25 @@ pub(crate) struct OperationFeedback {
 #[derive(Default)]
 pub(crate) struct DownloadsState {
     pub(crate) snapshots: RefCell<HashMap<SourceId, Arc<DownloadQueueSnapshot>>>,
-    pub(crate) queue_refresh: RefCell<Option<Rc<dyn Fn()>>>,
+    queue_refresh: RefCell<Option<Weak<dyn Fn()>>>,
     feedback_generation: Rc<Cell<u64>>,
     feedback_opens_queue: Cell<bool>,
     badges: Rc<RefCell<HashMap<usize, DownloadBadgeBinding>>>,
+}
+
+impl DownloadsState {
+    pub(crate) fn set_queue_refresh(&self, refresh: &Rc<dyn Fn()>) {
+        self.queue_refresh.replace(Some(Rc::downgrade(refresh)));
+    }
+
+    pub(crate) fn refresh_queue(&self) {
+        let refresh = self.queue_refresh.borrow().as_ref().and_then(Weak::upgrade);
+        if let Some(refresh) = refresh {
+            refresh();
+        } else {
+            self.queue_refresh.borrow_mut().take();
+        }
+    }
 }
 
 impl Shell {
@@ -63,9 +78,7 @@ impl Shell {
                         || previous.downloaded_tracks > snapshot.downloaded_tracks
                 });
                 self.refresh_download_badges(collection_changed);
-                if let Some(refresh) = self.downloads.queue_refresh.borrow().as_ref() {
-                    refresh();
-                }
+                self.downloads.refresh_queue();
             }
             DownloadEvent::Feedback(feedback) => {
                 self.show_operation_feedback(&OperationFeedback {
@@ -103,9 +116,7 @@ impl Shell {
                 paused: snapshot.paused,
             });
         }
-        if let Some(refresh) = self.downloads.queue_refresh.borrow().clone() {
-            refresh();
-        }
+        self.downloads.refresh_queue();
         self.products
             .downloads
             .move_job(source_id, job_id, target_job_id, after);
@@ -162,7 +173,7 @@ impl Shell {
     }
 
     pub(crate) fn download_subject_title(&self, subject: &DownloadSubject) -> String {
-        let selected = self.library.selected.borrow();
+        let selected = self.selected_library();
         let loaded = selected.as_ref().map(|selected| &selected.library);
         match subject {
             DownloadSubject::Rule(downloads::DownloadRule::EntireLibrary) => tr("Entire Library"),
@@ -223,10 +234,8 @@ impl Shell {
 
     pub(crate) fn download_source_artwork(self: &Rc<Self>, size: i32) -> gtk::Widget {
         let (bindings, seed) = self
-            .library
-            .selected
-            .borrow()
-            .as_ref()
+            .selected_library()
+            .as_deref()
             .map(|selected| {
                 let bindings = selected
                     .library
@@ -248,7 +257,7 @@ impl Shell {
         subject: &DownloadSubject,
         size: i32,
     ) -> gtk::Widget {
-        let selected = self.library.selected.borrow();
+        let selected = self.selected_library();
         let bindings = selected.as_ref().and_then(|selected| match subject {
             DownloadSubject::Track(id) => selected
                 .library
@@ -427,10 +436,8 @@ impl Shell {
             downloaded: Rc::new(downloaded),
         };
         let downloaded = self
-            .library
-            .selected
-            .borrow()
-            .as_ref()
+            .selected_library()
+            .as_deref()
             .is_some_and(|selected| (binding.downloaded)(selected));
         self.set_download_badge_visible(&image, downloaded);
         let identity = image.as_ptr() as usize;
@@ -465,7 +472,7 @@ impl Shell {
     }
 
     fn refresh_download_badges(&self, include_collections: bool) {
-        let selected = self.library.selected.borrow();
+        let selected = self.selected_library();
         self.downloads.badges.borrow_mut().retain(|_, binding| {
             let Some(image) = binding.image.upgrade() else {
                 return false;

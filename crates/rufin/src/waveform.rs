@@ -67,13 +67,21 @@ impl WaveformKey {
     }
 }
 
-#[derive(Clone)]
 struct CurrentWaveform {
     key: WaveformKey,
     media_id: CurrentMediaId,
     request: u64,
     running: bool,
     peaks: Option<Arc<Vec<(f64, f64)>>>,
+    task: Option<tokio::task::AbortHandle>,
+}
+
+impl Drop for CurrentWaveform {
+    fn drop(&mut self) {
+        if let Some(task) = self.task.take() {
+            task.abort();
+        }
+    }
 }
 
 #[derive(Deserialize, Serialize)]
@@ -171,6 +179,7 @@ impl WaveformOwner {
                     request,
                     running: true,
                     peaks: None,
+                    task: None,
                 };
                 projection = projection_for(&selected);
                 *current = Some(selected);
@@ -199,25 +208,30 @@ impl WaveformOwner {
     }
 
     fn start_decode(self: &Arc<Self>, request: u64, key: WaveformKey, input: WaveformMedia) {
-        let owner = Arc::clone(self);
-        let _task = self.runtime.spawn(async move {
+        let owner = Arc::downgrade(self);
+        let task_key = key.clone();
+        let task = self.runtime.spawn(async move {
             let stream = match prepare_stream(Some(input.loaded), input.source, input.request).await
             {
                 Ok(stream) => stream,
                 Err(error) => {
-                    if owner.matches(request, &key) {
-                        debug!(%error, track_id = %key.track_id, "waveform source is unavailable");
+                    if let Some(owner) = owner.upgrade() {
+                        if owner.matches(request, &task_key) {
+                            debug!(%error, track_id = %task_key.track_id, "waveform source is unavailable");
+                        }
+                        owner.finish_failed(request, &task_key);
                     }
-                    owner.finish_failed(request, &key);
                     return;
                 }
             };
-            if !source_and_format_supported(stream.uri(), key.source_format.as_deref()) {
-                owner.finish_failed(request, &key);
+            if !source_and_format_supported(stream.uri(), task_key.source_format.as_deref()) {
+                if let Some(owner) = owner.upgrade() {
+                    owner.finish_failed(request, &task_key);
+                }
                 return;
             }
-            let cancellation_owner = Arc::downgrade(&owner);
-            let cancellation_key = key.clone();
+            let cancellation_owner = owner.clone();
+            let cancellation_key = task_key.clone();
             let result = tokio::task::spawn_blocking(move || {
                 generate_waveform_peaks_cancellable(&stream, || {
                     cancellation_owner
@@ -226,33 +240,54 @@ impl WaveformOwner {
                 })
             })
             .await;
+            let Some(owner) = owner.upgrade() else {
+                return;
+            };
             let peaks = match result {
                 Ok(Ok(peaks)) => sanitize_peaks(peaks),
                 Ok(Err(error)) => {
-                    if owner.matches(request, &key) {
-                        warn!(%error, track_id = %key.track_id, "failed to generate waveform");
+                    if owner.matches(request, &task_key) {
+                        warn!(%error, track_id = %task_key.track_id, "failed to generate waveform");
                     }
                     None
                 }
                 Err(error) => {
-                    if owner.matches(request, &key) {
-                        warn!(%error, track_id = %key.track_id, "waveform worker failed");
+                    if owner.matches(request, &task_key) {
+                        warn!(%error, track_id = %task_key.track_id, "waveform worker failed");
                     }
                     None
                 }
             };
             let Some(peaks) = peaks else {
-                owner.finish_failed(request, &key);
+                owner.finish_failed(request, &task_key);
                 return;
             };
-            if !owner.matches(request, &key) {
+            if !owner.matches(request, &task_key) {
                 return;
             }
-            if let Err(error) = save_cached(&owner.cache_root, &key, &peaks) {
-                warn!(%error, track_id = %key.track_id, "failed to cache waveform");
+            if let Err(error) = save_cached(&owner.cache_root, &task_key, &peaks) {
+                warn!(%error, track_id = %task_key.track_id, "failed to cache waveform");
             }
-            owner.accept_peaks(request, &key, Arc::new(peaks));
+            owner.accept_peaks(request, &task_key, Arc::new(peaks));
         });
+        self.attach_task(request, &key, task.abort_handle());
+    }
+
+    fn attach_task(&self, request: u64, key: &WaveformKey, task: tokio::task::AbortHandle) {
+        let mut current = self
+            .current
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if let Some(selected) = current.as_mut().filter(|selected| {
+            selected.running && selected.request == request && &selected.key == key
+        }) {
+            if let Some(previous) = selected.task.replace(task) {
+                previous.abort();
+            }
+        } else {
+            drop(current);
+            task.abort();
+        }
     }
 
     fn accept_peaks(&self, request: u64, key: &WaveformKey, peaks: Arc<Vec<(f64, f64)>>) {
@@ -269,6 +304,7 @@ impl WaveformOwner {
             };
             selected.running = false;
             selected.peaks = Some(peaks);
+            selected.task = None;
             projection_for(selected)
         };
         self.publish(projection);
@@ -284,6 +320,7 @@ impl WaveformOwner {
             .filter(|selected| selected.request == request && &selected.key == key)
         {
             selected.running = false;
+            selected.task = None;
         }
     }
 
@@ -368,6 +405,58 @@ fn safe_path_part(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn clearing_waveform_aborts_its_pending_task() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .expect("build test runtime");
+        let (events, _receiver) = async_channel::unbounded();
+        let owner = WaveformOwner::new(
+            runtime.handle().clone(),
+            events,
+            PathBuf::from("unused-waveform-cache"),
+            true,
+        );
+        let retained = Arc::new(());
+        let retired = Arc::downgrade(&retained);
+        let task = runtime.spawn(async move {
+            let _retained = retained;
+            std::future::pending::<()>().await;
+        });
+        *owner
+            .current
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(CurrentWaveform {
+            key: WaveformKey {
+                source_id: SourceId::new("local:server:waveform-task"),
+                source_session_epoch: SourceSessionEpoch::new(1),
+                track_id: TrackId::new("pending-waveform"),
+                duration_seconds: 180,
+                source_path: None,
+                source_format: None,
+                cue_window: None,
+            },
+            media_id: CurrentMediaId {
+                source_id: SourceId::new("local:server:waveform-task"),
+                source_session_epoch: SourceSessionEpoch::new(1),
+                run: Some(playback::RunId::new(1)),
+                occurrence: playback::OccurrenceId::new("pending-waveform"),
+            },
+            request: 1,
+            running: true,
+            peaks: None,
+            task: Some(task.abort_handle()),
+        });
+
+        owner.clear();
+        let stopped = runtime
+            .block_on(task)
+            .expect_err("waveform task was aborted");
+
+        assert!(stopped.is_cancelled());
+        assert!(retired.upgrade().is_none());
+    }
 
     #[test]
     fn cached_peaks_are_finite_nonempty_and_bounded() {

@@ -8,9 +8,10 @@ use gtk::glib;
 use gtk::prelude::{Cast, ObjectExt};
 use library::SourceId;
 
-const MAX_TEXTURES: usize = 20_480;
-const MAX_TEXTURE_BYTES: usize = 256 * 1024 * 1024;
-const THUMBNAIL_RESERVE_BYTES: usize = 128 * 1024 * 1024;
+const MAX_THUMBNAIL_TEXTURES: usize = 20_480;
+const MAX_THUMBNAIL_TEXTURE_BYTES: usize = 128 * 1024 * 1024;
+const MAX_RECENT_LARGE_TEXTURES: usize = 4_096;
+const MAX_RECENT_LARGE_TEXTURE_BYTES: usize = 32 * 1024 * 1024;
 const MAX_THUMBNAIL_TEXTURE_SIZE: u32 = 96;
 
 pub(in crate::shell) struct TextureCache<K = DecodedImageIdentity> {
@@ -21,9 +22,10 @@ pub(in crate::shell) struct TextureCache<K = DecodedImageIdentity> {
     bytes: usize,
     thumbnail_bytes: usize,
     next_access: u64,
-    max_textures: usize,
-    max_bytes: usize,
-    thumbnail_reserve_bytes: usize,
+    max_thumbnail_textures: usize,
+    max_thumbnail_bytes: usize,
+    max_large_textures: usize,
+    max_large_bytes: usize,
 }
 
 #[derive(Clone)]
@@ -76,13 +78,14 @@ where
 {
     #[cfg(test)]
     fn with_limits(max_textures: usize, max_bytes: usize) -> Self {
-        Self::with_limits_and_thumbnail_reserve(max_textures, max_bytes, max_bytes / 2)
+        Self::with_class_limits(max_textures, max_bytes, max_textures, max_bytes)
     }
 
-    fn with_limits_and_thumbnail_reserve(
-        max_textures: usize,
-        max_bytes: usize,
-        thumbnail_reserve_bytes: usize,
+    fn with_class_limits(
+        max_thumbnail_textures: usize,
+        max_thumbnail_bytes: usize,
+        max_large_textures: usize,
+        max_large_bytes: usize,
     ) -> Self {
         Self {
             entries: HashMap::new(),
@@ -92,9 +95,10 @@ where
             bytes: 0,
             thumbnail_bytes: 0,
             next_access: 0,
-            max_textures,
-            max_bytes,
-            thumbnail_reserve_bytes: thumbnail_reserve_bytes.min(max_bytes),
+            max_thumbnail_textures,
+            max_thumbnail_bytes,
+            max_large_textures,
+            max_large_bytes,
         }
     }
 
@@ -152,8 +156,11 @@ where
         );
         self.order_mut(class)
             .insert(TextureAccess { last_used, key });
-        self.evict_to_limits();
-        if self.live_textures.len() > self.entries.len().saturating_add(self.max_textures) {
+        self.evict_class_to_limits(class);
+        let max_live_textures = self
+            .max_thumbnail_textures
+            .saturating_add(self.max_large_textures);
+        if self.live_textures.len() > self.entries.len().saturating_add(max_live_textures) {
             self.live_textures
                 .retain(|_, entry| entry.texture.upgrade().is_some());
         }
@@ -242,32 +249,6 @@ where
         }
     }
 
-    fn oldest_class(&self) -> Option<TextureClass> {
-        match (self.thumbnail_order.first(), self.large_order.first()) {
-            (Some(thumbnail), Some(large)) => Some(if thumbnail <= large {
-                TextureClass::Thumbnail
-            } else {
-                TextureClass::Large
-            }),
-            (Some(_), None) => Some(TextureClass::Thumbnail),
-            (None, Some(_)) => Some(TextureClass::Large),
-            (None, None) => None,
-        }
-    }
-
-    fn byte_pressure_class(&self) -> Option<TextureClass> {
-        let large_bytes = self.bytes.saturating_sub(self.thumbnail_bytes);
-        let large_reserve_bytes = self.max_bytes.saturating_sub(self.thumbnail_reserve_bytes);
-        match (
-            self.thumbnail_bytes > self.thumbnail_reserve_bytes,
-            large_bytes > large_reserve_bytes,
-        ) {
-            (true, false) => Some(TextureClass::Thumbnail),
-            (false, true) => Some(TextureClass::Large),
-            _ => self.oldest_class(),
-        }
-    }
-
     fn oldest_key(&self, class: TextureClass) -> Option<K> {
         match class {
             TextureClass::Thumbnail => self.thumbnail_order.first(),
@@ -276,14 +257,30 @@ where
         .map(|access| access.key.clone())
     }
 
-    fn evict_to_limits(&mut self) {
-        while self.entries.len() > self.max_textures || self.bytes > self.max_bytes {
-            let class = if self.bytes > self.max_bytes {
-                self.byte_pressure_class()
-            } else {
-                self.oldest_class()
-            };
-            let Some(key) = class.and_then(|class| self.oldest_key(class)) else {
+    fn class_usage(&self, class: TextureClass) -> (usize, usize) {
+        match class {
+            TextureClass::Thumbnail => (self.thumbnail_order.len(), self.thumbnail_bytes),
+            TextureClass::Large => (
+                self.large_order.len(),
+                self.bytes.saturating_sub(self.thumbnail_bytes),
+            ),
+        }
+    }
+
+    fn class_limits(&self, class: TextureClass) -> (usize, usize) {
+        match class {
+            TextureClass::Thumbnail => (self.max_thumbnail_textures, self.max_thumbnail_bytes),
+            TextureClass::Large => (self.max_large_textures, self.max_large_bytes),
+        }
+    }
+
+    fn evict_class_to_limits(&mut self, class: TextureClass) {
+        let limits = self.class_limits(class);
+        while {
+            let usage = self.class_usage(class);
+            usage.0 > limits.0 || usage.1 > limits.1
+        } {
+            let Some(key) = self.oldest_key(class) else {
                 break;
             };
             self.remove(&key);
@@ -299,9 +296,11 @@ where
             return 0;
         }
         let available_bytes = self
-            .thumbnail_reserve_bytes
+            .max_thumbnail_bytes
             .saturating_sub(self.thumbnail_bytes);
-        let available_entries = self.max_textures.saturating_sub(self.entries.len());
+        let available_entries = self
+            .max_thumbnail_textures
+            .saturating_sub(self.thumbnail_order.len());
         (available_bytes / bytes).min(available_entries)
     }
 
@@ -320,8 +319,10 @@ where
             .sum::<usize>();
         assert_eq!(self.bytes, bytes);
         assert_eq!(self.thumbnail_bytes, thumbnail_bytes);
-        assert!(self.bytes <= self.max_bytes);
-        assert!(self.entries.len() <= self.max_textures);
+        assert!(self.thumbnail_bytes <= self.max_thumbnail_bytes);
+        assert!(self.bytes.saturating_sub(self.thumbnail_bytes) <= self.max_large_bytes);
+        assert!(self.thumbnail_order.len() <= self.max_thumbnail_textures);
+        assert!(self.large_order.len() <= self.max_large_textures);
         assert_eq!(
             self.thumbnail_order.len(),
             self.entries
@@ -363,10 +364,11 @@ where
 
 impl Default for TextureCache {
     fn default() -> Self {
-        Self::with_limits_and_thumbnail_reserve(
-            MAX_TEXTURES,
-            MAX_TEXTURE_BYTES,
-            THUMBNAIL_RESERVE_BYTES,
+        Self::with_class_limits(
+            MAX_THUMBNAIL_TEXTURES,
+            MAX_THUMBNAIL_TEXTURE_BYTES,
+            MAX_RECENT_LARGE_TEXTURES,
+            MAX_RECENT_LARGE_TEXTURE_BYTES,
         )
     }
 }
@@ -402,8 +404,8 @@ impl TextureCache {
             return true;
         }
         let bytes = image.rgba().len();
-        if self.thumbnail_bytes.saturating_add(bytes) > self.thumbnail_reserve_bytes
-            || self.entries.len() >= self.max_textures
+        if self.thumbnail_bytes.saturating_add(bytes) > self.max_thumbnail_bytes
+            || self.thumbnail_order.len() >= self.max_thumbnail_textures
         {
             return false;
         }
@@ -474,7 +476,7 @@ mod tests {
     }
 
     #[test]
-    fn shared_texture_cache_reuses_one_texture_and_evicts_by_owned_bytes() {
+    fn recent_large_cache_reuses_one_texture_and_evicts_by_owned_bytes() {
         let source = SourceId::new("texture-cache-source");
         let mut cache = TextureCache::<u8>::with_limits(3, 8);
         let first = texture(1);
@@ -497,65 +499,71 @@ mod tests {
     }
 
     #[test]
-    fn thumbnail_and_large_textures_borrow_one_shared_budget() {
-        let source = SourceId::new("shared-texture-budget-source");
-        let mut cache = TextureCache::<u8>::with_limits(8, 16);
+    fn recent_large_textures_do_not_displace_source_thumbnails() {
+        let source = SourceId::new("independent-texture-budget-source");
+        let mut cache = TextureCache::<u8>::with_class_limits(2, 8, 2, 8);
         cache.insert_source_warm(1, source.clone(), texture(1), 4);
-        for key in 2..=4 {
+        cache.insert_source_warm(2, source.clone(), texture(2), 4);
+        for key in 3..=5 {
             cache.insert_with_class(key, source.clone(), texture(key), 4, TextureClass::Large);
         }
-        assert_eq!(cache.thumbnail_bytes, 4);
-        assert_eq!(cache.bytes, 16);
-
-        cache.insert_source_warm(5, source, texture(5), 4);
 
         assert_eq!(cache.bytes, 16);
         assert_eq!(cache.thumbnail_bytes, 8);
         assert!(cache.get(&1).is_some());
-        assert!(
-            cache.get(&2).is_none(),
-            "borrowed large-cover space is returned"
-        );
-        assert!(cache.get(&3).is_some());
+        assert!(cache.get(&2).is_some());
+        assert!(cache.get(&3).is_none());
         assert!(cache.get(&4).is_some());
         assert!(cache.get(&5).is_some());
     }
 
     #[test]
-    fn each_texture_class_keeps_its_soft_share_under_pressure() {
-        let source = SourceId::new("texture-priority-source");
-        let mut cache = TextureCache::<u8>::with_limits(8, 16);
-        for key in 1..=2 {
-            cache.insert_with_class(
-                key,
-                source.clone(),
-                texture(key),
-                4,
-                TextureClass::Thumbnail,
-            );
-        }
-        for key in 3..=4 {
+    fn large_textures_keep_only_their_recent_window() {
+        let source = SourceId::new("recent-large-texture-source");
+        let mut cache = TextureCache::<u8>::with_class_limits(8, 32, 8, 8);
+
+        for key in 1..=4 {
             cache.insert_with_class(key, source.clone(), texture(key), 4, TextureClass::Large);
         }
 
-        cache.insert_with_class(5, source.clone(), texture(5), 4, TextureClass::Large);
-        assert!(cache.get(&1).is_some());
-        assert!(cache.get(&2).is_some());
-        assert!(cache.get(&3).is_none());
-
-        cache.insert_with_class(6, source, texture(6), 4, TextureClass::Thumbnail);
+        assert_eq!(cache.bytes.saturating_sub(cache.thumbnail_bytes), 8);
         assert!(cache.get(&1).is_none());
-        assert!(cache.get(&2).is_some());
+        assert!(cache.get(&2).is_none());
+        assert!(cache.get(&3).is_some());
         assert!(cache.get(&4).is_some());
-        assert!(cache.get(&5).is_some());
-        assert!(cache.get(&6).is_some());
-        assert_eq!(cache.bytes, 16);
     }
 
     #[test]
-    fn thumbnail_warm_limit_follows_the_available_soft_share() {
+    fn normal_grid_covers_use_the_recent_large_byte_window() {
+        let source = SourceId::new("normal-grid-texture-source");
+        let cover_bytes = 200 * 200 * 4;
+        let expected = MAX_RECENT_LARGE_TEXTURE_BYTES / cover_bytes;
+        let mut cache = TextureCache::<u16>::with_class_limits(
+            MAX_THUMBNAIL_TEXTURES,
+            MAX_THUMBNAIL_TEXTURE_BYTES,
+            MAX_RECENT_LARGE_TEXTURES,
+            MAX_RECENT_LARGE_TEXTURE_BYTES,
+        );
+
+        for key in 0..=u16::try_from(expected).expect("grid-cover window fits in u16") {
+            cache.insert_with_class(
+                key,
+                source.clone(),
+                texture(key as u8),
+                cover_bytes,
+                TextureClass::Large,
+            );
+        }
+
+        assert_eq!(cache.large_order.len(), expected);
+        assert!(cache.get(&0).is_none());
+        assert!(cache.bytes <= MAX_RECENT_LARGE_TEXTURE_BYTES);
+    }
+
+    #[test]
+    fn thumbnail_warm_limit_follows_the_available_thumbnail_budget() {
         let source = SourceId::new("thumbnail-admission-source");
-        let mut cache = TextureCache::<u8>::with_limits(8, 16);
+        let mut cache = TextureCache::<u8>::with_class_limits(8, 8, 8, 8);
         assert_eq!(cache.thumbnail_warm_limit(1), 2);
         assert_eq!(cache.thumbnail_warm_limit(2), 0);
 
@@ -598,7 +606,7 @@ mod tests {
 
     proptest! {
         #[test]
-        fn arbitrary_cache_operations_preserve_the_shared_bounds(
+        fn arbitrary_cache_operations_preserve_each_class_bound(
             operations in prop::collection::vec(
                 (0u8..6, 0u8..24, 1usize..=24, any::<bool>(), any::<bool>()),
                 1..=96,
@@ -606,7 +614,7 @@ mod tests {
         ) {
             let first_source = SourceId::new("property-source-one");
             let second_source = SourceId::new("property-source-two");
-            let mut cache = TextureCache::<u8>::with_limits(16, 64);
+            let mut cache = TextureCache::<u8>::with_class_limits(16, 64, 8, 32);
 
             for (operation, key, bytes, thumbnail, second) in operations {
                 let source = if second {

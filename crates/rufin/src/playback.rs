@@ -6,7 +6,7 @@
 //! source reporting, AutoDJ, settings, and UI publication. It never mirrors
 //! the queue or current-media state.
 
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{self, SyncSender};
 use std::sync::{Arc, Mutex};
@@ -376,12 +376,10 @@ impl Drop for PreparedPlayback {
 /// finished before a prepared target is installed.
 pub(crate) struct PlaybackCutover;
 
-// This FIFO is only an executor boundary around blocking Library and Settings
-// calls. It preserves Playback's order without interpreting or merging state.
 const PERSISTENCE_CAPACITY: usize = 64;
 
 enum PersistenceWork {
-    Checkpoint(library::PlaybackCheckpoint),
+    Checkpoint(playback::PlaybackCheckpointRevision),
     State(PlaybackStateUpdate),
     Progress(PlaybackProgressUpdate),
     Activity {
@@ -396,7 +394,28 @@ enum PersistenceWork {
         muted: bool,
     },
     Fence(SyncSender<()>),
-    Shutdown,
+}
+
+fn apply_checkpoint_revision(
+    library: &Libraries,
+    revision: playback::PlaybackCheckpointRevision,
+) -> library::LibraryResult<library::PlaybackWriteOutcome> {
+    let full_fallback = revision.clone();
+    match revision.materialize_checkpoint() {
+        playback::PlaybackCheckpointMaterialization::Full(checkpoint) => {
+            library.replace_playback(checkpoint)
+        }
+        playback::PlaybackCheckpointMaterialization::Traversal(traversal) => {
+            match library.replace_playback_traversal(traversal)? {
+                library::PlaybackWriteOutcome::Applied => {
+                    Ok(library::PlaybackWriteOutcome::Applied)
+                }
+                library::PlaybackWriteOutcome::Stale => {
+                    library.replace_playback(full_fallback.materialize_full_checkpoint())
+                }
+            }
+        }
+    }
 }
 
 struct PersistenceTarget {
@@ -409,8 +428,8 @@ struct PersistenceTarget {
 impl PersistenceTarget {
     fn apply(&self, work: PersistenceWork) {
         match work {
-            PersistenceWork::Checkpoint(checkpoint) => {
-                if let Err(error) = self.library.replace_playback(checkpoint) {
+            PersistenceWork::Checkpoint(revision) => {
+                if let Err(error) = apply_checkpoint_revision(&self.library, revision) {
                     warn!(%error, "could not save Playback state");
                 }
             }
@@ -444,7 +463,7 @@ impl PersistenceTarget {
                     warn!(%error, "could not save external scrobbling work");
                 }
             }
-            PersistenceWork::Fence(_) | PersistenceWork::Shutdown => {
+            PersistenceWork::Fence(_) => {
                 unreachable!("persistence control work is handled by the worker")
             }
         }
@@ -489,38 +508,90 @@ impl PersistenceTarget {
     }
 }
 
+enum PersistenceToken {
+    Checkpoint(SourceId),
+    Work(PersistenceWork),
+    Shutdown,
+}
+
 struct PlaybackPersistence {
-    sender: SyncSender<PersistenceWork>,
+    sender: Mutex<SyncSender<PersistenceToken>>,
+    checkpoints: Arc<Mutex<HashMap<SourceId, playback::PlaybackCheckpointRevision>>>,
     worker: Option<JoinHandle<()>>,
 }
 
 impl PlaybackPersistence {
     fn new(target: PersistenceTarget) -> Self {
+        Self::start(move |work| target.apply(work))
+    }
+
+    fn start(mut apply: impl FnMut(PersistenceWork) + Send + 'static) -> Self {
         let (sender, receiver) = mpsc::sync_channel(PERSISTENCE_CAPACITY);
+        let checkpoints = Arc::new(Mutex::new(HashMap::<
+            SourceId,
+            playback::PlaybackCheckpointRevision,
+        >::new()));
+        let worker_checkpoints = Arc::clone(&checkpoints);
         let worker = thread::Builder::new()
             .name("rufin-playback-persistence".to_string())
             .spawn(move || {
-                while let Ok(work) = receiver.recv() {
-                    match work {
-                        PersistenceWork::Fence(crossed) => {
+                while let Ok(token) = receiver.recv() {
+                    match token {
+                        PersistenceToken::Checkpoint(source_id) => {
+                            let checkpoint = worker_checkpoints
+                                .lock()
+                                .ok()
+                                .and_then(|mut pending| pending.remove(&source_id));
+                            if let Some(checkpoint) = checkpoint {
+                                apply(PersistenceWork::Checkpoint(checkpoint));
+                            }
+                        }
+                        PersistenceToken::Work(PersistenceWork::Fence(crossed)) => {
                             let _ = crossed.send(());
                         }
-                        PersistenceWork::Shutdown => break,
-                        work => target.apply(work),
+                        PersistenceToken::Work(work) => apply(work),
+                        PersistenceToken::Shutdown => break,
                     }
                 }
             })
             .expect("could not start Playback persistence");
         Self {
-            sender,
+            sender: Mutex::new(sender),
+            checkpoints,
             worker: Some(worker),
         }
     }
 
     fn enqueue(&self, work: PersistenceWork) {
-        if self.sender.send(work).is_err() {
+        let stopped = match self.sender.lock() {
+            Ok(sender) => sender.send(PersistenceToken::Work(work)).is_err(),
+            Err(_) => true,
+        };
+        if stopped {
             warn!("Playback persistence worker stopped");
         }
+    }
+
+    fn enqueue_checkpoint(&self, mut checkpoint: playback::PlaybackCheckpointRevision) {
+        let source_id = checkpoint.source_id().clone();
+        let Ok(sender) = self.sender.lock() else {
+            warn!("Playback persistence worker stopped");
+            return;
+        };
+        let Ok(mut pending) = self.checkpoints.lock() else {
+            warn!("Playback persistence worker stopped");
+            return;
+        };
+        if let Some(mut older) = pending.remove(&source_id) {
+            older.coalesce(checkpoint);
+            checkpoint = older;
+        } else if sender
+            .send(PersistenceToken::Checkpoint(source_id.clone()))
+            .is_err()
+        {
+            warn!("Playback persistence worker stopped");
+        }
+        pending.insert(source_id, checkpoint);
     }
 
     fn enqueue_output_state(&self, volume: f64, muted: bool) {
@@ -529,7 +600,12 @@ impl PlaybackPersistence {
 
     fn drain(&self) {
         let (fence, crossed) = mpsc::sync_channel(0);
-        if self.sender.send(PersistenceWork::Fence(fence)).is_ok() {
+        let sent = self.sender.lock().is_ok_and(|sender| {
+            sender
+                .send(PersistenceToken::Work(PersistenceWork::Fence(fence)))
+                .is_ok()
+        });
+        if sent {
             let _ = crossed.recv();
         }
     }
@@ -538,7 +614,9 @@ impl PlaybackPersistence {
 impl Drop for PlaybackPersistence {
     fn drop(&mut self) {
         self.drain();
-        let _ = self.sender.send(PersistenceWork::Shutdown);
+        if let Ok(sender) = self.sender.lock() {
+            let _ = sender.send(PersistenceToken::Shutdown);
+        }
         if let Some(worker) = self.worker.take()
             && worker.join().is_err()
         {
@@ -998,8 +1076,7 @@ impl PlaybackOwner {
     ) {
         let current_media_changed = update.current_media_changed;
         if let Some(checkpoint) = update.checkpoint {
-            self.persistence
-                .enqueue(PersistenceWork::Checkpoint(checkpoint));
+            self.persistence.enqueue_checkpoint(checkpoint);
         }
         for effect in update.effects {
             self.consume_effect(instance, &source_id, source_session_epoch, selected, effect);
@@ -1707,6 +1784,217 @@ fn empty_clock_sample() -> playback::ClockSample {
 
 fn string_error(error: impl std::fmt::Display) -> String {
     error.to_string()
+}
+
+#[cfg(test)]
+mod persistence_tests {
+    use super::*;
+    use library::{TrackData, TrackRelations};
+    use playback::{
+        BackendCommand, BackendError, BackendEvent, Batch, BatchItem, ClockSample, ListeningTrack,
+        Placement, PlaybackBackend, PlaybackSettings, Provenance, Sequence,
+    };
+
+    #[derive(Default)]
+    struct AcceptingBackend;
+
+    impl PlaybackBackend for AcceptingBackend {
+        fn send(&mut self, _command: BackendCommand) -> Result<(), BackendError> {
+            Ok(())
+        }
+
+        fn drain_events(&mut self) -> Vec<BackendEvent> {
+            Vec::new()
+        }
+    }
+
+    #[derive(Debug, Eq, PartialEq)]
+    enum AppliedWork {
+        Checkpoint(SourceId, u64),
+        Scrobble(String),
+    }
+
+    fn completed_scrobble(play_id: &str, source_id: &SourceId) -> PersistenceWork {
+        PersistenceWork::CompletedScrobble(playback::CompletedScrobble {
+            play_id: play_id.to_string(),
+            track: ListeningTrack {
+                source_id: source_id.clone(),
+                track_id: TrackId::fake(1),
+                recording_id: None,
+                title: "Track".to_string(),
+                artists: vec!["Artist".to_string()],
+                album: Some("Album".to_string()),
+                track_number: Some(1),
+                disc_number: Some(1),
+                duration_millis: 180_000,
+            },
+            started_at_unix_seconds: 1,
+        })
+    }
+
+    fn checkpoint_revision(source_id: &SourceId) -> playback::PlaybackCheckpointRevision {
+        let mut sequence = Sequence::new(source_id.clone());
+        sequence
+            .apply_batch(
+                Batch::new(vec![BatchItem::new(
+                    Track::new(TrackData {
+                        id: TrackId::fake(1),
+                        album_id: None,
+                        title: "Track".to_string(),
+                        artist: "Artist".to_string(),
+                        album: "Album".to_string(),
+                        album_artwork: None,
+                        year: 2026,
+                        release_date: None,
+                        date_added: None,
+                        last_played: None,
+                        play_count: None,
+                        user_rating: None,
+                        duration_seconds: 180,
+                        favorite: false,
+                        disc_number: 1,
+                        track_number: 1,
+                        image_ref: None,
+                        local_artwork: None,
+                        musicbrainz_recording_id: None,
+                        musicbrainz_release_track_id: None,
+                        source_path: None,
+                        cue: None,
+                        source_format: None,
+                        comment: None,
+                        skip_count: None,
+                        bpm: None,
+                        relations: TrackRelations::default(),
+                    }),
+                    Provenance::Manual,
+                )]),
+                Placement::Replace { anchor_index: 0 },
+            )
+            .expect("seed checkpoint revision");
+        let (captured, receiver) = mpsc::channel();
+        let (playback, _) = Playback::start(
+            sequence,
+            SourceSessionEpoch::new(1),
+            "persistence-test",
+            PlaybackSettings::default(),
+            false,
+            2,
+            Box::<AcceptingBackend>::default(),
+            Arc::new(|| ClockSample {
+                monotonic_millis: 0,
+                unix_seconds: 0,
+                local_period: "1970-01".to_string(),
+            }),
+            move |update| {
+                if let Some(checkpoint) = update.checkpoint {
+                    captured
+                        .send(checkpoint)
+                        .expect("capture checkpoint revision");
+                }
+            },
+        )
+        .expect("start checkpoint Playback");
+        playback
+            .command(SessionCommand::SetShuffle {
+                enabled: true,
+                seed: 7,
+            })
+            .expect("change checkpoint traversal");
+        let checkpoint = receiver.recv().expect("checkpoint revision");
+        playback.shutdown().expect("stop checkpoint Playback");
+        checkpoint
+    }
+
+    #[test]
+    fn blocked_worker_keeps_one_pending_checkpoint_per_source() {
+        let first_source = SourceId::fake(1);
+        let second_source = SourceId::fake(2);
+        let first_checkpoint = checkpoint_revision(&first_source);
+        let second_checkpoint = checkpoint_revision(&second_source);
+        let revision = first_checkpoint.revision();
+        let (entered, worker_entered) = mpsc::sync_channel(0);
+        let (release, worker_release) = mpsc::sync_channel(0);
+        let applied = Arc::new(Mutex::new(Vec::new()));
+        let observed = Arc::clone(&applied);
+        let mut first = true;
+        let persistence = PlaybackPersistence::start(move |work| {
+            if first {
+                first = false;
+                entered.send(()).expect("report blocked persistence worker");
+                worker_release
+                    .recv()
+                    .expect("release blocked persistence worker");
+            }
+            let applied = match work {
+                PersistenceWork::Checkpoint(checkpoint) => {
+                    AppliedWork::Checkpoint(checkpoint.source_id().clone(), checkpoint.revision())
+                }
+                PersistenceWork::CompletedScrobble(completed) => {
+                    AppliedWork::Scrobble(completed.play_id)
+                }
+                _ => return,
+            };
+            observed
+                .lock()
+                .expect("record applied persistence work")
+                .push(applied);
+        });
+
+        persistence.enqueue_checkpoint(first_checkpoint.clone());
+        worker_entered
+            .recv()
+            .expect("persistence worker entered first write");
+        for _ in 0..256 {
+            persistence.enqueue_checkpoint(first_checkpoint.clone());
+            persistence.enqueue_checkpoint(second_checkpoint.clone());
+        }
+        persistence.enqueue(completed_scrobble("first", &first_source));
+        persistence.enqueue(completed_scrobble("second", &first_source));
+
+        {
+            let pending = persistence
+                .checkpoints
+                .lock()
+                .expect("inspect pending persistence work");
+            assert_eq!(pending.len(), 2);
+        }
+
+        release.send(()).expect("release persistence worker");
+        persistence.drain();
+        assert_eq!(
+            *applied.lock().expect("inspect applied persistence work"),
+            [
+                AppliedWork::Checkpoint(first_source.clone(), revision),
+                AppliedWork::Checkpoint(first_source, revision),
+                AppliedWork::Checkpoint(second_source, revision),
+                AppliedWork::Scrobble("first".to_string()),
+                AppliedWork::Scrobble("second".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn traversal_without_its_durable_base_promotes_to_a_full_checkpoint() {
+        let directory = tempfile::tempdir().expect("temporary Playback Store");
+        let libraries =
+            Libraries::open(directory.path().join("library.db")).expect("open Playback Store");
+        let source_id = SourceId::fake(1);
+        let checkpoint = checkpoint_revision(&source_id);
+        let revision = checkpoint.revision();
+
+        assert_eq!(
+            apply_checkpoint_revision(&libraries, checkpoint).expect("persist promoted checkpoint"),
+            library::PlaybackWriteOutcome::Applied
+        );
+        let library::PlaybackLoad::Ready(saved) = libraries
+            .load_playback(&source_id)
+            .expect("load promoted checkpoint")
+        else {
+            panic!("promoted checkpoint must be durable");
+        };
+        assert_eq!(saved.revision, revision);
+        assert_eq!(saved.queue.occurrences.len(), 1);
+    }
 }
 
 #[cfg(test)]

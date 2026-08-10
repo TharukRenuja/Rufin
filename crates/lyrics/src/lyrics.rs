@@ -2,6 +2,7 @@ use std::collections::HashSet;
 use std::fs;
 use std::io::{self, Read};
 use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
@@ -848,8 +849,7 @@ fn lrclib_exact_result(lookup: &LyricsLookup) -> Result<Option<LyricsSearchResul
     let Some(url) = lrclib_get_url(&artist_name, &track_name, lookup.duration_seconds)? else {
         return Ok(None);
     };
-    let client = external_lyrics_client(EXTERNAL_LYRICS_REQUEST_TIMEOUT)?;
-    lrclib_fetch_get(&client, url)
+    lrclib_fetch_get(external_lyrics_client()?, url)
 }
 fn external_provider_search_for_lookup(
     provider: ExternalLyricsProvider,
@@ -919,12 +919,18 @@ fn external_provider_search(
         ExternalLyricsProvider::SimpMusic => simpmusic_search(artist_name, track_name),
     }
 }
-fn external_lyrics_client(timeout: Duration) -> Result<reqwest::blocking::Client, String> {
-    reqwest::blocking::Client::builder()
-        .timeout(timeout)
-        .user_agent(format!("Rufin/{}", env!("CARGO_PKG_VERSION")))
-        .build()
-        .map_err(|error| error.to_string())
+fn external_lyrics_client() -> Result<&'static reqwest::blocking::Client, String> {
+    static CLIENT: OnceLock<Result<reqwest::blocking::Client, String>> = OnceLock::new();
+    CLIENT
+        .get_or_init(|| {
+            reqwest::blocking::Client::builder()
+                .timeout(EXTERNAL_LYRICS_REQUEST_TIMEOUT)
+                .user_agent(format!("Rufin/{}", env!("CARGO_PKG_VERSION")))
+                .build()
+                .map_err(|error| error.to_string())
+        })
+        .as_ref()
+        .map_err(Clone::clone)
 }
 fn netease_search(artist_name: &str, track_name: &str) -> Result<Vec<LyricsSearchResult>, String> {
     let query = [artist_name.trim(), track_name.trim()]
@@ -944,8 +950,7 @@ fn netease_search(artist_name: &str, track_name: &str) -> Result<Vec<LyricsSearc
         pairs.append_pair("limit", "5");
         pairs.append_pair("offset", "0");
     }
-    let client = external_lyrics_client(EXTERNAL_LYRICS_REQUEST_TIMEOUT)?;
-    let body = fetch_text(&client, url, "NetEase lyric search")?;
+    let body = fetch_text(external_lyrics_client()?, url, "NetEase lyric search")?;
     parse_netease_search_body(&body)
 }
 pub(crate) fn parse_netease_search_body(body: &str) -> Result<Vec<LyricsSearchResult>, String> {
@@ -1036,8 +1041,7 @@ fn netease_fetch_lyrics_response(id: &str) -> Result<NeteaseLyricsResponse, Stri
         pairs.append_pair("lv", "-1");
         pairs.append_pair("tv", "-1");
     }
-    let client = external_lyrics_client(EXTERNAL_LYRICS_REQUEST_TIMEOUT)?;
-    let body = fetch_text(&client, url, "NetEase lyric lookup")?;
+    let body = fetch_text(external_lyrics_client()?, url, "NetEase lyric lookup")?;
     let response = serde_json::from_str::<NeteaseLyricsResponse>(&body)
         .map_err(|error| format!("NetEase lyric lookup returned invalid data: {error}"))?;
     Ok(response)
@@ -1058,8 +1062,7 @@ fn genius_search(artist_name: &str, track_name: &str) -> Result<Vec<LyricsSearch
         pairs.append_pair("q", &query);
         pairs.append_pair("per_page", "5");
     }
-    let client = external_lyrics_client(EXTERNAL_LYRICS_REQUEST_TIMEOUT)?;
-    let body = fetch_text(&client, url, "Genius lyric search")?;
+    let body = fetch_text(external_lyrics_client()?, url, "Genius lyric search")?;
     parse_genius_search_body(&body)
 }
 pub(crate) fn parse_genius_search_body(body: &str) -> Result<Vec<LyricsSearchResult>, String> {
@@ -1101,8 +1104,7 @@ fn genius_fetch_lyrics(url: &str) -> Result<Option<String>, String> {
     let Some(url) = trusted_genius_lyrics_url(url) else {
         return Ok(None);
     };
-    let client = external_lyrics_client(EXTERNAL_LYRICS_REQUEST_TIMEOUT)?;
-    let body = fetch_text(&client, url, "Genius lyric lookup")?;
+    let body = fetch_text(external_lyrics_client()?, url, "Genius lyric lookup")?;
     Ok(extract_genius_lyrics(&body).filter(|lyrics| !lyrics.trim().is_empty()))
 }
 fn trusted_genius_lyrics_url(raw: &str) -> Option<reqwest::Url> {
@@ -1129,8 +1131,7 @@ fn simpmusic_search(
     let mut url = reqwest::Url::parse("https://api-lyrics.simpmusic.org/v1/search")
         .map_err(|error| error.to_string())?;
     url.query_pairs_mut().append_pair("q", &query);
-    let client = external_lyrics_client(Duration::from_secs(5))?;
-    let body = fetch_text(&client, url, "SimpMusic lyric search")?;
+    let body = fetch_text(external_lyrics_client()?, url, "SimpMusic lyric search")?;
     parse_simpmusic_search_body(&body)
 }
 pub(crate) fn parse_simpmusic_search_body(body: &str) -> Result<Vec<LyricsSearchResult>, String> {
@@ -1158,8 +1159,7 @@ pub(crate) fn parse_simpmusic_search_body(body: &str) -> Result<Vec<LyricsSearch
 fn simpmusic_fetch_lyrics(id: &str) -> Result<Option<String>, String> {
     let url = reqwest::Url::parse(&format!("https://api-lyrics.simpmusic.org/v1/{id}"))
         .map_err(|error| error.to_string())?;
-    let client = external_lyrics_client(Duration::from_secs(5))?;
-    let body = fetch_text(&client, url, "SimpMusic lyric lookup")?;
+    let body = fetch_text(external_lyrics_client()?, url, "SimpMusic lyric lookup")?;
     parse_simpmusic_lyrics_body(&body)
 }
 fn parse_simpmusic_lyrics_body(body: &str) -> Result<Option<String>, String> {
@@ -1220,17 +1220,13 @@ fn lrclib_search_with_urls(
     artist_name: &str,
     track_name: &str,
 ) -> Result<Vec<LyricsSearchResult>, String> {
-    let client = reqwest::blocking::Client::builder()
-        .timeout(EXTERNAL_LYRICS_REQUEST_TIMEOUT)
-        .user_agent(format!("Rufin/{}", env!("CARGO_PKG_VERSION")))
-        .build()
-        .map_err(|error| error.to_string())?;
+    let client = external_lyrics_client()?;
     let mut results = Vec::new();
     let mut seen = HashSet::new();
     let mut had_success = false;
     let mut errors = Vec::new();
     for url in urls {
-        match lrclib_fetch_search(&client, url) {
+        match lrclib_fetch_search(client, url) {
             Ok(batch) => {
                 debug!(results = batch.len(), "received LRCLIB lyric search batch");
                 had_success = true;
@@ -1257,15 +1253,11 @@ fn lrclib_search_priority_urls(
     if urls.is_empty() {
         return Ok(Vec::new());
     }
-    let client = reqwest::blocking::Client::builder()
-        .timeout(EXTERNAL_LYRICS_REQUEST_TIMEOUT)
-        .user_agent(format!("Rufin/{}", env!("CARGO_PKG_VERSION")))
-        .build()
-        .map_err(|error| error.to_string())?;
+    let client = external_lyrics_client()?;
     let mut errors = Vec::new();
     let mut had_success = false;
     for url in urls {
-        match lrclib_fetch_search(&client, url) {
+        match lrclib_fetch_search(client, url) {
             Ok(mut results) => {
                 debug!(
                     results = results.len(),

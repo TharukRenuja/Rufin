@@ -69,6 +69,7 @@ impl SourceOwner {
         };
 
         let previous_secrets = self.shared.secrets.replace(platform_secret_store(&changed));
+        self.clear_configured_feeds();
         let _ = blocking(move || {
             for key in keys {
                 if let Err(error) = previous_secrets.delete_secret(&key) {
@@ -192,18 +193,25 @@ impl SourceOwner {
                         if !self.shared.protect_interruptible_commit(&cancelled) {
                             return Ok(());
                         }
+                        let feed = (configuration.kind == "jellyfin"
+                            && self
+                                .shared
+                                .configured_feed_source(&configured.configuration.source_id)
+                                .is_some())
+                        .then(|| Arc::new(source));
                         let saved = self
                             .save_source_connection(
                                 Some(&configured),
                                 configuration,
                                 credential,
                                 false,
-                                same_account
-                                    .then_some(configured.music_folder_id.clone())
-                                    .flatten(),
+                                configured.music_folder_id.clone().filter(|_| same_account),
                                 configured.local_access.clone(),
                             )
                             .await?;
+                        if let Some(feed) = feed {
+                            self.install_configured_jellyfin_feed(feed, true);
+                        }
                         self.finish_source_connection(saved).await;
                         self.shared.publish_configured().await;
                         return Ok(());
@@ -312,7 +320,11 @@ impl SourceOwner {
                         .and_then(|configured| configured.local_access.clone()),
                 )
                 .await?;
-            self.retire_selected_access();
+            self.retire_selected_access().await;
+            let feed = source
+                .as_ref()
+                .filter(|_| configuration.kind == "jellyfin")
+                .cloned();
             let updated = match prepared_library {
                 PreparedConnectionLibrary::Candidate(candidate) => self
                     .accept_same_session_candidate(
@@ -340,6 +352,9 @@ impl SourceOwner {
             if let Err(error) = updated {
                 self.rollback_source_connection(saved).await;
                 return Err(error);
+            }
+            if let Some(feed) = feed {
+                self.install_configured_jellyfin_feed(feed, true);
             }
             if !cancelled.load(Ordering::Acquire) {
                 self.start_selected_access(true).await;
@@ -398,6 +413,10 @@ impl SourceOwner {
             let folder = music_folder_id.clone();
             blocking(move || library.home(folder.as_ref()).map_err(string_error)).await?
         };
+        let feed = source
+            .as_ref()
+            .filter(|_| configuration.kind == "jellyfin")
+            .cloned();
         let selected = Arc::new(SelectedSourceState {
             configuration: configuration.clone(),
             source,
@@ -437,7 +456,7 @@ impl SourceOwner {
                 .await;
         }
         self.cancel_album_release_lookup(true);
-        self.retire_selected_access();
+        self.retire_selected_access().await;
         let cutover = {
             let playback = Arc::clone(&playback);
             blocking(move || Ok(playback.stop_for_source_switch())).await?
@@ -445,6 +464,12 @@ impl SourceOwner {
         self.shared.release_selected().await;
         self.shared
             .install_selected_slot(Arc::clone(&session), Arc::clone(&selected));
+        if let Some(feed) = feed {
+            self.install_configured_jellyfin_feed(
+                feed,
+                cache_match == Some(SourceCacheMatch::Exact),
+            );
+        }
         self.shared.attach_selected_downloads(&selected).await;
         let playback = playback.install_prepared(prepared_playback, cutover);
         self.shared
@@ -866,6 +891,7 @@ impl SourceOwner {
     }
 
     pub(super) async fn remove_replaced_source_data(&self, source_id: SourceId) {
+        self.remove_configured_feed(&source_id);
         self.shared
             .downloads
             .settings_changed(self.shared.settings.load().ui.downloads);
@@ -976,15 +1002,19 @@ pub(super) async fn select_source(
         }
         None => None,
     };
-    let opened = match load_credential(&shared, &configured).await {
-        Ok(credential) => Source::open(
-            configuration.clone(),
-            credential,
-            Some(shared.settings.load().jellyfin_device_id),
-        )
-        .map(Arc::new)
-        .map_err(string_error),
-        Err(error) => Err(error),
+    let opened = if let Some(source) = shared.configured_feed_source(&source_id) {
+        Ok(source)
+    } else {
+        match load_credential(&shared, &configured).await {
+            Ok(credential) => Source::open(
+                configuration.clone(),
+                credential,
+                Some(shared.settings.load().jellyfin_device_id),
+            )
+            .map(Arc::new)
+            .map_err(string_error),
+            Err(error) => Err(error),
+        }
     };
     let source = match opened {
         Ok(source) => Some(source),
@@ -994,6 +1024,14 @@ pub(super) async fn select_source(
         }
         Err(error) => return Err(error),
     };
+    let cached_exact = cached
+        .as_ref()
+        .is_some_and(|(_, cache_match)| *cache_match == SourceCacheMatch::Exact);
+    if configuration.kind == "jellyfin"
+        && let Some(source) = source.as_ref()
+    {
+        owner.install_configured_jellyfin_feed(Arc::clone(source), cached_exact);
+    }
     let prepared_library = if let Some((library, cache_match)) = cached {
         PreparedConnectionLibrary::Accepted {
             library,
@@ -1001,6 +1039,7 @@ pub(super) async fn select_source(
         }
     } else {
         let source = source.as_ref().ok_or_else(source_access_unavailable)?;
+        owner.begin_configured_baseline(&source_id);
         let candidate = prepare_source_candidate(
             &shared,
             Arc::clone(source),

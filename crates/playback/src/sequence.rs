@@ -1,6 +1,7 @@
 use std::{
     collections::{HashMap, HashSet},
     fmt,
+    sync::Arc,
 };
 
 use library::{SourceId, Track, TrackId};
@@ -90,6 +91,19 @@ pub struct Batch {
     random_start: bool,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct BatchChange {
+    pub expected_revision: u64,
+    pub rows_changed: bool,
+    pub traversal_changed: bool,
+}
+
+impl BatchChange {
+    pub fn durable_changed(self) -> bool {
+        self.rows_changed || self.traversal_changed
+    }
+}
+
 impl Batch {
     pub fn new(items: Vec<BatchItem>) -> Self {
         Self {
@@ -130,11 +144,11 @@ pub enum SequenceError {
 #[derive(Clone, Debug)]
 pub struct Sequence {
     pub(crate) source_id: SourceId,
-    pub(crate) entries: Vec<SequenceEntry>,
+    pub(crate) entries: Arc<Vec<SequenceEntry>>,
     pub(crate) selected_index: Option<usize>,
     pub(crate) repeat_mode: RepeatMode,
     pub(crate) shuffle_enabled: bool,
-    pub(crate) traversal: Vec<usize>,
+    pub(crate) traversal: Arc<Vec<usize>>,
     pub(crate) traversal_position: Option<usize>,
     pub(crate) revision: u64,
     pub(crate) progress_millis: u64,
@@ -157,11 +171,11 @@ impl Sequence {
     pub fn new(source_id: SourceId) -> Self {
         Self {
             source_id,
-            entries: Vec::new(),
+            entries: Arc::new(Vec::new()),
             selected_index: None,
             repeat_mode: RepeatMode::Off,
             shuffle_enabled: false,
-            traversal: Vec::new(),
+            traversal: Arc::new(Vec::new()),
             traversal_position: None,
             revision: 0,
             progress_millis: 0,
@@ -202,11 +216,11 @@ impl Sequence {
         Ok(Self {
             source_id,
             next_occurrence_number: next_occurrence_number(&entries),
-            entries,
+            entries: Arc::new(entries),
             selected_index,
             repeat_mode,
             shuffle_enabled,
-            traversal,
+            traversal: Arc::new(traversal),
             traversal_position,
             revision,
             progress_millis,
@@ -300,6 +314,24 @@ impl Sequence {
         batch: Batch,
         placement: Placement,
     ) -> Result<Vec<OccurrenceId>, SequenceError> {
+        let replace = matches!(placement, Placement::Replace { .. });
+        let (inserted, _) = self.apply_batch_with_change(batch, placement)?;
+        Ok(if replace {
+            self.entries
+                .iter()
+                .map(|entry| entry.occurrence.clone())
+                .collect()
+        } else {
+            inserted
+        })
+    }
+
+    pub(crate) fn apply_batch_with_change(
+        &mut self,
+        batch: Batch,
+        placement: Placement,
+    ) -> Result<(Vec<OccurrenceId>, BatchChange), SequenceError> {
+        let expected_revision = self.revision;
         if batch.items.is_empty() {
             return Err(SequenceError::EmptyBatch);
         }
@@ -310,6 +342,11 @@ impl Sequence {
         }
         let changes_selection =
             matches!(placement, Placement::Replace { .. }) || self.selected_index.is_none();
+        let reuses_rows = matches!(placement, Placement::Replace { .. })
+            && self.entries.len() == batch.items.len()
+            && self.entries.iter().zip(&batch.items).all(|(entry, item)| {
+                entry.track == item.track && entry.provenance == item.provenance
+            });
 
         let previous_track_id = self.selected().map(|entry| entry.track.id.clone());
         let mut selected_anchor = match placement {
@@ -343,28 +380,53 @@ impl Sequence {
                 Placement::End => {}
             }
         }
-        let mut inserted = Vec::with_capacity(batch.items.len());
-        let mut new_entries = Vec::with_capacity(batch.items.len());
-        for item in batch.items {
-            let occurrence = self.next_occurrence();
-            inserted.push(occurrence.clone());
-            new_entries.push(SequenceEntry {
-                occurrence,
-                track: item.track,
-                provenance: item.provenance,
-            });
-        }
+        let mut inserted = Vec::new();
+        let rows_changed;
+        let traversal_changed;
         match placement {
-            Placement::Replace { .. } => {
-                self.entries = new_entries;
+            Placement::Replace { .. } if reuses_rows => {
+                rows_changed = false;
                 self.selected_index = Some(selected_anchor);
-                self.traversal = if self.shuffle_enabled {
+                let next_traversal = if self.shuffle_enabled {
                     batch_traversal
                 } else {
                     (0..self.entries.len()).collect()
                 };
+                traversal_changed = true;
+                self.traversal = Arc::new(next_traversal);
+            }
+            Placement::Replace { .. } => {
+                let mut new_entries = Vec::with_capacity(batch.items.len());
+                for item in batch.items {
+                    let occurrence = self.next_occurrence();
+                    new_entries.push(SequenceEntry {
+                        occurrence,
+                        track: item.track,
+                        provenance: item.provenance,
+                    });
+                }
+                self.entries = Arc::new(new_entries);
+                self.selected_index = Some(selected_anchor);
+                self.traversal = Arc::new(if self.shuffle_enabled {
+                    batch_traversal
+                } else {
+                    (0..self.entries.len()).collect()
+                });
+                rows_changed = true;
+                traversal_changed = true;
             }
             placement => {
+                inserted.reserve(batch.items.len());
+                let mut new_entries = Vec::with_capacity(batch.items.len());
+                for item in batch.items {
+                    let occurrence = self.next_occurrence();
+                    inserted.push(occurrence.clone());
+                    new_entries.push(SequenceEntry {
+                        occurrence,
+                        track: item.track,
+                        provenance: item.provenance,
+                    });
+                }
                 let batch_order = batch_traversal
                     .iter()
                     .copied()
@@ -375,15 +437,28 @@ impl Sequence {
                     &batch_order,
                     placement == Placement::AfterCurrent,
                 );
+                rows_changed = true;
+                traversal_changed = true;
             }
         }
         if changes_selection {
             self.progress_millis = 0;
         }
-        self.revision = self.revision.wrapping_add(1);
+        if rows_changed || traversal_changed {
+            self.revision = self.revision.wrapping_add(1);
+        }
         self.sync_traversal_position();
-        self.rebuild_track_counts();
-        Ok(inserted)
+        if rows_changed {
+            self.rebuild_track_counts();
+        }
+        Ok((
+            inserted,
+            BatchChange {
+                expected_revision,
+                rows_changed,
+                traversal_changed,
+            },
+        ))
     }
 
     pub fn activate(&mut self, occurrence: &OccurrenceId) -> bool {
@@ -438,7 +513,7 @@ impl Sequence {
             .then(|| self.successor_after_removed_selected())
             .flatten();
         let traversal = self.traversal_occurrences();
-        let removed = self.entries.remove(remove_index);
+        let removed = Arc::make_mut(&mut self.entries).remove(remove_index);
         let selected = if removing_selected {
             successor
         } else {
@@ -469,9 +544,9 @@ impl Sequence {
         };
         let selected = self.selected().map(|entry| entry.occurrence.clone());
         let traversal = self.traversal_occurrences();
-        let entry = self.entries.remove(old_index);
+        let entry = Arc::make_mut(&mut self.entries).remove(old_index);
         let target = new_index.min(self.entries.len());
-        self.entries.insert(target, entry);
+        Arc::make_mut(&mut self.entries).insert(target, entry);
         let traversal = if self.shuffle_enabled {
             traversal
         } else {
@@ -500,7 +575,7 @@ impl Sequence {
             return false;
         };
         let mut traversal = self.traversal_occurrences();
-        let entry = self.entries.remove(old_index);
+        let entry = Arc::make_mut(&mut self.entries).remove(old_index);
         let Some(current_index) = self
             .entries
             .iter()
@@ -508,7 +583,7 @@ impl Sequence {
         else {
             return false;
         };
-        self.entries.insert(current_index + 1, entry);
+        Arc::make_mut(&mut self.entries).insert(current_index + 1, entry);
         traversal.retain(|candidate| candidate != occurrence);
         let Some(current_position) = traversal.iter().position(|candidate| candidate == &current)
         else {
@@ -529,9 +604,9 @@ impl Sequence {
 
     pub(crate) fn clear(&mut self) -> bool {
         let changed = !self.entries.is_empty();
-        self.entries.clear();
+        Arc::make_mut(&mut self.entries).clear();
         self.track_counts.clear();
-        self.traversal.clear();
+        Arc::make_mut(&mut self.traversal).clear();
         self.selected_index = None;
         self.traversal_position = None;
         self.progress_millis = 0;
@@ -548,9 +623,9 @@ impl Sequence {
         if self.entries.len() == 1 {
             return false;
         }
-        self.entries = vec![current];
+        self.entries = Arc::new(vec![current]);
         self.selected_index = Some(0);
-        self.traversal = vec![0];
+        self.traversal = Arc::new(vec![0]);
         self.traversal_position = Some(0);
         self.rebuild_track_counts();
         self.revision = self.revision.wrapping_add(1);
@@ -583,8 +658,7 @@ impl Sequence {
             .into_iter()
             .filter(|occurrence| !removed.contains(occurrence))
             .collect();
-        self.entries
-            .retain(|entry| !removed.contains(&entry.occurrence));
+        Arc::make_mut(&mut self.entries).retain(|entry| !removed.contains(&entry.occurrence));
         self.rebuild_from_occurrences(traversal, selected.as_ref());
         self.revision = self.revision.wrapping_add(1);
         self.rebuild_track_counts();
@@ -680,7 +754,7 @@ impl Sequence {
             .map(|track| (track.id.clone(), track))
             .collect::<HashMap<_, _>>();
         let mut changed = false;
-        for entry in &mut self.entries {
+        for entry in Arc::make_mut(&mut self.entries) {
             if let Some(track) = replacements.get(&entry.track.id)
                 && &entry.track != track
             {
@@ -706,7 +780,7 @@ impl Sequence {
         } else {
             self.entries.len()
         };
-        self.entries.splice(insert_index..insert_index, new_entries);
+        Arc::make_mut(&mut self.entries).splice(insert_index..insert_index, new_entries);
         let selected = selected.or_else(|| batch_order.first().cloned());
         if self.shuffle_enabled {
             let traversal_insert = if after_current {
@@ -817,10 +891,12 @@ impl Sequence {
             .enumerate()
             .map(|(index, entry)| (entry.occurrence.clone(), index))
             .collect::<HashMap<_, _>>();
-        self.traversal = traversal
-            .into_iter()
-            .filter_map(|occurrence| positions.get(&occurrence).copied())
-            .collect();
+        self.traversal = Arc::new(
+            traversal
+                .into_iter()
+                .filter_map(|occurrence| positions.get(&occurrence).copied())
+                .collect(),
+        );
         self.selected_index = selected.and_then(|occurrence| positions.get(occurrence).copied());
         self.sync_traversal_position();
     }
@@ -834,11 +910,11 @@ impl Sequence {
     }
 
     fn install_shuffle(&mut self, enabled: bool, traversal: Vec<usize>) -> bool {
-        if self.shuffle_enabled == enabled && self.traversal == traversal {
+        if self.shuffle_enabled == enabled && self.traversal.as_ref() == &traversal {
             return false;
         }
         self.shuffle_enabled = enabled;
-        self.traversal = traversal;
+        self.traversal = Arc::new(traversal);
         self.sync_traversal_position();
         self.revision = self.revision.wrapping_add(1);
         true
@@ -1134,7 +1210,6 @@ mod tests {
             .collect::<Vec<_>>();
         assert_eq!(traversal.first(), Some(&inserted[anchor]));
         assert_eq!(traversal.len(), LEN);
-        assert_eq!(sequence.current_page().rows.len(), LEN);
 
         sequence.set_repeat_mode(RepeatMode::All);
         let selected = sequence

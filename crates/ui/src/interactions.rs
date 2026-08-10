@@ -14,6 +14,7 @@ const CONTEXT_MENU_PLAYLIST_MAX_HEIGHT: i32 = 320;
 const CONTEXT_MENU_PLAYLIST_MIN_WIDTH: i32 = 380;
 const NATIVE_MENU_SELECTION_CLASS: &str = "rufin-menu-selection";
 const NATIVE_MENU_SELECTED_CLASS: &str = "rufin-menu-selected";
+const NATIVE_MENU_PARENT_GRAB_CLASS: &str = "rufin-menu-parent-grab";
 
 pub(crate) const ADD_TO_PLAYLIST_ICON: &str = "rufin-route-playlists-symbolic";
 pub(crate) const ALBUM_ICON: &str = "rufin-route-albums-symbolic";
@@ -28,12 +29,13 @@ pub(crate) fn connect_transient_entry_focus_dismissal(shell: &Shell) {
         &shell.chrome.window,
         vec![
             shell.right_panel.queue_search.clone().upcast(),
-            shell.right_panel.lyrics_pane.focus_dismiss_target(),
+            shell.right_panel.lyrics_host.clone().upcast(),
             shell
                 .player_view
                 .fullscreen_player
-                .lyrics_pane
-                .focus_dismiss_target(),
+                .lyrics_host
+                .clone()
+                .upcast(),
         ],
     );
 }
@@ -415,12 +417,15 @@ fn keep_parent_grab_for_nested_native_menus_from(container: &gtk::Widget) {
         {
             // GTK can lose the parent's input grab when an autohide child closes.
             nested_popover.set_autohide(false);
-            let nested_popover = nested_popover.downgrade();
-            widget.connect_unmap(move |_| {
-                if let Some(nested_popover) = nested_popover.upgrade() {
-                    popdown_native_menu(&nested_popover);
-                }
-            });
+            if !widget.has_css_class(NATIVE_MENU_PARENT_GRAB_CLASS) {
+                widget.add_css_class(NATIVE_MENU_PARENT_GRAB_CLASS);
+                let nested_popover = nested_popover.downgrade();
+                widget.connect_unmap(move |_| {
+                    if let Some(nested_popover) = nested_popover.upgrade() {
+                        popdown_native_menu(&nested_popover);
+                    }
+                });
+            }
         }
         keep_parent_grab_for_nested_native_menus_from(&widget);
     }

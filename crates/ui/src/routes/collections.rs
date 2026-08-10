@@ -30,13 +30,11 @@ use super::detail_links::{DetailLinks, track_album_artist_links, track_artist_li
 use super::grid_cells::{
     AlbumGridCell, ArtistGridCell, CollectionGridProjection, FixedPageCollectionRow,
     PlaylistGridCell, ReusableCollectionGridCell, SmartPlaylistGridCell, TrackGridCell,
-    collection_grid, collection_grid_with_card_widths, fixed_page_collection_row,
+    collection_grid, fixed_page_collection_row,
 };
 use super::library_fields::{
-    ALBUM_COLLECTION_GRID_MAX_CARD_WIDTH, ALBUM_COLLECTION_GRID_MIN_CARD_WIDTH,
-    COLLECTION_GRID_CARD_GAP, COLLECTION_GRID_MAX_CARD_WIDTH, COLLECTION_GRID_MIN_CARD_WIDTH,
-    clear_list_item_child, column_width, compact_header_column_width, grid_label_with_label,
-    item_at, item_at_from_item, track_field,
+    COLLECTION_GRID_CARD_GAP, clear_list_item_child, column_width, compact_header_column_width,
+    grid_label_with_label, item_at, item_at_from_item, track_field,
 };
 use super::playlist_picker::PlaylistTrackSource;
 use super::route::Route;
@@ -123,7 +121,7 @@ impl PlaybackTarget {
     }
 
     pub(crate) fn playlist_tracks(&self, shell: &Shell) -> Option<PlaylistTrackSource> {
-        let selected = shell.library.selected.borrow().as_ref().cloned()?;
+        let selected = shell.selected_library().as_deref().cloned()?;
         match self.selection(&selected) {
             Ok(tracks) => Some(PlaylistTrackSource::loaded(
                 &selected,
@@ -138,7 +136,7 @@ impl PlaybackTarget {
     }
 
     pub(crate) fn download(&self, shell: &Shell) {
-        let Some(selected) = shell.library.selected.borrow().as_ref().cloned() else {
+        let Some(selected) = shell.selected_library().as_deref().cloned() else {
             return;
         };
         match self.selection(&selected) {
@@ -154,7 +152,7 @@ impl PlaybackTarget {
     }
 
     pub(crate) fn remove_download(&self, shell: &Shell) {
-        let Some(selected) = shell.library.selected.borrow().as_ref().cloned() else {
+        let Some(selected) = shell.selected_library().as_deref().cloned() else {
             return;
         };
         match self.selection(&selected) {
@@ -213,7 +211,7 @@ impl PlaybackTarget {
         placement: QueuePlacement,
         shuffled_start: bool,
     ) -> Option<LoadedPlayRequest> {
-        let selected = shell.library.selected.borrow().as_ref().cloned()?;
+        let selected = shell.selected_library().as_deref().cloned()?;
         let tracks = match self.selection(&selected) {
             Ok(tracks) => tracks,
             Err(error) => {
@@ -746,22 +744,10 @@ pub(crate) fn album_grid(
     let fields = settings.grid_fields;
     let cell_shell = Rc::clone(shell);
     let activate_shell = Rc::clone(shell);
-    let minimum_card_width = if key == LibraryListKey::Albums {
-        ALBUM_COLLECTION_GRID_MIN_CARD_WIDTH
-    } else {
-        COLLECTION_GRID_MIN_CARD_WIDTH
-    };
-    let maximum_card_width = if key == LibraryListKey::Albums {
-        ALBUM_COLLECTION_GRID_MAX_CARD_WIDTH
-    } else {
-        COLLECTION_GRID_MAX_CARD_WIDTH
-    };
-    collection_grid_with_card_widths(
+    collection_grid(
         model,
-        minimum_card_width,
-        maximum_card_width,
         &fields,
-        move |fields| AlbumGridCell::new(Rc::clone(&cell_shell), fields, maximum_card_width, None),
+        move |fields| AlbumGridCell::new(Rc::clone(&cell_shell), fields, None),
         move |_, album: AlbumSummary| {
             activate_shell.navigate(Route::AlbumDetail(album.album.id.clone()))
         },
@@ -855,7 +841,6 @@ pub(crate) fn track_grid(
                 Rc::clone(&cell_shell),
                 fields,
                 Rc::clone(&cell_play_from_collection),
-                COLLECTION_GRID_MAX_CARD_WIDTH,
                 Rc::new(move |position, track, field| {
                     let value =
                         if key == LibraryListKey::History && field == LibraryField::LastPlayed {
@@ -893,12 +878,8 @@ pub(crate) fn home_item_row(
         columns,
         move |position, item: LoadedHomeItem| match item {
             LoadedHomeItem::Album(album) => {
-                let cell = AlbumGridCell::new(
-                    Rc::clone(&widget_shell),
-                    &HOME_ALBUM_GRID_FIELDS,
-                    COLLECTION_GRID_MAX_CARD_WIDTH,
-                    None,
-                );
+                let cell =
+                    AlbumGridCell::new(Rc::clone(&widget_shell), &HOME_ALBUM_GRID_FIELDS, None);
                 cell.bind(position, album);
                 cell.widget()
             }
@@ -908,12 +889,8 @@ pub(crate) fn home_item_row(
                 let play = Rc::new(move |_| {
                     play_home_track(&play_shell, play_track.clone());
                 }) as Rc<dyn Fn(u32)>;
-                let cell = TrackGridCell::new(
-                    Rc::clone(&widget_shell),
-                    &HOME_TRACK_GRID_FIELDS,
-                    play,
-                    COLLECTION_GRID_MAX_CARD_WIDTH,
-                );
+                let cell =
+                    TrackGridCell::new(Rc::clone(&widget_shell), &HOME_TRACK_GRID_FIELDS, play);
                 cell.bind(position, track);
                 cell.widget()
             }
@@ -930,7 +907,7 @@ pub(crate) fn home_item_row(
 }
 
 fn play_home_track(shell: &Rc<Shell>, track: Track) {
-    let Some(selected) = shell.library.selected.borrow().as_ref().cloned() else {
+    let Some(selected) = shell.selected_library().as_deref().cloned() else {
         return;
     };
     shell
@@ -1271,10 +1248,8 @@ pub(crate) fn track_table(
     let playing_indicator = TrackRowPlayingIndicator::new();
     let playing_state = TrackTablePlayingState::new(&model, playing_indicator.clone());
     let source_id = shell
-        .library
-        .selected
-        .borrow()
-        .as_ref()
+        .selected_library()
+        .as_deref()
         .map(|selected| selected.source_id.clone());
     let selection_context_base = options.context_id.clone();
     let selection_model = model.clone();

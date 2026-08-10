@@ -2,25 +2,75 @@ use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 use std::sync::Arc;
 
+use adw::prelude::*;
 use gtk::glib;
 use localization::tr;
 use lyrics::{CurrentLyrics, CurrentLyricsContent, LyricsDocument, LyricsOrigin};
 
+use crate::player::lyrics::LyricsPane;
 use crate::player::lyrics::search::LyricsSearchDialog;
 use crate::player::lyrics::settings::LyricsSettingsDialog;
 use crate::player::state::{current_playback_media_id, current_playback_track_id};
 use crate::shell::Shell;
 
 pub(crate) struct LyricsState {
+    pub(crate) panel_visible: Cell<bool>,
+}
+
+pub(crate) struct SelectedLyricsState {
     pub(crate) projection: RefCell<CurrentLyrics>,
     pub(crate) offset_millis: Cell<i64>,
     pub(crate) timing_generation: Cell<u64>,
     pub(crate) timing_source: RefCell<Option<glib::SourceId>>,
-    pub(crate) panel_visible: Cell<bool>,
     pub(crate) right_pane_dirty: Cell<bool>,
     pub(crate) fullscreen_pane_dirty: Cell<bool>,
     pub(crate) search_dialog: RefCell<Option<LyricsSearchDialog>>,
     pub(crate) settings_dialog: RefCell<Option<LyricsSettingsDialog>>,
+    pub(crate) right_pane: LyricsPane,
+    pub(crate) fullscreen_pane: LyricsPane,
+}
+
+impl SelectedLyricsState {
+    pub(crate) fn new() -> Self {
+        let right_pane = LyricsPane::new();
+        let fullscreen_pane = LyricsPane::new();
+        fullscreen_pane
+            .widget()
+            .add_css_class("fullscreen-player-pane");
+        Self {
+            projection: RefCell::new(CurrentLyrics::Cleared),
+            offset_millis: Cell::new(0),
+            timing_generation: Cell::new(0),
+            timing_source: RefCell::new(None),
+            right_pane_dirty: Cell::new(true),
+            fullscreen_pane_dirty: Cell::new(true),
+            search_dialog: RefCell::new(None),
+            settings_dialog: RefCell::new(None),
+            right_pane,
+            fullscreen_pane,
+        }
+    }
+
+    pub(crate) fn close_dialogs(&self) {
+        if let Some(dialog) = self.search_dialog.borrow_mut().take() {
+            if let Some(source) = dialog.search_debounce_source.borrow_mut().take() {
+                source.remove();
+            }
+            dialog.dialog.close();
+        }
+        if let Some(dialog) = self.settings_dialog.borrow_mut().take() {
+            dialog.dialog.close();
+        }
+    }
+}
+
+impl Drop for SelectedLyricsState {
+    fn drop(&mut self) {
+        if let Some(source) = self.timing_source.get_mut().take() {
+            source.remove();
+        }
+        self.close_dialogs();
+    }
 }
 
 impl Shell {
@@ -44,8 +94,9 @@ impl Shell {
     }
 
     pub(crate) fn visible_lyrics(&self) -> Option<Arc<LyricsDocument>> {
-        let current_media = current_playback_media_id(&self.playback.player.borrow());
-        match &*self.lyrics.projection.borrow() {
+        let current_media = current_playback_media_id(self.selected_playback().as_deref());
+        let lyrics = self.selected_lyrics()?;
+        match &*lyrics.projection.borrow() {
             CurrentLyrics::Ready {
                 media_id,
                 content: Some(CurrentLyricsContent::Document { document, .. }),
@@ -58,9 +109,12 @@ impl Shell {
     }
 
     pub(crate) fn visible_lyrics_are_instrumental(&self) -> bool {
-        let current_media = current_playback_media_id(&self.playback.player.borrow());
+        let current_media = current_playback_media_id(self.selected_playback().as_deref());
+        let Some(lyrics) = self.selected_lyrics() else {
+            return false;
+        };
         matches!(
-            &*self.lyrics.projection.borrow(),
+            &*lyrics.projection.borrow(),
             CurrentLyrics::Ready {
                 media_id,
                 content: Some(CurrentLyricsContent::Instrumental),
@@ -70,9 +124,12 @@ impl Shell {
     }
 
     fn current_lyrics_resolved(&self) -> bool {
-        let current_media = current_playback_media_id(&self.playback.player.borrow());
+        let current_media = current_playback_media_id(self.selected_playback().as_deref());
+        let Some(lyrics) = self.selected_lyrics() else {
+            return false;
+        };
         matches!(
-            &*self.lyrics.projection.borrow(),
+            &*lyrics.projection.borrow(),
             CurrentLyrics::Ready {
                 media_id,
                 content: Some(_),
@@ -87,8 +144,9 @@ impl Shell {
     }
 
     pub(crate) fn visible_lyrics_origin(&self) -> Option<LyricsOrigin> {
-        let current_media = current_playback_media_id(&self.playback.player.borrow());
-        match &*self.lyrics.projection.borrow() {
+        let current_media = current_playback_media_id(self.selected_playback().as_deref());
+        let lyrics = self.selected_lyrics()?;
+        match &*lyrics.projection.borrow() {
             CurrentLyrics::Ready {
                 media_id, origin, ..
             } if current_media.as_ref() == Some(media_id) => *origin,
@@ -97,8 +155,9 @@ impl Shell {
     }
 
     pub(crate) fn visible_lyrics_pronunciation(&self) -> Option<Arc<LyricsDocument>> {
-        let current_media = current_playback_media_id(&self.playback.player.borrow());
-        match &*self.lyrics.projection.borrow() {
+        let current_media = current_playback_media_id(self.selected_playback().as_deref());
+        let lyrics = self.selected_lyrics()?;
+        match &*lyrics.projection.borrow() {
             CurrentLyrics::Ready {
                 media_id, content, ..
             } if current_media.as_ref() == Some(media_id) => match content {
@@ -110,16 +169,22 @@ impl Shell {
     }
 
     pub(crate) fn current_lyrics_loading(&self) -> bool {
-        let current_media = current_playback_media_id(&self.playback.player.borrow());
+        let current_media = current_playback_media_id(self.selected_playback().as_deref());
+        let Some(lyrics) = self.selected_lyrics() else {
+            return false;
+        };
         matches!(
-            &*self.lyrics.projection.borrow(),
+            &*lyrics.projection.borrow(),
             CurrentLyrics::Loading { media_id }
                 if current_media.as_ref() == Some(media_id)
         )
     }
 
     pub(crate) fn apply_current_lyrics(self: &Rc<Self>, projection: CurrentLyrics) {
-        let document_changed = match (&*self.lyrics.projection.borrow(), &projection) {
+        let Some(lyrics) = self.selected_lyrics() else {
+            return;
+        };
+        let document_changed = match (&*lyrics.projection.borrow(), &projection) {
             (
                 CurrentLyrics::Ready {
                     content:
@@ -151,13 +216,13 @@ impl Shell {
         };
         if document_changed {
             self.restart_lyrics_follow_tracking();
-            self.lyrics.offset_millis.set(0);
+            lyrics.offset_millis.set(0);
         }
-        *self.lyrics.projection.borrow_mut() = projection;
+        *lyrics.projection.borrow_mut() = projection;
         crate::player::lyrics::settings::refresh_word_highlighting_availability(self);
         self.render_lyrics_panel();
         if let Some(media_id) = media_id
-            && let Some(dialog) = self.lyrics.search_dialog.borrow().as_ref()
+            && let Some(dialog) = lyrics.search_dialog.borrow().as_ref()
             && dialog.media_id == media_id
             && dialog.status.text().as_str() == tr("Searching...")
             && !self.current_lyrics_loading()
@@ -184,25 +249,26 @@ impl Shell {
     }
 
     fn restart_lyrics_follow_tracking(&self) {
-        self.right_panel.lyrics_pane.restart_follow_tracking();
-        self.player_view
-            .fullscreen_player
-            .lyrics_pane
-            .restart_follow_tracking();
+        if let Some(lyrics) = self.selected_lyrics() {
+            lyrics.right_pane.restart_follow_tracking();
+            lyrics.fullscreen_pane.restart_follow_tracking();
+        }
     }
 
     pub(crate) fn refocus_current_lyrics_highlight(&self) {
         let lyrics = self.visible_lyrics();
         let position_millis = self.lyrics_position_millis(self.current_position_millis());
+        let Some(selected_lyrics) = self.selected_lyrics() else {
+            return;
+        };
         if self.right_lyrics_surface_visible() {
-            self.right_panel
-                .lyrics_pane
+            selected_lyrics
+                .right_pane
                 .refocus_highlight(lyrics.as_deref(), position_millis);
         }
         if self.fullscreen_lyrics_surface_visible() {
-            self.player_view
-                .fullscreen_player
-                .lyrics_pane
+            selected_lyrics
+                .fullscreen_pane
                 .refocus_highlight(lyrics.as_deref(), position_millis);
         }
     }
@@ -212,7 +278,7 @@ impl Shell {
     }
 
     pub(crate) fn request_auto_lyrics_if_needed(&self) {
-        let Some(media_id) = current_playback_media_id(&self.playback.player.borrow()) else {
+        let Some(media_id) = current_playback_media_id(self.selected_playback().as_deref()) else {
             return;
         };
         if self.current_lyrics_resolved() || self.current_lyrics_loading() {
@@ -225,10 +291,10 @@ impl Shell {
     }
 
     pub(crate) fn suppress_auto_lyrics_for_current(self: &Rc<Self>) {
-        let Some(media_id) = current_playback_media_id(&self.playback.player.borrow()) else {
+        let Some(media_id) = current_playback_media_id(self.selected_playback().as_deref()) else {
             return;
         };
-        let Some(track_id) = current_playback_track_id(&self.playback.player.borrow()) else {
+        let Some(track_id) = current_playback_track_id(self.selected_playback().as_deref()) else {
             return;
         };
         self.products.lyrics.clear_fetched(media_id);
@@ -260,26 +326,36 @@ impl Shell {
         }
         let lyrics = self.visible_lyrics();
         let lyrics_position_millis = self.lyrics_position_millis(position_millis);
+        let Some(selected_lyrics) = self.selected_lyrics() else {
+            return;
+        };
         if self.right_lyrics_surface_visible() {
-            self.right_panel
-                .lyrics_pane
+            selected_lyrics
+                .right_pane
                 .update_highlight(lyrics.as_deref(), lyrics_position_millis);
         }
         if self.fullscreen_lyrics_surface_visible() {
-            self.player_view
-                .fullscreen_player
-                .lyrics_pane
+            selected_lyrics
+                .fullscreen_pane
                 .update_highlight(lyrics.as_deref(), lyrics_position_millis);
         }
         self.schedule_next_lyrics_highlight(position_millis);
     }
 
     pub(crate) fn lyrics_position_millis(&self, position_millis: u64) -> i128 {
-        i128::from(position_millis) + i128::from(self.lyrics.offset_millis.get())
+        let offset_millis = self
+            .selected_lyrics()
+            .map_or(0, |lyrics| lyrics.offset_millis.get());
+        i128::from(position_millis) + i128::from(offset_millis)
     }
 
     pub(crate) fn adjust_lyrics_offset(self: &Rc<Self>, delta_millis: i64) {
-        self.set_lyrics_offset(self.lyrics.offset_millis.get().saturating_add(delta_millis));
+        let Some(lyrics) = self.selected_lyrics() else {
+            return;
+        };
+        let offset_millis = lyrics.offset_millis.get().saturating_add(delta_millis);
+        drop(lyrics);
+        self.set_lyrics_offset(offset_millis);
     }
 
     pub(crate) fn set_lyrics_offset_from_text(self: &Rc<Self>, value: &str) {
@@ -294,13 +370,22 @@ impl Shell {
         let Some(offset_millis) = parse_lyrics_offset_millis(value) else {
             return;
         };
-        if self.lyrics.offset_millis.replace(offset_millis) != offset_millis {
+        let Some(lyrics) = self.selected_lyrics() else {
+            return;
+        };
+        let changed = lyrics.offset_millis.replace(offset_millis) != offset_millis;
+        drop(lyrics);
+        if changed {
             self.update_lyrics_highlight();
         }
     }
 
     fn set_lyrics_offset(self: &Rc<Self>, offset_millis: i64) {
-        let changed = self.lyrics.offset_millis.replace(offset_millis) != offset_millis;
+        let Some(lyrics) = self.selected_lyrics() else {
+            return;
+        };
+        let changed = lyrics.offset_millis.replace(offset_millis) != offset_millis;
+        drop(lyrics);
         self.update_lyrics_offset_controls();
         if changed {
             self.update_lyrics_highlight();
@@ -311,11 +396,11 @@ impl Shell {
         let label = tr("Lyrics offset (ms)");
         let decrease_label = tr("Decrease");
         let increase_label = tr("Increase");
-        let offset_millis = self.lyrics.offset_millis.get();
-        for pane in [
-            &self.right_panel.lyrics_pane,
-            &self.player_view.fullscreen_player.lyrics_pane,
-        ] {
+        let Some(lyrics) = self.selected_lyrics() else {
+            return;
+        };
+        let offset_millis = lyrics.offset_millis.get();
+        for pane in [&lyrics.right_pane, &lyrics.fullscreen_pane] {
             pane.set_offset_action(
                 &label,
                 &decrease_label,
@@ -327,21 +412,20 @@ impl Shell {
     }
 
     pub(crate) fn current_position_millis(&self) -> u64 {
-        self.playback
-            .player
-            .borrow()
-            .as_ref()
+        self.selected_playback()
+            .as_deref()
             .map_or(0, |player| player.transport.position_millis)
     }
 
     pub(crate) fn seek_to_lyrics_position(self: &Rc<Self>, position_millis: u64) {
-        self.right_panel.lyrics_pane.clear_follow_scroll_pause();
-        self.player_view
-            .fullscreen_player
-            .lyrics_pane
-            .clear_follow_scroll_pause();
-        let position_millis =
-            playback_position_for_lyrics_position(position_millis, self.lyrics.offset_millis.get());
+        let Some(lyrics) = self.selected_lyrics() else {
+            return;
+        };
+        lyrics.right_pane.clear_follow_scroll_pause();
+        lyrics.fullscreen_pane.clear_follow_scroll_pause();
+        let offset_millis = lyrics.offset_millis.get();
+        drop(lyrics);
+        let position_millis = playback_position_for_lyrics_position(position_millis, offset_millis);
         self.products
             .playback
             .transport

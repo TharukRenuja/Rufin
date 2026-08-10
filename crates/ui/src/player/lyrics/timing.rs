@@ -7,10 +7,13 @@ use std::time::Duration;
 
 impl Shell {
     pub(crate) fn cancel_scheduled_lyrics_highlight(&self) {
-        self.lyrics
+        let Some(lyrics) = self.selected_lyrics() else {
+            return;
+        };
+        lyrics
             .timing_generation
-            .set(self.lyrics.timing_generation.get().saturating_add(1));
-        if let Some(source) = self.lyrics.timing_source.borrow_mut().take() {
+            .set(lyrics.timing_generation.get().saturating_add(1));
+        if let Some(source) = lyrics.timing_source.borrow_mut().take() {
             source.remove();
         }
     }
@@ -19,10 +22,8 @@ impl Shell {
             return;
         }
         let playing = self
-            .playback
-            .player
-            .borrow()
-            .as_ref()
+            .selected_playback()
+            .as_deref()
             .is_some_and(|player| matches!(player.transport.state, TransportStatus::Playing));
         if !playing {
             return;
@@ -43,18 +44,30 @@ impl Shell {
             return;
         };
         let next_playback_position_millis = position_millis.saturating_add(delay_millis);
-        let generation = self.lyrics.timing_generation.get().saturating_add(1);
-        self.lyrics.timing_generation.set(generation);
+        let Some(lyrics) = self.selected_lyrics() else {
+            return;
+        };
+        let generation = lyrics.timing_generation.get().saturating_add(1);
+        lyrics.timing_generation.set(generation);
+        drop(lyrics);
 
         let shell = Rc::clone(self);
         let source = glib::timeout_add_local_once(Duration::from_millis(delay_millis), move || {
-            if shell.lyrics.timing_generation.get() != generation {
+            let Some(lyrics) = shell.selected_lyrics() else {
+                return;
+            };
+            if lyrics.timing_generation.get() != generation {
                 return;
             }
-            let _source = shell.lyrics.timing_source.borrow_mut().take();
+            let _source = lyrics.timing_source.borrow_mut().take();
+            drop(lyrics);
             shell.update_lyrics_highlight_at(next_playback_position_millis);
         });
-        if let Some(previous_source) = self.lyrics.timing_source.borrow_mut().replace(source) {
+        let Some(lyrics) = self.selected_lyrics() else {
+            source.remove();
+            return;
+        };
+        if let Some(previous_source) = lyrics.timing_source.borrow_mut().replace(source) {
             previous_source.remove();
         }
     }

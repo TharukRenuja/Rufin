@@ -28,7 +28,6 @@ use super::home_layout::{
     HomeShowcaseMode, home_section_header, home_showcase_cover_size, home_showcase_is_compact,
     home_showcase_mode, home_showcase_spacing,
 };
-use super::library_fields::{COLLECTION_GRID_MAX_CARD_WIDTH, COLLECTION_GRID_MIN_CARD_WIDTH};
 use super::route::Route;
 use super::route_layout::{ROUTE_TOP_MARGIN, home_album_content_width, route_scroller_widget};
 
@@ -152,11 +151,7 @@ impl MountedHomeSectionPresentation {
         if width <= 1 {
             return;
         }
-        let page_size = collection_grid_column_count(
-            width,
-            COLLECTION_GRID_MIN_CARD_WIDTH,
-            COLLECTION_GRID_MAX_CARD_WIDTH,
-        );
+        let page_size = collection_grid_column_count(width);
         if self.page_size.replace(page_size) == page_size {
             return;
         }
@@ -562,11 +557,7 @@ impl Shell {
         section.append(&header.root);
 
         let content_width = home_album_content_width(self);
-        let page_size = collection_grid_column_count(
-            content_width,
-            COLLECTION_GRID_MIN_CARD_WIDTH,
-            COLLECTION_GRID_MAX_CARD_WIDTH,
-        );
+        let page_size = collection_grid_column_count(content_width);
         let model = gio::ListStore::new::<glib::BoxedAnyObject>();
         let row = home_item_row(self, model.clone(), page_size);
         let presentation = MountedHomeSectionPresentation {

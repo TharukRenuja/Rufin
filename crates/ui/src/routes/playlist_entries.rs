@@ -16,7 +16,6 @@ use crate::favorites::{
     favorite_button_is_active, favorite_icon_button, set_favorite_button_active, track_favorite_key,
 };
 use crate::localization::{bind_search_placeholder, bind_widget_tooltip, localized_column};
-use crate::preferences::dialogs::popup::present_light_dismiss_dialog;
 use crate::shell::Shell;
 use crate::shell::cover::presentation::stable_seed;
 use crate::shell::cover::{ArtworkTile, LARGE_COVER_SIZE, THUMB_COVER_SIZE};
@@ -279,10 +278,8 @@ impl Shell {
             .borrow()
             .library_list(LibraryListKey::PlaylistTracks);
         let selected = self
-            .library
-            .selected
-            .borrow()
-            .as_ref()
+            .selected_library()
+            .as_deref()
             .map(|selected| (selected.source_id.clone(), selected.source_session_epoch))
             .expect("a playlist route requires one selected source");
         let model = PlaylistEntryModel::new_prepared(
@@ -365,10 +362,8 @@ pub(crate) fn playlist_entries_collection_projection(
     let playing_indicator = TrackRowPlayingIndicator::new();
     let playlist_playing = PlaylistEntryTablePlayingState::new(&model, playing_indicator.clone());
     let source_id = shell
-        .library
-        .selected
-        .borrow()
-        .as_ref()
+        .selected_library()
+        .as_deref()
         .map(|selected| Some(selected.source_id.clone()))
         .expect("a playlist route requires one selected source");
     let current_playlist_playing = playlist_playing.clone();
@@ -991,7 +986,7 @@ fn playlist_entry_favorite_column(
             &state,
         );
         let favorite_state = Rc::clone(&state.menu);
-        setup_shell.favorites.register_dynamic_button(
+        setup_shell.register_dynamic_favorite_button(
             Rc::new(move || {
                 favorite_state
                     .borrow()
@@ -1391,5 +1386,5 @@ pub(crate) fn confirm_remove_playlist_entry(
             });
         }
     });
-    present_light_dismiss_dialog(&dialog, &shell.chrome.window);
+    shell.present_selected_dialog(&dialog);
 }

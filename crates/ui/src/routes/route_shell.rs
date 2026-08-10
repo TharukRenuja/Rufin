@@ -268,7 +268,9 @@ impl Shell {
     fn transient_route_input_active(&self) -> bool {
         self.preferences.active_dialog().is_some()
             || self.source.add_server.borrow().is_some()
-            || self.lyrics.search_dialog.borrow().is_some()
+            || self
+                .selected_lyrics()
+                .is_some_and(|lyrics| lyrics.search_dialog.borrow().is_some())
     }
 
     pub(crate) fn connect_route_keyboard(self: &Rc<Self>) {

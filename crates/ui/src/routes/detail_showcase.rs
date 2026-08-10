@@ -879,10 +879,8 @@ fn server_entity_url(
     entity_id: &str,
 ) -> Option<DetailExternalLink> {
     let source_id = shell
-        .library
-        .selected
-        .borrow()
-        .as_ref()
+        .selected_library()
+        .as_deref()
         .map(|selected| selected.source_id.clone())?;
     let source = shell
         .products

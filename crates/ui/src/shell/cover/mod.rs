@@ -55,6 +55,26 @@ pub(crate) fn cover_fetch_size_for_display(display_size: i32) -> u32 {
     }
 }
 
+fn cover_request_sizes(display_size: i32, fetch_size_cap: u32, scale: f64) -> (u32, u32) {
+    let fetch_size_cap = fetch_size_cap.max(1);
+    let render_size = cover_decode_size(display_size, fetch_size_cap, scale);
+    let fetch_size = cover_fetch_size_for_display(render_size as i32);
+    (fetch_size.min(fetch_size_cap), render_size)
+}
+
+const fn artwork_work_allowed(requires_mapping: bool, mapped: bool) -> bool {
+    !requires_mapping || mapped
+}
+
+const fn artwork_binding_needs_work(
+    tile_needs_request: bool,
+    exact_ready: bool,
+    terminal_missing: bool,
+    request_active: bool,
+) -> bool {
+    tile_needs_request || (!exact_ready && !terminal_missing && !request_active)
+}
+
 #[derive(Clone)]
 pub(super) struct LiveArtworkBinding {
     tile: ArtworkTileWeak,
@@ -182,7 +202,7 @@ impl Shell {
     }
 
     fn artwork_source(&self, source_id: Option<&::library::SourceId>) -> Option<SourceImages> {
-        let selected = self.library.selected.borrow();
+        let selected = self.selected_library();
         match source_id {
             None => selected.as_ref().map(|selected| selected.artwork.clone()),
             Some(source_id) => selected
@@ -255,18 +275,30 @@ impl Shell {
             return;
         }
 
+        if !artwork_work_allowed(binding.defer_during_route_scroll, tile.area.is_mapped()) {
+            self.cancel_artwork_tile_request(tile);
+            tile.bind_pending(binding.seed);
+            self.artwork
+                .route_interaction
+                .deferred
+                .borrow_mut()
+                .remove(&tile.identity());
+            self.remember_artwork_binding(tile, binding);
+            return;
+        }
+
         let source_id = binding.source_id.clone();
         let artwork = binding.artwork.clone();
         let seed = binding.seed;
         let render_size = binding.render_size;
-        let fetch_size = binding.fetch_size;
+        let fetch_size_cap = binding.fetch_size;
         let refresh_desktop_on_ready = binding.refresh_desktop_on_ready;
         let cache_only =
             binding.defer_during_route_scroll && self.artwork.route_interaction.active.get();
 
-        let render_size = cover_decode_size(render_size, fetch_size, self.artwork_scale());
-        let settings = self.settings.current.borrow().clone();
-        let external = artwork_external_policy(&settings);
+        let (fetch_size, render_size) =
+            cover_request_sizes(render_size, fetch_size_cap, self.artwork_scale());
+        let external = artwork_external_policy(&self.settings.current.borrow());
         let Some(source) = self.artwork_source(source_id.as_ref()) else {
             self.cancel_artwork_tile_request(tile);
             tile.bind_pending(seed);
@@ -277,7 +309,11 @@ impl Shell {
         let request = ArtworkRequest::new(artwork, fetch_size, render_size).with_external(external);
         let prepared = self.products.artwork.prepare(source, request);
         if cache_only && prepared.ready.is_none() {
-            self.defer_route_artwork_binding(tile, binding);
+            let preview = prepared
+                .preview
+                .as_ref()
+                .and_then(|image| self.texture_for_decoded(&texture_source_id, Arc::clone(image)));
+            self.defer_route_artwork_binding(tile, binding, preview);
             return;
         }
 
@@ -292,7 +328,12 @@ impl Shell {
             prepared.identity.visual.clone(),
             prepared.identity.request.clone(),
         );
-        if !outcome.request_needed {
+        if !artwork_binding_needs_work(
+            outcome.request_needed,
+            prepared.ready.is_some(),
+            outcome.terminal_missing,
+            tile.has_artwork_request(),
+        ) {
             return;
         }
         if let Some(image) = prepared.ready.as_ref() {
@@ -303,6 +344,11 @@ impl Shell {
                 tile.set_blank_if_current(outcome.generation);
             }
             return;
+        }
+        if let Some(image) = prepared.preview.as_ref()
+            && let Some(texture) = self.texture_for_decoded(&texture_source_id, Arc::clone(image))
+        {
+            tile.set_texture_if_current(outcome.generation, texture);
         }
         if !outcome.request_changed && tile.has_artwork_request() {
             return;
@@ -381,7 +427,7 @@ impl Shell {
                 }
             };
             if ready && refresh_desktop_on_ready {
-                let player = shell.playback.player.borrow().clone();
+                let player = shell.selected_playback().as_deref().cloned();
                 shell.refresh_now_playing_notification(player.as_ref());
                 shell.update_media_controls();
             }
@@ -394,9 +440,13 @@ impl Shell {
         self: &Rc<Self>,
         tile: &ArtworkTile,
         binding: LiveArtworkBinding,
+        preview: Option<gtk::gdk::Texture>,
     ) {
         self.cancel_artwork_tile_request(tile);
-        tile.bind_pending(binding.seed);
+        let generation = tile.bind_pending(binding.seed);
+        if let Some(texture) = preview {
+            tile.set_texture_if_current(generation, texture);
+        }
         self.remember_artwork_binding(tile, binding);
         self.artwork
             .route_interaction
@@ -443,13 +493,29 @@ impl Shell {
     }
 
     fn remember_artwork_binding(self: &Rc<Self>, tile: &ArtworkTile, binding: LiveArtworkBinding) {
-        let shell = Rc::downgrade(self);
-        tile.install_cleanup_hook_once(move |identity| {
-            let Some(shell) = shell.upgrade() else {
-                return;
-            };
-            shell.release_artwork_tile_registration(identity);
-        });
+        let mapped_shell = Rc::downgrade(self);
+        let cleanup_shell = Rc::downgrade(self);
+        tile.install_lifecycle_hooks_once(
+            move |identity| {
+                let Some(shell) = mapped_shell.upgrade() else {
+                    return;
+                };
+                let binding = shell.artwork.live_bindings.borrow().get(&identity).cloned();
+                let Some(binding) = binding else {
+                    return;
+                };
+                let Some(tile) = binding.tile.upgrade() else {
+                    return;
+                };
+                shell.bind_live_artwork_tile(&tile, binding);
+            },
+            move |identity| {
+                let Some(shell) = cleanup_shell.upgrade() else {
+                    return;
+                };
+                shell.release_artwork_tile_registration(identity);
+            },
+        );
         tile.mark_artwork_bound();
         self.artwork
             .live_bindings
@@ -594,7 +660,7 @@ impl Shell {
 
     pub(in crate::shell) fn start_source_thumbnail_warm(self: &Rc<Self>) {
         self.cancel_source_thumbnail_warm();
-        let Some(selected) = self.library.selected.borrow().clone() else {
+        let Some(selected) = self.selected_library().as_deref().cloned() else {
             return;
         };
         self.artwork
@@ -911,9 +977,10 @@ mod tests {
     use library::{ImageRef, SourceId, TrackId};
 
     use super::{
-        ArtworkBinding, RouteArtworkInteraction, StartupArtworkPrime, cover_decode_size,
-        defer_route_artwork_settle, disconnect_route_artwork_adjustment_handler,
-        replace_route_artwork_signal_handler, source_thumbnail_bindings,
+        ArtworkBinding, RouteArtworkInteraction, StartupArtworkPrime, artwork_binding_needs_work,
+        artwork_work_allowed, cover_decode_size, cover_request_sizes, defer_route_artwork_settle,
+        disconnect_route_artwork_adjustment_handler, replace_route_artwork_signal_handler,
+        source_thumbnail_bindings,
     };
     use crate::test_support::{album, loaded_source, playlist, playlist_snapshot};
 
@@ -926,6 +993,31 @@ mod tests {
         assert_eq!(cover_decode_size(48, 96, 2.0), 96);
         assert_eq!(cover_decode_size(160, 256, 2.0), 256);
         assert_eq!(cover_decode_size(512, 256, 1.0), 256);
+    }
+
+    #[test]
+    fn artwork_requests_use_physical_size_and_canonical_fetch_tiers() {
+        assert_eq!(cover_request_sizes(200, 512, 1.0), (256, 200));
+        assert_eq!(cover_request_sizes(200, 512, 1.25), (256, 250));
+        assert_eq!(cover_request_sizes(200, 512, 1.5), (512, 300));
+        assert_eq!(cover_request_sizes(200, 512, 2.0), (512, 400));
+        assert_eq!(cover_request_sizes(200, 256, 2.0), (256, 256));
+        assert_eq!(cover_request_sizes(48, 96, 2.0), (96, 96));
+    }
+
+    #[test]
+    fn route_artwork_waits_for_mapping_but_playback_artwork_does_not() {
+        assert!(!artwork_work_allowed(true, false));
+        assert!(artwork_work_allowed(true, true));
+        assert!(artwork_work_allowed(false, false));
+    }
+
+    #[test]
+    fn cancelled_exact_request_restarts_behind_a_preview() {
+        assert!(artwork_binding_needs_work(false, false, false, false));
+        assert!(!artwork_binding_needs_work(false, false, false, true));
+        assert!(!artwork_binding_needs_work(false, true, false, false));
+        assert!(!artwork_binding_needs_work(false, false, true, false));
     }
 
     #[test]

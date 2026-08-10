@@ -5,6 +5,7 @@
 //! sees only editable preferences and connection progress.
 
 use std::sync::Arc;
+use std::thread;
 
 use async_channel::{Receiver, bounded};
 use scrobbling::{AudioscrobblerAuthorization, AudioscrobblerSession, Scrobbler};
@@ -17,6 +18,26 @@ use ui::runtime::{
 
 use crate::playback::PlaybackOwner;
 use crate::settings::{SettingsFile, load_scrobbling_settings, persist_scrobbling_settings};
+
+const AUTHORIZATION_THREAD_NAME: &str = "rufin-scrobbling-auth";
+const AUTHORIZATION_TASK_FAILED: &str = "Scrobbling authorization task failed.";
+
+async fn wait_for_authorization(
+    authorization: AudioscrobblerAuthorization,
+) -> Result<Option<AudioscrobblerSession>, String> {
+    let (completed, session) = tokio::sync::oneshot::channel();
+    let thread = thread::Builder::new()
+        .name(AUTHORIZATION_THREAD_NAME.to_string())
+        .spawn(move || {
+            let _ = completed.send(authorization.wait_for_session());
+        })
+        .map_err(|_| AUTHORIZATION_TASK_FAILED.to_string())?;
+    let session = session.await;
+    thread
+        .join()
+        .map_err(|_| AUTHORIZATION_TASK_FAILED.to_string())?;
+    session.map_err(|_| AUTHORIZATION_TASK_FAILED.to_string())?
+}
 
 #[derive(Clone)]
 pub(crate) struct ScrobblingOwner {
@@ -143,10 +164,7 @@ impl ScrobblingOwner {
                 Err(_) => return,
             }
 
-            let session = tokio::task::spawn_blocking(move || authorization.wait_for_session())
-                .await
-                .map_err(|_| "Scrobbling authorization task failed.".to_string())
-                .and_then(|result| result);
+            let session = wait_for_authorization(authorization).await;
             match session {
                 Ok(Some(session)) => match owner.save_session(&request, session) {
                     Ok(username) => {

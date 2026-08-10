@@ -16,7 +16,7 @@ use crate::routes::route::Route;
 use crate::{SidebarPin, SidebarRouteItem, format_duration_units};
 use adw::prelude::*;
 use artwork::ArtworkBinding;
-use gtk::{gio, glib};
+use gtk::gio;
 use library::{
     AcceptedLibraryChange, AlbumSummary, ArtistSummary, GenreSummary, PlaylistSummary,
     SmartPlaylistSummary,
@@ -135,8 +135,6 @@ pub(crate) struct NavigationState {
 pub(super) struct PrimaryMenuWidgets {
     pub(super) button: gtk::Button,
     pub(super) popover: RefCell<Option<gtk::PopoverMenu>>,
-    pub(super) click_handler: RefCell<Option<glib::SignalHandlerId>>,
-    pub(super) unmap_handler: RefCell<Option<glib::SignalHandlerId>>,
 }
 
 pub(super) struct NormalPrimaryMenuWidgets {
@@ -175,8 +173,6 @@ pub(super) fn build_compact_navigation(shell: &Rc<Shell>) {
         .append(&primary_menu_button(
             &shell.navigation_view.compact_main_menu.button,
             &shell.navigation_view.compact_main_menu.popover,
-            &shell.navigation_view.compact_main_menu.click_handler,
-            &shell.navigation_view.compact_main_menu.unmap_handler,
             shell,
             true,
         ));
@@ -208,7 +204,7 @@ impl Shell {
     }
 
     pub(crate) fn import_remote_playlist_pins_once(&self) -> bool {
-        let Some(selected) = self.library.selected.borrow().clone() else {
+        let Some(selected) = self.selected_library().as_deref().cloned() else {
             return false;
         };
         let remote = self
@@ -251,10 +247,8 @@ impl Shell {
 
     pub(crate) fn sidebar_pins_changed(&self, change: &AcceptedLibraryChange) -> bool {
         let selected_source_id = self
-            .library
-            .selected
-            .borrow()
-            .as_ref()
+            .selected_library()
+            .as_deref()
             .map(|selected| selected.source_id.clone());
         let Some(selected_source_id) = selected_source_id else {
             return false;
@@ -304,18 +298,16 @@ pub(super) fn update_navigation_selection(shell: &Shell) {
 
 pub(crate) fn update_sidebar_pin_playback(shell: &Shell) {
     let selected_source_id = shell
-        .library
-        .selected
-        .borrow()
-        .as_ref()
+        .selected_library()
+        .as_deref()
         .map(|selected| selected.source_id.clone());
-    let current = route_current_track(shell.playback.player.borrow().as_ref());
+    let current = route_current_track(shell.selected_playback().as_deref());
     let playback_context_id = current
         .as_ref()
         .zip(selected_source_id.as_ref())
         .filter(|(current, source_id)| &current.source_id == *source_id)
         .and_then(|(current, _)| current.context.as_ref())
-        .map(|context| context.context_id.as_str());
+        .map(|context| context.context_id.as_ref());
 
     let mut pin_rows = Vec::new();
     let mut child = shell.navigation_view.normal_nav_pins.first_child();
@@ -372,21 +364,17 @@ fn sidebar_pin_context_matches(pin_context_id: &str, playback_context_id: &str) 
 pub(super) fn relocalize_primary_menu_button(
     button: &gtk::Button,
     popover_slot: &RefCell<Option<gtk::PopoverMenu>>,
-    handler_slot: &RefCell<Option<glib::SignalHandlerId>>,
-    unmap_handler_slot: &RefCell<Option<glib::SignalHandlerId>>,
     shell: &Rc<Shell>,
     compact: bool,
 ) {
     chrome::configure_primary_menu_button(button);
     button.set_child(Some(&sidebar_menu_content(compact)));
-    update_primary_menu_popover(
-        button,
-        popover_slot,
-        handler_slot,
-        unmap_handler_slot,
-        primary_menu_popover(shell),
-        shell,
-    );
+    let existing = popover_slot.borrow().clone();
+    if let Some(popover) = existing.as_ref() {
+        refresh_primary_menu(popover, shell);
+    } else {
+        update_primary_menu_popover(button, popover_slot, primary_menu_popover(shell), shell);
+    }
 }
 
 fn clear_box(container: &gtk::Box) {
@@ -551,8 +539,6 @@ fn nav_route_icon_names(widget: &gtk::Widget) -> Option<(&'static str, &'static 
 fn primary_menu_button(
     button: &gtk::Button,
     popover_slot: &RefCell<Option<gtk::PopoverMenu>>,
-    handler_slot: &RefCell<Option<glib::SignalHandlerId>>,
-    unmap_handler_slot: &RefCell<Option<glib::SignalHandlerId>>,
     shell: &Rc<Shell>,
     compact: bool,
 ) -> gtk::Button {
@@ -562,49 +548,27 @@ fn primary_menu_button(
         button.add_css_class("nav-button");
         button.add_css_class("rail-button");
     }
-    relocalize_primary_menu_button(
-        button,
-        popover_slot,
-        handler_slot,
-        unmap_handler_slot,
-        shell,
-        compact,
-    );
+    relocalize_primary_menu_button(button, popover_slot, shell, compact);
     button.clone()
 }
 
 fn update_primary_menu_popover(
     button: &gtk::Button,
     popover_slot: &RefCell<Option<gtk::PopoverMenu>>,
-    handler_slot: &RefCell<Option<glib::SignalHandlerId>>,
-    unmap_handler_slot: &RefCell<Option<glib::SignalHandlerId>>,
     popover: gtk::PopoverMenu,
     shell: &Rc<Shell>,
 ) {
-    if let Some(handler) = handler_slot.borrow_mut().take() {
-        button.disconnect(handler);
-    }
-    if let Some(handler) = unmap_handler_slot.borrow_mut().take() {
-        button.disconnect(handler);
-    }
-    if let Some(current) = popover_slot.borrow_mut().replace(popover.clone()) {
-        if current.is_visible() {
-            popdown_native_menu(&current);
-        }
-        current.unparent();
-    }
+    *popover_slot.borrow_mut() = Some(popover.clone());
     popover.set_parent(button);
     let row_popover = popover.clone();
     let row_shell = Rc::downgrade(shell);
-    let handler = button.connect_clicked(move |_| {
+    button.connect_clicked(move |_| {
         if let Some(shell) = row_shell.upgrade() {
             refresh_primary_menu(&row_popover, &shell);
             row_popover.popup();
         }
     });
-    let unmap_handler = crate::interactions::popdown_on_anchor_unmap(button, &popover);
-    *handler_slot.borrow_mut() = Some(handler);
-    *unmap_handler_slot.borrow_mut() = Some(unmap_handler);
+    crate::interactions::popdown_on_anchor_unmap(button, &popover);
 }
 
 fn normal_primary_menu_button(
@@ -615,16 +579,17 @@ fn normal_primary_menu_button(
     button.set_icon_name("open-menu-symbolic");
     bind_widget_tooltip(button, msgid("Menu"));
     bind_widget_accessible_label(button, msgid("Menu"));
-    let popover = primary_menu_popover(shell);
-    let mapped_popover = popover.clone();
-    let row_shell = Rc::downgrade(shell);
-    popover.connect_map(move |_| {
-        if let Some(shell) = row_shell.upgrade() {
-            refresh_primary_menu(&mapped_popover, &shell);
-        }
-    });
-    button.set_popover(Some(&popover));
-    popover_slot.replace(Some(popover));
+    if popover_slot.borrow().is_none() {
+        let popover = primary_menu_popover(shell);
+        let row_shell = Rc::downgrade(shell);
+        popover.connect_map(move |popover| {
+            if let Some(shell) = row_shell.upgrade() {
+                refresh_primary_menu(popover, &shell);
+            }
+        });
+        button.set_popover(Some(&popover));
+        popover_slot.replace(Some(popover));
+    }
     button.clone()
 }
 
@@ -642,14 +607,14 @@ pub(super) fn popup_compact_primary_menu(shell: &Rc<Shell>) {
 }
 
 pub(super) fn popup_normal_primary_menu(shell: &Rc<Shell>) {
-    if let Some(popover) = shell
+    if shell
         .navigation_view
         .normal_main_menu
         .popover
         .borrow()
         .as_ref()
+        .is_some()
     {
-        refresh_primary_menu(popover, shell);
         shell.navigation_view.normal_main_menu.button.popup();
     }
 }
@@ -678,15 +643,18 @@ pub(crate) fn popdown_primary_menu(shell: &Shell) {
 }
 
 fn refresh_primary_menu(popover: &gtk::PopoverMenu, shell: &Rc<Shell>) {
-    popover.set_menu_model(Some(&primary_menu_model(shell)));
+    let menu = popover
+        .menu_model()
+        .and_then(|model| model.downcast::<gio::Menu>().ok())
+        .expect("a primary menu popover keeps its mutable menu model");
+    replace_primary_menu_model(&menu, shell);
     style_primary_menu(popover);
 }
 
 fn primary_menu_popover(shell: &Rc<Shell>) -> gtk::PopoverMenu {
-    let popover = gtk::PopoverMenu::from_model_full(
-        &primary_menu_model(shell),
-        gtk::PopoverMenuFlags::NESTED,
-    );
+    let menu = gio::Menu::new();
+    replace_primary_menu_model(&menu, shell);
+    let popover = gtk::PopoverMenu::from_model_full(&menu, gtk::PopoverMenuFlags::NESTED);
     popover.set_autohide(true);
     popover.set_position(gtk::PositionType::Bottom);
     popover.set_halign(gtk::Align::Start);
@@ -701,8 +669,8 @@ fn style_primary_menu(popover: &gtk::PopoverMenu) {
     keep_parent_grab_for_nested_native_menus(popover);
 }
 
-fn primary_menu_model(shell: &Rc<Shell>) -> gio::Menu {
-    let menu = gio::Menu::new();
+fn replace_primary_menu_model(menu: &gio::Menu, shell: &Rc<Shell>) {
+    menu.remove_all();
 
     let source = gio::Menu::new();
     let (source_name, source_icon_name, source_menu) = source_submenu(shell);
@@ -767,8 +735,6 @@ fn primary_menu_model(shell: &Rc<Shell>) -> gio::Menu {
         "help-about-symbolic",
     );
     menu.append_section(None, &information);
-
-    menu
 }
 
 fn append_menu_action(menu: &gio::Menu, label: &str, action: &str, icon_name: &str) {
@@ -991,7 +957,7 @@ fn sidebar_pin_items(shell: &Shell) -> Vec<SidebarPinItem> {
         }
         settings.sidebar.pins.clone()
     };
-    let Some(selected) = shell.library.selected.borrow().as_ref().cloned() else {
+    let Some(selected) = shell.selected_library().as_deref().cloned() else {
         return Vec::new();
     };
     let folder = selected.music_folder_id.as_ref();

@@ -171,10 +171,6 @@ impl LyricsPane {
         &self.root
     }
 
-    pub(crate) fn focus_dismiss_target(&self) -> gtk::Widget {
-        self.offset_entry.clone().upcast()
-    }
-
     pub fn connect_search_clicked(&self, search: impl Fn() + 'static) {
         self.search_button.connect_clicked(move |_| search());
     }
@@ -232,9 +228,13 @@ impl LyricsPane {
             activate_commit(entry.text().to_string());
         });
 
-        let entry = self.offset_entry.clone();
+        let entry = self.offset_entry.downgrade();
         let focus = gtk::EventControllerFocus::new();
-        focus.connect_leave(move |_| commit(entry.text().to_string()));
+        focus.connect_leave(move |_| {
+            if let Some(entry) = entry.upgrade() {
+                commit(entry.text().to_string());
+            }
+        });
         self.offset_entry.add_controller(focus);
     }
 

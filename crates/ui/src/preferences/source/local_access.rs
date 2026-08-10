@@ -165,9 +165,14 @@ impl LocalAccessEditor {
         };
         self.operation.replace(LocalAccessOperation::Pending);
         update();
-        let editor = Rc::clone(self);
+        let editor = Rc::downgrade(self);
+        let update = Rc::downgrade(&update);
         glib::spawn_future_local(async move {
-            match receiver.recv().await {
+            let response = receiver.recv().await;
+            let (Some(editor), Some(update)) = (editor.upgrade(), update.upgrade()) else {
+                return;
+            };
+            match response {
                 Ok(Ok(())) => (editor.on_success)(),
                 Ok(Err(error)) => {
                     editor
@@ -228,12 +233,12 @@ fn manage_server_content(
         (access, status, selected)
     };
     let current_sample = {
-        let player = shell.playback.player.borrow();
+        let player = shell.selected_playback();
         let source_id = player
             .as_ref()
             .map(|player| player.transport.source_id.clone());
         let source_path =
-            current_playback_track(&player).and_then(|track| track.source_path.clone());
+            current_playback_track(player.as_deref()).and_then(|track| track.source_path.clone());
         source_id.zip(source_path)
     };
     let sample_source_path = preferred_server_sample(

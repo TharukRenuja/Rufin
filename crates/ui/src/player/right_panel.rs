@@ -12,8 +12,6 @@ use crate::shell::layout::{
 use localization::tr;
 
 use super::bottom::BOTTOM_PLAYER_HEIGHT;
-use super::lyrics::LyricsPane;
-
 const QUEUE_LYRICS_DEFAULT_LYRICS_HEIGHT: i32 = 300;
 const QUEUE_LYRICS_RESIZE_HANDLE_HEIGHT: i32 = 10;
 const QUEUE_HEADER_TOP_MARGIN: i32 = 10;
@@ -33,7 +31,7 @@ pub(crate) struct RightPanelWidgets {
     pub(crate) queue_lyrics_overlay: gtk::Overlay,
     pub(crate) lyrics_surface: gtk::Box,
     pub(crate) lyrics_resize_handle: gtk::Box,
-    pub(crate) lyrics_pane: LyricsPane,
+    pub(crate) lyrics_host: gtk::Box,
 }
 
 pub(crate) struct RightPanelParts {
@@ -44,7 +42,7 @@ pub(crate) struct RightPanelParts {
     pub(crate) queue_lyrics_overlay: gtk::Overlay,
     pub(crate) lyrics_surface: gtk::Box,
     pub(crate) lyrics_resize_handle: gtk::Box,
-    pub(crate) lyrics_pane: LyricsPane,
+    pub(crate) lyrics_host: gtk::Box,
 }
 
 pub(crate) fn build_right_panel() -> RightPanelParts {
@@ -86,7 +84,9 @@ pub(crate) fn build_right_panel() -> RightPanelParts {
     queue_region.append(&queue_header);
     queue_region.append(&queue_panel);
 
-    let lyrics_pane = LyricsPane::new();
+    let lyrics_host = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    lyrics_host.set_hexpand(true);
+    lyrics_host.set_vexpand(true);
     let lyrics_resize_handle = gtk::Box::new(gtk::Orientation::Horizontal, 0);
     lyrics_resize_handle.add_css_class("queue-lyrics-resize-handle");
     lyrics_resize_handle.set_height_request(QUEUE_LYRICS_RESIZE_HANDLE_HEIGHT);
@@ -104,7 +104,7 @@ pub(crate) fn build_right_panel() -> RightPanelParts {
     lyrics_surface.set_halign(gtk::Align::Fill);
     lyrics_surface.set_valign(gtk::Align::End);
     lyrics_surface.append(&lyrics_resize_handle);
-    lyrics_surface.append(lyrics_pane.widget());
+    lyrics_surface.append(&lyrics_host);
 
     let queue_lyrics_overlay = gtk::Overlay::new();
     queue_lyrics_overlay.add_css_class("queue-lyrics-overlay");
@@ -129,7 +129,7 @@ pub(crate) fn build_right_panel() -> RightPanelParts {
         queue_lyrics_overlay,
         lyrics_surface,
         lyrics_resize_handle,
-        lyrics_pane,
+        lyrics_host,
     }
 }
 

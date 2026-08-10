@@ -1,7 +1,6 @@
 use std::collections::{HashMap, VecDeque};
 
 use gtk::prelude::*;
-use library::SourceId;
 
 use crate::routes::route::Route;
 
@@ -9,13 +8,12 @@ const ROUTE_POSITION_CAPACITY: usize = 64;
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub(super) struct RoutePositionKey {
-    source_id: SourceId,
     route: Route,
 }
 
 impl RoutePositionKey {
-    pub(super) fn new(source_id: SourceId, route: Route) -> Self {
-        Self { source_id, route }
+    pub(super) fn new(route: Route) -> Self {
+        Self { route }
     }
 }
 
@@ -61,6 +59,11 @@ impl RoutePositionMemory {
         self.recency.retain(|candidate| candidate != key);
         self.recency.push_back(key.clone());
         Some(position)
+    }
+
+    pub(super) fn clear(&mut self) {
+        self.positions.clear();
+        self.recency.clear();
     }
 }
 
@@ -172,29 +175,30 @@ pub(super) fn restore_route_position_before_snapshot(
 
 #[cfg(test)]
 mod tests {
-    use library::SourceId;
-
     use crate::routes::route::Route;
 
     use super::{RoutePositionKey, RoutePositionMemory, clamp_route_position};
 
     #[test]
-    fn position_memory_is_source_scoped_bounded_and_overwrites_in_place() {
-        let source_a = SourceId::new("source-a");
-        let source_b = SourceId::new("source-b");
-        let home_a = RoutePositionKey::new(source_a.clone(), Route::Home);
-        let tracks_a = RoutePositionKey::new(source_a, Route::Tracks);
-        let home_b = RoutePositionKey::new(source_b, Route::Home);
+    fn position_memory_is_bounded_and_clears_with_the_source() {
+        let home = RoutePositionKey::new(Route::Home);
+        let tracks = RoutePositionKey::new(Route::Tracks);
+        let albums = RoutePositionKey::new(Route::Albums);
         let mut memory = RoutePositionMemory::with_capacity(2);
 
-        memory.record(home_a.clone(), 120.0);
-        memory.record(tracks_a.clone(), 240.0);
-        memory.record(home_a.clone(), 180.0);
-        memory.record(home_b.clone(), 360.0);
+        memory.record(home.clone(), 120.0);
+        memory.record(tracks.clone(), 240.0);
+        memory.record(home.clone(), 180.0);
+        memory.record(albums.clone(), 360.0);
 
-        assert_eq!(memory.restore(&home_a), Some(180.0));
-        assert_eq!(memory.restore(&tracks_a), None);
-        assert_eq!(memory.restore(&home_b), Some(360.0));
+        assert_eq!(memory.restore(&home), Some(180.0));
+        assert_eq!(memory.restore(&tracks), None);
+        assert_eq!(memory.restore(&albums), Some(360.0));
+
+        memory.clear();
+
+        assert_eq!(memory.restore(&home), None);
+        assert_eq!(memory.restore(&albums), None);
     }
 
     #[test]

@@ -1,9 +1,10 @@
 use library::{
     ArtistCredit, Library, PlaybackCheckpoint, PlaybackFallbackTrack, PlaybackOccurrence,
-    PlaybackOccurrenceId, PlaybackProvenance, PlaybackQueueSnapshot, PlaybackState, Track,
-    TrackData, TrackId, TrackRelations,
+    PlaybackOccurrenceId, PlaybackProvenance, PlaybackQueueSnapshot, PlaybackState,
+    PlaybackTraversalUpdate, SourceId, Track, TrackData, TrackId, TrackRelations,
 };
 use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
 use thiserror::Error;
 
 use crate::{
@@ -20,21 +21,118 @@ pub enum CheckpointError {
     Loaded(String),
 }
 
-/// Captures one compact durable queue value.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct CheckpointChange {
+    pub expected_revision: u64,
+    pub rows_changed: bool,
+}
+
+/// An immutable durable queue revision captured without copying queue rows.
 ///
-/// Every occurrence stores identity and provenance. One fallback value per
-/// distinct Track keeps restoration playable while canonical source facts are
-/// rebuilding.
-pub fn build_checkpoint(sequence: &Sequence) -> PlaybackCheckpoint {
-    let mut seen = HashSet::new();
-    let fallback_tracks = sequence
-        .entries()
+/// Playback publishes this value to its persistence consumer. The blocking
+/// Store worker materializes it only after newer revisions have been
+/// coalesced, keeping queue serialization and fallback construction off the
+/// playback actor and output threads.
+#[derive(Clone, Debug)]
+pub struct PlaybackCheckpointRevision {
+    source_id: SourceId,
+    expected_revision: u64,
+    revision: u64,
+    rows_changed: bool,
+    rows: Arc<Vec<SequenceEntry>>,
+    traversal: Arc<Vec<usize>>,
+    shuffle_enabled: bool,
+    selected_index: Option<usize>,
+    progress_millis: u64,
+}
+
+#[derive(Debug)]
+pub enum PlaybackCheckpointMaterialization {
+    Full(PlaybackCheckpoint),
+    Traversal(PlaybackTraversalUpdate),
+}
+
+impl PlaybackCheckpointRevision {
+    pub(crate) fn capture(sequence: &Sequence, change: CheckpointChange) -> Self {
+        Self {
+            source_id: sequence.source_id.clone(),
+            expected_revision: change.expected_revision,
+            revision: sequence.revision,
+            rows_changed: change.rows_changed,
+            rows: Arc::clone(&sequence.entries),
+            traversal: Arc::clone(&sequence.traversal),
+            shuffle_enabled: sequence.shuffle_enabled,
+            selected_index: sequence.selected_index,
+            progress_millis: sequence.progress_millis,
+        }
+    }
+
+    pub fn source_id(&self) -> &SourceId {
+        &self.source_id
+    }
+
+    pub fn revision(&self) -> u64 {
+        self.revision
+    }
+
+    #[cfg(test)]
+    fn shares_rows_with(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.rows, &other.rows)
+    }
+
+    /// Keeps only the latest value while retaining the oldest durable base.
+    pub fn coalesce(&mut self, mut newer: Self) {
+        if self.source_id == newer.source_id && self.revision == newer.expected_revision {
+            newer.expected_revision = self.expected_revision;
+            newer.rows_changed |= self.rows_changed;
+        } else {
+            newer.rows_changed = true;
+        }
+        *self = newer;
+    }
+
+    pub fn materialize_checkpoint(self) -> PlaybackCheckpointMaterialization {
+        if self.rows_changed || self.revision <= self.expected_revision {
+            return PlaybackCheckpointMaterialization::Full(self.materialize_full_checkpoint());
+        }
+        let traversal = checkpoint_traversal(&self.rows, &self.traversal, self.shuffle_enabled);
+        let state = checkpoint_state(&self.rows, self.selected_index, self.progress_millis);
+        PlaybackCheckpointMaterialization::Traversal(PlaybackTraversalUpdate {
+            source_id: self.source_id,
+            expected_revision: self.expected_revision,
+            revision: self.revision,
+            traversal,
+            state,
+        })
+    }
+
+    pub fn materialize_full_checkpoint(self) -> PlaybackCheckpoint {
+        let traversal = checkpoint_traversal(&self.rows, &self.traversal, self.shuffle_enabled);
+        let state = checkpoint_state(&self.rows, self.selected_index, self.progress_millis);
+        let (occurrences, fallback_tracks) = checkpoint_rows(&self.rows);
+        PlaybackCheckpoint {
+            source_id: self.source_id,
+            revision: self.revision,
+            queue: PlaybackQueueSnapshot {
+                occurrences,
+                fallback_tracks,
+                traversal,
+            },
+            state,
+        }
+    }
+}
+
+fn checkpoint_rows(
+    entries: &[SequenceEntry],
+) -> (Vec<PlaybackOccurrence>, Vec<PlaybackFallbackTrack>) {
+    let mut seen = HashSet::<&TrackId>::new();
+    let fallback_tracks = entries
         .iter()
-        .filter(|entry| seen.insert(entry.track.id.clone()))
+        .filter(|entry| seen.insert(&entry.track.id))
         .map(|entry| fallback_track(&entry.track))
         .collect();
-    let occurrences = sequence
-        .entries()
+    let occurrences = entries
         .iter()
         .map(|entry| PlaybackOccurrence {
             id: PlaybackOccurrenceId::new(entry.occurrence.as_str()),
@@ -42,29 +140,35 @@ pub fn build_checkpoint(sequence: &Sequence) -> PlaybackCheckpoint {
             provenance: playback_provenance(&entry.provenance),
         })
         .collect();
-    let traversal = if sequence.shuffle_enabled() {
-        sequence
-            .traversal()
-            .into_iter()
-            .map(|occurrence| PlaybackOccurrenceId::new(occurrence.as_str()))
+    (occurrences, fallback_tracks)
+}
+
+fn checkpoint_traversal(
+    entries: &[SequenceEntry],
+    traversal: &[usize],
+    shuffle_enabled: bool,
+) -> Vec<PlaybackOccurrenceId> {
+    if shuffle_enabled {
+        traversal
+            .iter()
+            .filter_map(|index| entries.get(*index))
+            .map(|entry| PlaybackOccurrenceId::new(entry.occurrence.as_str()))
             .collect()
     } else {
         Vec::new()
-    };
-    PlaybackCheckpoint {
-        source_id: sequence.source_id().clone(),
-        revision: sequence.revision(),
-        queue: PlaybackQueueSnapshot {
-            occurrences,
-            fallback_tracks,
-            traversal,
-        },
-        state: PlaybackState {
-            selected: sequence
-                .selected()
-                .map(|entry| PlaybackOccurrenceId::new(entry.occurrence.as_str())),
-            progress_millis: sequence.progress_millis(),
-        },
+    }
+}
+
+fn checkpoint_state(
+    entries: &[SequenceEntry],
+    selected_index: Option<usize>,
+    progress_millis: u64,
+) -> PlaybackState {
+    PlaybackState {
+        selected: selected_index
+            .and_then(|index| entries.get(index))
+            .map(|entry| PlaybackOccurrenceId::new(entry.occurrence.as_str())),
+        progress_millis,
     }
 }
 
@@ -312,7 +416,7 @@ mod tests {
             .expect("apply duplicate Track");
         sequence.set_progress_millis(12_345);
         assert!(sequence.set_shuffle_seed(true, 17));
-        let checkpoint = build_checkpoint(&sequence);
+        let checkpoint = full_checkpoint(&sequence);
         let stored_traversal = checkpoint.queue.traversal.clone();
 
         assert_eq!(checkpoint.queue.occurrences.len(), 2);
@@ -368,7 +472,7 @@ mod tests {
                 Placement::Replace { anchor_index: 2 },
             )
             .expect("build queue");
-        let checkpoint = build_checkpoint(&sequence);
+        let checkpoint = full_checkpoint(&sequence);
         assert!(checkpoint.queue.traversal.is_empty());
 
         let shuffled = restore_checkpoint(&checkpoint, None, RepeatMode::One, true, 81)
@@ -401,6 +505,87 @@ mod tests {
                 .map(|occurrence| occurrence.id.as_str())
                 .collect::<Vec<_>>()
         );
+    }
+
+    #[test]
+    fn identical_replacement_reuses_rows_and_materializes_only_new_traversal() {
+        let mut sequence = Sequence::new(SourceId::fake(1));
+        sequence
+            .apply_batch(
+                Batch::new((1..=8).map(item).collect()),
+                Placement::Replace { anchor_index: 0 },
+            )
+            .expect("build queue");
+        assert!(sequence.set_shuffle_seed(true, 17));
+        let previous_revision = sequence.revision();
+        let previous = PlaybackCheckpointRevision::capture(
+            &sequence,
+            CheckpointChange {
+                expected_revision: 0,
+                rows_changed: true,
+            },
+        );
+        let (_, change) = sequence
+            .apply_batch_with_change(
+                Batch::new((1..=8).map(item).collect()).with_shuffle_intent(29, true),
+                Placement::Replace { anchor_index: 0 },
+            )
+            .expect("restart identical queue");
+        let revision = PlaybackCheckpointRevision::capture(
+            &sequence,
+            CheckpointChange {
+                expected_revision: change.expected_revision,
+                rows_changed: change.rows_changed,
+            },
+        );
+
+        assert!(!change.rows_changed);
+        assert!(change.traversal_changed);
+        assert_eq!(revision.revision(), previous_revision + 1);
+        assert!(revision.shares_rows_with(&previous));
+        assert!(matches!(
+            revision.materialize_checkpoint(),
+            PlaybackCheckpointMaterialization::Traversal(_)
+        ));
+    }
+
+    #[test]
+    fn coalescing_keeps_an_unwritten_row_revision_self_contained() {
+        let mut sequence = Sequence::new(SourceId::fake(1));
+        let (_, row_change) = sequence
+            .apply_batch_with_change(
+                Batch::new((1..=8).map(item).collect()),
+                Placement::Replace { anchor_index: 0 },
+            )
+            .expect("replace rows");
+        assert!(sequence.set_shuffle_seed(true, 17));
+        let mut pending = PlaybackCheckpointRevision::capture(
+            &sequence,
+            CheckpointChange {
+                expected_revision: row_change.expected_revision,
+                rows_changed: true,
+            },
+        );
+        let (_, traversal_change) = sequence
+            .apply_batch_with_change(
+                Batch::new((1..=8).map(item).collect()).with_shuffle_intent(29, true),
+                Placement::Replace { anchor_index: 0 },
+            )
+            .expect("restart identical rows");
+        let latest = PlaybackCheckpointRevision::capture(
+            &sequence,
+            CheckpointChange {
+                expected_revision: traversal_change.expected_revision,
+                rows_changed: traversal_change.rows_changed,
+            },
+        );
+
+        pending.coalesce(latest);
+
+        assert!(matches!(
+            pending.materialize_checkpoint(),
+            PlaybackCheckpointMaterialization::Full(_)
+        ));
     }
 
     fn item(number: u32) -> BatchItem {
@@ -436,5 +621,16 @@ mod tests {
             }),
             Provenance::Manual,
         )
+    }
+
+    fn full_checkpoint(sequence: &Sequence) -> PlaybackCheckpoint {
+        PlaybackCheckpointRevision::capture(
+            sequence,
+            CheckpointChange {
+                expected_revision: sequence.revision(),
+                rows_changed: true,
+            },
+        )
+        .materialize_full_checkpoint()
     }
 }

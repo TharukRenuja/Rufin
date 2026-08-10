@@ -6,17 +6,13 @@ pub(crate) mod navigation;
 use std::cell::Cell;
 
 use crate::downloads::DownloadsState;
-use crate::favorites::FavoriteState;
 use crate::player::PlayerDesktopWidgets;
 use crate::player::desktop::DesktopState;
 use crate::player::lyrics::state::LyricsState;
-use crate::player::queue::QueueState;
 use crate::player::right_panel::RightPanelWidgets;
 use crate::player::state::PlaybackState;
 use crate::preferences::PreferencesState;
 use crate::preferences::source::SourceState;
-use crate::routes::LibraryState;
-use crate::routes::playlist_picker::PlaylistPickerState;
 use crate::runtime::{DiagnosticsHandle, ProductHandles, SelectedSourceHandle};
 use crate::settings::SettingsState;
 use actions::ControlFeedbackState;
@@ -33,25 +29,23 @@ mod events;
 mod localization;
 pub(crate) mod route;
 mod route_position;
+pub(crate) mod selected_ui;
 mod startup;
 mod window_state;
 
 use route::RouteViewport;
+use selected_ui::SelectedUiState;
 
 impl Shell {
     pub(crate) fn selected_source_operations(&self) -> Option<SelectedSourceHandle> {
-        self.library
-            .selected
-            .borrow()
-            .as_ref()
+        self.selected_library()
+            .as_deref()
             .map(|selected| selected.operations.clone())
     }
 
     pub(crate) fn metadata_editing_available(&self, item_id: library::MetadataItemId) -> bool {
-        self.library
-            .selected
-            .borrow()
-            .as_ref()
+        self.selected_library()
+            .as_deref()
             .is_some_and(|selected| selected.operations.metadata_editing_available(&item_id))
     }
 }
@@ -62,20 +56,17 @@ pub(crate) struct Shell {
     pub(crate) appearance: crate::application::style::ApplicationAppearance,
     pub(crate) settings: SettingsState,
     pub(crate) navigation: NavigationState,
-    pub(crate) library: LibraryState,
     pub(crate) source: SourceState,
     startup: StartupState,
     pub(crate) playback: PlaybackState,
-    pub(crate) queue: QueueState,
     pub(crate) lyrics: LyricsState,
     pub(crate) preferences: PreferencesState,
-    pub(crate) playlist_picker: PlaylistPickerState,
     pub(crate) downloads: DownloadsState,
     pub(crate) control_feedback: ControlFeedbackState,
     localization: LocalizationState,
     pub(crate) desktop: DesktopState,
     artwork: ArtworkState,
-    pub(crate) favorites: FavoriteState,
+    pub(crate) selected_ui: SelectedUiState,
     pub(crate) products: ProductHandles,
     pub(crate) chrome: WindowChrome,
     layout_state: ShellLayoutState,

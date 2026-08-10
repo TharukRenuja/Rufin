@@ -5,8 +5,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use library::{
-    LoudnessAlbumInput, LoudnessAnalysisSnapshot, LoudnessItemId, LoudnessMeasurementWrite,
-    LoudnessTrackInput, SourceId, StreamRequest, TrackId,
+    Library, LoudnessAlbumInput, LoudnessAnalysisSnapshot, LoudnessItemId,
+    LoudnessMeasurementWrite, LoudnessTrackInput, ResolvedStream, SourceId, StreamRequest, TrackId,
 };
 use playback::{LoudnessNormalizationMode, SourceSessionEpoch};
 use playback_gstreamer::{LoudnessAnalysis, album_loudness, analyze_loudness_cancellable};
@@ -20,7 +20,17 @@ struct ActiveAnalysis {
     source_session_epoch: SourceSessionEpoch,
     selected: WeakActiveSource,
     cancelled: Arc<AtomicBool>,
+    task: Option<tokio::task::AbortHandle>,
     restart_requested: bool,
+}
+
+impl ActiveAnalysis {
+    fn cancel(mut self) {
+        self.cancelled.store(true, Ordering::Release);
+        if let Some(task) = self.task.take() {
+            task.abort();
+        }
+    }
 }
 
 #[derive(Default)]
@@ -87,23 +97,26 @@ impl LoudnessAnalysisOwner {
                 return;
             }
             if let Some(previous) = active.take() {
-                previous.cancelled.store(true, Ordering::Release);
+                previous.cancel();
             }
             *active = Some(ActiveAnalysis {
                 source_id: source_id.clone(),
                 source_session_epoch,
                 selected: selected.downgrade(),
                 cancelled: Arc::clone(&cancelled),
+                task: None,
                 restart_requested: false,
             });
         }
 
         let owner = Arc::downgrade(self);
         let selected = selected.downgrade();
-        self.runtime.spawn(async move {
+        let task_cancelled = Arc::clone(&cancelled);
+        let task = self.runtime.spawn(async move {
             info!(%source_id, "analyzing missing loudness data");
-            let summary = analyze_selected(selected, Arc::clone(&cancelled)).await;
-            if !cancelled.load(Ordering::Acquire) {
+            let summary =
+                analyze_selected(selected, Arc::clone(&task_cancelled), analyze_track).await;
+            if !task_cancelled.load(Ordering::Acquire) {
                 info!(
                     %source_id,
                     tracks = summary.tracks,
@@ -113,9 +126,22 @@ impl LoudnessAnalysisOwner {
                 );
             }
             if let Some(owner) = owner.upgrade() {
-                owner.finish(&cancelled);
+                owner.finish(&task_cancelled);
             }
         });
+        let task = task.abort_handle();
+        let mut active = self
+            .active
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if let Some(active) = active
+            .as_mut()
+            .filter(|active| Arc::ptr_eq(&active.cancelled, &cancelled))
+        {
+            active.task = Some(task);
+        } else {
+            task.abort();
+        }
     }
 
     pub(crate) fn library_changed(
@@ -159,7 +185,7 @@ impl LoudnessAnalysisOwner {
             .unwrap_or_else(|poisoned| poisoned.into_inner())
             .take()
         {
-            active.cancelled.store(true, Ordering::Release);
+            active.cancel();
         }
     }
 
@@ -191,6 +217,11 @@ impl LoudnessAnalysisOwner {
 async fn analyze_selected(
     selected: WeakActiveSource,
     cancelled: Arc<AtomicBool>,
+    analyze: impl AsyncFn(
+        &WeakActiveSource,
+        &Arc<AtomicBool>,
+        &LoudnessTrackInput,
+    ) -> Result<LoudnessAnalysis, String>,
 ) -> AnalysisSummary {
     let mut summary = AnalysisSummary::default();
     let mut attempted_tracks = HashSet::new();
@@ -210,6 +241,7 @@ async fn analyze_selected(
                 break;
             }
         };
+        drop(state);
         let plan = analysis_plan(&snapshot, &attempted_tracks, &attempted_albums);
         if plan.albums.is_empty() && plan.tracks.is_empty() {
             break;
@@ -222,7 +254,7 @@ async fn analyze_selected(
             let mut complete = true;
             for track in work.tracks {
                 attempted_tracks.insert(track.analysis_key);
-                match analyze_track(&selected, &cancelled, &track).await {
+                match analyze(&selected, &cancelled, &track).await {
                     Ok(analysis) => {
                         if track.current.is_none() {
                             writes.push(LoudnessMeasurementWrite {
@@ -277,7 +309,7 @@ async fn analyze_selected(
                 break;
             }
             attempted_tracks.insert(track.analysis_key);
-            match analyze_track(&selected, &cancelled, &track).await {
+            match analyze(&selected, &cancelled, &track).await {
                 Ok(analysis)
                     if store_measurements(
                         &selected,
@@ -360,13 +392,29 @@ async fn analyze_track(
     cancelled: &Arc<AtomicBool>,
     input: &LoudnessTrackInput,
 ) -> Result<LoudnessAnalysis, String> {
-    let state = selected
-        .upgrade()
-        .and_then(|selected| selected.resolve())
-        .ok_or_else(|| "the selected source changed".to_string())?;
-    let stream = prepare_stream(
-        Some(Arc::clone(&state.library)),
-        state.source.clone(),
+    analyze_track_with(selected, cancelled, input, prepare_stream).await
+}
+
+async fn analyze_track_with(
+    selected: &WeakActiveSource,
+    cancelled: &Arc<AtomicBool>,
+    input: &LoudnessTrackInput,
+    resolve_stream: impl AsyncFn(
+        Option<Arc<Library>>,
+        Option<Arc<sources::Source>>,
+        StreamRequest,
+    ) -> Result<ResolvedStream, String>,
+) -> Result<LoudnessAnalysis, String> {
+    let (library, source) = {
+        let state = selected
+            .upgrade()
+            .and_then(|selected| selected.resolve())
+            .ok_or_else(|| "the selected source changed".to_string())?;
+        (Arc::clone(&state.library), state.source.clone())
+    };
+    let stream = resolve_stream(
+        Some(library),
+        source,
         StreamRequest::original(input.track.id.clone()),
     )
     .await?;
@@ -405,9 +453,111 @@ fn analysis_cancelled(selected: &WeakActiveSource, cancelled: &AtomicBool) -> bo
 
 #[cfg(test)]
 mod tests {
-    use library::{AlbumId, LoudnessMeasurement, Track};
+    use std::future::Future;
+    use std::task::{Context, Poll, Waker};
+
+    use library::{
+        AlbumId, CandidateBatch, CandidateFinish, CandidateHeader, HomeFacts, Libraries,
+        LoudnessMeasurement, Track,
+    };
+    use sources::SourceConfiguration;
+
+    use crate::source::SelectedSourceState;
 
     use super::*;
+
+    #[test]
+    fn cancelling_analysis_aborts_its_pending_task() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .expect("build test runtime");
+        let owner = LoudnessAnalysisOwner::new(runtime.handle().clone());
+        let retained = Arc::new(());
+        let retired = Arc::downgrade(&retained);
+        let task = runtime.spawn(async move {
+            let _retained = retained;
+            std::future::pending::<()>().await;
+        });
+        let cancelled = Arc::new(AtomicBool::new(false));
+        *owner
+            .active
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(ActiveAnalysis {
+            source_id: SourceId::new("local:server:cancel-loudness"),
+            source_session_epoch: SourceSessionEpoch::new(1),
+            selected: std::sync::Weak::new(),
+            cancelled: Arc::clone(&cancelled),
+            task: Some(task.abort_handle()),
+            restart_requested: false,
+        });
+
+        owner.cancel();
+        let stopped = runtime
+            .block_on(task)
+            .expect_err("analysis task was aborted");
+
+        assert!(stopped.is_cancelled());
+        assert!(cancelled.load(Ordering::Acquire));
+        assert!(retired.upgrade().is_none());
+    }
+
+    #[test]
+    fn pending_track_work_does_not_retain_the_selected_library() {
+        let (selected, retired_state, retired_library, _) = selected_loudness_fixture();
+
+        let started = Arc::new(AtomicBool::new(false));
+        let observed = Arc::clone(&started);
+        let mut analysis = Box::pin(analyze_selected(
+            selected.downgrade(),
+            Arc::new(AtomicBool::new(false)),
+            async move |_, _, _| {
+                observed.store(true, Ordering::Release);
+                std::future::pending::<Result<LoudnessAnalysis, String>>().await
+            },
+        ));
+        let mut context = Context::from_waker(Waker::noop());
+
+        assert!(matches!(
+            analysis.as_mut().poll(&mut context),
+            Poll::Pending
+        ));
+        assert!(started.load(Ordering::Acquire));
+        drop(selected);
+
+        assert!(retired_state.upgrade().is_none());
+        assert!(retired_library.upgrade().is_none());
+    }
+
+    #[test]
+    fn pending_stream_resolution_does_not_retain_the_selected_library() {
+        let (selected, retired_state, retired_library, input) = selected_loudness_fixture();
+        let started = Arc::new(AtomicBool::new(false));
+        let observed = Arc::clone(&started);
+        let selected_handle = selected.downgrade();
+        let cancelled = Arc::new(AtomicBool::new(false));
+        let mut analysis = Box::pin(analyze_track_with(
+            &selected_handle,
+            &cancelled,
+            &input,
+            async move |library, source, _| {
+                drop(library);
+                drop(source);
+                observed.store(true, Ordering::Release);
+                std::future::pending::<Result<ResolvedStream, String>>().await
+            },
+        ));
+        let mut context = Context::from_waker(Waker::noop());
+
+        assert!(matches!(
+            analysis.as_mut().poll(&mut context),
+            Poll::Pending
+        ));
+        assert!(started.load(Ordering::Acquire));
+        drop(selected);
+
+        assert!(retired_state.upgrade().is_none());
+        assert!(retired_library.upgrade().is_none());
+    }
 
     #[test]
     fn a_missing_album_reanalyzes_every_member_but_stores_no_duplicate_track_work() {
@@ -451,6 +601,62 @@ mod tests {
         assert!(plan.albums.is_empty());
         assert_eq!(plan.tracks.len(), 1);
         assert_eq!(plan.tracks[0].track.id, TrackId::new("second"));
+    }
+
+    fn selected_loudness_fixture() -> (
+        Arc<ActiveSource>,
+        std::sync::Weak<SelectedSourceState>,
+        std::sync::Weak<Library>,
+        LoudnessTrackInput,
+    ) {
+        let input = track_input("pending", 1, None);
+        let libraries = Libraries::memory().expect("open in-memory Libraries");
+        let source_id = SourceId::new("local:server:loudness-lifetime");
+        let mut candidate = libraries
+            .begin_source_candidate(CandidateHeader {
+                source_id: source_id.clone(),
+                input_version: 1,
+                input_digest: [1; 32],
+            })
+            .expect("begin source candidate");
+        candidate
+            .write(CandidateBatch::Tracks(vec![input.track.clone()]))
+            .expect("write candidate Track");
+        let library = candidate
+            .finish(
+                CandidateFinish {
+                    freshness: None,
+                    home: HomeFacts::RufinDefined,
+                    accepted_at: 1,
+                },
+                None,
+            )
+            .and_then(|candidate| candidate.accept())
+            .expect("accept source candidate")
+            .library;
+        let selected = ActiveSource::fixed_for_test(SelectedSourceState {
+            configuration: SourceConfiguration {
+                source_id,
+                kind: "local".to_string(),
+                name: "Loudness lifetime".to_string(),
+                provider_payload: serde_json::json!({
+                    "version": 1,
+                    "roots": [],
+                })
+                .to_string(),
+            },
+            source: None,
+            source_session_epoch: SourceSessionEpoch::new(1),
+            home: library.home(None).expect("prepare Home"),
+            library: Arc::clone(&library),
+            music_folder_id: None,
+        });
+        let selected_state = selected.resolve().expect("selected source state");
+        let retired_state = Arc::downgrade(&selected_state);
+        let retired_library = Arc::downgrade(&library);
+        drop(selected_state);
+        drop(library);
+        (selected, retired_state, retired_library, input)
     }
 
     fn track_input(id: &str, key: u8, current: Option<LoudnessMeasurement>) -> LoudnessTrackInput {

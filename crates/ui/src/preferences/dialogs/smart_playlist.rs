@@ -4,7 +4,6 @@ use std::{
 };
 
 use crate::layout::large_popup_content_width;
-use crate::preferences::dialogs::popup::present_light_dismiss_dialog;
 use crate::shell::Shell;
 use crate::shell::actions::text_button;
 use crate::shell::actions::{ADD_ICON, REMOVE_ICON};
@@ -39,7 +38,7 @@ struct SmartPlaylistEditor {
 
 impl Shell {
     pub(crate) fn new_smart_playlist_dialog(self: &Rc<Self>) {
-        let Some(selected) = self.library.selected.borrow().as_ref().cloned() else {
+        let Some(selected) = self.selected_library().as_deref().cloned() else {
             return;
         };
         let missing_defaults = selected
@@ -103,17 +102,15 @@ impl Shell {
                 }
             });
         }
-        present_light_dismiss_dialog(&dialog, &self.chrome.window);
+        self.present_selected_dialog(&dialog);
     }
 }
 
 impl Shell {
     fn smart_playlist_rule_value_suggestions(&self) -> RuleValueSuggestions {
         let (genres, moods) = self
-            .library
-            .selected
-            .borrow()
-            .as_ref()
+            .selected_library()
+            .as_deref()
             .and_then(|selected| {
                 selected
                     .library

@@ -16,22 +16,28 @@ pub(crate) struct LyricsSettingsDialog {
 }
 
 pub(crate) fn connect_lyrics_settings_controls(shell: &Rc<Shell>) {
-    for pane in [
-        shell.right_panel.lyrics_pane.clone(),
-        shell.player_view.fullscreen_player.lyrics_pane.clone(),
-    ] {
-        let settings_shell = Rc::clone(shell);
+    let Some(lyrics) = shell.selected_lyrics() else {
+        return;
+    };
+    for pane in [lyrics.right_pane.clone(), lyrics.fullscreen_pane.clone()] {
+        let settings_shell = Rc::downgrade(shell);
         pane.connect_settings_clicked(move || {
-            present_lyrics_settings_dialog(&settings_shell);
+            if let Some(shell) = settings_shell.upgrade() {
+                present_lyrics_settings_dialog(&shell);
+            }
         });
     }
 }
 
 fn present_lyrics_settings_dialog(shell: &Rc<Shell>) {
-    if let Some(settings_dialog) = shell.lyrics.settings_dialog.borrow().as_ref() {
+    let Some(lyrics) = shell.selected_lyrics() else {
+        return;
+    };
+    if let Some(settings_dialog) = lyrics.settings_dialog.borrow().as_ref() {
         settings_dialog.dialog.present(Some(&shell.chrome.window));
         return;
     }
+    drop(lyrics);
 
     let (page, word_by_word_highlighting) = build_lyrics_settings(shell);
     let dialog = adw::PreferencesDialog::builder()
@@ -45,17 +51,24 @@ fn present_lyrics_settings_dialog(shell: &Rc<Shell>) {
         dialog: dialog.clone(),
         word_by_word_highlighting,
     };
-    shell.lyrics.settings_dialog.replace(Some(settings_dialog));
+    if let Some(lyrics) = shell.selected_lyrics() {
+        lyrics.settings_dialog.replace(Some(settings_dialog));
+    }
 
     let close_shell = Rc::clone(shell);
     dialog.connect_closed(move |_| {
-        close_shell.lyrics.settings_dialog.borrow_mut().take();
+        if let Some(lyrics) = close_shell.selected_lyrics() {
+            lyrics.settings_dialog.borrow_mut().take();
+        }
     });
     present_light_dismiss_dialog(&dialog, &shell.chrome.window);
 }
 
 pub(crate) fn refresh_word_highlighting_availability(shell: &Rc<Shell>) {
-    if let Some(settings_dialog) = shell.lyrics.settings_dialog.borrow().as_ref() {
+    let Some(lyrics) = shell.selected_lyrics() else {
+        return;
+    };
+    if let Some(settings_dialog) = lyrics.settings_dialog.borrow().as_ref() {
         settings_dialog
             .word_by_word_highlighting
             .set_sensitive(shell.visible_lyrics_have_word_timing());
