@@ -26,7 +26,7 @@
 - Optional waveform seekbar; waveforms are generated for the current track and cached
 - Fullscreen player with visualizer
 - CUE sheet support with separate playable tracks
-- Broad local format support: AAC and ALAC (including M4A/MP4), AIFF and WAV, APE, FLAC, TTA and WavPack, MP1/MP2/MP3 and Musepack, Ogg Vorbis/Opus/Speex, MKA and audio-only WebM, WMA/ASF, DSD, tracker modules such as MOD/XM/IT/S3M/MPTM, and emulated game music such as NSF/VGM[^codecs]
+- Broad codec support [^codecs]
 - Audio output device selection
 
 ## 📚 Library
@@ -37,9 +37,9 @@
 - Path matching between music servers and local folders, allowing local playback while keeping server activity and history
 - Metadata editing for supported servers and local formats, with bulk editing and `Identify` available with auto-fill
 - Automatic metadata, artwork and lyrics caching
-- Normal browsing for large libraries with non-paginated pages
+- Browsing large libraries feels normal, routes are not paginated 
 
-## 🌍️ Discovery, playlists and lyrics
+## 🌍️ Discovery
 
 - Server-provided artist, track, album, playlist and genre radios, including recommendations from server plugins
 - App owned smart playlists with custom sorting and limits; can use metadata, play/skip history or pre-defined dynamic lists
@@ -52,7 +52,6 @@
 
 - Last.fm, Libre.fm and ListenBrainz scrobbling, with offline storage and automatic retries 
 - Discord Rich Presence
-- System tray integration
 - Private mode for temporarily pausing external activity
 - Secure storage for server credentials and API secrets by default
 
@@ -67,7 +66,8 @@
 - Easy built-in log viewing and exporting (privacy-conscious)
 - Type to search for routes
 - `Exit to tray` and `Start minimized` window options 
-
+- System tray integration
+- 
 # Screenshots
 
 
@@ -145,9 +145,6 @@ Both have opt-in **Automatic updates** in General preferences to have Rufin inst
 update when the app starts. Alternatively, you can click `Update` button in Version History on the latest release.
 
 ## macOS
-
-> [!WARNING]
-> Experimental, not ready yet! 
 
 Homebrew Cask is the primary macOS installation:
 
@@ -325,4 +322,4 @@ Player backend design and Smart Playlists are inspired from [Strawberry](https:/
 
 [LICENSE](LICENSE)
 
-[^codecs]: All supported packages have the required plugins. You may need additional GStreamer plugins if you are building Rufin natively; after installing them, restart Rufin and Resync the local library to retry rejected files.
+[^codecs]:AAC and ALAC (including M4A/MP4), AIFF and WAV, APE, FLAC, TTA and WavPack, MP1/MP2/MP3 and Musepack, Ogg Vorbis/Opus/Speex, MKA and audio-only WebM, WMA/ASF, DSD, tracker modules such as MOD/XM/IT/S3M/MPTM, and emulated game music such as NSF/VGM. All supported packages have the required plugins. You may need additional GStreamer plugins if you are building Rufin natively; after installing them, restart Rufin and Resync the local library to retry rejected files.
