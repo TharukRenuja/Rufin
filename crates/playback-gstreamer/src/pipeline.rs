@@ -122,6 +122,15 @@ impl PlayerPipeline {
         Ok(())
     }
 
+    pub(super) fn try_reconfigure_audio(
+        &mut self,
+        settings: &BackendAudioSettings,
+    ) -> Result<bool, String> {
+        self.session
+            .as_mut()
+            .map_or(Ok(false), |session| session.try_reconfigure_audio(settings))
+    }
+
     pub(super) fn set_visualizer_tap(&mut self, tap: Option<VisualizerTap>) {
         if let Some(session) = self.session.as_mut() {
             session.set_visualizer_tap(tap);
@@ -141,6 +150,14 @@ impl PlayerPipeline {
                 session.pipeline.property::<f64>("volume"),
                 session.pipeline.property::<bool>("mute"),
             )
+        })
+    }
+
+    #[cfg(test)]
+    pub(super) fn wait_for_state(&self, state: gst::State, timeout: gst::ClockTime) -> bool {
+        self.session.as_ref().is_some_and(|session| {
+            let (result, current, _) = session.pipeline.state(timeout);
+            result.is_ok() && current == state
         })
     }
 
@@ -355,6 +372,12 @@ impl PipelineSession {
         self.pipeline.set_property("audio-sink", graph.root());
         self.audio_graph = Some(graph);
         Ok(())
+    }
+
+    fn try_reconfigure_audio(&mut self, settings: &BackendAudioSettings) -> Result<bool, String> {
+        self.audio_graph
+            .as_mut()
+            .map_or(Ok(false), |graph| graph.reconfigure(settings))
     }
 
     fn set_stream(&mut self, stream: &PreparedStream) {
