@@ -37,6 +37,7 @@ url.workspace = true
 walkdir.workspace = true
 
 [dev-dependencies]
+tokio-rustls.workspace = true
 wiremock.workspace = true
 
 [target.'cfg(target_os = "windows")'.dependencies]

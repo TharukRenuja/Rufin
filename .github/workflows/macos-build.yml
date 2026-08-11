@@ -90,6 +90,7 @@ jobs:
             gtk4 \
             libadwaita \
             libopenmpt \
+            libsoup \
             librsvg \
             meson \
             ninja \

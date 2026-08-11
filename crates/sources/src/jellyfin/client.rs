@@ -579,6 +579,17 @@ pub(super) fn build_client(trust_invalid_cert: bool) -> SourceResult<Client> {
     )
 }
 
+pub(super) fn build_websocket_client(trust_invalid_cert: bool) -> SourceResult<Client> {
+    remote_http::build_http1_client(
+        trust_invalid_cert,
+        RemoteTimeouts {
+            connect: JELLYFIN_CONNECT_TIMEOUT,
+            request: JELLYFIN_REQUEST_TIMEOUT,
+        },
+        JELLYFIN_HTTP,
+    )
+}
+
 pub(super) fn build_client_with_timeouts(
     trust_invalid_cert: bool,
     connect_timeout: Duration,

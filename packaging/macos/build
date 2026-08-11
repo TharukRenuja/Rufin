@@ -111,6 +111,9 @@ gstreamer_plugins="$(pkg-config --variable=pluginsdir gstreamer-1.0)"
 pixbuf_loaders="$(pkg-config --variable=gdk_pixbuf_moduledir gdk-pixbuf-2.0)"
 plugin_scanner_dir="$(pkg-config --variable=pluginscannerdir gstreamer-1.0)"
 plugin_scanner="${plugin_scanner_dir}/gst-plugin-scanner"
+libsoup_libdir="$(pkg-config --variable=libdir libsoup-3.0)"
+libsoup_library="${libsoup_libdir}/libsoup-3.0.0.dylib"
+libsoup_bundle_input="${work_root}/libsoup-3.0.0.dylib"
 
 if [[ -z "$gstreamer_plugins" || ! -d "$gstreamer_plugins" ]]; then
     echo "The Homebrew GStreamer plugin directory is unavailable: ${gstreamer_plugins:-not set}" >&2
@@ -122,6 +125,10 @@ if [[ -z "$pixbuf_loaders" || ! -d "$pixbuf_loaders" ]]; then
 fi
 if [[ -z "$plugin_scanner_dir" || ! -f "$plugin_scanner" ]]; then
     echo "The Homebrew GStreamer plugin scanner is unavailable: ${plugin_scanner}" >&2
+    exit 1
+fi
+if [[ -z "$libsoup_libdir" || ! -f "$libsoup_library" ]]; then
+    echo "The Homebrew libsoup runtime is unavailable: ${libsoup_library}" >&2
     exit 1
 fi
 gstreamer_version="$(pkg-config --modversion gstreamer-1.0)"
@@ -290,6 +297,7 @@ cp -L "$gme_plugin" \
     "$app_path/Contents/Resources/lib/gstreamer-1.0/libgstgme.dylib"
 cp -L "$openmpt_plugin" \
     "$app_path/Contents/Resources/lib/gstreamer-1.0/libgstopenmpt.dylib"
+cp -L "$libsoup_library" "$libsoup_bundle_input"
 copy_directory "$pixbuf_loaders" \
     "$app_path/Contents/Resources/lib/gdk-pixbuf-2.0/loaders"
 copy_directory "${brew_prefix}/lib/gio/modules" \
@@ -345,6 +353,7 @@ done
 iconutil -c icns "$iconset" -o "$app_path/Contents/Resources/Rufin.icns"
 
 files_to_fix=(
+    "$libsoup_bundle_input"
     "$app_path/Contents/MacOS/rufin-bin"
     "$app_path/Contents/MacOS/gdk-pixbuf-query-loaders"
     "$app_path/Contents/MacOS/gst-plugin-scanner"
@@ -371,6 +380,8 @@ for file_to_fix in "${files_to_fix[@]}"; do
     dylib_args+=(-x "$file_to_fix")
 done
 dylibbundler "${dylib_args[@]}" -s "$dependency_sources" -ns
+cp "$libsoup_bundle_input" \
+    "$app_path/Contents/Frameworks/libsoup-3.0.0.dylib"
 
 bundled_rufin_binary="$app_path/Contents/MacOS/rufin-bin"
 if ! mach_o_rpaths "$bundled_rufin_binary" | grep -Fx '/usr/lib/swift' >/dev/null; then

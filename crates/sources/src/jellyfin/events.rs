@@ -37,10 +37,8 @@ impl JellyfinSource {
             "sending WebSocket upgrade request"
         );
         let started = Instant::now();
-        let response = self
-            .client
+        let response = build_websocket_client(self.trust_invalid_cert)?
             .get(url)
-            .version(reqwest::Version::HTTP_11)
             .header(header::AUTHORIZATION, self.authorization.clone())
             .header(header::CONNECTION, "Upgrade")
             .header(header::UPGRADE, "websocket")

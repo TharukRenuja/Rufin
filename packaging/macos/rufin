@@ -3,6 +3,7 @@ set -eu
 
 macos_dir=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
 contents_dir=$(dirname "$macos_dir")
+frameworks_dir="$contents_dir/Frameworks"
 resources_dir="$contents_dir/Resources"
 loader_dir="$resources_dir/lib/gdk-pixbuf-2.0/loaders"
 loader_cache="${TMPDIR:-/tmp}/rufin-gdk-pixbuf-loaders-$(id -u).cache"
@@ -11,6 +12,11 @@ registry_path="${RUFIN_GST_REGISTRY_1_0:-${registry_dir}/gstreamer-registry-$(un
 registry_parent="$(dirname "$registry_path")"
 
 export GDK_PIXBUF_MODULEDIR="$loader_dir"
+if [ -n "${DYLD_LIBRARY_PATH:-}" ]; then
+  export DYLD_LIBRARY_PATH="$frameworks_dir:$DYLD_LIBRARY_PATH"
+else
+  export DYLD_LIBRARY_PATH="$frameworks_dir"
+fi
 if "$macos_dir/gdk-pixbuf-query-loaders" "$loader_dir"/*.so >"$loader_cache"; then
   export GDK_PIXBUF_MODULE_FILE="$loader_cache"
 else

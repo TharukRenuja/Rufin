@@ -26,6 +26,9 @@ pub use waveform::generate_waveform_peaks_cancellable;
 
 pub fn verify_audio_file(path: &Path) -> Result<(), String> {
     ensure_gstreamer_initialized()?;
+    if gst::ElementFactory::find("souphttpsrc").is_none() {
+        return Err("GStreamer HTTP playback support (souphttpsrc) is unavailable".to_string());
+    }
     let uri = glib::filename_to_uri(path, None).map_err(|error| error.to_string())?;
     let pipeline = pipeline::make_playbin("rufin-media-verification")?;
     let bus = pipeline
