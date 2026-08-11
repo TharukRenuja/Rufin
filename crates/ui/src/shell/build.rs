@@ -294,7 +294,12 @@ pub fn build(
     content_chrome
         .root
         .set_measure_overlay(&tiny_nav_button, false);
-    let fullscreen_player = build_fullscreen_player();
+    let fullscreen_hero_window_controls = window_controls.start_width_reservation();
+    let fullscreen_inline_window_controls = window_controls.start_width_reservation();
+    let fullscreen_player = build_fullscreen_player(
+        &fullscreen_hero_window_controls,
+        &fullscreen_inline_window_controls,
+    );
     let player_controls = build_bottom_player();
 
     let content_row = gtk::Box::new(gtk::Orientation::Horizontal, 0);
