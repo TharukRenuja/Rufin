@@ -1,17 +1,9 @@
 use super::Shell;
 use crate::{DEFAULT_WINDOW_HEIGHT, DEFAULT_WINDOW_WIDTH, sanitized_window_size};
 use adw::prelude::*;
-use std::rc::Rc;
 
 pub(crate) fn initial_window_size(width: Option<i32>, height: Option<i32>) -> (i32, i32) {
     sanitized_window_size(width, height).unwrap_or((DEFAULT_WINDOW_WIDTH, DEFAULT_WINDOW_HEIGHT))
-}
-
-pub(crate) fn install_window_state_persistence(shell: &Rc<Shell>) {
-    let save_shell = Rc::clone(shell);
-    shell.chrome.application.connect_shutdown(move |_| {
-        save_shell.save_window_state();
-    });
 }
 
 impl Shell {

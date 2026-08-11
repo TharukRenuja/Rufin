@@ -50,7 +50,7 @@ use super::navigation::{
 use super::route::{RouteStack, RouteViewport};
 use super::selected_ui::SelectedUiState;
 use super::startup::StartupState;
-use super::window_state::{initial_window_size, install_window_state_persistence};
+use super::window_state::initial_window_size;
 
 fn sidebar_scroll_slot(width: i32, child: &impl IsA<gtk::Widget>) -> gtk::ScrolledWindow {
     let slot = gtk::ScrolledWindow::new();
@@ -86,6 +86,7 @@ fn sidebar_resize_handle() -> gtk::Box {
 pub fn build(
     app: &adw::Application,
     inputs: RuntimeInputs,
+    quitting: Rc<Cell<bool>>,
     force_initial_presentation: bool,
     presented: Option<Box<dyn FnOnce()>>,
     window_bar_preview: Option<crate::application::WindowBarPreview>,
@@ -455,7 +456,7 @@ pub fn build(
     };
 
     let shell = Rc::new(Shell {
-        quitting: Cell::new(false),
+        quitting,
         diagnostics,
         appearance,
         settings: settings_state,
@@ -519,7 +520,6 @@ pub fn build(
     }
     connect_shell_actions(&shell);
     install_application_quit(&shell);
-    install_window_state_persistence(&shell);
     install_tray(&shell);
     connect_queue_panel_controls(&shell);
     connect_queue_lyrics_overlay(&shell);

@@ -4,6 +4,7 @@ mod diagnostics;
 pub(crate) mod layout;
 pub(crate) mod navigation;
 use std::cell::Cell;
+use std::rc::Rc;
 
 use crate::downloads::DownloadsState;
 use crate::player::PlayerDesktopWidgets;
@@ -51,7 +52,7 @@ impl Shell {
 }
 
 pub(crate) struct Shell {
-    pub(crate) quitting: Cell<bool>,
+    pub(crate) quitting: Rc<Cell<bool>>,
     pub(crate) diagnostics: DiagnosticsHandle,
     pub(crate) appearance: crate::application::style::ApplicationAppearance,
     pub(crate) settings: SettingsState,

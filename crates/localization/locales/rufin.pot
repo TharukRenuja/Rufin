@@ -391,6 +391,9 @@ msgstr ""
 msgid "Control notifications"
 msgstr ""
 
+msgid "Copy"
+msgstr ""
+
 msgid "Could not save diagnostic log"
 msgstr ""
 
@@ -420,6 +423,9 @@ msgid "Custom"
 msgstr ""
 
 msgid "Customize display"
+msgstr ""
+
+msgid "Cut"
 msgstr ""
 
 msgid "Dance"
@@ -525,6 +531,9 @@ msgid "EPs"
 msgstr ""
 
 msgid "Edit metadata"
+msgstr ""
+
+msgid "Edit"
 msgstr ""
 
 msgid "Enable equalizer"
@@ -1133,6 +1142,9 @@ msgstr ""
 msgid "Password"
 msgstr ""
 
+msgid "Paste"
+msgstr ""
+
 msgid "Pause"
 msgstr ""
 
@@ -1317,6 +1329,9 @@ msgid "Reconnect"
 msgstr ""
 
 msgid "Red"
+msgstr ""
+
+msgid "Redo"
 msgstr ""
 
 msgid "Refresh section"
@@ -1538,6 +1553,9 @@ msgstr ""
 msgid "Seekbar"
 msgstr ""
 
+msgid "Select All"
+msgstr ""
+
 msgid "Select Download Folder"
 msgstr ""
 
@@ -1645,6 +1663,10 @@ msgid "Shuffle"
 msgstr ""
 
 msgid "Sidebar Items"
+msgstr ""
+
+#, rust-format
+msgid "Sidebar item {position}"
 msgstr ""
 
 msgid "Sidebar route by position"
@@ -1792,6 +1814,9 @@ msgid "Type to search"
 msgstr ""
 
 msgid "Undo identified value"
+msgstr ""
+
+msgid "Undo"
 msgstr ""
 
 msgid "Unmuted"

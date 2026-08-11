@@ -645,7 +645,18 @@ fn normal_primary_menu_button(
     button.clone()
 }
 
-pub(super) fn popup_compact_primary_menu(shell: &Rc<Shell>) {
+pub(super) fn popup_primary_menu(shell: &Rc<Shell>) {
+    if shell.chrome.window_controls.uses_platform_bar() {
+        popup_normal_primary_menu(shell);
+    } else {
+        match shell.left_sidebar_mode() {
+            ResolvedLeftSidebarMode::Compact => popup_compact_primary_menu(shell),
+            _ => popup_normal_primary_menu(shell),
+        }
+    }
+}
+
+fn popup_compact_primary_menu(shell: &Rc<Shell>) {
     if let Some(popover) = shell
         .navigation_view
         .compact_main_menu
@@ -658,7 +669,7 @@ pub(super) fn popup_compact_primary_menu(shell: &Rc<Shell>) {
     }
 }
 
-pub(super) fn popup_normal_primary_menu(shell: &Rc<Shell>) {
+fn popup_normal_primary_menu(shell: &Rc<Shell>) {
     if shell
         .navigation_view
         .normal_main_menu
