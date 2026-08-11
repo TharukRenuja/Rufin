@@ -32,12 +32,30 @@ pub fn build_client(
     timeouts: RemoteTimeouts,
     policy: RemoteHttpPolicy,
 ) -> SourceResult<Client> {
+    configured_client_builder(trust_invalid_cert, timeouts)
+        .build()
+        .map_err(|error| map_reqwest_error(error, policy))
+}
+
+pub fn build_http1_client(
+    trust_invalid_cert: bool,
+    timeouts: RemoteTimeouts,
+    policy: RemoteHttpPolicy,
+) -> SourceResult<Client> {
+    configured_client_builder(trust_invalid_cert, timeouts)
+        .http1_only()
+        .build()
+        .map_err(|error| map_reqwest_error(error, policy))
+}
+
+fn configured_client_builder(
+    trust_invalid_cert: bool,
+    timeouts: RemoteTimeouts,
+) -> reqwest::ClientBuilder {
     Client::builder()
         .danger_accept_invalid_certs(trust_invalid_cert)
         .connect_timeout(timeouts.connect)
         .timeout(timeouts.request)
-        .build()
-        .map_err(|error| map_reqwest_error(error, policy))
 }
 
 pub async fn json<T: DeserializeOwned>(
@@ -319,7 +337,12 @@ fn size_error(limit: BodyLimit) -> SourceError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use base64::{Engine as _, engine::general_purpose};
     use serde::Deserialize;
+    use std::sync::Arc;
+    use tokio::net::TcpListener;
+    use tokio_rustls::TlsAcceptor;
+    use tokio_rustls::rustls::{ServerConfig, pki_types::PrivateKeyDer};
     use wiremock::matchers::{method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
@@ -519,5 +542,55 @@ mod tests {
             .expect_err("timeout");
 
         assert!(matches!(error, SourceError::Network(_)));
+    }
+
+    #[tokio::test]
+    async fn http1_client_does_not_offer_http2_during_tls_negotiation() {
+        const CERTIFICATE: &str = "MIIBkjCCATmgAwIBAgIUPRq7UtGROBB8IhPuCf+lPcpCA0UwCgYIKoZIzj0EAwIwFDESMBAGA1UEAwwJbG9jYWxob3N0MB4XDTI2MDgxMTE3NDEzM1oXDTM2MDgwODE3NDEzM1owFDESMBAGA1UEAwwJbG9jYWxob3N0MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE9qqA1jD7b5Z5WOQHe4rbPv6v2Uie5/t4dGjMa9X3WgyKShtzCWUlq5NcPUCa0RGdmeeccSMXBj3/3lpCX2mZMKNpMGcwHQYDVR0OBBYEFMfL7ybwXwNbtfHaiX6cC62zXEz2MB8GA1UdIwQYMBaAFMfL7ybwXwNbtfHaiX6cC62zXEz2MA8GA1UdEwEB/wQFMAMBAf8wFAYDVR0RBA0wC4IJbG9jYWxob3N0MAoGCCqGSM49BAMCA0cAMEQCICt22OMG72rCqjYhjfmM0JmgLEXVeANQIG21eHjZ7lqWAiB2XDCaK7EVao3BVbf1j3e34+nh1r+6DCC+aMtZcKh5Kg==";
+        const PRIVATE_KEY: &str = "MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgFd6Y2EAjgZb2gDA8FH395jckz20p2BhtiZsYV6cITSuhRANCAAT2qoDWMPtvlnlY5Ad7its+/q/ZSJ7n+3h0aMxr1fdaDIpKG3MJZSWrk1w9QJrREZ2Z55xxIxcGPf/eWkJfaZkw";
+
+        let certificate = general_purpose::STANDARD
+            .decode(CERTIFICATE)
+            .expect("test certificate");
+        let private_key = general_purpose::STANDARD
+            .decode(PRIVATE_KEY)
+            .expect("test private key");
+        let mut tls_config = ServerConfig::builder()
+            .with_no_client_auth()
+            .with_single_cert(
+                vec![certificate.into()],
+                PrivateKeyDer::try_from(private_key).expect("PKCS#8 test private key"),
+            )
+            .expect("TLS server configuration");
+        tls_config.alpn_protocols = vec![b"h2".to_vec(), b"http/1.1".to_vec()];
+        let tls_acceptor = TlsAcceptor::from(Arc::new(tls_config));
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("TLS listener");
+        let address = listener.local_addr().expect("TLS listener address");
+        let server = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.expect("TLS connection");
+            let stream = tls_acceptor.accept(stream).await.expect("TLS handshake");
+            stream
+                .get_ref()
+                .1
+                .alpn_protocol()
+                .expect("negotiated ALPN protocol")
+                .to_vec()
+        });
+        let client = build_http1_client(
+            true,
+            RemoteTimeouts {
+                connect: Duration::from_secs(1),
+                request: Duration::from_secs(1),
+            },
+            POLICY,
+        )
+        .expect("HTTP/1 client");
+
+        let request = client.get(format!("https://localhost:{}/socket", address.port()));
+        let (_, protocol) = tokio::join!(request.send(), server);
+
+        assert_eq!(protocol.expect("TLS server"), b"http/1.1");
     }
 }

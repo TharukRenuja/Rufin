@@ -222,7 +222,7 @@ pacman -S --needed base-devel git \
 ```bash
 brew install \
   rust just pkgconf gettext gtk4 libadwaita gstreamer \
-  dylibbundler librsvg game-music-emu libopenmpt meson ninja wavpack
+  dylibbundler librsvg game-music-emu libopenmpt libsoup meson ninja wavpack
 ```
 
 **Building:** After you installed dependencies for your operating system, you can build and run:
