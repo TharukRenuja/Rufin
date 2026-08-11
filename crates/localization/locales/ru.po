@@ -429,6 +429,9 @@ msgstr "Продолжить"
 msgid "Control notifications"
 msgstr "Управление уведомлениями"
 
+msgid "Copy"
+msgstr ""
+
 msgid "Could not save diagnostic log"
 msgstr "Не удалось сохранить диагностический журнал"
 
@@ -458,6 +461,11 @@ msgstr "Настраиваемый"
 
 msgid "Customize display"
 msgstr "Настроить отображение"
+
+#, fuzzy
+#| msgid "Custom"
+msgid "Cut"
+msgstr "Настраиваемый"
 
 msgid "Dance"
 msgstr "Танцевальная"
@@ -563,6 +571,9 @@ msgstr "EP-альбомы"
 
 msgid "Edit metadata"
 msgstr "Редактировать метаданные"
+
+msgid "Edit"
+msgstr "Редактировать"
 
 msgid "Enable equalizer"
 msgstr "Включить эквалайзер"
@@ -1178,6 +1189,9 @@ msgstr "Обзор"
 msgid "Password"
 msgstr "Пароль"
 
+msgid "Paste"
+msgstr ""
+
 msgid "Pause"
 msgstr "Приостановить"
 
@@ -1365,6 +1379,9 @@ msgstr "Повторное подключение"
 
 msgid "Red"
 msgstr "Красный"
+
+msgid "Redo"
+msgstr ""
 
 msgid "Refresh section"
 msgstr "Обновить раздел"
@@ -1585,6 +1602,11 @@ msgstr "Переместить по треку"
 msgid "Seekbar"
 msgstr "Индикатор прогресса"
 
+#, fuzzy
+#| msgid "Selection"
+msgid "Select All"
+msgstr "Выбор"
+
 msgid "Select Download Folder"
 msgstr "Выбрать папку для загрузки"
 
@@ -1693,6 +1715,11 @@ msgstr "Перемешать"
 
 msgid "Sidebar Items"
 msgstr "Элементы боковой панели"
+
+#, fuzzy
+#| msgid "Sidebar route by position"
+msgid "Sidebar item {position}"
+msgstr "Маршрут в боковой панели по расположению"
 
 msgid "Sidebar route by position"
 msgstr "Маршрут в боковой панели по расположению"
@@ -1840,6 +1867,9 @@ msgstr "Введите текст для поиска"
 
 msgid "Undo identified value"
 msgstr "Отменить изменение значения"
+
+msgid "Undo"
+msgstr ""
 
 msgid "Unmuted"
 msgstr "Звук включен"
@@ -2187,9 +2217,6 @@ msgstr[2] "{count} лет назад"
 
 #~ msgid "Does MusicBrainz and Cover Art Archive lookups"
 #~ msgstr "Выполняет поиск в базах данных MusicBrainz и Cover Art Archive"
-
-#~ msgid "Edit"
-#~ msgstr "Редактировать"
 
 #~ msgid "Edit Mapping"
 #~ msgstr "Редактировать соответствия"
