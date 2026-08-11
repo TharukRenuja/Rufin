@@ -7,7 +7,7 @@ msgstr ""
 "Project-Id-Version: Rufin 0.6.0\n"
 "Report-Msgid-Bugs-To: https://github.com/screwys/Rufin/issues\n"
 "POT-Creation-Date: YEAR-MO-DA HO:MI+ZONE\n"
-"PO-Revision-Date: 2026-06-30 17:01+0000\n"
+"PO-Revision-Date: 2026-08-12 10:51+0000\n"
 "Last-Translator: Александр Стельмах <aguhadug@gmail.com>\n"
 "Language-Team: Latvian <https://hosted.weblate.org/projects/rufin/app/lv/>\n"
 "Language: lv\n"
@@ -16,33 +16,32 @@ msgstr ""
 "Content-Transfer-Encoding: 8bit\n"
 "Plural-Forms: nplurals=3; plural=(n % 10 == 0 || n % 100 >= 11 && n % 100 <= "
 "19) ? 0 : ((n % 10 == 1 && n % 100 != 11) ? 1 : 2);\n"
-"X-Generator: Weblate 2026.7.dev0\n"
+"X-Generator: Weblate 2026.9.dev0\n"
 
 msgid ""
 "Downloads from this server will be removed, and automatic rules will be "
 "turned off"
 msgstr ""
+"Lejupielādes no šī servera tiks dzēstas un automātiskās funkcijas tiks "
+"atslēgtas"
 
 msgid ""
 "Logs have secrets and absolute folder paths redacted, but you may still want "
 "to review the logs before sharing them"
 msgstr ""
+"Žurnālos sensitīva informācija un absolūtie ceļi uz mapēm ir aizvietoti, "
+"taču pirms žurnālu koplietošanas varat vēlēties tos pārskatīt"
 
 msgid "No results ¯\\_(°╭╮°)_/¯"
-msgstr ""
+msgstr "Rezultāti netika atrasti ¯\\_(°╭╮°)_/¯"
 
 msgid ""
 "Only downloads from this rule will be deleted. Shared and manual downloads "
 "stay"
 msgstr ""
+"Tikai šī noteikuma ietvarā lejupielādētie faili tiks dzēsti. Koplietotie un "
+"manuāli lejupielādētie faili paliks"
 
-#, fuzzy
-#| msgid ""
-#| "Saved mapping. {direct} direct, {prefix} prefix, {metadata} metadata, "
-#| "{unmatched} unmatched of {total} track."
-#| msgid_plural ""
-#| "Saved mapping. {direct} direct, {prefix} prefix, {metadata} metadata, "
-#| "{unmatched} unmatched of {total} tracks."
 msgid ""
 "Saved mapping. {direct} direct, {prefix} prefix, {metadata} metadata, "
 "{unmatched} unmatched of {total} track"
@@ -51,13 +50,13 @@ msgid_plural ""
 "{unmatched} unmatched of {total} tracks"
 msgstr[0] ""
 "Saglabāta sasaiste. {direct} tieša, {prefix} pēc prefiksa, {metadata} pēc "
-"metadatiem, {unmatched} neatbilst no {total} celiņiem."
+"metadatiem, {unmatched} neatbilst no {total} celiņiem"
 msgstr[1] ""
 "Saglabāta sasaiste. {direct} tieša, {prefix} pēc prefiksa, {metadata} pēc "
-"metadatiem, {unmatched} neatbilst no {total} celiņa."
+"metadatiem, {unmatched} neatbilst no {total} celiņa"
 msgstr[2] ""
 "Saglabāta sasaiste. {direct} tieša, {prefix} pēc prefiksa, {metadata} pēc "
-"metadatiem, {unmatched} neatbilst no {total} celiņiem."
+"metadatiem, {unmatched} neatbilst no {total} celiņiem"
 
 msgid ""
 "Tap to the entry to load the lyrics and save in the app cache, click save "
@@ -74,16 +73,11 @@ msgstr ""
 "Paldies, ka izmēģināt Rufin! Ja jums ir problēmas vai ierosinājumi, lūdzu, "
 "atveriet problēmu vietnē Github."
 
-#, fuzzy
-#| msgid ""
-#| "These folders are combined into the Local source and shown through folder "
-#| "browsing."
 msgid ""
 "These folders are combined into the Local source and shown through folder "
 "browsing"
 msgstr ""
-"Šīs mapes tiek apvienotas lokālajā avotā un parādītas, izmantojot mapes "
-"pārlūkošanu."
+"Šīs mapes tiek apvienotas vienā lokālā avotā un parādītas, pārlūkojot mapes"
 
 msgid ""
 "This removes the server, cached library metadata, queue snapshot, and saved "
@@ -92,41 +86,27 @@ msgstr ""
 "Tas noņem serveri, kešotos bibliotēkas metadatus, rindas momentuzņēmumu un "
 "saglabāto žetonu priekš"
 
-#, fuzzy
-#| msgid ""
-#| "This uses Jellyfin API for play radio, necessary if you want "
-#| "recommendation plugins to work."
 msgid ""
 "This uses Jellyfin API for play radio, necessary if you want recommendation "
 "plugins to work"
 msgstr ""
-"Šī funkcija izmanto Jellyfin API radio atskaņošanai, kas ir nepieciešams "
-"ieteikumu spraudņu darbībai."
+"Šī funkcija izmanto Jellyfin API, lai atskaņotu radio — tas ir nepieciešams, "
+"ja vēlaties, lai darbotos ieteikumu papildinājumi"
 
-#, fuzzy
-#| msgid ""
-#| "Changing secret backend removes legacy config secrets and signs you out "
-#| "everywhere, including API secrets. App cache is not affected."
 msgid ""
 "This will log you out and clear your secrets including API ones. Your app "
 "cache is not touched."
 msgstr ""
-"Mainot konfidenciālo aizkulises iestatījumu, tiks dzēstas vecās "
-"konfigurācijas slepenās atslēgas un jūs tiksiet izrakstīts no visām sesijām, "
-"ieskaitot API atslēgas. Lietojumprogrammas kešatmiņa netiks skarta."
+"Šī darbība izrakstinās jūs un dzēsīs jūsu sensitīvos datus, ieskaitot API "
+"atslēgas. Jūsu lietotnes kešatmiņa netiks skarta."
 
 msgid ""
 "Track evens out every song, while Album preserves the intended differences "
 "within each album"
 msgstr ""
+"Celiņš” izlīdzina skaņas līmeni visās dziesmās, savukārt Albums” saglabā "
+"paredzētās atšķirības katrā albumā"
 
-#, fuzzy
-#| msgid ""
-#| "Unsaved changes. {direct} direct, {prefix} prefix, {metadata} metadata, "
-#| "{unmatched} unmatched of {total} track."
-#| msgid_plural ""
-#| "Unsaved changes. {direct} direct, {prefix} prefix, {metadata} metadata, "
-#| "{unmatched} unmatched of {total} tracks."
 msgid ""
 "Unsaved changes. {direct} direct, {prefix} prefix, {metadata} metadata, "
 "{unmatched} unmatched of {total} track"
@@ -135,13 +115,13 @@ msgid_plural ""
 "{unmatched} unmatched of {total} tracks"
 msgstr[0] ""
 "Nesaglabātas izmaiņas. {direct} tieša, {prefix} pēc prefiksa, {metadata} pēc "
-"metadatiem, {unmatched} neatbilst no {total} celiņiem."
+"metadatiem, {unmatched} neatbilst no {total} celiņiem"
 msgstr[1] ""
 "Nesaglabātas izmaiņas. {direct} tieša, {prefix} pēc prefiksa, {metadata} pēc "
-"metadatiem, {unmatched} neatbilst no {total} celiņa."
+"metadatiem, {unmatched} neatbilst no {total} celiņa"
 msgstr[2] ""
 "Nesaglabātas izmaiņas. {direct} tieša, {prefix} pēc prefiksa, {metadata} pēc "
-"metadatiem, {unmatched} neatbilst no {total} celiņiem."
+"metadatiem, {unmatched} neatbilst no {total} celiņiem"
 
 msgid ". You only need to fill email and an application name parts"
 msgstr ". Jums jāaizpilda tikai e-pasta un lietojumprogrammas nosaukuma daļas"
@@ -158,13 +138,11 @@ msgstr "256 kbps"
 msgid "320 kbps"
 msgstr "320 kbps"
 
-#, fuzzy
-#| msgid "Artist albums"
 msgid "5 Latest Albums"
-msgstr "Izpildītāja albumi"
+msgstr "5 jaunākie albumi"
 
 msgid "ALSA"
-msgstr ""
+msgstr "ALSA"
 
 msgid "API key"
 msgstr "API atslēga"
@@ -176,29 +154,23 @@ msgid "About Rufin"
 msgstr "Par Rufin"
 
 msgid "Accent color"
-msgstr ""
+msgstr "Akcenta krāsa"
 
 msgid "Add Rule"
 msgstr "Pievienot noteikumu"
 
-#, fuzzy
-#| msgid "Enter a matching server prefix to map this path."
 msgid "Add a matching server prefix"
-msgstr "Ievadiet atbilstošu servera prefiksu, lai kartētu šo ceļu."
+msgstr "Pievienojiet atbilstošu servera prefiksu"
 
 msgid "Add a new source"
-msgstr ""
+msgstr "Pievienot jaunu avotu"
 
-#, fuzzy
-#| msgid "Album title"
 msgid "Add a title"
-msgstr "Albuma nosaukums"
+msgstr "Pievienot nosaukumu"
 
 msgid "Add current"
 msgstr "Pievienot pašreizējo"
 
-#, fuzzy
-#| msgid "Add Folder"
 msgid "Add folder"
 msgstr "Pievienot mapi"
 
@@ -208,10 +180,8 @@ msgstr "Pievienot serveri"
 msgid "Add to Favorites"
 msgstr "Pievienot izlasei"
 
-#, fuzzy
-#| msgid "Add to Playlist"
 msgid "Add to Pins"
-msgstr "Pievienot atskaņošanas sarakstam"
+msgstr "Pievienot izlasei"
 
 msgid "Add to Playlist"
 msgstr "Pievienot atskaņošanas sarakstam"
@@ -225,10 +195,8 @@ msgstr "Pievienot"
 msgid "Added to favorites"
 msgstr "Pievienots izlasei"
 
-#, fuzzy
-#| msgid "Saved to"
 msgid "Added to"
-msgstr "Saglabāts:"
+msgstr "Pievienots"
 
 msgid "Album Artists"
 msgstr "Albumu izpildītāji"
@@ -257,10 +225,8 @@ msgstr "Albumi"
 msgid "All Music"
 msgstr "Visa mūzika"
 
-#, fuzzy
-#| msgid "Playlists"
 msgid "All Playlists"
-msgstr "Atskaņošanas saraksti"
+msgstr "Visi atskaņošanas saraksti"
 
 msgid "All tracks"
 msgstr "Visas dziesmas"
@@ -268,15 +234,11 @@ msgstr "Visas dziesmas"
 msgid "Any genre"
 msgstr "Jebkurš žanrs"
 
-#, fuzzy
-#| msgid "Settings"
 msgid "App settings"
-msgstr "Iestatījumi"
+msgstr "Lietotnes iestatījumi"
 
-#, fuzzy
-#| msgid "Appears On"
 msgid "Appearance"
-msgstr "Parādās ierakstos"
+msgstr "Izskats"
 
 msgid "Appears On"
 msgstr "Parādās ierakstos"
@@ -326,19 +288,17 @@ msgstr "Automātiskā DJ papildināšanas slieksnis"
 msgid "Auto DJ"
 msgstr "Automātiskais DJ"
 
-#, fuzzy
-#| msgid "Now playing updates"
 msgid "Automatic updates"
-msgstr "Atjauninājumi par pašreiz atskaņoto"
+msgstr "Automātiskie atjauninājumi"
 
 msgid "BPM"
-msgstr ""
+msgstr "BPM"
 
 msgid "Back"
 msgstr "Atpakaļ"
 
 msgid "Blue"
-msgstr ""
+msgstr "Zils"
 
 msgid "Cached"
 msgstr "Kešots"
@@ -350,10 +310,10 @@ msgid "Caching local library..."
 msgstr "Kešo lokālo bibliotēku…"
 
 msgid "Cancel download and clear downloaded items"
-msgstr ""
+msgstr "Atcelt lejupielādi un dzēst lejupielādētos elementus"
 
 msgid "Cancel download"
-msgstr ""
+msgstr "Atcelt lejupielādi"
 
 msgid "Cancel"
 msgstr "Atcelt"
@@ -364,27 +324,20 @@ msgstr "Mainīt slepeno krātuvi"
 msgid "Change"
 msgstr "Mainīt"
 
-#, fuzzy
-#| msgid "{count} track"
-#| msgid_plural "{count} tracks"
 msgid "Changes apply to {count} track"
 msgid_plural "Changes apply to {count} tracks"
-msgstr[0] "{count} dziesmas"
-msgstr[1] "{count} dziesma"
-msgstr[2] "{count} dziesmas"
+msgstr[0] "Izmaiņas attiecas uz {count} celiņu"
+msgstr[1] "Izmaiņas attiecas uz {count} celiņiem"
+msgstr[2] "Izmaiņas attiecas uz {count} celiņiem"
 
-#, fuzzy
-#| msgid "Searching..."
 msgid "Checking..."
-msgstr "Tiek veikta meklēšana..."
+msgstr "Notiek pārbaude..."
 
 msgid "Choose a local music folder"
 msgstr "Izvēlieties lokālo mūzikas mapi"
 
-#, fuzzy
-#| msgid "Choose an existing local prefix."
 msgid "Choose an existing local folder"
-msgstr "Izvēlieties esošu lokālo prefiksu."
+msgstr "Izvēlieties esošu lokālu mapi"
 
 msgid "Choose at least one local music folder"
 msgstr "Izvēlieties vismaz vienu lokālo mūzikas mapi"
@@ -409,15 +362,11 @@ msgstr "Notīrīt ielādētos tekstus šai dziesmai"
 msgid "Clear queue"
 msgstr "Notīrīt rindu"
 
-#, fuzzy
-#| msgid "App window"
 msgid "Close Window"
-msgstr "Lietotnes logs"
+msgstr "Aizvērt logu"
 
-#, fuzzy
-#| msgid "App window"
 msgid "Close app window"
-msgstr "Lietotnes logs"
+msgstr "Aizvērt lietotnes logu"
 
 msgid "Close fullscreen player"
 msgstr "Aizvērt pilnekrāna atskaņotāju"
@@ -438,7 +387,7 @@ msgid "Collections"
 msgstr "Kolekcijas"
 
 msgid "Color scheme"
-msgstr ""
+msgstr "Krāsu shēma"
 
 msgid "Columns"
 msgstr "Kolonnas"
@@ -468,35 +417,31 @@ msgid "Connection"
 msgstr "Savienojums"
 
 msgid "Context Menus"
-msgstr ""
+msgstr "Konteksta izvēlnes"
 
 msgid "Continue"
-msgstr ""
+msgstr "Turpināt"
 
 msgid "Control notifications"
 msgstr "Pārvaldīt paziņojumus"
 
 msgid "Copy"
-msgstr ""
+msgstr "Kopēt"
 
 msgid "Could not save diagnostic log"
-msgstr ""
+msgstr "Nevarēja saglabāt diagnostikas žurnālu"
 
 msgid "Could not update favorites"
-msgstr ""
+msgstr "Nevarēja atjaunināt izlasi"
 
-#, fuzzy
-#| msgid "Connect to Music Server"
 msgid "Couldn't connect to {service}"
-msgstr "Savienoties ar mūzikas serveri"
+msgstr "Nevarēja izveidot savienojumu ar {service}"
 
 msgid "Couldn't load this folder"
-msgstr ""
+msgstr "Nevarēja ielādēt šo mapi"
 
-#, fuzzy
-#| msgid "Search lyrics"
 msgid "Couldn't search for lyrics"
-msgstr "Meklēt tekstus"
+msgstr "Nevarēja atrast tekstus"
 
 msgid "Create"
 msgstr "Izveidot"
@@ -513,27 +458,23 @@ msgstr "Pielāgots"
 msgid "Customize display"
 msgstr "Pielāgot displeju"
 
-#, fuzzy
-#| msgid "Custom"
 msgid "Cut"
-msgstr "Pielāgots"
+msgstr "Izgriezt"
 
 msgid "Dance"
 msgstr "Dejas"
 
 msgid "Dark"
-msgstr ""
+msgstr "Tumšs"
 
 msgid "Date added"
 msgstr "Pievienošanas datums"
 
 msgid "Debug logging"
-msgstr ""
+msgstr "Atkļūdošanas žurnāls"
 
-#, fuzzy
-#| msgid "Release"
 msgid "Decrease"
-msgstr "Izdevums"
+msgstr "Samazināt"
 
 msgid "Default left sidebar"
 msgstr "Noklusējuma kreisais sānu panelis"
@@ -557,19 +498,19 @@ msgid "Detail"
 msgstr "Sīkāka informācija"
 
 msgid "Diagnostic log saved"
-msgstr ""
+msgstr "Diagnostikas žurnāls saglabāts"
 
 msgid "Diagnostic log"
-msgstr ""
+msgstr "Diagnostikas žurnāls"
 
 msgid "DirectSound"
-msgstr ""
+msgstr "DirectSound"
 
 msgid "Disable private mode"
 msgstr "Atslēgt privāto režīmu"
 
 msgid "Disc number"
-msgstr ""
+msgstr "Diska numurs"
 
 msgid "Disc"
 msgstr "Disks"
@@ -583,38 +524,32 @@ msgstr "Discord"
 msgid "Don't duplicate"
 msgstr "Nedublēt"
 
-#, fuzzy
-#| msgid "Local Folder"
 msgid "Download Folder"
-msgstr "Lokālā mape"
+msgstr "Lejupielādes mape"
 
 msgid "Download Queue"
-msgstr ""
+msgstr "Lejupielādes rinda"
 
-#, fuzzy
-#| msgid "Stream quality"
 msgid "Download quality"
-msgstr "Straumes kvalitāte"
+msgstr "Lejupielādes kvalitāte"
 
-#, fuzzy
-#| msgid "Clear queue"
 msgid "Download queued"
-msgstr "Notīrīt rindu"
+msgstr "Lejupielādēt no rindas"
 
 msgid "Download started"
-msgstr ""
+msgstr "Lejupielāde sākusies"
 
 msgid "Download"
-msgstr ""
+msgstr "Lejupielādēt"
 
 msgid "Downloaded"
-msgstr ""
+msgstr "Lejupielādēts"
 
 msgid "Downloading"
-msgstr ""
+msgstr "Lejupielādē"
 
 msgid "Downloads"
-msgstr ""
+msgstr "Lejupielādes"
 
 msgid "Drag to reorder"
 msgstr "Pārvelciet, lai mainītu secību"
@@ -628,10 +563,8 @@ msgstr "EP"
 msgid "EPs"
 msgstr "EP"
 
-#, fuzzy
-#| msgid "Metadata"
 msgid "Edit metadata"
-msgstr "Metadati"
+msgstr "Rediģēt metadatus"
 
 msgid "Edit"
 msgstr "Rediģēt"
@@ -648,16 +581,14 @@ msgstr "Vispirms ievadiet API autentifikācijas datus"
 msgid "Enter a server address, username, and password"
 msgstr "Ievadiet servera adresi, lietotājvārdu un paroli"
 
-#, fuzzy
-#| msgid "Server Library"
 msgid "Entire Library"
-msgstr "Servera bibliotēka"
+msgstr "Visa bibliotēka"
 
 msgid "Equalizer"
 msgstr "Ekvalaizers"
 
 msgid "Everything, including new tracks"
-msgstr ""
+msgstr "Viss, ieskaitot jaunās dziesmas"
 
 msgid "Exit to tray"
 msgstr "Iziet uz sistēmas joslu"
@@ -668,18 +599,14 @@ msgstr "Izvērst sānu paneli"
 msgid "Explore"
 msgstr "Izpētīt"
 
-#, fuzzy
-#| msgid "External lyric lookup"
 msgid "External lyric lookup is off"
-msgstr "Ārējais tekstu meklējums"
+msgstr "Ārējais tekstu meklējums ir izslēgts"
 
 msgid "External lyric lookup"
 msgstr "Ārējais tekstu meklējums"
 
-#, fuzzy
-#| msgid "External cover lookup"
 msgid "External metadata lookup"
-msgstr "Ārējais vāka meklējums"
+msgstr "Ārēju metadatu meklēšana"
 
 msgid "External site links"
 msgstr "Ārējās saites"
@@ -692,6 +619,8 @@ msgstr "Iecienītākie celiņi"
 
 msgid "Favorite tracks, plus tracks from favorite albums and artists"
 msgstr ""
+"Iecienītākie celiņi, kā arī celiņi no iecienītajiem albumiem un izpildītāju "
+"repertuāra"
 
 msgid "Favorite"
 msgstr "Izlase"
@@ -703,18 +632,18 @@ msgid "Featured genres"
 msgstr "Ieteicamie žanri"
 
 msgid "File path replacement"
-msgstr ""
+msgstr "Failu ceļu aizstāšana"
 
 msgid "Files need Mood/BPM tags written on them. Not supported for Jellyfin"
 msgstr ""
+"Failiem jābūt pievienotām noskaņas/BPM tagām. Neatbalstīts programmai "
+"Jellyfin"
 
 msgid "Find your ListenBrainz user token"
 msgstr "Atrodiet savu ListenBrainz lietotāja žetonu"
 
-#, fuzzy
-#| msgid "Position"
 msgid "Fixed position"
-msgstr "Pozīcija"
+msgstr "Fiksēta pozīcija"
 
 msgid "Flat"
 msgstr "Plakans"
@@ -744,7 +673,7 @@ msgid "Full"
 msgstr "Pilns"
 
 msgid "Furigana"
-msgstr ""
+msgstr "Furigana"
 
 msgid "Gapless"
 msgstr "Bez pauzēm"
@@ -780,7 +709,7 @@ msgid "Go to Artist"
 msgstr "Pāriet uz Izpildītāju"
 
 msgid "Green"
-msgstr ""
+msgstr "Zaļš"
 
 msgid "Grid labels"
 msgstr "Režģa uzraksti"
@@ -789,7 +718,7 @@ msgid "Grid"
 msgstr "Režģis"
 
 msgid "Help"
-msgstr ""
+msgstr "Palīdzība"
 
 msgid "Hidden"
 msgstr "Paslēpts"
@@ -800,13 +729,11 @@ msgstr "Paslēpt tekstus"
 msgid "Hide sidebar"
 msgstr "Paslēpt sānu paneli"
 
-#, fuzzy
-#| msgid "Version History"
 msgid "History"
-msgstr "Versiju vēsture"
+msgstr "Vēsture"
 
 msgid "Hold and drag to resize"
-msgstr ""
+msgstr "Turiet un velciet, lai mainītu izmēru"
 
 msgid "Home Blocks"
 msgstr "Sākuma bloki"
@@ -815,10 +742,10 @@ msgid "Home"
 msgstr "Sākums"
 
 msgid "Identify"
-msgstr ""
+msgstr "Identificēt"
 
 msgid "Identifying..."
-msgstr ""
+msgstr "Notiek identificēšana..."
 
 msgid "If the page doesn't load, then Libre.fm blocks your IP range/VPN"
 msgstr "Ja lapa neielādējas, tad Libre.fm bloķē jūsu IP adrešu diapazonu/VPN"
@@ -830,45 +757,42 @@ msgid "Image"
 msgstr "Attēls"
 
 msgid "Include detailed Rufin diagnostics in this session"
-msgstr ""
+msgstr "Iekļaut detalizētu Rufin diagnostikas informāciju šajā sesijā"
 
 msgid "Increase"
-msgstr ""
+msgstr "Palielināt"
 
 msgid "Increases memory usage"
-msgstr ""
+msgstr "Palielina atmiņas izmantošanu"
 
 msgid "Install available updates when Rufin starts"
-msgstr ""
+msgstr "Instalēt pieejamos atjauninājumus, kad tiek palaists Rufin"
 
 msgid "Installed"
 msgstr "Uzstādīts"
 
 msgid "Instrumental"
-msgstr ""
+msgstr "Instrumentāls"
 
 msgid "JACK"
-msgstr ""
+msgstr "JACK"
 
 msgid "Jellyfin"
 msgstr "Jellyfin"
 
-#, fuzzy
-#| msgid "Add a server to use Jellyfin, Subsonic, or OpenSubsonic."
 msgid "Jellyfin, Navidrome, or OpenSubsonic"
-msgstr ""
-"Pievienojiet serveri, lai izmantotu Jellyfin, Subsonic vai OpenSubsonic."
+msgstr "Jellyfin, Navidrome vai OpenSubsonic"
 
-#, fuzzy
-#| msgid "Private mode"
 msgid "Karaoke mode"
-msgstr "Privātais režīms"
+msgstr "Karaoke režīms"
 
 msgid "Keep album transitions gapless when possible"
 msgstr "Turēt albumu pārejas bez pauzēm, ja iespējams"
 
 msgid "Keep music available offline. Folder changes only affect new downloads"
 msgstr ""
+"Saglabāt mūziku, lai tā būtu pieejama bezsaistē. Mapes izmaiņas ietekmēs "
+"tikai jaunus lejupielādes failus"
 
 msgid "Keyboard Shortcuts"
 msgstr "Tastatūras saīsnes"
@@ -877,7 +801,7 @@ msgid "LRCLIB"
 msgstr "LRCLIB"
 
 msgid "Language and readings"
-msgstr ""
+msgstr "Valoda un lasījumi"
 
 msgid "Language"
 msgstr "Valoda"
@@ -910,13 +834,13 @@ msgid "Libre.fm"
 msgstr "Libre.fm"
 
 msgid "Light"
-msgstr ""
+msgstr "Gaišs"
 
 msgid "Limit"
 msgstr "Ierobežojums"
 
 msgid "Linear"
-msgstr ""
+msgstr "Lineārs"
 
 msgid "ListenBrainz scrobbling"
 msgstr "ListenBrainz skroblēšana"
@@ -927,15 +851,11 @@ msgstr "ListenBrainz"
 msgid "Loading folders..."
 msgstr "Ielādē mapes…"
 
-#, fuzzy
-#| msgid "Local Playback Access"
 msgid "Local File Access"
-msgstr "Lokālās atskaņošanas piekļuve"
+msgstr "Lokāla failu piekļuve"
 
-#, fuzzy
-#| msgid "Local mapping"
 msgid "Local File Mapping"
-msgstr "Lokālā kartēšana"
+msgstr "Lokālo failu kartēšana"
 
 msgid "Local Folders"
 msgstr "Lokālās mapes"
@@ -943,52 +863,38 @@ msgstr "Lokālās mapes"
 msgid "Local Prefix"
 msgstr "Lokālais prefikss"
 
-#, fuzzy
-#| msgid "No local folders configured"
 msgid "Local file access configured"
-msgstr "Nav konfigurētas lokālās mapes"
+msgstr "Lokālai failu piekļuvei ir veikta konfigurēšana"
 
 msgid "Local file mapping is no longer available"
-msgstr ""
+msgstr "Vietējo failu kartēšana vairs nav pieejama"
 
-#, fuzzy
-#| msgid "Local mapping"
 msgid "Local file mapping"
-msgstr "Lokālā kartēšana"
+msgstr "Lokālo failu sasaiste"
 
-#, fuzzy
-#| msgid "Local Library"
 msgid "Local library"
 msgstr "Lokālā mūzikas bibliotēka"
 
-#, fuzzy
-#| msgid "Add a music folder"
 msgid "Local music folder"
-msgstr "Pievienot mūzikas mapi"
+msgstr "Lokālā mūzikas mape"
 
 msgid "Local"
 msgstr "Lokāls"
 
-#, fuzzy
-#| msgid "Metadata"
 msgid "Lock metadata"
-msgstr "Metadati"
+msgstr "Bloķēt metadatus"
 
 msgid "Loudness normalization"
-msgstr ""
+msgstr "Skaļuma normalizācija"
 
-#, fuzzy
-#| msgid "Lyrics"
 msgid "Lyrics loaded"
-msgstr "Teksti"
+msgstr "Teksti ir ielādēti"
 
 msgid "Lyrics offset (ms)"
-msgstr ""
+msgstr "Teksta nobīde (ms)"
 
-#, fuzzy
-#| msgid "Settings"
 msgid "Lyrics settings"
-msgstr "Iestatījumi"
+msgstr "Tekstu iestatījumi"
 
 msgid "Lyrics"
 msgstr "Teksti"
@@ -1006,12 +912,10 @@ msgid "Menu"
 msgstr "Izvēlne"
 
 msgid "Metadata editing is no longer available"
-msgstr ""
+msgstr "Metadatu rediģēšana vairs nav pieejama"
 
-#, fuzzy
-#| msgid "Metadata"
 msgid "Metadata source"
-msgstr "Metadati"
+msgstr "Metadatu avots"
 
 msgid "Metadata"
 msgstr "Metadati"
@@ -1019,16 +923,14 @@ msgstr "Metadati"
 msgid "Minimum year"
 msgstr "Minimālais gads"
 
-#, fuzzy
-#| msgid "tracks"
 msgid "Mood tracks"
-msgstr "dziesmas"
+msgstr "Noskaņu dziesmas"
 
 msgid "Mood"
-msgstr ""
+msgstr "Noskaņojums"
 
 msgid "Moods"
-msgstr ""
+msgstr "Noskaņas"
 
 msgid "More actions"
 msgstr "Vēl darbības"
@@ -1045,21 +947,17 @@ msgstr "Visbiežāk atskaņotie"
 msgid "Move down"
 msgstr "Pārvietot lejup"
 
-#, fuzzy
-#| msgid "Move down"
 msgid "Move provider down"
-msgstr "Pārvietot lejup"
+msgstr "Pārvietot pakalpojumu uz leju"
 
-#, fuzzy
-#| msgid "Move up"
 msgid "Move provider up"
-msgstr "Pārvietot augšup"
+msgstr "Pārvietot pakalpojumu uz augšu"
 
 msgid "Move up"
 msgstr "Pārvietot augšup"
 
 msgid "Multiple values"
-msgstr ""
+msgstr "Vairākas vērtības"
 
 msgid "Music Folder"
 msgstr "Mūzikas mape"
@@ -1067,28 +965,20 @@ msgstr "Mūzikas mape"
 msgid "MusicBrainz + Last.fm"
 msgstr "MusicBrainz + Last.fm"
 
-#, fuzzy
-#| msgid "MusicBrainz + Last.fm"
 msgid "MusicBrainz artist ID"
-msgstr "MusicBrainz + Last.fm"
+msgstr "MusicBrainz izpildītāja ID"
 
-#, fuzzy
-#| msgid "MusicBrainz"
 msgid "MusicBrainz recording ID"
-msgstr "MusicBrainz"
+msgstr "MusicBrainz ieraksta ID"
 
-#, fuzzy
-#| msgid "MusicBrainz"
 msgid "MusicBrainz release ID"
-msgstr "MusicBrainz"
+msgstr "MusicBrainz izdevuma ID"
 
 msgid "MusicBrainz release group ID"
-msgstr ""
+msgstr "MusicBrainz izdevuma grupas identifikators"
 
-#, fuzzy
-#| msgid "MusicBrainz + Last.fm"
 msgid "MusicBrainz release track ID"
-msgstr "MusicBrainz + Last.fm"
+msgstr "MusicBrainz izdevuma dziesmas ID"
 
 msgid "MusicBrainz"
 msgstr "MusicBrainz"
@@ -1115,12 +1005,10 @@ msgid "Navidrome"
 msgstr "Navidrome"
 
 msgid "Navigate page items"
-msgstr ""
+msgstr "Pārvietoties pa lapas elementiem"
 
-#, fuzzy
-#| msgid "Refresh section"
 msgid "Needs attention"
-msgstr "Atsvaidzināt sadaļu"
+msgstr "Prasās uzmanība"
 
 msgid "NetEase"
 msgstr "NetEase"
@@ -1135,7 +1023,7 @@ msgid "New Smart Playlist"
 msgstr "Jauns viedais atskaņošanas saraksts"
 
 msgid "New download rule"
-msgstr ""
+msgstr "Jauns lejupielādes noteikums"
 
 msgid "Newly added"
 msgstr "Nesen pievienotie"
@@ -1153,15 +1041,13 @@ msgid "No Servers Found"
 msgstr "Serveri nav atrasti"
 
 msgid "No albums from this artist yet"
-msgstr ""
+msgstr "Šim izpildītājam vēl nav pieejami albumi"
 
 msgid "No cached server path yet"
 msgstr "Vēl nav kešota servera ceļa"
 
-#, fuzzy
-#| msgid "Added to favorites"
 msgid "No favorites yet"
-msgstr "Pievienots izlasei"
+msgstr "Vēl nav pievienots nevienas dziesmas izlasē"
 
 msgid "No folder selected"
 msgstr "Nav izvēlēta mape"
@@ -1172,10 +1058,8 @@ msgstr "Nav izvēlētu mapu"
 msgid "No limit"
 msgstr "Nav ierobežojuma"
 
-#, fuzzy
-#| msgid "No local playback mapping"
 msgid "No local file mapping"
-msgstr "Nav lokālās atskaņošanas kartējuma"
+msgstr "Nav lokālu failu sasaistījumu"
 
 msgid "No local folders configured"
 msgstr "Nav konfigurētas lokālās mapes"
@@ -1184,41 +1068,28 @@ msgid "No lyrics"
 msgstr "Nav teksta"
 
 msgid "No matching tracks"
-msgstr ""
+msgstr "Nav atrasts neviens atbilstošs celiņš"
 
 msgid "No music from this artist yet"
-msgstr ""
+msgstr "Šim izpildītājam vēl nav pieejama neviena mūzika"
 
-#, fuzzy
-#| msgid "No servers configured"
 msgid "No remote sources configured"
-msgstr "Nav konfigurēti serveri"
+msgstr "Nav konfigurētu attālu avotu"
 
-#, fuzzy
-#| msgid ""
-#| "No Jellyfin servers found. Enter the address manually or search again"
 msgid "No servers found, add one manually or try again"
-msgstr ""
-"Nav atrasts neviens Jellyfin serveris. Ievadiet adresi manuāli vai veiciet "
-"atkārtotu meklēšanu"
+msgstr "Serveri nav atrasti, pievienojiet vienu manuāli vai mēģiniet vēlreiz"
 
-#, fuzzy
-#| msgid "Smart playlists"
 msgid "No smart playlists yet"
-msgstr "Viedie atskaņošanas saraksti"
+msgstr "Vēl nav izveidoti viedie atskaņošanas saraksti"
 
 msgid "No source"
 msgstr "Nav avota"
 
-#, fuzzy
-#| msgid "No servers configured"
 msgid "No sources configured"
-msgstr "Nav konfigurēti serveri"
+msgstr "Nav konfigurētu avotu"
 
-#, fuzzy
-#| msgid "No tracks match the search."
 msgid "No tracks here yet"
-msgstr "Neviens celiņš neatbilst meklējumam."
+msgstr "Šeit vēl nav nevienas dziesmas"
 
 msgid "No"
 msgstr "Nē"
@@ -1230,21 +1101,19 @@ msgid "Not connected"
 msgstr "Nav savienots"
 
 msgid "Nothing here yet"
-msgstr ""
+msgstr "Šeit vēl nekas nav"
 
 msgid "Nothing in this folder"
-msgstr ""
+msgstr "Šajā mapē nekas nav"
 
-#, fuzzy
-#| msgid "Nothing playing"
 msgid "Nothing played yet"
-msgstr "Nekas netiek atskaņots"
+msgstr "Vēl nekas nav atskaņots"
 
 msgid "Nothing playing"
 msgstr "Nekas netiek atskaņots"
 
 msgid "Nothing queued"
-msgstr ""
+msgstr "Rindā nav neviena elementa"
 
 msgid "Notifications"
 msgstr "Paziņojumi"
@@ -1297,10 +1166,8 @@ msgstr "Atver Last.fm autorizāciju…"
 msgid "Opening Libre.fm authorization..."
 msgstr "Atver Libre.fm autorizāciju…"
 
-#, fuzzy
-#| msgid "range"
 msgid "Orange"
-msgstr "diapazons"
+msgstr "Oranžs"
 
 msgid "Original"
 msgstr "Oriģināls"
@@ -1309,31 +1176,33 @@ msgid "Other"
 msgstr "Cits"
 
 msgid "Overview"
-msgstr ""
+msgstr "Pārskats"
 
 msgid "Password"
 msgstr "Parole"
 
 msgid "Paste"
-msgstr ""
+msgstr "Ielīmēt"
 
 msgid "Pause"
 msgstr "Pauzēt"
 
 msgid "Perceptual for a finer control at low volume; Linear for a direct scale"
 msgstr ""
+"Uztveramais režīms nodrošina smalkāku kontroli pie zema skaļuma līmeņa; "
+"lineārais režīms — tiešu mērogošanu"
 
 msgid "Perceptual"
-msgstr ""
+msgstr "Uztveramais"
 
 msgid "Pink"
-msgstr ""
+msgstr "Rozā"
 
 msgid "Pins"
-msgstr ""
+msgstr "Atslēgas"
 
 msgid "PipeWire"
-msgstr ""
+msgstr "PipeWire"
 
 msgid "Plain lyrics"
 msgstr "Vienkārši teksti"
@@ -1356,20 +1225,14 @@ msgstr "Atskaņošanas skaits"
 msgid "Play filter"
 msgstr "Atskaņošanas filtrs"
 
-#, fuzzy
-#| msgid "Any genre"
 msgid "Play genre"
-msgstr "Jebkurš žanrs"
+msgstr "Atskaņot pēc žanra"
 
-#, fuzzy
-#| msgid "Play Now"
 msgid "Play mood"
-msgstr "Atskaņot tagad"
+msgstr "Atskaņot pēc noskaņas"
 
-#, fuzzy
-#| msgid "Playlist"
 msgid "Play playlist"
-msgstr "Atskaņošanas saraksts"
+msgstr "Atskaņot atskaņošanas sarakstu"
 
 msgid "Play radio"
 msgstr "Atskaņot radio"
@@ -1377,10 +1240,8 @@ msgstr "Atskaņot radio"
 msgid "Play random"
 msgstr "Atskaņot nejaušā secībā"
 
-#, fuzzy
-#| msgid "Smart playlists"
 msgid "Play smart playlist"
-msgstr "Viedie atskaņošanas saraksti"
+msgstr "Atskaņot viedo atskaņošanas sarakstu"
 
 msgid "Play track"
 msgstr "Atskaņot dziesmu"
@@ -1430,10 +1291,8 @@ msgstr "Dot priekšroku servera tekstiem"
 msgid "Prefer server playlist covers"
 msgstr "Dot priekšroku servera atskaņošanas sarakstu vākiem"
 
-#, fuzzy
-#| msgid "Queue and transitions"
 msgid "Prefer translations"
-msgstr "Rinda un pārejas"
+msgstr "Izmantot tulkojumus"
 
 msgid "Preferences"
 msgstr "Iestatījumi"
@@ -1445,7 +1304,7 @@ msgid "Preset"
 msgstr "Iepriekš iestatīts"
 
 msgid "Prevent automatic metadata refreshes from replacing these values"
-msgstr ""
+msgstr "Neļaut automātiskajai metadatu atjaunināšanai aizstāt šīs vērtības"
 
 msgid "Previous Track"
 msgstr "Iepriekšēja dziesma"
@@ -1459,10 +1318,8 @@ msgstr "Iepriekšējais"
 msgid "Privacy and Security"
 msgstr "Privātums un drošība"
 
-#, fuzzy
-#| msgid "Private mode is on"
 msgid "Private mode is off"
-msgstr "Privātais režīms ir ieslēgts"
+msgstr "Privātais režīms ir izslēgts"
 
 msgid "Private mode is on"
 msgstr "Privātais režīms ir ieslēgts"
@@ -1470,18 +1327,14 @@ msgstr "Privātais režīms ir ieslēgts"
 msgid "Private mode"
 msgstr "Privātais režīms"
 
-#, fuzzy
-#| msgid "Connection"
 msgid "Pronunciation"
-msgstr "Savienojums"
+msgstr "Izruna"
 
-#, fuzzy
-#| msgid "Audio"
 msgid "PulseAudio"
-msgstr "Skaņa"
+msgstr "PulseAudio"
 
 msgid "Purple"
-msgstr ""
+msgstr "Violets"
 
 msgid "Queue a track to begin"
 msgstr "Pievienojiet dziesmu rindai, lai sāktu"
@@ -1492,15 +1345,11 @@ msgstr "Rinda un pārejas"
 msgid "Queue"
 msgstr "Rinda"
 
-#, fuzzy
-#| msgid "Queue"
 msgid "Queued"
-msgstr "Rinda"
+msgstr "Pievienots rindai"
 
-#, fuzzy
-#| msgid "About Rufin"
 msgid "Quit Rufin"
-msgstr "Par Rufin"
+msgstr "Iziet no Rufin"
 
 msgid "Quit"
 msgstr "Iziet"
@@ -1520,21 +1369,17 @@ msgstr "Nesen izdotie"
 msgid "Reconnect"
 msgstr "Atjaunot savienojumu"
 
-#, fuzzy
-#| msgid "Ready"
 msgid "Red"
-msgstr "Gatavs"
+msgstr "Sarkans"
 
 msgid "Redo"
-msgstr ""
+msgstr "Atkārtot"
 
 msgid "Refresh section"
 msgstr "Atsvaidzināt sadaļu"
 
-#, fuzzy
-#| msgid "Refresh section"
 msgid "Refresh"
-msgstr "Atsvaidzināt sadaļu"
+msgstr "Atsvaidzināt"
 
 msgid "Release date"
 msgstr "Izdošanas datums"
@@ -1548,50 +1393,38 @@ msgstr "Izdevums"
 msgid "Remote lyrics"
 msgstr "Attālināti teksti"
 
-#, fuzzy
-#| msgid "Remove Local Folder"
 msgid "Remove All Downloads"
-msgstr "Noņemt lokālo mapi"
+msgstr "Dzēst visas lejupielādes"
 
-#, fuzzy
-#| msgid "Remove Local Folder"
 msgid "Remove Download"
-msgstr "Noņemt lokālo mapi"
+msgstr "Noņemt no lejupielāžu saraksta"
 
-#, fuzzy
-#| msgid "Remove Local Folder"
 msgid "Remove Downloads"
-msgstr "Noņemt lokālo mapi"
+msgstr "Dzēst lejupielādes"
 
 msgid "Remove Local Folder"
 msgstr "Noņemt lokālo mapi"
 
 msgid "Remove Rule and Delete Downloads"
-msgstr ""
+msgstr "Noņemt noteikumu un dzēst lejupielādes"
 
 msgid "Remove Rule and Downloads"
-msgstr ""
+msgstr "Noņemt noteikumu un lejupielādes"
 
 msgid "Remove Rule, Keep Downloads"
-msgstr ""
+msgstr "Noņemt noteikumu, saglabāt lejupielādes"
 
-#, fuzzy
-#| msgid "Remove rule"
 msgid "Remove and Delete"
-msgstr "Noņemt noteikumu"
+msgstr "Noņemt un dzēst"
 
-#, fuzzy
-#| msgid "Remove Local Folder"
 msgid "Remove folder"
-msgstr "Noņemt lokālo mapi"
+msgstr "Dzēst mapi"
 
 msgid "Remove from Favorites"
 msgstr "Noņemt no izlases"
 
-#, fuzzy
-#| msgid "Remove from Playlist"
 msgid "Remove from Pins"
-msgstr "Noņemt no atskaņošanas saraksta"
+msgstr "Noņemt no izlases"
 
 msgid "Remove from Playlist"
 msgstr "Noņemt no atskaņošanas saraksta"
@@ -1602,10 +1435,8 @@ msgstr "Noņemt no rindas"
 msgid "Remove from playlist"
 msgstr "Noņemt no atskaņošanas saraksta"
 
-#, fuzzy
-#| msgid "Remove rule"
 msgid "Remove prefix"
-msgstr "Noņemt noteikumu"
+msgstr "Noņemt prefiksu"
 
 msgid "Remove rule"
 msgstr "Noņemt noteikumu"
@@ -1635,15 +1466,13 @@ msgid "Repeat"
 msgstr "Atkārtot"
 
 msgid "Requires OpenSubsonic songLyrics v2"
-msgstr ""
+msgstr "Nepieciešams OpenSubsonic dziesmu tekstu atbalsts, versija v2"
 
 msgid "Reset equalizer"
 msgstr "Atiestatīt ekvalaizeru"
 
-#, fuzzy
-#| msgid "Restore Default"
 msgid "Reset to defaults"
-msgstr "Atjaunot noklusējuma iestatījumus"
+msgstr "Atiestatīt uz noklusējuma iestatījumiem"
 
 msgid "Reset"
 msgstr "Atiestatīt"
@@ -1664,27 +1493,22 @@ msgid "Rock"
 msgstr "Roks"
 
 msgid "Romaji"
-msgstr ""
+msgstr "Romadži"
 
 msgid "Rows"
 msgstr "Rindas"
 
-#, fuzzy
-#| msgid "{count} folder"
-#| msgid_plural "{count} folders"
 msgid "Rufin data folder"
-msgstr "{count} mapes"
+msgstr "Rufin datu mape"
 
 msgid "Rufin is running in the tray"
 msgstr "Rufin darbojas sistēmas joslā"
 
-#, fuzzy
-#| msgid "More actions"
 msgid "Rule actions"
-msgstr "Vēl darbības"
+msgstr "Noteikumu darbības"
 
 msgid "Save Diagnostic Log"
-msgstr ""
+msgstr "Saglabāt diagnostikas žurnālu"
 
 msgid "Save Lyrics"
 msgstr "Saglabāt tekstus"
@@ -1695,37 +1519,26 @@ msgstr "Saglabāt kartēšanu"
 msgid "Save Server Settings"
 msgstr "Saglabāt servera iestatījumus"
 
-#, fuzzy
-#| msgid "Saved to"
 msgid "Save to rescan"
-msgstr "Saglabāts:"
+msgstr "Saglabāt, lai atkārtoti skenētu"
 
 msgid "Save"
 msgstr "Saglabāt"
 
-#, fuzzy
-#| msgid "Selected Source"
 msgid "Saved Sources"
-msgstr "Izvēlētais avots"
+msgstr "Saglabātie avoti"
 
 msgid "Saved to"
 msgstr "Saglabāts:"
 
-#, fuzzy
-#| msgid "Save"
 msgid "Saved"
-msgstr "Saglabāt"
+msgstr "Saglabāts"
 
-#, fuzzy
-#| msgid "Local mapping saved. Sync to preview matches"
 msgid "Saved, sync to preview matches"
-msgstr ""
-"Lokālā kartēšana saglabāta. Sinhronizējiet, lai priekšskatītu atbilstības"
+msgstr "Saglabāts, sinhronizē ar priekšskatījumu, lai atrastu atbilstības"
 
-#, fuzzy
-#| msgid "Searching..."
 msgid "Saving..."
-msgstr "Tiek veikta meklēšana..."
+msgstr "Saglabāšana..."
 
 msgid "Scrobbling"
 msgstr "Skroblēšana"
@@ -1739,10 +1552,8 @@ msgstr "Meklēt tekstus"
 msgid "Search lyrics"
 msgstr "Meklēt tekstus"
 
-#, fuzzy
-#| msgid "Preferences"
 msgid "Search preferences"
-msgstr "Iestatījumi"
+msgstr "Meklēšanas iestatījumi"
 
 msgid "Search queue"
 msgstr "Meklēt rindā"
@@ -1783,15 +1594,11 @@ msgstr "Meklēt atskaņošanā"
 msgid "Seekbar"
 msgstr "Pozīcijas josla"
 
-#, fuzzy
-#| msgid "Collection"
 msgid "Select All"
-msgstr "Kolekcija"
+msgstr "Atlasīt visu"
 
-#, fuzzy
-#| msgid "Select Music Folder"
 msgid "Select Download Folder"
-msgstr "Izvēlēties mūzikas mapi"
+msgstr "Izvēlieties lejupielādes mapi"
 
 msgid "Select Music Folder"
 msgstr "Izvēlēties mūzikas mapi"
@@ -1799,15 +1606,11 @@ msgstr "Izvēlēties mūzikas mapi"
 msgid "Select Source"
 msgstr "Izvēlēties avotu"
 
-#, fuzzy
-#| msgid "Selected Source"
 msgid "Selected device"
-msgstr "Izvēlētais avots"
+msgstr "Izvēlētā ierīce"
 
-#, fuzzy
-#| msgid "Collection"
 msgid "Selection"
-msgstr "Kolekcija"
+msgstr "Atlasīšana"
 
 msgid "Server Actions"
 msgstr "Servera darbības"
@@ -1830,25 +1633,17 @@ msgstr "Servera iestatījumi"
 msgid "Server discovery failed: {error}"
 msgstr "Servera meklēšana neizdevās: {error}"
 
-#, fuzzy
-#| msgid "Server selector"
 msgid "Server is unreachable"
-msgstr "Servera izvēlētājs"
+msgstr "Serveris nav pieejams"
 
-#, fuzzy
-#| msgid "Turn off private mode"
 msgid "Server lyrics are off in private mode"
-msgstr "Izslēgt privāto režīmu"
+msgstr "Privātajā režīmā servera tekstu atskaņošana ir izslēgta"
 
-#, fuzzy
-#| msgid "Server"
 msgid "Server path"
-msgstr "Serveris"
+msgstr "Servera ceļš"
 
-#, fuzzy
-#| msgid "Server Prefix"
 msgid "Server prefix doesn't match"
-msgstr "Servera prefikss"
+msgstr "Servera prefikss neatbilst"
 
 msgid "Server"
 msgstr "Serveris"
@@ -1869,7 +1664,7 @@ msgid "Show Rufin"
 msgstr "Rādīt Rufin"
 
 msgid "Show downloaded badge"
-msgstr ""
+msgstr "Rādīt lejupielādes ikonu"
 
 msgid "Show external service icons on album and artist pages"
 msgstr "Rādīt ārējo pakalpojumu ikonas albumu un izpildītāju lapās"
@@ -1910,13 +1705,11 @@ msgstr "Jaukta secība"
 msgid "Sidebar Items"
 msgstr "Sānu paneļa vienumi"
 
-#, fuzzy
-#| msgid "Sidebar Items"
 msgid "Sidebar item {position}"
-msgstr "Sānu paneļa vienumi"
+msgstr "Sānjoslas elements {pozīcija}"
 
 msgid "Sidebar route by position"
-msgstr ""
+msgstr "Sānjoslas maršruts pēc pozīcijas"
 
 msgid "SimpMusic"
 msgstr "SimpMusic"
@@ -1934,7 +1727,7 @@ msgid "Skip same-album crossfade"
 msgstr "Izlaist pāreju starp dziesmām no viena un tā paša albuma"
 
 msgid "Slate"
-msgstr ""
+msgstr "Pelēks"
 
 msgid "Smart Playlist"
 msgstr "Viedais atskaņošanas saraksts"
@@ -1954,16 +1747,14 @@ msgstr "Dziesmas nosaukums"
 msgid "Song"
 msgstr "Dziesma"
 
-#, fuzzy
-#| msgid "Song title"
 msgid "Sort title"
-msgstr "Dziesmas nosaukums"
+msgstr "Kārto pēc nosaukuma"
 
 msgid "Sort"
 msgstr "Kārtot"
 
 msgid "Source to use for cover images and song/artist links"
-msgstr ""
+msgstr "Avots, ko izmantot vāku attēliem un dziesmu/izpildītāju saitēm"
 
 msgid "Sources"
 msgstr "Avoti"
@@ -1978,7 +1769,7 @@ msgid "Stream quality"
 msgstr "Straumes kvalitāte"
 
 msgid "Support"
-msgstr ""
+msgstr "Atbalsts"
 
 msgid "Switching library..."
 msgstr "Pārslēdz bibliotēku…"
@@ -1989,13 +1780,11 @@ msgstr "Sinhronizēti teksti"
 msgid "System default"
 msgstr "Sistēmas noklusējums"
 
-#, fuzzy
-#| msgid "System default"
 msgid "System"
-msgstr "Sistēmas noklusējums"
+msgstr "Sistēma"
 
 msgid "Teal"
-msgstr ""
+msgstr "Zilganzaļš"
 
 msgid "Techno"
 msgstr "Tehno"
@@ -2004,13 +1793,13 @@ msgid "Text"
 msgstr "Teksts"
 
 msgid "Theme"
-msgstr ""
+msgstr "Tēma"
 
 msgid "This isn't available"
-msgstr ""
+msgstr "Šis nav pieejams"
 
 msgid "This source cannot edit this field"
-msgstr ""
+msgstr "Šo lauku nevar rediģēt no šī avota"
 
 msgid "Title (merged)"
 msgstr "Nosaukums (apvienots)"
@@ -2021,10 +1810,8 @@ msgstr "Nosaukums"
 msgid "Toggle Fullscreen"
 msgstr "Pārslēgt pilnekrāna režīmu"
 
-#, fuzzy
-#| msgid "Track radio"
 msgid "Track number"
-msgstr "Dziesmas radio"
+msgstr "Dziesmas numurs"
 
 msgid "Track radio"
 msgstr "Dziesmas radio"
@@ -2032,13 +1819,11 @@ msgstr "Dziesmas radio"
 msgid "Track"
 msgstr "Dziesma"
 
-#, fuzzy
-#| msgid "Prefer server playlist covers"
 msgid "Tracks from every playlist"
-msgstr "Dot priekšroku servera atskaņošanas sarakstu vākiem"
+msgstr "Dziesmas no visiem atskaņošanas sarakstiem"
 
 msgid "Tracks from your five latest albums"
-msgstr ""
+msgstr "Pēdējo piecu albumu dziesmas"
 
 msgid "Tracks"
 msgstr "Dziesmas"
@@ -2046,13 +1831,11 @@ msgstr "Dziesmas"
 msgid "Transition mode"
 msgstr "Pārejas režīms"
 
-#, fuzzy
-#| msgid "Transition mode"
 msgid "Translation language"
-msgstr "Pārejas režīms"
+msgstr "Tulkošanas valoda"
 
 msgid "Troubleshooting"
-msgstr ""
+msgstr "Problēmu novēršana"
 
 msgid "Turn off only for a server you control"
 msgstr "Izslēdziet tikai serverim, ko pārvaldāt"
@@ -2070,25 +1853,25 @@ msgid "Type to search"
 msgstr "Ierakstiet, lai meklētu"
 
 msgid "Undo identified value"
-msgstr ""
+msgstr "Atcelt atzīmēto vērtību"
 
 msgid "Undo"
-msgstr ""
+msgstr "Atcelt"
 
 msgid "Unmuted"
 msgstr "Skaņa atjaunota"
 
 msgid "Update"
-msgstr ""
+msgstr "Atjaunināt"
 
 msgid "Use Jellyfin Instant Mix for recommendations"
 msgstr "Izmantot Jellyfin Instant Mix ieteikumiem"
 
 msgid "Use Rufin data folder"
-msgstr ""
+msgstr "Izmantot Rufin datu mapi"
 
 msgid "Use a number above zero"
-msgstr ""
+msgstr "Izmantojiet skaitli, kas ir lielāka par nulli"
 
 msgid "Use different layout below a threshold width"
 msgstr "Izmantot citu izkārtojumu zem sliekšņa platuma"
@@ -2098,6 +1881,8 @@ msgstr "Izmantot klausīšanās aktivitāti"
 
 msgid "Use local files for playback, lyrics, and supported metadata editing"
 msgstr ""
+"Izmantot lokālos failus atskaņošanai, tekstu un atbalstīto metadatu "
+"rediģēšanai"
 
 msgid "User token"
 msgstr "Lietotāja žetons"
@@ -2129,28 +1914,26 @@ msgstr "Skaļuma samazināšana"
 msgid "Volume Up"
 msgstr "Skaļuma palielināšana"
 
-#, fuzzy
-#| msgid "Volume Up"
 msgid "Volume scale"
-msgstr "Skaļuma palielināšana"
+msgstr "Skaļuma skala"
 
 msgid "WASAPI"
-msgstr ""
+msgstr "WASAPI"
 
 msgid "Waiting for connection"
-msgstr ""
+msgstr "Gaida savienojumu"
 
 msgid "Waveform seekbar"
 msgstr "Viļņa formas meklēšanas josla"
 
 msgid "Window"
-msgstr ""
+msgstr "Logs"
 
 msgid "Year"
 msgstr "Gads"
 
 msgid "Yellow"
-msgstr ""
+msgstr "Dzeltens"
 
 msgid "Yes"
 msgstr "Jā"
@@ -2198,7 +1981,7 @@ msgid "is"
 msgstr "ir"
 
 msgid "macOS"
-msgstr ""
+msgstr "macOS"
 
 msgid "range"
 msgstr "diapazons"
