@@ -1,9 +1,10 @@
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::io::{self, Write};
 use std::ops::ControlFlow;
 use std::process::ExitCode;
 use std::rc::Rc;
 use std::sync::OnceLock;
+use std::time::Duration;
 
 use adw::prelude::*;
 use gtk::gio;
@@ -16,6 +17,7 @@ pub(crate) mod style;
 const APP_ID: &str = "io.github.screwys.Rufin";
 const ICON_RESOURCE_ROOT: &str = "/io/github/screwys/Rufin/icons/hicolor";
 const GTK_DECORATION_LAYOUT_OPTION: &str = "gtk-decoration-layout";
+const RUNTIME_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(1);
 const WINDOW_BAR_PREVIEW_OPTION: &str = "window-bar-preview";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -75,13 +77,17 @@ where
             return run_startup_error_application(error.to_string());
         }
     };
-    let _runtime_guard = runtime.enter();
+    let runtime_guard = runtime.enter();
 
     let (app, options) = application();
     connect_startup_configuration(&app, Rc::clone(&options));
     let bootstrap = Rc::new(RefCell::new(Some(bootstrap)));
     let presented = Rc::new(RefCell::new(presented));
+    let quitting = Rc::new(Cell::new(false));
     app.connect_activate(move |app| {
+        if quitting.get() {
+            return;
+        }
         if let Some(window) = app
             .active_window()
             .or_else(|| app.windows().into_iter().next())
@@ -98,6 +104,7 @@ where
                 crate::shell::build::build(
                     app,
                     inputs,
+                    Rc::clone(&quitting),
                     force_initial_presentation,
                     presented.borrow_mut().take(),
                     window_bar_preview,
@@ -110,7 +117,11 @@ where
         }
     });
 
-    app.run().into()
+    let exit_code: ExitCode = app.run().into();
+    drop(app);
+    drop(runtime_guard);
+    runtime.shutdown_timeout(RUNTIME_SHUTDOWN_TIMEOUT);
+    exit_code
 }
 
 fn run_startup_error_application(error: String) -> ExitCode {

@@ -81,10 +81,18 @@ impl Shell {
         let application = self.chrome.application.clone();
         let started_at = Instant::now();
         glib::timeout_add_local(QUIT_POLL_INTERVAL, move || match completion.try_recv() {
-            Ok(()) | Err(TryRecvError::Disconnected) => {
+            Ok(()) => {
                 info!(
                     elapsed_ms = started_at.elapsed().as_millis(),
-                    "Rufin stopped"
+                    "playback shutdown finished"
+                );
+                application.quit();
+                glib::ControlFlow::Break
+            }
+            Err(TryRecvError::Disconnected) => {
+                warn!(
+                    elapsed_ms = started_at.elapsed().as_millis(),
+                    "playback shutdown worker stopped before reporting completion"
                 );
                 application.quit();
                 glib::ControlFlow::Break
@@ -92,7 +100,7 @@ impl Shell {
             Err(TryRecvError::Empty) if started_at.elapsed() >= QUIT_TIMEOUT => {
                 warn!(
                     elapsed_ms = started_at.elapsed().as_millis(),
-                    "playback shutdown did not finish before Rufin exited"
+                    "playback shutdown did not finish before the quit deadline"
                 );
                 application.quit();
                 glib::ControlFlow::Break
@@ -314,19 +322,9 @@ pub(crate) fn install_tray(shell: &Rc<Shell>) {
     }
     let close_shell = Rc::clone(shell);
     shell.chrome.window.connect_close_request(move |_| {
-        #[cfg(target_os = "macos")]
-        {
-            close_shell.save_window_state();
-            close_shell.chrome.window.set_visible(false);
-            return glib::Propagation::Stop;
-        }
-
-        #[cfg(not(target_os = "macos"))]
         let settings = close_shell.settings.current.borrow().clone();
-        #[cfg(not(target_os = "macos"))]
         let tray_available =
             settings.tray_enabled && settings.exit_to_tray && close_shell.ensure_tray();
-        #[cfg(not(target_os = "macos"))]
         if settings.tray_enabled && settings.exit_to_tray && tray_available {
             close_shell.save_window_state();
             close_shell.chrome.window.set_visible(false);
@@ -334,12 +332,6 @@ pub(crate) fn install_tray(shell: &Rc<Shell>) {
         } else {
             close_shell.request_quit("window close");
             glib::Propagation::Stop
-        }
-    });
-    let shutdown_shell = Rc::downgrade(shell);
-    shell.chrome.application.connect_shutdown(move |_| {
-        if let Some(shell) = shutdown_shell.upgrade() {
-            shell.shutdown_tray();
         }
     });
 }
