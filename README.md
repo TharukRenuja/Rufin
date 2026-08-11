@@ -92,7 +92,7 @@
 
 ## Fedora
 
-Rufin is available for Fedora 43 and Fedora 44.
+Rufin is available for Fedora 44.
 
 ```bash
 sudo dnf copr enable screwyy/rufin
