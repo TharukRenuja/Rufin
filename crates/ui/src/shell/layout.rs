@@ -405,6 +405,10 @@ impl Shell {
         let app_active = presentation.app_active;
         let full_sidebar = resolved.left_sidebar == ResolvedLeftSidebarMode::Full;
         let hidden_sidebar = resolved.left_sidebar == ResolvedLeftSidebarMode::Hidden;
+        let right_visible = app_active && resolved.right_sidebar.is_visible();
+        self.chrome
+            .window_controls
+            .set_full_controls_allowed(!app_active || full_sidebar, !app_active || right_visible);
         self.chrome.window_controls.set_compact_start_alignment(
             app_active && resolved.left_sidebar == ResolvedLeftSidebarMode::Compact,
         );
@@ -477,7 +481,6 @@ impl Shell {
             &self.navigation_view.left_resize_handle,
             app_active && !hidden_sidebar,
         );
-        let right_visible = app_active && resolved.right_sidebar.is_visible();
         let right_visibility_changed =
             self.right_panel.right_panel_slot.is_visible() != right_visible;
         set_widget_visible(&self.right_panel.right_panel_slot, right_visible);
@@ -613,10 +616,21 @@ impl Shell {
         self.navigation_view
             .split_view
             .set_max_sidebar_width(f64::from(width));
-        self.navigation_view
-            .left_resize_handle
-            .set_margin_start((width - 4).max(0));
+        position_left_resize_handle(&self.navigation_view.left_resize_handle, width);
     }
+
+    fn sync_left_resize_handle_to_allocation(&self) {
+        let width = match self.left_sidebar_mode() {
+            ResolvedLeftSidebarMode::Full => self.navigation_view.normal_nav_panel.width(),
+            ResolvedLeftSidebarMode::Compact => self.navigation_view.compact_nav_slot.width(),
+            ResolvedLeftSidebarMode::Hidden => 0,
+        };
+        position_left_resize_handle(&self.navigation_view.left_resize_handle, width);
+    }
+}
+
+fn position_left_resize_handle(handle: &gtk::Box, sidebar_width: i32) {
+    handle.set_margin_start((sidebar_width - 4).max(0));
 }
 
 fn set_widget_visible(widget: &impl IsA<gtk::Widget>, visible: bool) {
@@ -912,6 +926,7 @@ fn connect_layout_allocation_owner(shell: &Rc<Shell>) {
     let after_shell = Rc::downgrade(shell);
     owner.set_after_allocate(move |width, _| {
         if let Some(shell) = after_shell.upgrade() {
+            shell.sync_left_resize_handle_to_allocation();
             shell.finish_startup_route_allocation(width);
         }
     });

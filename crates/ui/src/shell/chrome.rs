@@ -1,5 +1,8 @@
 use adw::prelude::*;
 
+#[cfg(not(any(target_os = "windows", target_os = "macos")))]
+use std::{cell::Cell, rc::Rc};
+
 use crate::layout::configure_fill_width_clip;
 use localization::tr;
 
@@ -53,6 +56,10 @@ pub(crate) struct WindowControlLayout {
     start_height: gtk::SizeGroup,
     #[cfg(not(any(target_os = "windows", target_os = "macos")))]
     end_width: gtk::SizeGroup,
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+    decoration_settings: Option<gtk::Settings>,
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+    full_controls_allowed: Rc<Cell<(bool, bool)>>,
 }
 
 impl WindowControlLayout {
@@ -92,6 +99,28 @@ impl WindowControlLayout {
             let end_width = gtk::SizeGroup::new(gtk::SizeGroupMode::Horizontal);
             end_width.add_widget(&end);
 
+            let decoration_settings = (!platform_bar_preview)
+                .then(gtk::Settings::default)
+                .flatten();
+            let full_controls_allowed = Rc::new(Cell::new((true, true)));
+            if let Some(settings) = decoration_settings.as_ref() {
+                apply_window_control_layout(&start, &end, settings, true, true);
+
+                let weak_start = start.downgrade();
+                let weak_end = end.downgrade();
+                let full_controls_allowed = Rc::clone(&full_controls_allowed);
+                settings.connect_gtk_decoration_layout_notify(move |settings| {
+                    let Some(start) = weak_start.upgrade() else {
+                        return;
+                    };
+                    let Some(end) = weak_end.upgrade() else {
+                        return;
+                    };
+                    let (start_allowed, end_allowed) = full_controls_allowed.get();
+                    apply_window_control_layout(&start, &end, settings, start_allowed, end_allowed);
+                });
+            }
+
             Self {
                 platform_bar: platform_bar_preview,
                 start,
@@ -102,6 +131,8 @@ impl WindowControlLayout {
                 start_width,
                 start_height,
                 end_width,
+                decoration_settings,
+                full_controls_allowed,
             }
         }
 
@@ -175,6 +206,24 @@ impl WindowControlLayout {
         let _ = compact;
     }
 
+    pub(crate) fn set_full_controls_allowed(&self, start: bool, end: bool) {
+        #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+        {
+            if self.platform_bar {
+                return;
+            }
+            if self.full_controls_allowed.replace((start, end)) == (start, end) {
+                return;
+            }
+            if let Some(settings) = self.decoration_settings.as_ref() {
+                apply_window_control_layout(&self.start, &self.end, settings, start, end);
+            }
+        }
+
+        #[cfg(any(target_os = "windows", target_os = "macos"))]
+        let _ = (start, end);
+    }
+
     pub(crate) fn compact_start_reservation(&self) -> gtk::Box {
         #[cfg(not(any(target_os = "windows", target_os = "macos")))]
         {
@@ -197,6 +246,47 @@ impl WindowControlLayout {
 
         #[cfg(any(target_os = "windows", target_os = "macos"))]
         hidden_control_reservation()
+    }
+}
+
+#[cfg(not(any(target_os = "windows", target_os = "macos")))]
+fn apply_window_control_layout(
+    start: &gtk::WindowControls,
+    end: &gtk::WindowControls,
+    settings: &gtk::Settings,
+    full_start_controls: bool,
+    full_end_controls: bool,
+) {
+    let layout = settings
+        .gtk_decoration_layout()
+        .map(|layout| filtered_decoration_layout(&layout, full_start_controls, full_end_controls));
+    start.set_decoration_layout(layout.as_deref());
+    end.set_decoration_layout(layout.as_deref());
+}
+
+#[cfg(not(any(target_os = "windows", target_os = "macos")))]
+fn filtered_decoration_layout(
+    layout: &str,
+    full_start_controls: bool,
+    full_end_controls: bool,
+) -> String {
+    let filter_side = |side: &str, full_controls: bool| {
+        side.split(',')
+            .map(str::trim)
+            .filter(|token| !token.is_empty())
+            .filter(|token| *token != "icon")
+            .filter(|token| full_controls || *token == "close")
+            .collect::<Vec<_>>()
+            .join(",")
+    };
+
+    match layout.split_once(':') {
+        Some((start, end)) => format!(
+            "{}:{}",
+            filter_side(start, full_start_controls),
+            filter_side(end, full_end_controls)
+        ),
+        None => filter_side(layout, full_start_controls),
     }
 }
 
@@ -359,7 +449,51 @@ pub(crate) fn playback_window_title(title: Option<&str>, artist: Option<&str>) -
 
 #[cfg(test)]
 mod tests {
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+    use super::filtered_decoration_layout;
     use super::playback_window_title;
+
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+    #[test]
+    fn decoration_layout_removes_window_icon_without_moving_controls() {
+        assert_eq!(
+            filtered_decoration_layout("icon:minimize,maximize,close", true, true),
+            ":minimize,maximize,close"
+        );
+        assert_eq!(
+            filtered_decoration_layout("close,icon:appmenu", true, true),
+            "close:appmenu"
+        );
+        assert_eq!(
+            filtered_decoration_layout("appmenu:close", true, true),
+            "appmenu:close"
+        );
+    }
+
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+    #[test]
+    fn decoration_layout_keeps_only_close_without_a_full_pane_on_that_side() {
+        assert_eq!(
+            filtered_decoration_layout("icon:minimize,maximize,close", true, false),
+            ":close"
+        );
+        assert_eq!(
+            filtered_decoration_layout("close,icon,minimize,maximize:", false, true),
+            "close:"
+        );
+        assert_eq!(
+            filtered_decoration_layout("minimize,maximize,close:", true, false),
+            "minimize,maximize,close:"
+        );
+        assert_eq!(
+            filtered_decoration_layout("close:minimize,maximize,close", false, true),
+            "close:minimize,maximize,close"
+        );
+        assert_eq!(
+            filtered_decoration_layout("appmenu:close", false, false),
+            ":close"
+        );
+    }
 
     #[test]
     fn playback_title_contains_track_artist_and_app() {

@@ -130,7 +130,10 @@ struct EqualizerPanel {
     syncing: Rc<Cell<bool>>,
 }
 
-pub(crate) fn build_fullscreen_player() -> FullscreenPlayerParts {
+pub(crate) fn build_fullscreen_player(
+    hero_window_controls: &impl IsA<gtk::Widget>,
+    inline_window_controls: &impl IsA<gtk::Widget>,
+) -> FullscreenPlayerParts {
     let root = gtk::Overlay::new();
     root.add_css_class("fullscreen-player");
     root.set_hexpand(true);
@@ -155,6 +158,7 @@ pub(crate) fn build_fullscreen_player() -> FullscreenPlayerParts {
     hero.set_valign(gtk::Align::Center);
     hero.set_hexpand(true);
     hero.set_width_request(1);
+    hero.append(hero_window_controls);
     hero.append(&close_button);
 
     let cover = ArtworkTile::new(FULLSCREEN_PLAYER_DEFAULT_COVER_SIZE, 42);
@@ -228,7 +232,10 @@ pub(crate) fn build_fullscreen_player() -> FullscreenPlayerParts {
     let inline_close_button = icon_button("go-down-symbolic", "Close fullscreen player");
     inline_close_button.add_css_class("fullscreen-player-close-button");
     inline_close_button.set_visible(false);
-    switcher_bar.set_start_widget(Some(&inline_close_button));
+    let inline_start = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+    inline_start.append(inline_window_controls);
+    inline_start.append(&inline_close_button);
+    switcher_bar.set_start_widget(Some(&inline_start));
     let (switcher, tabs) = fullscreen_player_switcher(&stack);
     switcher_bar.set_center_widget(Some(&switcher));
     body.append(&switcher_bar);
