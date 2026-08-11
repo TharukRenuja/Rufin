@@ -2,7 +2,7 @@ use std::collections::BTreeSet;
 use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::task::{Context, Poll, Waker};
 
 use library::{
@@ -1337,6 +1337,134 @@ fn completed_source_switch_releases_the_previous_state_and_library() {
 }
 
 #[test]
+fn new_source_addition_finishes_while_retired_backend_shuts_down() {
+    let directory = tempfile::tempdir().expect("temporary Rufin data directory");
+    let target_root = directory.path().join("target");
+    std::fs::create_dir(&target_root).expect("create target Local folder");
+    let runtime = test_runtime();
+    let libraries = Libraries::open(directory.path().join("library.db")).expect("open Library");
+    let previous_id = SourceId::new("local:server:previous-addition");
+    let previous_configuration = test_configuration(previous_id.clone(), "Previous");
+    let previous_library = accept_library(
+        &libraries,
+        previous_id.clone(),
+        vec![test_track(
+            library::TrackId::new("local:track:previous-addition"),
+            "Previous",
+            PathBuf::from("Previous.flac"),
+            None,
+        )],
+        Vec::new(),
+        1,
+    );
+    let settings = SettingsFile::memory();
+    settings
+        .update(|stored| {
+            stored.sources.configured = vec![ConfiguredSource {
+                configuration: previous_configuration.clone(),
+                credential_ref: None,
+                music_folder_id: None,
+                local_access: None,
+            }];
+            stored.sources.selected_source_id = Some(previous_id.clone());
+            Ok(())
+        })
+        .expect("save previous source");
+    let (bootstrap, events) = test_owner(directory.path(), &runtime, libraries, settings);
+    let (shutdown_entered, entered) = async_channel::bounded(1);
+    let (release_shutdown, shutdown_release) = async_channel::bounded(1);
+    let (shutdown_finished, finished) = async_channel::bounded(1);
+    let backend_number = Arc::new(AtomicUsize::new(0));
+    let next_backend_number = Arc::clone(&backend_number);
+    let playback = attach_test_playback_with_backend(
+        &bootstrap.owner,
+        &runtime,
+        directory.path(),
+        move || {
+            if next_backend_number.fetch_add(1, Ordering::AcqRel) == 0 {
+                Ok(Box::new(BlockingShutdownBackend {
+                    entered: shutdown_entered.clone(),
+                    release: shutdown_release.clone(),
+                    finished: shutdown_finished.clone(),
+                }))
+            } else {
+                Ok(Box::<AcceptingPlaybackBackend>::default())
+            }
+        },
+    );
+    let previous_session = install_selected_for_test(
+        &bootstrap.owner,
+        previous_configuration,
+        None,
+        Arc::clone(&previous_library),
+        SourceSessionEpoch::new(1),
+    );
+    let prepared = playback
+        .prepare_selected(
+            Arc::clone(&previous_session),
+            previous_session.resolve().expect("previous selected state"),
+        )
+        .expect("prepare previous Playback");
+    let cutover = playback.stop_for_source_switch();
+    let _ = playback.install_prepared(prepared, cutover);
+    let previous_state = previous_session.resolve().expect("previous selected state");
+    let retired_state = Arc::downgrade(&previous_state);
+    let retired_library = Arc::downgrade(&previous_library);
+    drop(previous_state);
+    drop(previous_library);
+
+    runtime.block_on(async {
+        bootstrap.owner.configure_source(SourceSetup::Local {
+            roots: vec![target_root],
+        });
+        entered.recv().await.expect("old backend entered shutdown");
+        let mut release_requested = false;
+        let mut selected = false;
+        tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            loop {
+                let event = events.recv().await.expect("source addition event");
+                match &event {
+                    SourceEvent::ReleaseSelected { acknowledged } => {
+                        release_requested = true;
+                        acknowledged.send(()).await.expect("acknowledge release");
+                    }
+                    SourceEvent::Selected { selected: next, .. }
+                        if next.source_id != previous_id =>
+                    {
+                        selected = true;
+                    }
+                    SourceEvent::Operation(SourceOperation::Idle) if selected => break,
+                    SourceEvent::Operation(SourceOperation::Failed { message, .. }) => {
+                        panic!("source addition failed: {message}");
+                    }
+                    _ => {}
+                }
+            }
+        })
+        .await
+        .unwrap_or_else(|_| {
+            panic!(
+                "source addition did not finish; release requested: {release_requested}, target selected: {selected}"
+            )
+        });
+        assert!(previous_session.resolve().is_none());
+        assert!(retired_state.upgrade().is_none());
+        assert!(retired_library.upgrade().is_none());
+        release_shutdown
+            .send(())
+            .await
+            .expect("release old backend shutdown");
+        finished
+            .recv()
+            .await
+            .expect("old backend finished shutdown");
+    });
+
+    runtime.block_on(bootstrap.owner.retire_selected_access());
+    let _ = playback.stop_for_source_switch();
+}
+
+#[test]
 fn activity_publishes_while_candidate_acquisition_is_blocked_and_rebases_once() {
     let directory = tempfile::tempdir().expect("temporary Rufin data directory");
     let path = directory.path().join("library.db");
@@ -2152,11 +2280,57 @@ impl ::playback::PlaybackBackend for AcceptingPlaybackBackend {
     }
 }
 
+struct BlockingShutdownBackend {
+    entered: async_channel::Sender<()>,
+    release: async_channel::Receiver<()>,
+    finished: async_channel::Sender<()>,
+}
+
+impl ::playback::PlaybackBackend for BlockingShutdownBackend {
+    fn send(
+        &mut self,
+        _command: ::playback::BackendCommand,
+    ) -> Result<(), ::playback::BackendError> {
+        Ok(())
+    }
+
+    fn drain_events(&mut self) -> Vec<::playback::BackendEvent> {
+        Vec::new()
+    }
+
+    fn shutdown(&mut self) -> Result<(), ::playback::BackendError> {
+        self.entered
+            .send_blocking(())
+            .map_err(|error| ::playback::BackendError::Backend(error.to_string()))?;
+        self.release
+            .recv_blocking()
+            .map_err(|error| ::playback::BackendError::Backend(error.to_string()))?;
+        self.finished
+            .send_blocking(())
+            .map_err(|error| ::playback::BackendError::Backend(error.to_string()))
+    }
+}
+
 fn attach_test_playback(
     owner: &Arc<SourceOwner>,
     runtime: &tokio::runtime::Runtime,
     directory: &Path,
 ) -> Arc<PlaybackOwner> {
+    attach_test_playback_with_backend(owner, runtime, directory, || {
+        Ok(Box::<AcceptingPlaybackBackend>::default())
+    })
+}
+
+fn attach_test_playback_with_backend<StartBackend>(
+    owner: &Arc<SourceOwner>,
+    runtime: &tokio::runtime::Runtime,
+    directory: &Path,
+    start_backend: StartBackend,
+) -> Arc<PlaybackOwner>
+where
+    StartBackend:
+        Fn() -> Result<Box<dyn ::playback::PlaybackBackend>, String> + Send + Sync + 'static,
+{
     let (playback_events, _playback_event_receiver) = async_channel::unbounded();
     let (waveform_events, _waveform_event_receiver) = async_channel::unbounded();
     let waveform = crate::waveform::WaveformOwner::new(
@@ -2184,7 +2358,7 @@ fn attach_test_playback(
         lyrics,
         Arc::new(desktop_integration::Discord::new()),
         Arc::clone(&owner.shared.scrobbler),
-        || Ok(Box::<AcceptingPlaybackBackend>::default()),
+        start_backend,
     );
     owner.attach_playback(&playback);
     playback

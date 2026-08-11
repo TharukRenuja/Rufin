@@ -372,8 +372,8 @@ impl Drop for PreparedPlayback {
     }
 }
 
-/// Proof that the previous Playback session and its persistence work have
-/// finished before a prepared target is installed.
+/// Proof that the previous Playback left the active slot and its persistence
+/// work finished before a prepared target is installed.
 pub(crate) struct PlaybackCutover;
 
 const PERSISTENCE_CAPACITY: usize = 64;
@@ -931,6 +931,14 @@ impl PlaybackOwner {
     }
 
     pub(crate) fn stop_for_source_switch(&self) -> PlaybackCutover {
+        self.stop_for_source_transition(true)
+    }
+
+    pub(crate) fn stop_for_source_add(&self) -> PlaybackCutover {
+        self.stop_for_source_transition(false)
+    }
+
+    fn stop_for_source_transition(&self, wait_for_backend: bool) -> PlaybackCutover {
         let active = self
             .active
             .lock()
@@ -940,10 +948,22 @@ impl PlaybackOwner {
         self.loudness.cancel();
         self.publish_current_media(None);
         self.observe_discord(None, false);
-        if let Some(active) = active
-            && let Err(error) = active.playback.shutdown()
-        {
-            warn!(%error, "could not shut down retired Playback");
+        if let Some(active) = active {
+            if wait_for_backend {
+                if let Err(error) = active.playback.shutdown() {
+                    warn!(%error, "could not shut down retired Playback");
+                }
+            } else {
+                self.send_to(&active, SessionCommand::Retire);
+                let ActivePlayback { playback, .. } = active;
+                let _ = thread::Builder::new()
+                    .name("rufin-playback-cleanup".to_string())
+                    .spawn(move || {
+                        if let Err(error) = playback.shutdown() {
+                            warn!(%error, "could not shut down retired Playback");
+                        }
+                    });
+            }
         }
         self.persistence.drain();
         PlaybackCutover
