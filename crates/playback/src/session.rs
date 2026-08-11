@@ -380,7 +380,10 @@ impl PlaybackSession {
     }
 
     pub fn can_seek(&self) -> bool {
-        self.current_run.as_ref().is_some_and(|run| run.seekable)
+        match self.current_run.as_ref() {
+            Some(run) => run.seekable,
+            None => self.duration_millis() > 0,
+        }
     }
 
     pub fn position_millis(&self) -> u64 {
@@ -2692,6 +2695,7 @@ mod tests {
     #[test]
     fn only_a_seekable_current_run_emits_a_position_discontinuity() {
         let mut session = session(&[1, 2]);
+        assert!(session.view().transport.can_seek);
         let inactive = session
             .handle_command(SessionCommand::Seek(12_000), &sample(0))
             .expect("inactive seek");

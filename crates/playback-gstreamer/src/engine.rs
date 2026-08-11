@@ -1,4 +1,4 @@
-use super::audio::{SharedLoudnessTags, apply_shared_loudness};
+use super::audio::{SharedLoudnessTags, apply_shared_loudness, audio_outputs_share_current_target};
 use super::pipeline::{AboutToFinishAction, PlayerPipeline, SourceClock};
 #[cfg(test)]
 use super::waveform::visualizer_pipeline_is_live;
@@ -1111,6 +1111,8 @@ impl GstEngine {
                 Ok(())
             }
             BackendCommand::ConfigureAudio(settings) => {
+                let previous_output = self.settings().audio_output;
+                let output_changed = previous_output != settings.audio_output;
                 if self.desired_playing {
                     self.cancel_status_fade();
                 } else {
@@ -1126,9 +1128,60 @@ impl GstEngine {
                             self.push_state(BackendState::Paused);
                         }
                     }
+                    let retargeted = if output_changed
+                        && audio_outputs_share_current_target(
+                            previous_output.as_deref(),
+                            settings.audio_output.as_deref(),
+                        ) {
+                        self.active_pipeline_mut()
+                            .try_reconfigure_audio(&settings)?
+                    } else {
+                        false
+                    };
+                    let restart = if output_changed && !retargeted {
+                        let current = lock_recover(&self.shared).current.clone();
+                        current.map(|current| {
+                            let position_millis = self
+                                .active_pipeline()
+                                .position()
+                                .map(clock_millis)
+                                .map(|position| self.active_pipeline().logical_position(position))
+                                .unwrap_or_default();
+                            (current, position_millis)
+                        })
+                    } else {
+                        None
+                    };
                     lock_recover(&self.shared).settings = settings.clone();
-                    self.primary.configure_audio(&settings)?;
-                    self.secondary.configure_audio(&settings)?;
+                    if let Some((current, position_millis)) = restart {
+                        let logical_state = if self.desired_playing {
+                            BackendState::Playing
+                        } else {
+                            BackendState::Paused
+                        };
+                        let target_state = if self.desired_playing {
+                            gst::State::Playing
+                        } else {
+                            gst::State::Paused
+                        };
+                        let (start_millis, needs_preroll_seek) = self
+                            .start_item_session_at_millis(current, position_millis, target_state)?;
+                        self.pending_seek = pending_seek_for_session_restart(
+                            start_millis,
+                            position_millis,
+                            logical_state,
+                            target_state,
+                            needs_preroll_seek,
+                            Instant::now(),
+                        );
+                        self.push_logical_position(position_millis);
+                        if !self.desired_playing {
+                            self.push_state(BackendState::Paused);
+                        }
+                    } else {
+                        self.primary.configure_audio(&settings)?;
+                        self.secondary.configure_audio(&settings)?;
+                    }
                     self.sync_visualizer_taps(visualizer_enabled);
                     let (gain, muted) = self.output_gain_state();
                     self.apply_output_gain_to_pipelines(gain, muted);
@@ -3190,6 +3243,61 @@ mod tests {
         assert_eq!(muted, 0.0);
     }
 
+    #[test]
+    fn device_change_restores_playback_from_a_physically_paused_output() {
+        ensure_gstreamer_initialized().expect("initialize GStreamer");
+        let directory = tempfile::tempdir().expect("playback fixture directory");
+        let path = directory.path().join("audio-device-change.wav");
+        write_long_silent_wave(&path);
+        let uri = gst::glib::filename_to_uri(&path, None).expect("playback fixture URI");
+        let events = Arc::new(Mutex::new(EventMailbox::default()));
+        let mut engine = GstEngine::new(Arc::clone(&events));
+        let settings = BackendAudioSettings {
+            audio_output: Some("fakesink".to_string()),
+            ..BackendAudioSettings::default()
+        };
+        lock_recover(&engine.shared).settings = settings.clone();
+
+        engine
+            .play_prepared(
+                PreparedRun {
+                    run: RunId::new(1),
+                    stream: ResolvedStream::new(uri.as_str()).into(),
+                },
+                None,
+                0,
+            )
+            .expect("start playback");
+        assert!(
+            engine
+                .primary
+                .wait_for_state(gst::State::Playing, gst::ClockTime::from_seconds(2))
+        );
+        engine
+            .primary
+            .set_state(gst::State::Paused)
+            .expect("simulate inactive output pause");
+        assert!(
+            engine
+                .primary
+                .wait_for_state(gst::State::Paused, gst::ClockTime::from_seconds(2))
+        );
+        assert!(engine.desired_playing);
+
+        let mut changed = settings;
+        changed.audio_output = Some("appsink".to_string());
+        engine.handle_command(BackendCommand::ConfigureAudio(changed));
+
+        let applied = lock_recover(&events).drain();
+        assert!(
+            engine
+                .primary
+                .wait_for_state(gst::State::Playing, gst::ClockTime::from_seconds(2)),
+            "audio configuration events: {applied:?}"
+        );
+        engine.shutdown();
+    }
+
     fn first_output_peak(uri: &str, volume_scale: VolumeScale, volume: f64, muted: bool) -> f64 {
         let events = Arc::new(Mutex::new(EventMailbox::default()));
         let mut engine = GstEngine::new(events);
@@ -3798,20 +3906,23 @@ mod tests {
     }
 
     fn write_silent_wave(path: &std::path::Path) {
-        write_mono_wave(path, 0);
+        write_mono_wave(path, 0, 800);
+    }
+
+    fn write_long_silent_wave(path: &std::path::Path) {
+        write_mono_wave(path, 0, 80_000);
     }
 
     fn write_constant_wave(path: &std::path::Path) {
-        write_mono_wave(path, i16::MAX / 2);
+        write_mono_wave(path, i16::MAX / 2, 800);
     }
 
-    fn write_mono_wave(path: &std::path::Path, sample: i16) {
+    fn write_mono_wave(path: &std::path::Path, sample: i16, frames: u32) {
         const SAMPLE_RATE: u32 = 8_000;
         const CHANNELS: u16 = 1;
         const BITS_PER_SAMPLE: u16 = 16;
-        const FRAMES: u32 = 800;
         let bytes_per_frame = u32::from(CHANNELS) * u32::from(BITS_PER_SAMPLE / 8);
-        let data_len = FRAMES * bytes_per_frame;
+        let data_len = frames * bytes_per_frame;
         let mut file = File::create(path).expect("create playback fixture");
         file.write_all(b"RIFF").expect("write RIFF");
         file.write_all(&(36 + data_len).to_le_bytes())
@@ -3834,7 +3945,7 @@ mod tests {
         file.write_all(b"data").expect("write data tag");
         file.write_all(&data_len.to_le_bytes())
             .expect("write data size");
-        for _ in 0..FRAMES {
+        for _ in 0..frames {
             file.write_all(&sample.to_le_bytes()).expect("write sample");
         }
     }
