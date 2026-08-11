@@ -134,6 +134,24 @@ impl PlayerPipeline {
         }
     }
 
+    #[cfg(test)]
+    pub(super) fn output_volume_state(&self) -> Option<(f64, bool)> {
+        self.session.as_ref().map(|session| {
+            (
+                session.pipeline.property::<f64>("volume"),
+                session.pipeline.property::<bool>("mute"),
+            )
+        })
+    }
+
+    #[cfg(test)]
+    pub(super) fn try_pull_output_sample(&self, timeout: gst::ClockTime) -> Option<gst::Sample> {
+        self.session
+            .as_ref()
+            .and_then(|session| session.audio_graph.as_ref())
+            .and_then(|graph| graph.try_pull_output_sample(timeout))
+    }
+
     pub(super) fn set_state(&self, state: gst::State) -> Result<gst::StateChangeSuccess, String> {
         let Some(session) = self.session.as_ref() else {
             return Err(format!("GStreamer session {} is not active", self.name));

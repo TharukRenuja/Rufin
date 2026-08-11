@@ -128,6 +128,33 @@ impl Default for StoredSettings {
     }
 }
 
+#[derive(Deserialize)]
+struct SourceAuthorizationRecovery {
+    #[serde(default)]
+    sources: SourceSettings,
+    #[serde(default)]
+    secret_scope_id: String,
+    #[serde(default)]
+    jellyfin_device_id: String,
+    #[serde(default)]
+    secret_storage_mode: Option<SecretStorageMode>,
+}
+
+impl SourceAuthorizationRecovery {
+    fn into_stored_settings(self) -> StoredSettings {
+        let mut stored = StoredSettings {
+            sources: self.sources,
+            secret_scope_id: self.secret_scope_id,
+            jellyfin_device_id: self.jellyfin_device_id,
+            ..StoredSettings::default()
+        };
+        if let Some(mode) = self.secret_storage_mode {
+            stored.ui.secret_storage_mode = mode;
+        }
+        stored
+    }
+}
+
 impl StoredSettings {
     pub(crate) fn migrate_defaults(&mut self) {
         if self.ui.lastfm_api_key.trim().is_empty() && !self.scrobbling.lastfm.api_key.is_empty() {
@@ -624,7 +651,23 @@ fn read_startup_settings(path: &Path) -> Result<StoredSettings, String> {
     match serde_json::from_str(&raw) {
         Ok(stored) => Ok(stored),
         Err(error) => {
+            let recovered = serde_json::from_str::<SourceAuthorizationRecovery>(&raw)
+                .ok()
+                .filter(|recovered| !recovered.sources.configured.is_empty());
             let preserved = preserve_unreadable_settings(path)?;
+            if let Some(recovered) = recovered {
+                let mut stored = recovered.into_stored_settings();
+                stored.migrate_defaults();
+                write_settings(path, &stored)?;
+                warn!(
+                    %error,
+                    path = %path.display(),
+                    preserved_path = %preserved.display(),
+                    configured_sources = stored.sources.configured.len(),
+                    "preserved incompatible settings and recovered source authorization"
+                );
+                return Ok(stored);
+            }
             warn!(
                 %error,
                 path = %path.display(),
@@ -865,6 +908,69 @@ mod tests {
         assert_eq!(
             fs::read(preserved).expect("read preserved settings"),
             unreadable
+        );
+    }
+
+    #[test]
+    fn unrelated_settings_mismatch_preserves_source_authorization() {
+        let directory = tempfile::tempdir().expect("temporary settings directory");
+        let path = directory.path().join("settings.json");
+        let source_id = SourceId::new("local:recovery");
+        let sources = SourceSettings {
+            selected_source_id: Some(source_id.clone()),
+            configured: vec![ConfiguredSource {
+                configuration: SourceConfiguration {
+                    source_id,
+                    kind: "local".to_string(),
+                    name: "Local".to_string(),
+                    provider_payload: serde_json::json!({
+                        "version": 1,
+                        "roots": ["/music"],
+                    })
+                    .to_string(),
+                },
+                credential_ref: Some(CredentialRef::new("source-credential")),
+                music_folder_id: None,
+                local_access: None,
+            }],
+        };
+        let mut stored = StoredSettings {
+            sources: sources.clone(),
+            secret_scope_id: "secret-scope".to_string(),
+            jellyfin_device_id: "device-id".to_string(),
+            ..StoredSettings::default()
+        };
+        stored.ui.secret_storage_mode = SecretStorageMode::SystemKeyring;
+        let mut value = serde_json::to_value(stored).expect("serialize settings");
+        value["private_mode"] = "incompatible-value".into();
+        fs::write(
+            &path,
+            serde_json::to_vec_pretty(&value).expect("encode incompatible settings"),
+        )
+        .expect("write incompatible settings");
+
+        let settings = SettingsFile::open(path.clone()).expect("recover source authorization");
+        let recovered = settings.load();
+
+        assert_eq!(recovered.sources, sources);
+        assert_eq!(recovered.secret_scope_id, "secret-scope");
+        assert_eq!(recovered.jellyfin_device_id, "device-id");
+        assert_eq!(
+            recovered.ui.secret_storage_mode,
+            SecretStorageMode::SystemKeyring
+        );
+        assert!(!recovered.ui.private_mode);
+        assert!(
+            read_settings(&path).is_ok(),
+            "startup writes usable recovered settings"
+        );
+        assert!(
+            fs::read_dir(directory.path())
+                .expect("read settings directory")
+                .map(|entry| entry.expect("settings entry").path())
+                .any(|path| path.file_name().is_some_and(|name| name
+                    .to_string_lossy()
+                    .starts_with("settings.json.damaged-")))
         );
     }
 
