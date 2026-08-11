@@ -1,5 +1,6 @@
 use std::{cell::RefCell, rc::Rc};
 
+use crate::favorites::{FAVORITE_ADD_ICON, FAVORITE_REMOVE_ICON};
 use crate::interactions::{
     install_context_menu_openers, keep_parent_grab_for_nested_native_menus, popdown_native_menu,
     replace_native_menu_checkmarks, show_native_menu_icons,
@@ -35,12 +36,10 @@ use super::{
 use localization::{msgid, tr};
 
 const NORMAL_NAV_ICON_SIZE: i32 = 16;
-const COMPACT_NAV_ICON_SIZE: i32 = 20;
+const COMPACT_NAV_ICON_SIZE: i32 = 24;
 const MOUSE_BACK_BUTTON: u32 = 8;
 const MOUSE_FORWARD_BUTTON: u32 = 9;
-#[cfg(test)]
-const ROUTE_ICON_PREFIX: &str = "rufin-route-";
-const COMPACT_RAIL_LABEL_WIDTH: i32 = COMPACT_RAIL_WIDTH - 8;
+const COMPACT_RAIL_LABEL_WIDTH: i32 = COMPACT_RAIL_WIDTH - 16;
 const COMPACT_RAIL_LABEL_WIDTH_CHARS: i32 = 8;
 const NAV_SELECTED_CLASS: &str = "selected";
 const NAV_ROUTE_HOME_CLASS: &str = "nav-route-home";
@@ -74,8 +73,8 @@ const NAV_ROUTE_ICONS: [(&str, &str, &str); 13] = [
     ),
     (
         NAV_ROUTE_FAVORITES_CLASS,
-        "rufin-route-favorites-symbolic",
-        "rufin-route-favorites-selected-symbolic",
+        FAVORITE_ADD_ICON,
+        FAVORITE_REMOVE_ICON,
     ),
     (
         NAV_ROUTE_HISTORY_CLASS,
@@ -871,6 +870,7 @@ fn sidebar_menu_content(compact: bool) -> gtk::Box {
         NORMAL_NAV_ICON_SIZE
     };
     let icon = gtk::Image::from_icon_name("open-menu-symbolic");
+    icon.add_css_class("nav-icon");
     icon.set_pixel_size(icon_size);
     icon.set_size_request(icon_size, icon_size);
     icon.set_halign(gtk::Align::Center);
@@ -1319,7 +1319,7 @@ fn nav_item(item: SidebarRouteItem) -> NavItem {
             route: Route::Search,
         },
         SidebarRouteItem::Favorites => NavItem {
-            icon_name: "rufin-route-favorites-symbolic",
+            icon_name: FAVORITE_ADD_ICON,
             label: msgid("Favorites"),
             route: Route::Favorites,
         },
@@ -1667,12 +1667,6 @@ mod tests {
     fn navigation_uses_bundled_assets() {
         for item in SidebarRouteItem::all() {
             let nav = nav_item(item);
-            assert!(
-                nav.icon_name.starts_with(ROUTE_ICON_PREFIX),
-                "{} should use an app-bundled sidebar icon",
-                nav.icon_name
-            );
-
             let path = bundled_sidebar_icon_path(nav.icon_name);
             assert!(
                 path.is_file(),

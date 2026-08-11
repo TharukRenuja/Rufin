@@ -12,7 +12,8 @@ pub(crate) mod right_panel;
 pub(crate) mod state;
 
 pub(crate) use bottom::{
-    BOTTOM_PLAYER_HEIGHT, PlayerControls, build_bottom_player, connect_player_controls,
+    BOTTOM_PLAYER_HEIGHT, NOW_PLAYING_RAIL_WIDTH, PlayerControls, build_bottom_player,
+    connect_player_controls,
 };
 pub(crate) use desktop::{install_tray, present_initial_window};
 pub(crate) use desktop::{

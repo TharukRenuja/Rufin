@@ -1,5 +1,6 @@
 use std::{cell::Cell, rc::Rc};
 
+use crate::player::NOW_PLAYING_RAIL_WIDTH;
 use crate::{
     LayoutProfile, LayoutSettings, LeftSidebarMode, MAX_RIGHT_SIDEBAR_WIDTH,
     MIN_LEFT_SIDEBAR_WIDTH, MIN_RIGHT_SIDEBAR_WIDTH, RightSidebarMode,
@@ -10,7 +11,7 @@ use tracing::debug;
 
 use super::Shell;
 
-pub(super) const COMPACT_RAIL_WIDTH: i32 = 56;
+pub(super) const COMPACT_RAIL_WIDTH: i32 = NOW_PLAYING_RAIL_WIDTH;
 pub(super) const LEFT_PANE_SEPARATOR_WIDTH: i32 = 1;
 pub(super) const RIGHT_PANE_SEPARATOR_WIDTH: i32 = 1;
 pub(super) const NORMAL_SIDEBAR_WIDTH: i32 = crate::DEFAULT_LEFT_SIDEBAR_WIDTH;
@@ -1045,11 +1046,11 @@ mod tests {
         settings.default_profile.right_sidebar = RightSidebarMode::Visible;
 
         let expanded =
-            right_sidebar_width_after_drag_update(&settings, 948, None, 300.0, 0.0, -200.0);
+            right_sidebar_width_after_drag_update(&settings, 968, None, 300.0, 0.0, -200.0);
         assert_eq!(expanded, 440.0);
 
         let reversed =
-            right_sidebar_width_after_drag_update(&settings, 948, None, expanded, -200.0, -199.0);
+            right_sidebar_width_after_drag_update(&settings, 968, None, expanded, -200.0, -199.0);
         assert_eq!(reversed, 439.0);
     }
 
@@ -1108,7 +1109,7 @@ mod tests {
         settings.default_profile.right_sidebar = RightSidebarMode::Visible;
 
         assert_eq!(
-            right_sidebar_width_after_drag_update(&settings, 948, None, 500.0, 0.0, 1.0),
+            right_sidebar_width_after_drag_update(&settings, 968, None, 500.0, 0.0, 1.0),
             439.0
         );
     }
@@ -1224,7 +1225,7 @@ mod tests {
 
         let resolved = resolve_layout_with_drag_previews(
             &settings,
-            1_000,
+            1_024,
             Some(LeftSidebarDragPreview {
                 mode: LeftSidebarMode::Compact,
                 width: COMPACT_RAIL_WIDTH,
@@ -1234,7 +1235,7 @@ mod tests {
 
         assert_eq!(resolved.left_sidebar, ResolvedLeftSidebarMode::Compact);
         assert_eq!(resolved.left_sidebar_width, COMPACT_RAIL_WIDTH);
-        assert_eq!(resolved.right_sidebar_width, 492);
+        assert_eq!(resolved.right_sidebar_width, 496);
         assert_eq!(resolved.main_width, MIN_USEFUL_MAIN_WIDTH);
     }
 
