@@ -1,6 +1,5 @@
 use std::{cell::RefCell, rc::Rc};
 
-use crate::favorites::{FAVORITE_ADD_ICON, FAVORITE_REMOVE_ICON};
 use crate::interactions::{
     install_context_menu_openers, keep_parent_grab_for_nested_native_menus, popdown_native_menu,
     replace_native_menu_checkmarks, show_native_menu_icons,
@@ -73,8 +72,8 @@ const NAV_ROUTE_ICONS: [(&str, &str, &str); 13] = [
     ),
     (
         NAV_ROUTE_FAVORITES_CLASS,
-        FAVORITE_ADD_ICON,
-        FAVORITE_REMOVE_ICON,
+        "rufin-route-favorites-symbolic",
+        "rufin-route-favorites-symbolic",
     ),
     (
         NAV_ROUTE_HISTORY_CLASS,
@@ -1319,7 +1318,7 @@ fn nav_item(item: SidebarRouteItem) -> NavItem {
             route: Route::Search,
         },
         SidebarRouteItem::Favorites => NavItem {
-            icon_name: FAVORITE_ADD_ICON,
+            icon_name: "rufin-route-favorites-symbolic",
             label: msgid("Favorites"),
             route: Route::Favorites,
         },
@@ -1684,6 +1683,19 @@ mod tests {
                 selected_path.display()
             );
         }
+    }
+
+    #[test]
+    fn favorites_route_keeps_the_outlined_icon_when_selected() {
+        let (_, normal_icon, selected_icon) = NAV_ROUTE_ICONS
+            .iter()
+            .find(|(route_class, _, _)| *route_class == NAV_ROUTE_FAVORITES_CLASS)
+            .copied()
+            .expect("Favorites should have a route icon");
+
+        assert_eq!(normal_icon, "rufin-route-favorites-symbolic");
+        assert_eq!(selected_icon, normal_icon);
+        assert_eq!(nav_item(SidebarRouteItem::Favorites).icon_name, normal_icon);
     }
 
     fn bundled_sidebar_icon_path(icon_name: &str) -> PathBuf {
