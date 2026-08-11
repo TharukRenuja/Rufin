@@ -15,11 +15,11 @@ use lofty::picture::Picture;
 use lofty::prelude::*;
 use lofty::tag::{ItemKey, ItemValue, Tag, TagItem, TagType};
 
-use super::format::{AudioFormat, MetadataWriter, bpm_key, read_lofty_for_edit};
+use super::lofty_metadata::{MetadataWriter, bpm_key, read_lofty_for_edit};
 
 pub(super) struct MetadataTarget {
     pub(super) path: PathBuf,
-    pub(super) format: &'static AudioFormat,
+    pub(super) writer: MetadataWriter,
 }
 
 struct SubjectTarget {
@@ -59,10 +59,10 @@ pub(super) fn mapped_editing_available(item: &MetadataItem) -> bool {
                 return false;
             }
             track
-                .source_path
+                .source_format
                 .as_deref()
-                .and_then(|path| super::format::audio_format(Path::new(path)))
-                .and_then(|format| format.metadata_editing())
+                .and_then(MetadataWriter::for_source_format)
+                .and_then(MetadataWriter::metadata_editing)
                 .is_some()
         }
         MetadataItem::Album(_) | MetadataItem::Artist(_) => true,
@@ -75,7 +75,7 @@ pub(super) fn entry_editing_available(roots: &[PathBuf], item: &MetadataItem) ->
     }
     match item {
         MetadataItem::Track(track) => accepted_target(roots, track)
-            .and_then(|target| target.format.metadata_editing())
+            .and_then(|target| target.writer.metadata_editing())
             .is_some(),
         MetadataItem::Album(_) | MetadataItem::Artist(_) => true,
     }
@@ -226,9 +226,11 @@ fn accepted_target(roots: &[PathBuf], track: &Track) -> Option<MetadataTarget> {
     {
         return None;
     }
-    let format = super::format::audio_format(&path)?;
-    format.metadata_writer()?;
-    Some(MetadataTarget { path, format })
+    let writer = track
+        .source_format
+        .as_deref()
+        .and_then(MetadataWriter::for_source_format)?;
+    Some(MetadataTarget { path, writer })
 }
 
 fn mapped_target_in_roots(
@@ -255,18 +257,17 @@ fn target_path(roots: &[PathBuf], source_path: &Path) -> Option<MetadataTarget> 
     if !roots.iter().any(|root| path.starts_with(root)) {
         return None;
     }
-    let format = super::format::audio_format(&path)?;
-    format.metadata_writer()?;
-    Some(MetadataTarget { path, format })
+    let writer = MetadataWriter::for_path(&path)?;
+    Some(MetadataTarget { path, writer })
 }
 
 pub(super) fn read(target: &MetadataTarget, track: &Track) -> Result<MetadataDraft, MetadataError> {
-    let tagged = read_tagged(&target.path, target.format)?;
+    let tagged = read_tagged(&target.path, target.writer)?;
     let tag = tagged.primary_tag().or_else(|| tagged.first_tag());
     Ok(MetadataDraft {
         item_id: MetadataItemId::Track(track.id.clone()),
         editing: target
-            .format
+            .writer
             .metadata_editing()
             .ok_or(MetadataError::Unavailable)?,
         source_search: false,
@@ -284,7 +285,7 @@ fn read_album(
     let editing = album_editing(targets).ok_or(MetadataError::Unavailable)?;
     let mut observed = Vec::with_capacity(targets.len());
     for target in targets {
-        let tagged = read_tagged(&target.target.path, target.target.format)?;
+        let tagged = read_tagged(&target.target.path, target.target.writer)?;
         let tag = tagged.primary_tag().or_else(|| tagged.first_tag());
         observed.push(album_values(tag, &target.track));
     }
@@ -338,7 +339,7 @@ fn read_artist(artist: &Artist, targets: &[SubjectTarget]) -> Result<MetadataDra
     let editing = artist_editing(artist, targets).ok_or(MetadataError::Unavailable)?;
     let mut observations = Vec::new();
     for target in targets {
-        let tagged = read_tagged(&target.target.path, target.target.format)?;
+        let tagged = read_tagged(&target.target.path, target.target.writer)?;
         let tag = tagged.primary_tag().or_else(|| tagged.first_tag());
         observations.extend(artist_observations(tag, &target.track, artist)?);
     }
@@ -373,7 +374,7 @@ fn album_editing(targets: &[SubjectTarget]) -> Option<MetadataEditing> {
         .filter_map(|(field, key)| {
             targets
                 .iter()
-                .all(|target| target.target.format.metadata_key_is_writable(*key))
+                .all(|target| target.target.writer.metadata_key_is_writable(*key))
                 .then_some(*field)
         })
         .collect::<Vec<_>>();
@@ -395,9 +396,9 @@ fn artist_editing(artist: &Artist, targets: &[SubjectTarget]) -> Option<Metadata
                 ArtistScope::Track => (ItemKey::TrackArtist, ItemKey::MusicBrainzArtistId),
                 ArtistScope::Album => (ItemKey::AlbumArtist, ItemKey::MusicBrainzReleaseArtistId),
             };
-            title &= target.target.format.metadata_key_is_writable(title_key);
+            title &= target.target.writer.metadata_key_is_writable(title_key);
             musicbrainz_id &= occurrence.credit_count == 1
-                && target.target.format.metadata_key_is_writable(id_key);
+                && target.target.writer.metadata_key_is_writable(id_key);
         }
     }
     let mut fields = Vec::new();
@@ -590,12 +591,12 @@ fn current_artist_values(
             let tagged = tag
                 .map(|tag| {
                     tag.get_strings(name_key)
-                        .flat_map(super::tags::split_names)
+                        .flat_map(super::media::split_names)
                         .collect::<Vec<_>>()
                 })
                 .unwrap_or_default();
             if tagged.is_empty() {
-                super::tags::split_names(
+                super::media::split_names(
                     tag.and_then(|tag| text(tag.artist()))
                         .as_deref()
                         .unwrap_or(&fallback),
@@ -604,7 +605,7 @@ fn current_artist_values(
                 tagged
             }
         }
-        ArtistScope::Album => super::tags::split_names(
+        ArtistScope::Album => super::media::split_names(
             tag.and_then(|tag| tag.get_string(name_key))
                 .unwrap_or(&fallback),
         ),
@@ -613,7 +614,7 @@ fn current_artist_values(
         .map(|tag| {
             tag.get_items(id_key)
                 .filter_map(|item| item.value().text())
-                .flat_map(super::tags::split_names)
+                .flat_map(super::media::split_names)
                 .filter(|value| library::is_musicbrainz_id(value))
                 .collect::<Vec<_>>()
         })
@@ -789,7 +790,7 @@ fn write_batch(
         return Err(MetadataError::Unavailable);
     }
     let editing = match item {
-        MetadataItem::Track(_) => targets[0].target.format.metadata_editing(),
+        MetadataItem::Track(_) => targets[0].target.writer.metadata_editing(),
         MetadataItem::Album(_) => album_editing(&targets),
         MetadataItem::Artist(artist) => artist_editing(artist, &targets),
     }
@@ -840,7 +841,7 @@ fn prepare_batch_file(
     fs::copy(&target.path, temp.path())
         .map_err(|error| write_error("copy the original metadata file", error))?;
 
-    let tagged = read_tagged(temp.path(), target.format)?;
+    let tagged = read_tagged(temp.path(), target.writer)?;
     let mut tag = writable_tag(&tagged);
     let mut preserved = PreservedMetadata::new(&tag);
     let mut changed = HashSet::new();
@@ -858,7 +859,7 @@ fn prepare_batch_file(
     preserved.allow_changes(changed);
     save_tag(&tag, temp.path())?;
 
-    let verified = read_tagged(temp.path(), target.format)?;
+    let verified = read_tagged(temp.path(), target.writer)?;
     let verified_tag = verified.primary_tag().or_else(|| verified.first_tag());
     if !preserved.matches(verified_tag) {
         return Err(MetadataError::Write(
@@ -878,7 +879,7 @@ fn prepare_batch_file(
     Ok(PreparedBatchFile {
         target: MetadataTarget {
             path: target.path.clone(),
-            format: target.format,
+            writer: target.writer,
         },
         temp: temp.into_temp_path(),
         expected_revision,
@@ -1155,14 +1156,12 @@ fn unsupported_metadata_replacement() -> std::io::Error {
     )
 }
 
-fn read_tagged(path: &Path, format: &AudioFormat) -> Result<TaggedFile, MetadataError> {
-    let MetadataWriter::Lofty(file_types) =
-        format.metadata_writer().ok_or(MetadataError::Unavailable)?;
-    read_lofty_for_edit(path, file_types)
+fn read_tagged(path: &Path, writer: MetadataWriter) -> Result<TaggedFile, MetadataError> {
+    read_lofty_for_edit(path, writer.file_type())
         .map_err(|error| write_error("read the file metadata", error))?
         .ok_or_else(|| {
             MetadataError::Write(
-                "The file contents do not match its registered audio format.".to_string(),
+                "The file contents no longer match the selected metadata writer.".to_string(),
             )
         })
 }
@@ -1561,7 +1560,7 @@ fn write_track_with_hook(
     let targets = vec![SubjectTarget {
         target: MetadataTarget {
             path: target.path.clone(),
-            format: target.format,
+            writer: target.writer,
         },
         track: track.clone(),
     }];

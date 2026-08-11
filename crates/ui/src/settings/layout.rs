@@ -803,6 +803,20 @@ impl LibraryListSettings {
             .map(|entry| entry.width)
     }
 
+    pub(crate) fn uses_track_activity(&self) -> bool {
+        let fields = match self.layout {
+            LibraryLayout::Row => &self.row_fields,
+            LibraryLayout::Grid => &self.grid_fields,
+            LibraryLayout::Detail => &self.detail_track_fields,
+        };
+        matches!(
+            self.sort_key,
+            LibraryField::LastPlayed | LibraryField::PlayCount
+        ) || fields
+            .iter()
+            .any(|field| matches!(field, LibraryField::LastPlayed | LibraryField::PlayCount))
+    }
+
     fn migrate_defaults(&mut self, key: LibraryListKey) {
         if self.layout_version >= LIBRARY_LIST_LAYOUT_VERSION {
             return;

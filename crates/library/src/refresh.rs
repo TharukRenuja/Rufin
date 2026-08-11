@@ -113,6 +113,7 @@ pub struct SourceLibraryUpdate {
 pub struct AcceptedTrackReplacement {
     pub id: TrackId,
     pub track: Option<Track>,
+    pub activity_only: bool,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

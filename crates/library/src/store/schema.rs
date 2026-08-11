@@ -9,13 +9,14 @@ use rusqlite::{Connection, OptionalExtension};
 use super::{StoreError, StoreResult};
 
 pub(crate) const APPLICATION_ID: i64 = 1_381_320_270;
-pub(crate) const SCHEMA_VERSION: i64 = 38;
+pub(crate) const SCHEMA_VERSION: i64 = 39;
 const FIRST_STORE_SCHEMA_VERSION: i64 = 32;
 const MUSIC_FOLDER_ARTWORK_SCHEMA_VERSION: i64 = 33;
 const FILESYSTEM_IDENTITY_SCHEMA_VERSION: i64 = 34;
 const RECENT_PLAYS_SCHEMA_VERSION: i64 = 35;
 const PENDING_FAVORITES_SCHEMA_VERSION: i64 = 36;
 const LOUDNESS_MEASUREMENTS_SCHEMA_VERSION: i64 = 37;
+const MEDIA_STATE_SCHEMA_VERSION: i64 = 38;
 
 struct Migration {
     from_version: i64,
@@ -51,12 +52,17 @@ const MIGRATIONS: &[Migration] = &[
     },
     Migration {
         from_version: LOUDNESS_MEASUREMENTS_SCHEMA_VERSION,
-        to_version: SCHEMA_VERSION,
+        to_version: MEDIA_STATE_SCHEMA_VERSION,
         run: migrate_schema_37,
+    },
+    Migration {
+        from_version: MEDIA_STATE_SCHEMA_VERSION,
+        to_version: SCHEMA_VERSION,
+        run: migrate_schema_38,
     },
 ];
 
-const CREATE_SCHEMA: &str = r###"-- Rufin Store schema 38.
+const CREATE_SCHEMA: &str = r###"-- Rufin Store schema 39.
 --
 -- Product routes hydrate Library and do not query these tables for
 -- sorting or filtering.
@@ -66,7 +72,7 @@ PRAGMA foreign_keys = ON;
 BEGIN IMMEDIATE;
 
 PRAGMA application_id = 1381320270; -- "RUFN"
-PRAGMA user_version = 38;
+PRAGMA user_version = 39;
 
 -- One row is one complete or in-progress source-library candidate. The newest
 -- accepted library_id is current; there is no mutable head row.
@@ -414,8 +420,8 @@ CREATE TABLE source_playlist_entries (
 
 -- Local inventory stores observations needed for exact no-op and dependency
 -- decisions. Canonical item facts stay in the item tables above.
--- metadata-fallback is a usable path-backed Track. unreadable audio and invalid
--- CUE rows stay as observations and never create canonical Tracks. Automatic
+-- Rejected media and CUE rows stay as observations and never create canonical
+-- Tracks. Unreadable media preserves the last accepted Track until a later read. Automatic
 -- verification retries them after a fingerprint, dependency, or parser-version
 -- change; explicit Resync retries all. A parsed CUE may still name missing
 -- media.
@@ -426,23 +432,22 @@ CREATE TABLE local_files (
     root TEXT NOT NULL CHECK (root <> ''),
     relative_path TEXT NOT NULL,
     kind TEXT NOT NULL CHECK (
-        kind IN ('audio', 'cue', 'image', 'directory')
+        kind IN ('media', 'cue', 'image', 'directory')
     ),
     size_bytes INTEGER CHECK (size_bytes IS NULL OR size_bytes >= 0),
     mtime_ns INTEGER NOT NULL,
     device_id INTEGER,
     inode INTEGER,
-    -- The current audio/CUE parser writes version 1. Images and directories are
+    -- The current media/CUE parser writes a version. Images and directories are
     -- observed without parsing and therefore keep this null.
     parse_version INTEGER CHECK (
         parse_version IS NULL OR parse_version >= 1
     ),
-    read_state TEXT NOT NULL CHECK (
-        read_state IN (
-            'parsed',
-            'metadata-fallback',
+    state TEXT NOT NULL CHECK (
+        state IN (
+            'accepted',
+            'rejected',
             'unreadable',
-            'invalid',
             'observed'
         )
     ),
@@ -461,19 +466,19 @@ CREATE TABLE local_files (
     ),
     CHECK (
         (
-            kind = 'audio'
+            kind = 'media'
             AND parse_version IS NOT NULL
-            AND read_state IN ('parsed', 'metadata-fallback', 'unreadable')
+            AND state IN ('accepted', 'rejected', 'unreadable')
         )
         OR (
             kind = 'cue'
             AND parse_version IS NOT NULL
-            AND read_state IN ('parsed', 'invalid')
+            AND state IN ('accepted', 'rejected')
         )
         OR (
             kind IN ('image', 'directory')
             AND parse_version IS NULL
-            AND read_state = 'observed'
+            AND state = 'observed'
         )
     ),
     CHECK (kind = 'cue' OR dependencies_json = '[]')
@@ -1162,6 +1167,93 @@ CREATE TABLE playback_state (
     Ok(())
 }
 
+fn migrate_schema_38(connection: &Connection) -> StoreResult<()> {
+    connection.execute_batch(
+        r###"ALTER TABLE local_files RENAME TO schema_38_local_files;
+
+CREATE TABLE local_files (
+    library_id INTEGER NOT NULL
+        REFERENCES source_libraries(library_id) ON DELETE NO ACTION,
+    path TEXT NOT NULL CHECK (path <> ''),
+    root TEXT NOT NULL CHECK (root <> ''),
+    relative_path TEXT NOT NULL,
+    kind TEXT NOT NULL CHECK (
+        kind IN ('media', 'cue', 'image', 'directory')
+    ),
+    size_bytes INTEGER CHECK (size_bytes IS NULL OR size_bytes >= 0),
+    mtime_ns INTEGER NOT NULL,
+    device_id INTEGER,
+    inode INTEGER,
+    -- The current media/CUE parser writes a version. Images and directories are
+    -- observed without parsing and therefore keep this null.
+    parse_version INTEGER CHECK (
+        parse_version IS NULL OR parse_version >= 1
+    ),
+    state TEXT NOT NULL CHECK (
+        state IN (
+            'accepted',
+            'rejected',
+            'unreadable',
+            'observed'
+        )
+    ),
+    dependencies_json TEXT NOT NULL CHECK (
+        length(CAST(dependencies_json AS BLOB)) <= 2097152
+        AND CASE
+            WHEN json_valid(dependencies_json)
+            THEN json_type(dependencies_json) = 'array'
+            ELSE 0
+        END
+    ),
+    PRIMARY KEY (library_id, path),
+    CHECK (
+        (kind = 'directory' AND size_bytes IS NULL)
+        OR (kind <> 'directory' AND size_bytes IS NOT NULL)
+    ),
+    CHECK (
+        (
+            kind = 'media'
+            AND parse_version IS NOT NULL
+            AND state IN ('accepted', 'rejected', 'unreadable')
+        )
+        OR (
+            kind = 'cue'
+            AND parse_version IS NOT NULL
+            AND state IN ('accepted', 'rejected')
+        )
+        OR (
+            kind IN ('image', 'directory')
+            AND parse_version IS NULL
+            AND state = 'observed'
+        )
+    ),
+    CHECK (kind = 'cue' OR dependencies_json = '[]')
+) STRICT;
+
+INSERT INTO local_files(
+    library_id, path, root, relative_path, kind, size_bytes, mtime_ns,
+    device_id, inode, parse_version, state, dependencies_json
+)
+SELECT
+    library_id, path, root, relative_path,
+    CASE kind WHEN 'audio' THEN 'media' ELSE kind END,
+    size_bytes, mtime_ns, device_id, inode, parse_version,
+    CASE read_state
+        WHEN 'parsed' THEN 'accepted'
+        WHEN 'metadata-fallback' THEN 'accepted'
+        WHEN 'invalid' THEN 'rejected'
+        ELSE read_state
+    END,
+    dependencies_json
+FROM schema_38_local_files;
+
+DROP TABLE schema_38_local_files;
+PRAGMA user_version = 39;
+"###,
+    )?;
+    Ok(())
+}
+
 fn backfill_recent_plays(connection: &Connection) -> StoreResult<()> {
     connection.execute(
         "INSERT OR IGNORE INTO recent_plays(
@@ -1305,6 +1397,82 @@ mod tests {
     }
 
     #[test]
+    fn schema_38_maps_audio_fallbacks_and_invalid_rows_to_media_state() {
+        let connection = Connection::open_in_memory().expect("open Store");
+        initialize(&connection).expect("initialize current Store");
+        connection
+            .execute(
+                "INSERT INTO source_libraries(
+                    source_id, input_version, input_digest, accepted_at
+                 ) VALUES ('local:test', 1, ?1, 1)",
+                [vec![1_u8; 32]],
+            )
+            .expect("write source library");
+        connection
+            .execute_batch(
+                "INSERT INTO local_files(
+                    library_id, path, root, relative_path, kind, size_bytes,
+                    mtime_ns, parse_version, state, dependencies_json
+                 ) VALUES
+                    (1, '/music/accepted.wav', '/music', 'accepted.wav',
+                     'media', 1, 1, 4, 'accepted', '[]'),
+                    (1, '/music/rejected.wav', '/music', 'rejected.wav',
+                     'media', 1, 1, 4, 'rejected', '[]'),
+                    (1, '/music/album.cue', '/music', 'album.cue',
+                     'cue', 1, 1, 4, 'rejected', '[]');",
+            )
+            .expect("write current Local rows");
+        restore_schema_38_local_files(&connection);
+        connection
+            .execute(
+                "UPDATE local_files
+                 SET read_state = 'metadata-fallback'
+                 WHERE path = '/music/accepted.wav'",
+                [],
+            )
+            .expect("prepare legacy metadata fallback");
+        connection
+            .pragma_update(None, "user_version", MEDIA_STATE_SCHEMA_VERSION)
+            .expect("prepare schema 38 Store");
+
+        initialize(&connection).expect("migrate schema 38 Store");
+
+        let rows = connection
+            .prepare("SELECT path, kind, state FROM local_files ORDER BY path")
+            .expect("prepare migrated Local rows")
+            .query_map([], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                ))
+            })
+            .expect("read migrated Local rows")
+            .collect::<Result<Vec<_>, _>>()
+            .expect("collect migrated Local rows");
+        assert_eq!(
+            rows,
+            [
+                (
+                    "/music/accepted.wav".to_string(),
+                    "media".to_string(),
+                    "accepted".to_string(),
+                ),
+                (
+                    "/music/album.cue".to_string(),
+                    "cue".to_string(),
+                    "rejected".to_string(),
+                ),
+                (
+                    "/music/rejected.wav".to_string(),
+                    "media".to_string(),
+                    "rejected".to_string(),
+                ),
+            ]
+        );
+    }
+
+    #[test]
     fn schema_35_adds_the_pending_favorite_outbox() {
         let connection = Connection::open_in_memory().expect("open Store");
         initialize(&connection).expect("initialize current Store");
@@ -1443,11 +1611,11 @@ PRAGMA user_version = 37;
             .execute(
                 "INSERT INTO local_files(
                     library_id, path, root, relative_path, kind, size_bytes,
-                    mtime_ns, device_id, inode, parse_version, read_state,
+                    mtime_ns, device_id, inode, parse_version, state,
                     dependencies_json
                  ) VALUES (
-                    1, '/music/Track.flac', '/music', 'Track.flac', 'audio',
-                    1024, 1, 7, 11, 1, 'parsed', '[]'
+                    1, '/music/Track.flac', '/music', 'Track.flac', 'media',
+                    1024, 1, 7, 11, 1, 'accepted', '[]'
                  )",
                 [],
             )
@@ -1701,6 +1869,7 @@ PRAGMA user_version = 37;
     }
 
     fn restore_schema_37_playback(connection: &Connection) {
+        restore_schema_38_local_files(connection);
         connection
             .execute_batch(
                 r###"DROP TABLE playback_state;
@@ -1735,5 +1904,49 @@ CREATE TABLE playback_state (
 "###,
             )
             .expect("restore schema 37 Playback tables");
+    }
+
+    fn restore_schema_38_local_files(connection: &Connection) {
+        connection
+            .execute_batch(
+                r###"ALTER TABLE local_files RENAME TO schema_39_local_files;
+
+CREATE TABLE local_files (
+    library_id INTEGER NOT NULL
+        REFERENCES source_libraries(library_id) ON DELETE NO ACTION,
+    path TEXT NOT NULL,
+    root TEXT NOT NULL,
+    relative_path TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    size_bytes INTEGER,
+    mtime_ns INTEGER NOT NULL,
+    device_id INTEGER,
+    inode INTEGER,
+    parse_version INTEGER,
+    read_state TEXT NOT NULL,
+    dependencies_json TEXT NOT NULL,
+    PRIMARY KEY (library_id, path)
+) STRICT;
+
+INSERT INTO local_files(
+    library_id, path, root, relative_path, kind, size_bytes, mtime_ns,
+    device_id, inode, parse_version, read_state, dependencies_json
+)
+SELECT
+    library_id, path, root, relative_path,
+    CASE kind WHEN 'media' THEN 'audio' ELSE kind END,
+    size_bytes, mtime_ns, device_id, inode, parse_version,
+    CASE state
+        WHEN 'accepted' THEN 'parsed'
+        WHEN 'rejected' THEN 'invalid'
+        ELSE state
+    END,
+    dependencies_json
+FROM schema_39_local_files;
+
+DROP TABLE schema_39_local_files;
+"###,
+            )
+            .expect("restore schema 38 Local files");
     }
 }

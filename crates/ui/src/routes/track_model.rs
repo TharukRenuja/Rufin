@@ -423,8 +423,16 @@ impl TrackCollectionModel {
         let Some(track) = replacement.track.as_ref() else {
             return false;
         };
+        if replacement.activity_only
+            && self.with_state(|state| !state.settings.uses_track_activity())
+        {
+            return true;
+        }
         let result = self.with_state_mut(|state| {
             let source_include = include(track);
+            if !source_include && matches!(state.source.position(&replacement.id), Ok(None)) {
+                return Some((None, None));
+            }
             let source_and_visible_share_order = state.source.shares_order(&state.visible);
             let Some(source) = state
                 .source

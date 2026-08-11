@@ -1591,10 +1591,10 @@ fn local_file_change_updates_only_the_changed_component() {
     let music_root = directory.path().join("music");
     std::fs::create_dir(&music_root).expect("create Local music folder");
     let music_root = std::fs::canonicalize(music_root).expect("canonical Local music folder");
-    std::fs::write(music_root.join("First.mp3"), []).expect("write first Local Track");
+    write_silent_wav(&music_root.join("First.wav")).expect("write first Local Track");
     let other_directory = music_root.join("Other");
     std::fs::create_dir(&other_directory).expect("create unrelated Local directory");
-    std::fs::write(other_directory.join("Outside.mp3"), []).expect("write unrelated Local Track");
+    write_silent_wav(&other_directory.join("Outside.wav")).expect("write unrelated Local Track");
     let runtime = test_runtime();
     let connected = runtime
         .block_on(Source::connect(SourceSetupInput::Local(
@@ -1628,8 +1628,8 @@ fn local_file_change_updates_only_the_changed_component() {
         2
     );
 
-    let second_path = music_root.join("Second.mp3");
-    std::fs::write(&second_path, []).expect("write changed Local Track");
+    let second_path = music_root.join("Second.wav");
+    write_silent_wav(&second_path).expect("write changed Local Track");
     let prepared = runtime
         .block_on(source.prepare_change(
             Arc::clone(&accepted),

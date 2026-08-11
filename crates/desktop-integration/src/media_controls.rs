@@ -374,7 +374,7 @@ mod freedesktop {
             volume: playback.map_or(1.0, |playback| playback.controls.volume.clamp(0.0, 1.0)),
             can_play: has_current,
             can_pause: has_active_run,
-            can_seek: has_current,
+            can_seek: has_current && playback.is_some_and(|playback| playback.transport.can_seek),
             can_go_next,
             can_go_previous: has_current,
             position: playback
@@ -1172,7 +1172,7 @@ mod macos {
         commands.previous_track_command().set_enabled(has_current);
         commands
             .change_playback_position_command()
-            .set_enabled(has_current);
+            .set_enabled(has_current && playback.transport.can_seek);
 
         let repeat = commands.change_repeat_mode_command();
         repeat.set_enabled(has_current);

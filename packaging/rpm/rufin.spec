@@ -32,6 +32,7 @@ Requires:       hicolor-icon-theme
 Recommends:     gstreamer1-plugins-base
 Recommends:     gstreamer1-plugins-good
 Recommends:     gstreamer1-plugins-bad-free
+Recommends:     gstreamer1-plugins-bad-free-extras
 Recommends:     gstreamer1-plugins-ugly-free
 Recommends:     gstreamer1-plugin-libav
 

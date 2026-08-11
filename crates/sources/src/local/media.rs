@@ -1,9 +1,11 @@
+//! One Local media candidate: GStreamer admission followed by optional Lofty enrichment.
+
 use std::fs;
 use std::path::{Path, PathBuf};
 
 use library::{
-    AlbumId, ArtistCredit, ArtistId, GenreCredit, LocalArtworkRef, LocalReadState, MoodCredit,
-    Track, TrackData, TrackId, TrackRelations,
+    AlbumId, ArtistCredit, ArtistId, GenreCredit, LocalArtworkRef, MoodCredit, Track, TrackData,
+    TrackId, TrackRelations,
 };
 use lofty::file::TaggedFileExt;
 use lofty::prelude::*;
@@ -12,8 +14,8 @@ use lofty::tag::{ItemKey, Tag};
 use crate::policy::stable_hash;
 
 use super::artwork;
-use super::discoverer;
-use super::format::{ArtworkReader, AudioFormat, MetadataReader, read_lofty};
+use super::discovery;
+use super::lofty_metadata::{read_lofty, source_format};
 
 #[derive(Clone, Debug)]
 pub(super) struct ScannedTrack {
@@ -26,9 +28,10 @@ pub(super) struct ScannedTrack {
 }
 
 #[derive(Clone, Debug)]
-pub(super) struct AudioRead {
-    pub(super) scanned: Option<ScannedTrack>,
-    pub(super) state: LocalReadState,
+pub(super) enum MediaRead {
+    Accepted(ScannedTrack),
+    Rejected,
+    Unreadable,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -63,11 +66,12 @@ struct AudioMetadata {
     release_types: Vec<String>,
     is_compilation: Option<bool>,
     local_artwork: Option<LocalArtworkRef>,
+    source_format: Option<String>,
 }
 
 #[derive(Default)]
 pub(super) struct Worker {
-    discoverer: discoverer::Reader,
+    discovery: discovery::Reader,
 }
 
 /// Reads only the fields used to match a remote track to a local file.
@@ -75,26 +79,20 @@ pub(super) struct Worker {
 /// Local-access discovery deliberately skips pictures, MusicBrainz fields,
 /// relationships, and Rufin identities. A readable file with invalid metadata
 /// still has a useful filename-based match candidate.
-pub(super) fn read_basic_audio(
-    worker: &mut Worker,
-    path: PathBuf,
-    format: &AudioFormat,
-) -> Option<BasicAudioMetadata> {
+pub(super) fn read_basic_audio(worker: &mut Worker, path: PathBuf) -> Option<BasicAudioMetadata> {
     fs::File::open(&path).ok()?;
-    let tagged_file = match format.metadata_reader() {
-        MetadataReader::Lofty(file_types) => read_lofty(&path, file_types, false).ok().flatten(),
-        MetadataReader::Discoverer(format) => {
-            let metadata = worker.discoverer.read(&path, format);
-            return Some(basic_audio_metadata_from_discoverer(
-                &path,
-                metadata.as_ref(),
-            ));
-        }
-    };
+    let discovered = worker.discovery.read(&path)?;
+    let tagged_file = read_lofty(&path, false).ok().flatten();
+    if tagged_file.is_none() {
+        return Some(basic_audio_metadata_from_discoverer(
+            &path,
+            Some(&discovered),
+        ));
+    }
     let tag = tagged_file
         .as_ref()
         .and_then(|file| file.primary_tag().or_else(|| file.first_tag()));
-    let duration_seconds = tagged_file
+    let metadata_duration_seconds = tagged_file
         .as_ref()
         .map(|file| {
             file.properties()
@@ -103,78 +101,53 @@ pub(super) fn read_basic_audio(
                 .min(u64::from(u32::MAX)) as u32
         })
         .unwrap_or_default();
+    let duration_seconds =
+        playback_duration_seconds(discovered.duration_seconds, metadata_duration_seconds);
     Some(basic_audio_metadata(&path, tag, duration_seconds))
 }
 
-pub(super) fn read_audio(
+pub(super) fn read_media(
     worker: &mut Worker,
     path: PathBuf,
-    format: &AudioFormat,
     sidecar: Option<LocalArtworkRef>,
     revision: String,
-) -> AudioRead {
+) -> MediaRead {
     if fs::File::open(&path).is_err() {
-        return AudioRead {
-            scanned: None,
-            state: LocalReadState::Unreadable,
-        };
+        return MediaRead::Unreadable;
     }
 
-    let tagged_file = match format.metadata_reader() {
-        MetadataReader::Lofty(file_types) => read_lofty(&path, file_types, false).ok().flatten(),
-        MetadataReader::Discoverer(format) => {
-            let metadata = worker.discoverer.read(&path, format);
-            return discoverer_audio_read(&path, metadata, sidecar, revision);
-        }
+    let Some(discovered) = worker.discovery.read(&path) else {
+        return MediaRead::Rejected;
     };
-    let state = if tagged_file.is_some() {
-        LocalReadState::Parsed
+    let tagged_file = read_lofty(&path, false).ok().flatten();
+    let local_artwork = sidecar
+        .or_else(|| embedded_artwork(&path, revision.clone()))
+        .or_else(|| {
+            discovered
+                .artwork_index
+                .map(|picture_index| artwork::embedded_reference(&path, picture_index, revision))
+        });
+    let metadata = if tagged_file.is_some() {
+        audio_metadata_from_lofty(
+            &path,
+            tagged_file.as_ref(),
+            discovered.duration_seconds,
+            local_artwork,
+        )
     } else {
-        LocalReadState::MetadataFallback
+        audio_metadata_from_discoverer(&path, Some(&discovered), local_artwork)
     };
-    let local_artwork = sidecar.or_else(|| {
-        tagged_file
-            .as_ref()
-            .and_then(|_| embedded_artwork(&path, format.artwork_reader(), revision))
-    });
-    let metadata = audio_metadata_from_lofty(&path, tagged_file.as_ref(), local_artwork);
-    AudioRead {
-        scanned: Some(scanned_track(&path, metadata)),
-        state,
-    }
-}
-
-fn discoverer_audio_read(
-    path: &Path,
-    metadata: Option<discoverer::Metadata>,
-    sidecar: Option<LocalArtworkRef>,
-    revision: String,
-) -> AudioRead {
-    let state = if metadata.is_some() {
-        LocalReadState::Parsed
-    } else {
-        LocalReadState::MetadataFallback
-    };
-    let local_artwork = sidecar.or_else(|| {
-        metadata
-            .as_ref()
-            .and_then(|metadata| metadata.artwork_index)
-            .map(|picture_index| artwork::embedded_reference(path, picture_index, revision))
-    });
-    let metadata = audio_metadata_from_discoverer(path, metadata.as_ref(), local_artwork);
-    AudioRead {
-        scanned: Some(scanned_track(path, metadata)),
-        state,
-    }
+    MediaRead::Accepted(scanned_track(&path, metadata))
 }
 
 fn audio_metadata_from_lofty(
     path: &Path,
     tagged_file: Option<&lofty::file::TaggedFile>,
+    discovered_duration_seconds: u32,
     local_artwork: Option<LocalArtworkRef>,
 ) -> AudioMetadata {
     let tag = tagged_file.and_then(|file| file.primary_tag().or_else(|| file.first_tag()));
-    let duration_seconds = tagged_file
+    let metadata_duration_seconds = tagged_file
         .map(|file| {
             file.properties()
                 .duration()
@@ -182,6 +155,8 @@ fn audio_metadata_from_lofty(
                 .min(u64::from(u32::MAX)) as u32
         })
         .unwrap_or_default();
+    let duration_seconds =
+        playback_duration_seconds(discovered_duration_seconds, metadata_duration_seconds);
     let basic = basic_audio_metadata(path, tag, duration_seconds);
     let artist = &basic.artist;
     let album_artist = tag
@@ -251,12 +226,21 @@ fn audio_metadata_from_lofty(
         release_types,
         is_compilation,
         local_artwork,
+        source_format: tagged_file.and_then(|file| source_format(path, file.file_type())),
+    }
+}
+
+fn playback_duration_seconds(discovered: u32, metadata: u32) -> u32 {
+    if discovered == 0 {
+        metadata
+    } else {
+        discovered
     }
 }
 
 fn audio_metadata_from_discoverer(
     path: &Path,
-    metadata: Option<&discoverer::Metadata>,
+    metadata: Option<&discovery::Metadata>,
     local_artwork: Option<LocalArtworkRef>,
 ) -> AudioMetadata {
     let basic = basic_audio_metadata_from_discoverer(path, metadata);
@@ -335,6 +319,15 @@ fn audio_metadata_from_discoverer(
         ),
         is_compilation: metadata.and_then(|metadata| metadata.is_compilation),
         local_artwork,
+        source_format: metadata
+            .and_then(|metadata| metadata.source_format.clone())
+            .or_else(|| {
+                path.extension()
+                    .and_then(|extension| extension.to_str())
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .map(ToString::to_string)
+            }),
     }
 }
 
@@ -356,6 +349,7 @@ fn scanned_track(path: &Path, metadata: AudioMetadata) -> ScannedTrack {
         release_types,
         is_compilation,
         local_artwork,
+        source_format,
     } = metadata;
     let BasicAudioMetadata {
         title,
@@ -418,12 +412,7 @@ fn scanned_track(path: &Path, metadata: AudioMetadata) -> ScannedTrack {
             musicbrainz_release_track_id,
             source_path: Some(path_text),
             cue: None,
-            source_format: path
-                .extension()
-                .and_then(|extension| extension.to_str())
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-                .map(ToString::to_string),
+            source_format,
             comment,
             skip_count: None,
             bpm,
@@ -480,7 +469,7 @@ fn basic_audio_metadata(
 
 fn basic_audio_metadata_from_discoverer(
     path: &Path,
-    metadata: Option<&discoverer::Metadata>,
+    metadata: Option<&discovery::Metadata>,
 ) -> BasicAudioMetadata {
     let fallback_title = path
         .file_stem()
@@ -515,15 +504,8 @@ fn basic_audio_metadata_from_discoverer(
     }
 }
 
-fn embedded_artwork(
-    path: &Path,
-    reader: ArtworkReader,
-    revision: String,
-) -> Option<LocalArtworkRef> {
-    let ArtworkReader::Lofty(file_types) = reader else {
-        return None;
-    };
-    let file = read_lofty(path, file_types, true).ok().flatten()?;
+fn embedded_artwork(path: &Path, revision: String) -> Option<LocalArtworkRef> {
+    let file = read_lofty(path, true).ok().flatten()?;
     let tag = file.primary_tag().or_else(|| file.first_tag());
     let picture_index = artwork::best_picture_index(&file, tag)?;
     Some(artwork::embedded_reference(path, picture_index, revision))
@@ -723,39 +705,41 @@ mod tests {
     use super::*;
 
     #[test]
-    fn discoverer_failure_keeps_a_filename_metadata_fallback() {
-        let read = discoverer_audio_read(
-            Path::new("/Music/Album/Fallback.mka"),
-            None,
-            None,
-            "revision".to_string(),
-        );
-
-        assert_eq!(read.state, LocalReadState::MetadataFallback);
-        let scanned = read.scanned.expect("fallback track");
-        assert_eq!(scanned.track.title, "Fallback");
-        assert_eq!(scanned.track.album, "Album");
-        assert_eq!(scanned.track.artist, "Unknown Artist");
+    fn gstreamer_duration_owns_the_playback_length() {
+        assert_eq!(playback_duration_seconds(190, 0), 190);
+        assert_eq!(playback_duration_seconds(190, 191), 190);
+        assert_eq!(playback_duration_seconds(0, 191), 191);
     }
 
     #[test]
-    fn discoverer_metadata_preserves_its_embedded_artwork_locator() {
-        let metadata = discoverer::Metadata {
+    fn discovered_metadata_preserves_its_embedded_artwork_locator() {
+        let metadata = discovery::Metadata {
             title: Some("Track".to_string()),
             artist: Some("Artist".to_string()),
             artwork_index: Some(2),
-            ..discoverer::Metadata::default()
+            ..discovery::Metadata::default()
         };
-        let read = discoverer_audio_read(
+        let local_artwork = metadata.artwork_index.map(|picture_index| {
+            artwork::embedded_reference(
+                Path::new("/Music/Album/Track.wma"),
+                picture_index,
+                "file-revision".to_string(),
+            )
+        });
+        let read = MediaRead::Accepted(scanned_track(
             Path::new("/Music/Album/Track.wma"),
-            Some(metadata),
-            None,
-            "file-revision".to_string(),
-        );
+            audio_metadata_from_discoverer(
+                Path::new("/Music/Album/Track.wma"),
+                Some(&metadata),
+                local_artwork,
+            ),
+        ));
 
-        assert_eq!(read.state, LocalReadState::Parsed);
+        let MediaRead::Accepted(scanned) = read else {
+            panic!("accepted media")
+        };
         assert_eq!(
-            read.scanned.expect("parsed track").track.local_artwork,
+            scanned.track.local_artwork,
             Some(LocalArtworkRef::Embedded {
                 path: "/Music/Album/Track.wma".to_string(),
                 picture_index: 2,

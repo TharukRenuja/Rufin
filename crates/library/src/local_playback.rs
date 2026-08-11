@@ -11,7 +11,7 @@ use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    Libraries, Library, LibraryError, LibraryResult, LocalFile, LocalFileKind, LocalReadState,
+    Libraries, Library, LibraryError, LibraryResult, LocalFile, LocalFileKind, LocalFileState,
     MetadataError, MetadataItem, MetadataItemId, MetadataSubject, SourceId, Track, TrackId,
 };
 
@@ -505,11 +505,7 @@ pub(crate) fn playable_file_for(
 ) -> Option<PlayableFile> {
     if let Some(path) = track.source_path.as_ref().filter(|path| {
         local_files.get(*path).is_some_and(|file| {
-            file.kind == LocalFileKind::Audio
-                && matches!(
-                    file.read_state,
-                    LocalReadState::Parsed | LocalReadState::MetadataFallback
-                )
+            file.kind == LocalFileKind::Media && file.state == LocalFileState::Accepted
         })
     }) {
         return Some(match &track.cue {

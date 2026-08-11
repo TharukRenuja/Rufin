@@ -163,6 +163,7 @@ gstreamer_plugin_names=(
     libgstequalizer.dll
     libgstfdkaac.dll
     libgstflac.dll
+    libgstgme.dll
     libgstid3demux.dll
     libgstisomp4.dll
     libgstlevel.dll
@@ -172,6 +173,7 @@ gstreamer_plugin_names=(
     libgstmusepack.dll
     libgstmulaw.dll
     libgstogg.dll
+    libgstopenmpt.dll
     libgstopus.dll
     libgstopusparse.dll
     libgstpbtypes.dll

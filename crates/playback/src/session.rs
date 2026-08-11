@@ -232,6 +232,7 @@ struct RunContext {
     last_progress_bucket: Option<u64>,
     desired_playing: bool,
     resolved_stream: Option<PreparedStream>,
+    seekable: bool,
 }
 
 impl RunContext {
@@ -253,6 +254,7 @@ impl RunContext {
             last_progress_bucket: None,
             desired_playing: true,
             resolved_stream: None,
+            seekable: false,
         }
     }
 
@@ -375,6 +377,10 @@ impl PlaybackSession {
 
     pub fn current_run(&self) -> Option<RunId> {
         self.current_run.as_ref().map(|run| run.id)
+    }
+
+    pub fn can_seek(&self) -> bool {
+        self.current_run.as_ref().is_some_and(|run| run.seekable)
     }
 
     pub fn position_millis(&self) -> u64 {
@@ -623,6 +629,7 @@ impl PlaybackSession {
             BackendEvent::State { run, state } => self.accept_state(run, state, sample),
             BackendEvent::Position { run, millis } => self.accept_position(run, millis, sample),
             BackendEvent::Duration { run, millis } => self.accept_duration(run, millis),
+            BackendEvent::Seekable { run, seekable } => self.accept_seekable(run, seekable),
             BackendEvent::Buffering { run, percent } => self.accept_buffering(run, percent),
             BackendEvent::Ended { run } => self.accept_ended(run, sample),
             BackendEvent::Transitioned { old_run, new_run } => {
@@ -1212,6 +1219,9 @@ impl PlaybackSession {
                 checkpoint_change: None,
             };
         };
+        if !run.seekable && position_millis != 0 {
+            return SessionUpdate::default();
+        }
         SessionUpdate {
             effects: vec![
                 SessionEffect::Backend(BackendCommand::Seek {
@@ -1225,6 +1235,21 @@ impl PlaybackSession {
             ],
             ..SessionUpdate::default()
         }
+    }
+
+    fn accept_seekable(&mut self, run: RunId, seekable: bool) -> SessionUpdate {
+        let Some(current) = self
+            .current_run
+            .as_mut()
+            .filter(|current| current.id == run)
+        else {
+            return SessionUpdate::default();
+        };
+        if current.seekable == seekable {
+            return SessionUpdate::default();
+        }
+        current.seekable = seekable;
+        SessionUpdate::changed()
     }
 
     fn set_volume(&mut self, volume: f64) -> SessionUpdate {
@@ -2665,7 +2690,7 @@ mod tests {
     }
 
     #[test]
-    fn accepted_seek_emits_a_position_discontinuity_for_the_current_run_only() {
+    fn only_a_seekable_current_run_emits_a_position_discontinuity() {
         let mut session = session(&[1, 2]);
         let inactive = session
             .handle_command(SessionCommand::Seek(12_000), &sample(0))
@@ -2681,6 +2706,20 @@ mod tests {
             .handle_command(SessionCommand::PlayPause, &sample(0))
             .expect("start");
         let run = session.current_run().expect("current run");
+        let rejected = session
+            .handle_command(SessionCommand::Seek(42_000), &sample(0))
+            .expect("unseekable current run");
+        assert!(rejected.effects.is_empty());
+        assert!(!session.view().transport.can_seek);
+
+        session.handle_backend(
+            BackendEvent::Seekable {
+                run,
+                seekable: true,
+            },
+            &sample(0),
+        );
+        assert!(session.view().transport.can_seek);
         let accepted = session
             .handle_command(SessionCommand::Seek(42_000), &sample(0))
             .expect("active seek");

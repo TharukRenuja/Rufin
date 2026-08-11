@@ -1,3 +1,5 @@
+//! Media discovery, admission, generic tags, embedded artwork, and bounded container preflight.
+
 use std::collections::HashMap;
 use std::fs;
 use std::io::{Read, Seek, SeekFrom};
@@ -43,12 +45,6 @@ const ASF_AUDIO_MEDIA_GUID: [u8; 16] = [
 ];
 const WAVE_FORMAT_WMA_PRO: u16 = 0x0162;
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(super) enum Format {
-    Mka,
-    Asf,
-}
-
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub(super) struct Metadata {
     pub(super) title: Option<String>,
@@ -72,6 +68,7 @@ pub(super) struct Metadata {
     pub(super) is_compilation: Option<bool>,
     pub(super) duration_seconds: u32,
     pub(super) artwork_index: Option<u32>,
+    pub(super) source_format: Option<String>,
 }
 
 #[derive(Default)]
@@ -92,21 +89,17 @@ impl Default for DiscovererState {
 }
 
 impl Reader {
-    pub(super) fn read(&mut self, path: &Path, format: Format) -> Option<Metadata> {
-        let info = self.discover(path, format)?;
-        metadata_from_info(&info, format)
+    pub(super) fn read(&mut self, path: &Path) -> Option<Metadata> {
+        let info = self.discover(path)?;
+        metadata_from_info(&info)
     }
 
-    fn discover(&mut self, path: &Path, format: Format) -> Option<DiscovererInfo> {
-        match format {
-            Format::Mka => preflight_mka(path),
-            Format::Asf => preflight_asf(path),
-        }
-        .ok()?;
+    fn discover(&mut self, path: &Path) -> Option<DiscovererInfo> {
+        preflight_known_container(path).ok()?;
         let discoverer = self.discoverer()?;
         let uri = url::Url::from_file_path(path).ok()?;
         let info = discoverer.discover_uri(uri.as_str()).ok()?;
-        (info.result() == DiscovererResult::Ok).then_some(info)
+        admitted_audio_stream(&info).map(|_| info)
     }
 
     fn discoverer(&mut self) -> Option<&Discoverer> {
@@ -125,14 +118,10 @@ impl Reader {
     }
 }
 
-pub(super) fn read_image(
-    path: &Path,
-    picture_index: u32,
-    format: Format,
-) -> SourceResult<ImageBytes> {
+pub(super) fn read_image(path: &Path, picture_index: u32) -> SourceResult<ImageBytes> {
     let mut reader = Reader::default();
-    let info = reader.discover(path, format).ok_or(SourceError::NotFound)?;
-    let audio = single_audio_stream(&info).ok_or(SourceError::NotFound)?;
+    let info = reader.discover(path).ok_or(SourceError::NotFound)?;
+    let audio = admitted_audio_stream(&info).ok_or(SourceError::NotFound)?;
     let tags = ScopedTags::new(container_tags(&info), audio.tags());
     let sample = tags
         .images()
@@ -165,15 +154,34 @@ fn ensure_gstreamer_initialized() -> Result<(), String> {
         .clone()
 }
 
-fn metadata_from_info(info: &DiscovererInfo, format: Format) -> Option<Metadata> {
-    let audio = single_audio_stream(info)?;
+fn metadata_from_info(info: &DiscovererInfo) -> Option<Metadata> {
+    let audio = admitted_audio_stream(info)?;
     let tags = ScopedTags::new(container_tags(info), audio.tags());
     let duration_seconds = info
         .duration()
         .map(gst::ClockTime::seconds)
         .unwrap_or_default()
         .min(u64::from(u32::MAX)) as u32;
-    Some(metadata_from_tags(&tags, duration_seconds, format))
+    let mut metadata = metadata_from_tags(&tags, duration_seconds, container_is_asf(info));
+    metadata.source_format = synthetic_audio_format(&audio);
+    Some(metadata)
+}
+
+fn synthetic_audio_format(audio: &gstreamer_pbutils::DiscovererAudioInfo) -> Option<String> {
+    let caps = audio.caps()?;
+    let structure = caps.structure(0)?;
+    let name = structure.name();
+    if name == "audio/x-mod" {
+        return structure
+            .get::<String>("type")
+            .ok()
+            .map(|format| format.to_ascii_lowercase());
+    }
+    let format = name.as_str().strip_prefix("audio/x-")?;
+    ["ay", "gbs", "gym", "hes", "kss", "nsf", "sap", "spc", "vgm"]
+        .into_iter()
+        .find(|candidate| format == *candidate)
+        .map(ToString::to_string)
 }
 
 fn container_tags(info: &DiscovererInfo) -> Option<gst::TagList> {
@@ -183,15 +191,49 @@ fn container_tags(info: &DiscovererInfo) -> Option<gst::TagList> {
         .tags()
 }
 
-fn single_audio_stream(info: &DiscovererInfo) -> Option<gstreamer_pbutils::DiscovererAudioInfo> {
-    select_single_audio(info.audio_streams(), !info.video_streams().is_empty())
+fn container_is_asf(info: &DiscovererInfo) -> bool {
+    info.stream_info()
+        .and_then(|stream| stream.caps())
+        .and_then(|caps| {
+            caps.structure(0)
+                .map(|structure| structure.name().to_string())
+        })
+        .is_some_and(|name| name == "video/x-ms-asf")
 }
 
-fn select_single_audio<T>(mut audio: Vec<T>, has_video: bool) -> Option<T> {
-    if has_video || audio.len() != 1 {
+fn admitted_audio_stream(info: &DiscovererInfo) -> Option<gstreamer_pbutils::DiscovererAudioInfo> {
+    let mut audio = info.audio_streams();
+    let video_is_image = info
+        .video_streams()
+        .iter()
+        .map(video_is_still)
+        .collect::<Vec<_>>();
+    if !discovery_is_admitted(info.result(), audio.len(), &video_is_image) {
         return None;
     }
     audio.pop()
+}
+
+fn video_is_still(video: &gstreamer_pbutils::DiscovererVideoInfo) -> bool {
+    let caps_name = video.caps().and_then(|caps| {
+        caps.structure(0)
+            .map(|structure| structure.name().to_string())
+    });
+    video_shape_is_still(video.is_image(), caps_name.as_deref())
+}
+
+fn video_shape_is_still(is_image: bool, caps_name: Option<&str>) -> bool {
+    is_image || caps_name.is_some_and(|name| name.starts_with("image/"))
+}
+
+fn discovery_is_admitted(
+    result: DiscovererResult,
+    audio_streams: usize,
+    video_is_image: &[bool],
+) -> bool {
+    result == DiscovererResult::Ok
+        && audio_streams == 1
+        && video_is_image.iter().all(|is_image| *is_image)
 }
 
 struct ScopedTags {
@@ -293,20 +335,17 @@ impl ScopedTags {
     }
 }
 
-fn metadata_from_tags(tags: &ScopedTags, duration_seconds: u32, format: Format) -> Metadata {
+fn metadata_from_tags(tags: &ScopedTags, duration_seconds: u32, is_asf: bool) -> Metadata {
     let artists = tags.strings::<gst::tags::Artist>();
-    let artist = match format {
-        Format::Mka => join_tag_values(artists.clone()),
-        Format::Asf => artists.first().cloned(),
+    let artist = if is_asf {
+        artists.first().cloned()
+    } else {
+        join_tag_values(artists.clone())
     };
     let album_artist = tags
         .string::<gst::tags::AlbumArtist>()
         .or_else(|| tags.extended(&["albumartist", "album_artist"]))
-        .or_else(|| {
-            (format == Format::Asf)
-                .then(|| artists.get(1).cloned())
-                .flatten()
-        });
+        .or_else(|| is_asf.then(|| artists.get(1).cloned()).flatten());
     let track_number = tags
         .number::<gst::tags::TrackNumber>()
         .or_else(|| parse_number(tags.extended(&["tracknumber", "track_number", "track"])));
@@ -350,7 +389,7 @@ fn metadata_from_tags(tags: &ScopedTags, duration_seconds: u32, format: Format) 
         moods: split_values(tags.extended_values(&["mood"]).iter().map(String::as_str)),
         year: tag_year(tags),
         comment: tags.string::<gst::tags::Comment>().or_else(|| {
-            (format == Format::Asf)
+            is_asf
                 .then(|| tags.string::<gst::tags::Description>())
                 .flatten()
         }),
@@ -366,6 +405,7 @@ fn metadata_from_tags(tags: &ScopedTags, duration_seconds: u32, format: Format) 
         is_compilation,
         duration_seconds,
         artwork_index: tags.images().next().map(|_| 0),
+        source_format: None,
     }
 }
 
@@ -523,6 +563,19 @@ enum PreflightError {
     UnknownSize,
     TooDeep,
     MissingSegment,
+}
+
+fn preflight_known_container(path: &Path) -> Result<(), PreflightError> {
+    let mut file = fs::File::open(path).map_err(|_| PreflightError::Io)?;
+    let mut prefix = [0_u8; 16];
+    let read = file.read(&mut prefix).map_err(|_| PreflightError::Io)?;
+    if read >= 4 && prefix[..4] == [0x1a, 0x45, 0xdf, 0xa3] {
+        preflight_mka(path)
+    } else if read == prefix.len() && prefix == ASF_HEADER_GUID {
+        preflight_asf(path)
+    } else {
+        Ok(())
+    }
 }
 
 #[derive(Default)]
@@ -885,7 +938,7 @@ mod tests {
         audio.add::<gst::tags::Artist>(&"Stream artist", gst::TagMergeMode::Append);
 
         let tags = ScopedTags::new(Some(container.to_owned()), Some(audio.to_owned()));
-        let metadata = metadata_from_tags(&tags, 42, Format::Mka);
+        let metadata = metadata_from_tags(&tags, 42, false);
 
         assert_eq!(metadata.title.as_deref(), Some("Stream title"));
         assert_eq!(metadata.artist.as_deref(), Some("Stream artist"));
@@ -917,7 +970,7 @@ mod tests {
         container.add::<gst::tags::Description>(&"Track comment", gst::TagMergeMode::Append);
 
         let tags = ScopedTags::new(Some(container.to_owned()), None);
-        let metadata = metadata_from_tags(&tags, 1, Format::Asf);
+        let metadata = metadata_from_tags(&tags, 1, true);
 
         assert_eq!(metadata.artist.as_deref(), Some("Track artist"));
         assert_eq!(metadata.album_artist.as_deref(), Some("Album artist"));
@@ -925,11 +978,27 @@ mod tests {
     }
 
     #[test]
-    fn metadata_requires_exactly_one_audio_stream_and_no_video() {
-        assert_eq!(select_single_audio(Vec::<u8>::new(), false), None);
-        assert_eq!(select_single_audio(vec![1], false), Some(1));
-        assert_eq!(select_single_audio(vec![1, 2], false), None);
-        assert_eq!(select_single_audio(vec![1], true), None);
+    fn admission_requires_success_one_audio_and_only_still_images() {
+        assert!(discovery_is_admitted(DiscovererResult::Ok, 1, &[]));
+        assert!(discovery_is_admitted(DiscovererResult::Ok, 1, &[true]));
+        for result in [
+            DiscovererResult::Error,
+            DiscovererResult::Timeout,
+            DiscovererResult::MissingPlugins,
+        ] {
+            assert!(!discovery_is_admitted(result, 1, &[]));
+        }
+        assert!(!discovery_is_admitted(DiscovererResult::Ok, 0, &[]));
+        assert!(!discovery_is_admitted(DiscovererResult::Ok, 2, &[]));
+        assert!(!discovery_is_admitted(DiscovererResult::Ok, 1, &[false]));
+        assert!(!discovery_is_admitted(
+            DiscovererResult::Ok,
+            1,
+            &[true, false]
+        ));
+        assert!(video_shape_is_still(true, None));
+        assert!(video_shape_is_still(false, Some("image/png")));
+        assert!(!video_shape_is_still(false, Some("video/x-h264")));
     }
 
     #[test]

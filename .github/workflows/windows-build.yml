@@ -120,7 +120,8 @@ jobs:
         shell: msys2 {0}
         run: |
           media_dir="$(cygpath -m "$RUNNER_TEMP")/rufin-package-media"
-          cargo run --locked -p xtask -- generate media-verification-files "$media_dir"
+          cargo run --locked -p xtask -- generate media-verification-files \
+            "$media_dir" --with-openmpt-gme
 
       - name: Verify installer
         shell: pwsh

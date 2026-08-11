@@ -213,7 +213,7 @@ impl Sequence {
         let traversal_position = selected_index
             .and_then(|selected| traversal.iter().position(|index| *index == selected));
         let track_counts = track_counts(&entries);
-        Ok(Self {
+        let mut sequence = Self {
             source_id,
             next_occurrence_number: next_occurrence_number(&entries),
             entries: Arc::new(entries),
@@ -225,7 +225,9 @@ impl Sequence {
             revision,
             progress_millis,
             track_counts,
-        })
+        };
+        sequence.reset_finished_progress();
+        Ok(sequence)
     }
 
     pub fn source_id(&self) -> &SourceId {
@@ -762,7 +764,20 @@ impl Sequence {
                 changed = true;
             }
         }
+        if changed {
+            self.reset_finished_progress();
+        }
         changed
+    }
+
+    fn reset_finished_progress(&mut self) {
+        let duration_millis = self
+            .selected()
+            .map(|entry| u64::from(entry.track.duration_seconds).saturating_mul(1_000))
+            .unwrap_or_default();
+        if duration_millis > 0 && self.progress_millis >= duration_millis {
+            self.progress_millis = 0;
+        }
     }
 
     fn insert_batch(
@@ -1308,6 +1323,46 @@ mod tests {
             sequence.selected().map(|entry| &entry.occurrence),
             Some(&ids[3])
         );
+    }
+
+    #[test]
+    fn learning_the_current_duration_resets_a_finished_unknown_position() {
+        let mut unknown = track(1);
+        unknown.make_mut().duration_seconds = 0;
+        let mut sequence = Sequence::new(SourceId::fake(1));
+        sequence
+            .apply_batch(
+                Batch::new(vec![BatchItem::new(unknown, Provenance::Manual)]),
+                Placement::Replace { anchor_index: 0 },
+            )
+            .expect("replace batch");
+        sequence.set_progress_millis(180_000);
+
+        assert!(sequence.refresh_tracks(vec![track(1)]));
+        assert_eq!(sequence.progress_millis(), 0);
+    }
+
+    #[test]
+    fn restoring_a_finished_position_starts_the_track_from_the_beginning() {
+        let entry = SequenceEntry {
+            occurrence: OccurrenceId::new("occurrence-1"),
+            track: track(1),
+            provenance: Provenance::Manual,
+        };
+        let selected = entry.occurrence.clone();
+        let sequence = Sequence::restore(RestoredSequence {
+            source_id: SourceId::fake(1),
+            entries: vec![entry],
+            selected: Some(selected.clone()),
+            repeat_mode: RepeatMode::Off,
+            shuffle_enabled: false,
+            traversal: vec![selected],
+            revision: 1,
+            progress_millis: 180_000,
+        })
+        .expect("restore sequence");
+
+        assert_eq!(sequence.progress_millis(), 0);
     }
 
     fn batch(numbers: &[u32]) -> Batch {

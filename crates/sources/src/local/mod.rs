@@ -18,11 +18,11 @@ use crate::{
 
 mod artwork;
 mod cue;
-mod discoverer;
-mod format;
+mod discovery;
+mod lofty_metadata;
+mod media;
 pub(crate) mod metadata;
 mod scan;
-mod tags;
 mod watch;
 
 #[cfg(test)]
@@ -280,26 +280,14 @@ pub fn verify_local_media_file(path: &Path) -> SourceResult<()> {
     let path = fs::canonicalize(path).map_err(|error| {
         SourceError::Other(format!("Could not read {}: {error}", path.display()))
     })?;
-    let format = format::audio_format(&path).ok_or(SourceError::InvalidRequest(
-        "the verification path is not a supported Local audio file",
-    ))?;
-    let mut worker = tags::Worker::default();
-    let read = tags::read_audio(
-        &mut worker,
-        path.clone(),
-        format,
-        None,
-        "verification".to_string(),
-    );
-    if read.state != library::LocalReadState::Parsed {
+    let mut worker = media::Worker::default();
+    let read = media::read_media(&mut worker, path.clone(), None, "verification".to_string());
+    let media::MediaRead::Accepted(scanned) = read else {
         return Err(SourceError::Other(format!(
-            "Local metadata reader could not parse {}",
+            "Could not read {}",
             path.display()
         )));
-    }
-    let scanned = read
-        .scanned
-        .ok_or_else(|| SourceError::Other(format!("Could not read {}", path.display())))?;
+    };
     if let Some(reference) = &scanned.track.local_artwork {
         let root = path.parent().ok_or(SourceError::NotFound)?.to_path_buf();
         LocalSource { roots: vec![root] }.image_bytes(reference)?;

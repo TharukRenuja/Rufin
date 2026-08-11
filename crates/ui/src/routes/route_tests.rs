@@ -720,6 +720,114 @@ fn accepted_activity_repositions_exact_track_without_a_complete_rebuild() {
 }
 
 #[test]
+fn accepted_activity_does_not_refresh_a_track_view_that_does_not_show_it() {
+    use std::{cell::Cell, rc::Rc};
+
+    let first = test_track(1, "Alpha", 1, 1);
+    let second = test_track(2, "Beta", 1, 2);
+    let source_id = SourceId::new("local:ui-hidden-activity");
+    let fixture = crate::test_support::source_fixture(
+        source_id.clone(),
+        Vec::new(),
+        vec![first.clone(), second],
+        Vec::new(),
+    );
+    let mut settings = LibraryListSettings::for_key(LibraryListKey::Tracks);
+    settings.sort_key = LibraryField::ReleaseDate;
+    settings.row_fields = vec![
+        LibraryField::RowIndex,
+        LibraryField::TitleMerged,
+        LibraryField::Album,
+        LibraryField::Year,
+        LibraryField::Favorite,
+    ];
+    let model = TrackCollectionModel::new(
+        source_id,
+        SourceSessionEpoch::new(1),
+        fixture
+            .library
+            .track_list(None, TrackSort::ReleaseDate, false)
+            .expect("complete Track list"),
+        settings,
+    );
+    let retained_row = model.item(0).expect("bound Track row");
+    let notifications = Rc::new(Cell::new(0));
+    let observed = Rc::clone(&notifications);
+    model.connect_items_changed(move |_, _, _, _| observed.set(observed.get() + 1));
+    let activity = fixture
+        .library
+        .record_play(AcceptedPlay {
+            play_id: "ui-hidden-activity-play".to_string(),
+            track_id: first.id.clone(),
+            played_at: 1_700_000_000,
+            month: "2023-11".to_string(),
+        })
+        .expect("record accepted activity")
+        .expect("new accepted activity");
+    let accepted = fixture
+        .library
+        .apply_recorded_activity(&activity)
+        .expect("apply accepted activity")
+        .expect("changed accepted activity");
+    assert!(accepted.tracks[0].activity_only);
+    let before = model.test_stats();
+
+    assert!(model.apply_track_replacement(&accepted.tracks, |_| true));
+
+    assert_eq!(model.test_stats(), before);
+    assert_eq!(notifications.get(), 0);
+    assert_eq!(
+        model
+            .track_at(model.position(&first.id).expect("updated Track position"))
+            .and_then(|track| track.play_count),
+        Some(1)
+    );
+    drop(retained_row);
+}
+
+#[test]
+fn an_update_that_stays_outside_the_mounted_collection_is_a_no_op() {
+    use std::{cell::Cell, rc::Rc};
+
+    let first = test_track(1, "First", 1, 1);
+    let second = test_track(2, "Second", 1, 2);
+    let source_id = SourceId::fake(33);
+    let loaded = crate::test_support::loaded_source(
+        source_id.clone(),
+        Vec::new(),
+        vec![first.clone(), second.clone()],
+        Vec::new(),
+    );
+    let model = TrackCollectionModel::new(
+        source_id,
+        SourceSessionEpoch::new(1),
+        loaded
+            .track_selection(&first.id)
+            .expect("one-Track mounted collection"),
+        LibraryListSettings::for_key(LibraryListKey::Tracks),
+    );
+    let mut changed_second = second.clone();
+    changed_second.skip_count = Some(1);
+    let replacements = [::library::AcceptedTrackReplacement {
+        id: second.id.clone(),
+        track: Some(changed_second),
+        activity_only: false,
+    }];
+    let notifications = Rc::new(Cell::new(0));
+    let observed = Rc::clone(&notifications);
+    model.connect_items_changed(move |_, _, _, _| observed.set(observed.get() + 1));
+    let before = model.test_stats();
+
+    assert!(model.apply_track_replacement(&replacements, |track| track.id == first.id));
+    assert_eq!(model.test_stats(), before);
+    assert_eq!(notifications.get(), 0);
+    assert_eq!(
+        displayed_track_ids(&model).as_slice(),
+        std::slice::from_ref(&first.id)
+    );
+}
+
+#[test]
 fn route_fit_pane() {
     let fields = [
         LibraryField::RowIndex,

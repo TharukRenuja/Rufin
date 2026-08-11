@@ -17,7 +17,7 @@ use crate::{
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub enum LocalFileKind {
-    Audio,
+    Media,
     Cue,
     Image,
     Directory,
@@ -26,7 +26,7 @@ pub enum LocalFileKind {
 impl LocalFileKind {
     pub(crate) const fn as_str(self) -> &'static str {
         match self {
-            Self::Audio => "audio",
+            Self::Media => "media",
             Self::Cue => "cue",
             Self::Image => "image",
             Self::Directory => "directory",
@@ -35,7 +35,7 @@ impl LocalFileKind {
 
     pub(crate) fn from_stored(value: &str) -> Option<Self> {
         match value {
-            "audio" => Some(Self::Audio),
+            "media" => Some(Self::Media),
             "cue" => Some(Self::Cue),
             "image" => Some(Self::Image),
             "directory" => Some(Self::Directory),
@@ -45,31 +45,28 @@ impl LocalFileKind {
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
-pub enum LocalReadState {
-    Parsed,
-    MetadataFallback,
+pub enum LocalFileState {
+    Accepted,
+    Rejected,
     Unreadable,
-    Invalid,
     Observed,
 }
 
-impl LocalReadState {
+impl LocalFileState {
     pub(crate) const fn as_str(self) -> &'static str {
         match self {
-            Self::Parsed => "parsed",
-            Self::MetadataFallback => "metadata-fallback",
+            Self::Accepted => "accepted",
+            Self::Rejected => "rejected",
             Self::Unreadable => "unreadable",
-            Self::Invalid => "invalid",
             Self::Observed => "observed",
         }
     }
 
     pub(crate) fn from_stored(value: &str) -> Option<Self> {
         match value {
-            "parsed" => Some(Self::Parsed),
-            "metadata-fallback" => Some(Self::MetadataFallback),
+            "accepted" => Some(Self::Accepted),
+            "rejected" => Some(Self::Rejected),
             "unreadable" => Some(Self::Unreadable),
-            "invalid" => Some(Self::Invalid),
             "observed" => Some(Self::Observed),
             _ => None,
         }
@@ -87,7 +84,7 @@ pub struct LocalFile {
     pub device_id: Option<u64>,
     pub inode: Option<u64>,
     pub parse_version: Option<u32>,
-    pub read_state: LocalReadState,
+    pub state: LocalFileState,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub dependencies: Vec<String>,
 }
@@ -138,12 +135,9 @@ pub enum LocalFileSeed {
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct LocalFileBaseline {
     pub files: Vec<LocalFile>,
-    /// Accepted audio-file counts beneath each requested artwork directory.
-    ///
-    /// Local uses this compact fact to distinguish an album cover from an
-    /// image shared by a broader artist or source directory without walking
-    /// that directory again.
-    pub artwork_directory_audio_counts: BTreeMap<String, usize>,
+    pub tracked_media_paths: BTreeSet<String>,
+    /// Accepted media counts beneath each requested artwork directory.
+    pub accepted_media_counts_by_directory: BTreeMap<String, usize>,
 }
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
@@ -307,13 +301,21 @@ impl Library {
             );
         }
         files.sort_by(|left, right| left.path.cmp(&right.path));
+        let tracked_media_paths = files
+            .iter()
+            .filter(|file| {
+                file.kind == LocalFileKind::Media && state.path_tracks.contains_key(&file.path)
+            })
+            .map(|file| file.path.clone())
+            .collect();
         Ok(LocalFileBaseline {
             files,
-            artwork_directory_audio_counts: artwork_directories
+            tracked_media_paths,
+            accepted_media_counts_by_directory: artwork_directories
                 .into_iter()
                 .map(|directory| {
                     let count = state
-                        .directory_audio_counts
+                        .directory_media_counts
                         .get(&directory)
                         .copied()
                         .unwrap_or_default();

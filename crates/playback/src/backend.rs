@@ -35,11 +35,28 @@ pub enum NextTransition {
 pub struct PreparedStream {
     pub stream: ResolvedStream,
     pub loudness: TrackLoudness,
+    pub allows_preloading: bool,
+    pub allows_timing_queries: bool,
 }
 
 impl PreparedStream {
     pub fn new(stream: ResolvedStream, loudness: TrackLoudness) -> Self {
-        Self { stream, loudness }
+        Self {
+            stream,
+            loudness,
+            allows_preloading: true,
+            allows_timing_queries: true,
+        }
+    }
+
+    pub fn without_preloading(mut self) -> Self {
+        self.allows_preloading = false;
+        self
+    }
+
+    pub fn without_timing_queries(mut self) -> Self {
+        self.allows_timing_queries = false;
+        self
     }
 }
 
@@ -185,6 +202,10 @@ pub enum BackendEvent {
     Duration {
         run: RunId,
         millis: u64,
+    },
+    Seekable {
+        run: RunId,
+        seekable: bool,
     },
     Buffering {
         run: RunId,

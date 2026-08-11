@@ -70,6 +70,7 @@ fn telemetry_key(event: &BackendEvent) -> Option<(RunId, TelemetryKind)> {
         }
         BackendEvent::Started { .. }
         | BackendEvent::State { .. }
+        | BackendEvent::Seekable { .. }
         | BackendEvent::Ended { .. }
         | BackendEvent::Transitioned { .. }
         | BackendEvent::NextNeeded { .. }
@@ -573,6 +574,10 @@ impl GstEngine {
     }
 
     fn prepare_incoming(&mut self, next: &PreparedNext) {
+        if !next.stream.allows_preloading {
+            self.clear_incoming();
+            return;
+        }
         if self
             .incoming
             .as_ref()
@@ -593,6 +598,9 @@ impl GstEngine {
                 return None;
             }
             let current = shared.current.as_ref()?;
+            if !current.stream.allows_preloading {
+                return None;
+            }
             let should_prepare = match next.transition {
                 NextTransition::Crossfade { .. } => true,
                 NextTransition::Gapless => {
@@ -1889,6 +1897,7 @@ impl GstEngine {
                 millis: 0,
             },
         );
+        self.push_seekable();
     }
 
     pub(super) fn handle_state_changed(&mut self, state: BackendState) {
@@ -1974,6 +1983,7 @@ impl GstEngine {
     }
 
     fn handle_async_done(&mut self) {
+        self.push_seekable();
         if self.retry_pending_seek() {
             return;
         }
@@ -2274,13 +2284,19 @@ impl GstEngine {
             {
                 return;
             }
-            if let Some(position) = self.active_pipeline().position() {
-                self.push_position(clock_millis(position));
-            }
-            if self.pending_seek.is_none()
-                && let Some(duration) = self.active_pipeline().duration()
+            if self.current_allows_timing_queries() {
+                if let Some(position) = self.active_pipeline().position() {
+                    self.push_position(clock_millis(position));
+                }
+                if self.pending_seek.is_none()
+                    && let Some(duration) = self.active_pipeline().duration()
+                {
+                    self.push_physical_duration(clock_millis(duration));
+                }
+            } else if self.state == BackendState::Playing
+                && let Some(position) = self.active_pipeline().running_time()
             {
-                self.push_physical_duration(clock_millis(duration));
+                self.push_logical_position(clock_millis(position));
             }
         }
     }
@@ -2389,6 +2405,33 @@ impl GstEngine {
         if let Some(run) = self.duration_run_id() {
             push_event(&self.events, BackendEvent::Duration { run, millis });
         }
+    }
+
+    fn push_seekable(&self) {
+        let Some(run) = self.timing_run_id() else {
+            return;
+        };
+        if !self.current_allows_timing_queries() {
+            push_event(
+                &self.events,
+                BackendEvent::Seekable {
+                    run,
+                    seekable: false,
+                },
+            );
+            return;
+        }
+        let Some(seekable) = self.active_pipeline().seekable() else {
+            return;
+        };
+        push_event(&self.events, BackendEvent::Seekable { run, seekable });
+    }
+
+    fn current_allows_timing_queries(&self) -> bool {
+        lock_recover(&self.shared)
+            .current
+            .as_ref()
+            .is_some_and(|current| current.stream.allows_timing_queries)
     }
 
     fn push_physical_duration(&self, millis: u64) {
@@ -2764,7 +2807,15 @@ pub(super) fn handle_about_to_finish(
     slot: Slot,
     id: PipelineId,
 ) {
-    let action = about_to_finish_action_for_pipeline(&mut lock_recover(shared), slot, id);
+    if !about_to_finish_may_query(&lock_recover(shared), slot, id) {
+        return;
+    }
+    let position_millis = pipeline
+        .query_position::<gst::ClockTime>()
+        .map(clock_millis)
+        .unwrap_or_default();
+    let action =
+        about_to_finish_action_for_pipeline(&mut lock_recover(shared), slot, id, position_millis);
 
     match action {
         AboutToFinishAction::Preload(next) => {
@@ -2782,12 +2833,21 @@ pub(super) fn handle_about_to_finish(
     }
 }
 
+fn about_to_finish_may_query(shared: &SharedBackendState, slot: Slot, id: PipelineId) -> bool {
+    shared.pipeline_is_current(slot, id)
+        && shared
+            .current
+            .as_ref()
+            .is_some_and(|current| current.stream.allows_preloading)
+}
+
 fn about_to_finish_action_for_pipeline(
     shared: &mut SharedBackendState,
     slot: Slot,
     id: PipelineId,
+    position_millis: u64,
 ) -> AboutToFinishAction {
-    if !shared.pipeline_is_current(slot, id) {
+    if !shared.pipeline_is_current(slot, id) || position_millis == 0 {
         return AboutToFinishAction::Ignore;
     }
     about_to_finish_action(shared)
@@ -2853,8 +2913,13 @@ pub(super) fn clear_prepared_next_state(shared: &mut SharedBackendState) -> Prep
     PreparedNextClear { gapless_current }
 }
 
-fn gapless_preload_should_run(_shared: &SharedBackendState, next: &PreparedNext) -> bool {
+fn gapless_preload_should_run(shared: &SharedBackendState, next: &PreparedNext) -> bool {
     next.transition == NextTransition::Gapless
+        && next.stream.allows_preloading
+        && shared
+            .current
+            .as_ref()
+            .is_some_and(|current| current.stream.allows_preloading)
 }
 
 pub(super) fn gapless_preload_source_is_supported(uri: &str) -> bool {
@@ -3882,7 +3947,7 @@ mod tests {
         shared.set_pipeline_id(Slot::Primary, Some(current));
 
         assert_eq!(
-            about_to_finish_action_for_pipeline(&mut shared, Slot::Primary, old),
+            about_to_finish_action_for_pipeline(&mut shared, Slot::Primary, old, 1),
             AboutToFinishAction::Ignore
         );
         assert_eq!(shared.next, Some(next));
@@ -3900,6 +3965,66 @@ mod tests {
             current,
             current_run,
         ));
+    }
+
+    #[test]
+    fn about_to_finish_before_playback_does_not_consume_the_next_track() {
+        let pipeline = PipelineId(5);
+        let current_run = RunId::new(10);
+        let next = PreparedNext::new(
+            RunId::new(11),
+            ResolvedStream::new("file:///music/next.flac"),
+            NextTransition::Gapless,
+        );
+        let mut shared = SharedBackendState::new();
+        shared.active = Slot::Primary;
+        shared.current = Some(PreparedRun {
+            run: current_run,
+            stream: ResolvedStream::new("file:///music/current.mod").into(),
+        });
+        shared.next = Some(next.clone());
+        shared.set_pipeline_id(Slot::Primary, Some(pipeline));
+
+        assert!(about_to_finish_may_query(&shared, Slot::Primary, pipeline));
+        assert_eq!(
+            about_to_finish_action_for_pipeline(&mut shared, Slot::Primary, pipeline, 0),
+            AboutToFinishAction::Ignore
+        );
+        assert_eq!(shared.next, Some(next.clone()));
+        assert!(shared.gapless_pending.is_none());
+
+        assert!(matches!(
+            about_to_finish_action_for_pipeline(&mut shared, Slot::Primary, pipeline, 1),
+            AboutToFinishAction::Preload(preloaded) if *preloaded == next
+        ));
+    }
+
+    #[test]
+    fn module_music_never_preloads_the_next_stream() {
+        let pipeline = PipelineId(5);
+        let current_run = RunId::new(10);
+        let next = PreparedNext::new(
+            RunId::new(11),
+            ResolvedStream::new("file:///music/next.flac"),
+            NextTransition::Gapless,
+        );
+        let mut shared = SharedBackendState::new();
+        shared.active = Slot::Primary;
+        shared.current = Some(PreparedRun {
+            run: current_run,
+            stream: PreparedStream::from(ResolvedStream::new("file:///music/current.mod"))
+                .without_preloading(),
+        });
+        shared.next = Some(next.clone());
+        shared.set_pipeline_id(Slot::Primary, Some(pipeline));
+
+        assert!(!about_to_finish_may_query(&shared, Slot::Primary, pipeline));
+        assert_eq!(
+            about_to_finish_action_for_pipeline(&mut shared, Slot::Primary, pipeline, 1),
+            AboutToFinishAction::Ignore
+        );
+        assert_eq!(shared.next, Some(next));
+        assert!(shared.gapless_pending.is_none());
     }
 
     #[test]

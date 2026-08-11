@@ -109,6 +109,7 @@ fn rule_reconciliation_follows_the_changed_collection_facts() {
         tracks: vec![library::AcceptedTrackReplacement {
             id: TrackId::fake(1),
             track: None,
+            activity_only: false,
         }],
         ..AcceptedLibraryChange::default()
     };

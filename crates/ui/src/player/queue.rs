@@ -2015,6 +2015,7 @@ mod tests {
             &[AcceptedTrackReplacement {
                 id: TrackId::fake(1),
                 track: Some(replacement),
+                activity_only: false,
             }],
             8,
         ));
