@@ -3282,6 +3282,10 @@ mod tests {
                 .primary
                 .wait_for_state(gst::State::Paused, gst::ClockTime::from_seconds(2))
         );
+        engine
+            .primary
+            .seek_millis(100)
+            .expect("position the physically paused output");
         assert!(engine.desired_playing);
 
         let mut changed = settings;
@@ -3289,11 +3293,24 @@ mod tests {
         engine.handle_command(BackendCommand::ConfigureAudio(changed));
 
         let applied = lock_recover(&events).drain();
-        assert!(
-            engine
+        let resume_deadline = Instant::now() + Duration::from_secs(2);
+        let resumed = loop {
+            engine.poll_bus();
+            if engine
                 .primary
-                .wait_for_state(gst::State::Playing, gst::ClockTime::from_seconds(2)),
-            "audio configuration events: {applied:?}"
+                .wait_for_state(gst::State::Playing, gst::ClockTime::ZERO)
+            {
+                break true;
+            }
+            if Instant::now() >= resume_deadline {
+                break false;
+            }
+            std::thread::yield_now();
+        };
+        let resumed_events = lock_recover(&events).drain();
+        assert!(
+            resumed,
+            "audio configuration events: {applied:?}; resume events: {resumed_events:?}"
         );
         engine.shutdown();
     }
