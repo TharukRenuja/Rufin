@@ -29,13 +29,20 @@ use crate::routes::collection_context::{
 use crate::shell::Shell;
 use crate::shell::actions::{MORE_ICON, icon_button_without_tooltip, set_active_class};
 use crate::shell::cover::ArtworkTile;
-use crate::shell::cover::THUMB_COVER_SIZE;
+use crate::shell::cover::MEDIUM_COVER_SIZE;
 
 pub(crate) const BOTTOM_PLAYER_HEIGHT: i32 = 97;
-const BOTTOM_PLAYER_COVER_SIZE: i32 = 56;
+const BOTTOM_PLAYER_COVER_START_INSET: i32 = 10;
+const BOTTOM_PLAYER_COVER_SIZE: i32 = 64;
 const BOTTOM_PLAYER_EDGE_PADDING: i32 = 8;
-const BOTTOM_PLAYER_HORIZONTAL_PADDING: i32 = 0;
+const BOTTOM_PLAYER_HORIZONTAL_PADDING: i32 =
+    BOTTOM_PLAYER_COVER_START_INSET - BOTTOM_PLAYER_EDGE_PADDING;
 const BOTTOM_PLAYER_NOW_PLAYING_SPACING: i32 = 8;
+const BOTTOM_PLAYER_RAIL_END_PADDING: i32 = 2;
+pub(crate) const NOW_PLAYING_RAIL_WIDTH: i32 = BOTTOM_PLAYER_EDGE_PADDING
+    + BOTTOM_PLAYER_HORIZONTAL_PADDING
+    + BOTTOM_PLAYER_COVER_SIZE
+    + BOTTOM_PLAYER_RAIL_END_PADDING;
 const BOTTOM_PLAYER_TRANSPORT_WIDTH: i32 = 300;
 const BOTTOM_PLAYER_PROGRESS_WIDTH: i32 = 320;
 const BOTTOM_PLAYER_PROGRESS_MIN_WIDTH: i32 = 140;
@@ -64,7 +71,14 @@ const BOTTOM_PLAYER_TINY_TRANSPORT_WIDTH: i32 = 126;
 const BOTTOM_PLAYER_TINY_CONTROL_SPACING: i32 = 2;
 const BOTTOM_PLAYER_TINY_CONTROLS_WIDTH: i32 = BOTTOM_PLAYER_TINY_TRANSPORT_WIDTH;
 const BOTTOM_PLAYER_TINY_ROW_SPACING: i32 = 6;
-const BOTTOM_PLAYER_COMPACT_MIN_WIDTH: i32 = 614;
+const BOTTOM_PLAYER_IDENTITY_MIN_WIDTH: i32 = 85;
+const BOTTOM_PLAYER_COMPACT_MIN_WIDTH: i32 = BOTTOM_PLAYER_EDGE_PADDING * 2
+    + BOTTOM_PLAYER_TRANSPORT_WIDTH
+    + (BOTTOM_PLAYER_HORIZONTAL_PADDING
+        + BOTTOM_PLAYER_COVER_SIZE
+        + BOTTOM_PLAYER_NOW_PLAYING_SPACING
+        + BOTTOM_PLAYER_IDENTITY_MIN_WIDTH)
+        * 2;
 const BOTTOM_PLAYER_TINY_WIDTH: i32 = BOTTOM_PLAYER_COMPACT_MIN_WIDTH;
 const BOTTOM_PLAYER_FULL_PROGRESS_WIDTH: i32 = 864;
 const SEEK_PREVIEW_COMMIT_DELAY: Duration = Duration::from_millis(100);
@@ -546,7 +560,7 @@ impl Shell {
                     ArtworkBinding::track(&entry.track),
                     cover_seed,
                     BOTTOM_PLAYER_COVER_SIZE,
-                    THUMB_COVER_SIZE,
+                    MEDIUM_COVER_SIZE,
                 );
             } else {
                 self.clear_artwork_tile(&controls.cover);
@@ -1948,6 +1962,21 @@ mod tests {
                 "actions outgrew their side at player width {player_width}"
             );
         }
+    }
+
+    #[test]
+    fn non_tiny_player_preserves_now_playing_identity_width() {
+        let fixed_now_playing_width = super::BOTTOM_PLAYER_HORIZONTAL_PADDING
+            + super::BOTTOM_PLAYER_COVER_SIZE
+            + super::BOTTOM_PLAYER_NOW_PLAYING_SPACING;
+        let identity_width = super::bottom_player_side_width(super::BOTTOM_PLAYER_TINY_WIDTH)
+            - fixed_now_playing_width;
+
+        assert_eq!(identity_width, super::BOTTOM_PLAYER_IDENTITY_MIN_WIDTH);
+        assert!(super::bottom_player_tiny(
+            super::BOTTOM_PLAYER_TINY_WIDTH - 1
+        ));
+        assert!(!super::bottom_player_tiny(super::BOTTOM_PLAYER_TINY_WIDTH));
     }
 
     #[test]

@@ -591,14 +591,14 @@ row:focus {
 }
 
 .rail-button {
-  margin: 0 2px;
+  margin: 0 6px;
   padding: 3px 1px;
   min-width: 48px;
   min-height: 44px;
 }
 
 .sidebar-entry-label {
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 475;
 }
 
@@ -611,10 +611,33 @@ row:focus {
   color: var(--accent-color);
 }
 
+.rail-button image.nav-icon {
+  color: color-mix(in srgb, var(--window-fg-color) 58%, transparent);
+}
+
+.rail-button:not(.selected):not(.primary-menu-button):hover image.nav-icon {
+  color: var(--window-fg-color);
+}
+
 .nav-button:not(.selected):hover,
 .sidebar-pin-row.selected:hover,
 .album-button:hover {
   background: color-mix(in srgb, currentColor 8%, transparent);
+}
+
+.rail-button,
+.rail-button:hover,
+.rail-button:active,
+.rail-button:checked,
+.rail-button.selected,
+.rail-button.selected:hover {
+  background: transparent;
+  box-shadow: none;
+}
+
+.nav-button.rail-button:not(.selected):hover {
+  background: transparent;
+  box-shadow: none;
 }
 
 .sidebar-pins-heading {

@@ -244,7 +244,7 @@ pub fn build(
     normal_nav_panel.add_css_class("wide-sidebar-slot");
     normal_nav_panel.append(&normal_nav_scroller);
 
-    let compact_nav = gtk::Box::new(gtk::Orientation::Vertical, 1);
+    let compact_nav = gtk::Box::new(gtk::Orientation::Vertical, 8);
     compact_nav.add_css_class("compact-rail");
     compact_nav.set_hexpand(false);
     compact_nav.set_vexpand(true);
