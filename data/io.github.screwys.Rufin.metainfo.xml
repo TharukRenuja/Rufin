@@ -33,43 +33,43 @@
   <screenshots>
     <screenshot type="default">
       <caption>Browse your music library</caption>
-      <image type="source" width="1000" height="700">https://raw.githubusercontent.com/screwys/Rufin/v0.13.0/data/screenshots/Rufin.png</image>
+      <image type="source" width="1000" height="700">https://raw.githubusercontent.com/screwys/Rufin/v0.13.1/data/screenshots/Rufin.png</image>
     </screenshot>
     <screenshot>
       <caption>Browse all tracks</caption>
-      <image type="source" width="1000" height="700">https://raw.githubusercontent.com/screwys/Rufin/v0.13.0/data/screenshots/tracks_page.png</image>
+      <image type="source" width="1000" height="700">https://raw.githubusercontent.com/screwys/Rufin/v0.13.1/data/screenshots/tracks_page.png</image>
     </screenshot>
     <screenshot>
       <caption>Browse all albums</caption>
-      <image type="source" width="1000" height="700">https://raw.githubusercontent.com/screwys/Rufin/v0.13.0/data/screenshots/albums_page.png</image>
+      <image type="source" width="1000" height="700">https://raw.githubusercontent.com/screwys/Rufin/v0.13.1/data/screenshots/albums_page.png</image>
     </screenshot>
     <screenshot>
       <caption>View artist details</caption>
-      <image type="source" width="1000" height="700">https://raw.githubusercontent.com/screwys/Rufin/v0.13.0/data/screenshots/artist_detail.png</image>
+      <image type="source" width="1000" height="700">https://raw.githubusercontent.com/screwys/Rufin/v0.13.1/data/screenshots/artist_detail.png</image>
     </screenshot>
     <screenshot>
       <caption>View album details</caption>
-      <image type="source" width="1000" height="700">https://raw.githubusercontent.com/screwys/Rufin/v0.13.0/data/screenshots/album_detail.png</image>
+      <image type="source" width="1000" height="700">https://raw.githubusercontent.com/screwys/Rufin/v0.13.1/data/screenshots/album_detail.png</image>
     </screenshot>
     <screenshot>
       <caption>Use the fullscreen player</caption>
-      <image type="source" width="1000" height="700">https://raw.githubusercontent.com/screwys/Rufin/v0.13.0/data/screenshots/visualizer.png</image>
+      <image type="source" width="1000" height="700">https://raw.githubusercontent.com/screwys/Rufin/v0.13.1/data/screenshots/visualizer.png</image>
     </screenshot>
     <screenshot>
       <caption>Customize the display</caption>
-      <image type="source" width="1000" height="700">https://raw.githubusercontent.com/screwys/Rufin/v0.13.0/data/screenshots/customize_display.png</image>
+      <image type="source" width="1000" height="700">https://raw.githubusercontent.com/screwys/Rufin/v0.13.1/data/screenshots/customize_display.png</image>
     </screenshot>
     <screenshot>
       <caption>Manage downloads</caption>
-      <image type="source" width="1000" height="700">https://raw.githubusercontent.com/screwys/Rufin/v0.13.0/data/screenshots/download_settings.png</image>
+      <image type="source" width="1000" height="700">https://raw.githubusercontent.com/screwys/Rufin/v0.13.1/data/screenshots/download_settings.png</image>
     </screenshot>
     <screenshot>
       <caption>Configure playback</caption>
-      <image type="source" width="1000" height="700">https://raw.githubusercontent.com/screwys/Rufin/v0.13.0/data/screenshots/playback_settings.png</image>
+      <image type="source" width="1000" height="700">https://raw.githubusercontent.com/screwys/Rufin/v0.13.1/data/screenshots/playback_settings.png</image>
     </screenshot>
     <screenshot>
       <caption>Customize the layout</caption>
-      <image type="source" width="1000" height="700">https://raw.githubusercontent.com/screwys/Rufin/v0.13.0/data/screenshots/layout_settings.png</image>
+      <image type="source" width="1000" height="700">https://raw.githubusercontent.com/screwys/Rufin/v0.13.1/data/screenshots/layout_settings.png</image>
     </screenshot>
   </screenshots>
   <launchable type="desktop-id">io.github.screwys.Rufin.desktop</launchable>
@@ -80,6 +80,35 @@
     <control>touch</control>
   </supports>
   <releases>
+    <release version="0.13.1" date="2026-08-11">
+      <description>
+        <p>A quick patch release.</p>
+        <ul>
+          <li>Bundled the missing dependency required for HTTP streams on MacOS and made HTTPS socket connection for Jellyfin more reliable</li>
+        </ul>
+        <ul>
+          <li>Extended audio device selection to work reliably cross-platform.</li>
+        </ul>
+        <ul>
+          <li>Updated nixpkgs manifest to use the same dependencies with all Linux packages.</li>
+        </ul>
+        <ul>
+          <li>Cover in bottom player now has equal distance to edges and compact sidebar is enlargened.</li>
+        </ul>
+        <ul>
+          <li>Fixed a bug with KDE application icon colliding with our buttons and making fullscreen player undismissable.</li>
+        </ul>
+        <ul>
+          <li>Fixed a bug with volume slider that it would slide on its own when hold.</li>
+        </ul>
+        <ul>
+          <li>Fixed a bug with songs starting aloud.</li>
+        </ul>
+        <ul>
+          <li>Fixed a regression with media not being seekable on launch before playback.</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.13.0" date="2026-08-11">
       <description>
         <p>This release has all kind of behavior changes! The most noticeable one being looks: Sidebar tabs now look more natural, and we use native window controls. This means for KDE, minimize/maximize buttons show up; GNOME Tweaks work for moving close icon to the left; Windows and MacOS get a different look with native title bars as well.</p>
