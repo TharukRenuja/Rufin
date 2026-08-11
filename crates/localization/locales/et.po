@@ -418,6 +418,9 @@ msgstr "Jätka"
 msgid "Control notifications"
 msgstr "Teavituste haldus"
 
+msgid "Copy"
+msgstr ""
+
 msgid "Could not save diagnostic log"
 msgstr "Diagnostikalogi salvestamine ei õnnestunud"
 
@@ -447,6 +450,11 @@ msgstr "Kohandatud"
 
 msgid "Customize display"
 msgstr "Kohanda ekraanivaadet"
+
+#, fuzzy
+#| msgid "Custom"
+msgid "Cut"
+msgstr "Kohandatud"
 
 msgid "Dance"
 msgstr "Tantsumuusika"
@@ -552,6 +560,9 @@ msgstr "EP-plaadid"
 
 msgid "Edit metadata"
 msgstr "Muuda metateavet"
+
+msgid "Edit"
+msgstr "Muuda"
 
 msgid "Enable equalizer"
 msgstr "Kasuta ekvalaiserit"
@@ -1165,6 +1176,9 @@ msgstr "Ülevaade"
 msgid "Password"
 msgstr "Salasõna"
 
+msgid "Paste"
+msgstr ""
+
 msgid "Pause"
 msgstr "Peata esitus"
 
@@ -1352,6 +1366,9 @@ msgstr "Ühenda uuesti"
 
 msgid "Red"
 msgstr "Punane"
+
+msgid "Redo"
+msgstr ""
 
 msgid "Refresh section"
 msgstr "Uuenda ploki andmeid"
@@ -1572,6 +1589,11 @@ msgstr "Keri taasesituses"
 msgid "Seekbar"
 msgstr "Kerimisriba"
 
+#, fuzzy
+#| msgid "Selection"
+msgid "Select All"
+msgstr "Valik"
+
 msgid "Select Download Folder"
 msgstr "Vali allalaadimiste kaust"
 
@@ -1679,6 +1701,11 @@ msgstr "Sega lood"
 
 msgid "Sidebar Items"
 msgstr "Külgpaani objektid"
+
+#, fuzzy
+#| msgid "Sidebar route by position"
+msgid "Sidebar item {position}"
+msgstr "Külgriba teekond asukoha alusel"
 
 msgid "Sidebar route by position"
 msgstr "Külgriba teekond asukoha alusel"
@@ -1826,6 +1853,9 @@ msgstr "Otsimiseks sisesta midagi"
 
 msgid "Undo identified value"
 msgstr "Tühista kindlaksmääratud väärtus"
+
+msgid "Undo"
+msgstr ""
 
 msgid "Unmuted"
 msgstr "Summutamine on lõpetatud"
@@ -2088,9 +2118,6 @@ msgstr[1] "{count} aastat tagasi"
 #~ msgid "Configure saved music servers and local playback mappings."
 #~ msgstr ""
 #~ "Seadista salvestatud muusikaserverid ja kohaliku taasesituse vastendusi."
-
-#~ msgid "Edit"
-#~ msgstr "Muuda"
 
 #~ msgid "Edit Smart Playlist"
 #~ msgstr "Muuda nutikat esitusloendit"

@@ -476,6 +476,9 @@ msgstr ""
 msgid "Control notifications"
 msgstr "Pārvaldīt paziņojumus"
 
+msgid "Copy"
+msgstr ""
+
 msgid "Could not save diagnostic log"
 msgstr ""
 
@@ -509,6 +512,11 @@ msgstr "Pielāgots"
 
 msgid "Customize display"
 msgstr "Pielāgot displeju"
+
+#, fuzzy
+#| msgid "Custom"
+msgid "Cut"
+msgstr "Pielāgots"
 
 msgid "Dance"
 msgstr "Dejas"
@@ -624,6 +632,9 @@ msgstr "EP"
 #| msgid "Metadata"
 msgid "Edit metadata"
 msgstr "Metadati"
+
+msgid "Edit"
+msgstr "Rediģēt"
 
 msgid "Enable equalizer"
 msgstr "Iespējot ekvalaizeru"
@@ -1303,6 +1314,9 @@ msgstr ""
 msgid "Password"
 msgstr "Parole"
 
+msgid "Paste"
+msgstr ""
+
 msgid "Pause"
 msgstr "Pauzēt"
 
@@ -1510,6 +1524,9 @@ msgstr "Atjaunot savienojumu"
 #| msgid "Ready"
 msgid "Red"
 msgstr "Gatavs"
+
+msgid "Redo"
+msgstr ""
 
 msgid "Refresh section"
 msgstr "Atsvaidzināt sadaļu"
@@ -1767,6 +1784,11 @@ msgid "Seekbar"
 msgstr "Pozīcijas josla"
 
 #, fuzzy
+#| msgid "Collection"
+msgid "Select All"
+msgstr "Kolekcija"
+
+#, fuzzy
 #| msgid "Select Music Folder"
 msgid "Select Download Folder"
 msgstr "Izvēlēties mūzikas mapi"
@@ -1886,6 +1908,11 @@ msgid "Shuffle"
 msgstr "Jaukta secība"
 
 msgid "Sidebar Items"
+msgstr "Sānu paneļa vienumi"
+
+#, fuzzy
+#| msgid "Sidebar Items"
+msgid "Sidebar item {position}"
 msgstr "Sānu paneļa vienumi"
 
 msgid "Sidebar route by position"
@@ -2043,6 +2070,9 @@ msgid "Type to search"
 msgstr "Ierakstiet, lai meklētu"
 
 msgid "Undo identified value"
+msgstr ""
+
+msgid "Undo"
 msgstr ""
 
 msgid "Unmuted"
@@ -2315,9 +2345,6 @@ msgstr[2] "pirms {count} gadiem"
 #~ msgid "Configure saved music servers and local playback mappings."
 #~ msgstr ""
 #~ "Konfigurēt saglabātos mūzikas serverus un lokālos atskaņošanas kartējumus."
-
-#~ msgid "Edit"
-#~ msgstr "Rediģēt"
 
 #~ msgid "Edit Smart Playlist"
 #~ msgstr "Rediģēt viedo atskaņošanas sarakstu"
