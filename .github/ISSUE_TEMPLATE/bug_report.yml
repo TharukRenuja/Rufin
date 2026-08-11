@@ -102,7 +102,8 @@ body:
     id: logs
     attributes:
       label: Logs
-      description: Open **Troubleshooting** from the main menu, enable **Debug logging**, reproduce the problem, then click `Save`. Crash logs also appear here on
-the next launch. Logs have secrets and absolute folder paths redacted, but you may still want to review the logs before sharing them.
+      description: >-
+        Open **Troubleshooting** from the main menu, enable **Debug logging**, reproduce the problem, then click `Save`. Crash logs also appear here on
+        the next launch. Logs have secrets and absolute folder paths redacted, but you may still want to review the logs before sharing them.
     validations:
       required: false
