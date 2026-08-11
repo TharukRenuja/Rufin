@@ -8,6 +8,7 @@ pub const MAX_CROSSFADE_SECONDS: u8 = 30;
 pub const DEFAULT_AUTO_DJ_REFILL_THRESHOLD: u8 = 1;
 pub const MIN_AUTO_DJ_REFILL_THRESHOLD: u8 = 1;
 pub const MAX_AUTO_DJ_REFILL_THRESHOLD: u8 = 10;
+const PERCEPTUAL_DB_RANGE: f64 = 50.0;
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 pub enum PlaybackTransitionMode {
@@ -36,7 +37,8 @@ impl VolumeScale {
     pub fn gain(self, position: f64) -> f64 {
         let position = sanitize_volume(position);
         match self {
-            Self::Perceptual => position.powi(3),
+            Self::Perceptual if position == 0.0 => 0.0,
+            Self::Perceptual => 10_f64.powf(PERCEPTUAL_DB_RANGE * (position - 1.0) / 20.0),
             Self::Linear => position,
         }
     }
@@ -44,10 +46,15 @@ impl VolumeScale {
     pub fn position_for_gain(self, gain: f64) -> f64 {
         let gain = sanitize_volume(gain);
         match self {
-            Self::Perceptual => gain.cbrt(),
+            Self::Perceptual if gain <= perceptual_gain_floor() => 0.0,
+            Self::Perceptual => sanitize_volume(1.0 + 20.0 * gain.log10() / PERCEPTUAL_DB_RANGE),
             Self::Linear => gain,
         }
     }
+}
+
+fn perceptual_gain_floor() -> f64 {
+    10_f64.powf(-PERCEPTUAL_DB_RANGE / 20.0)
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -316,12 +323,24 @@ mod tests {
     }
 
     #[test]
-    fn perceptual_volume_is_cubic_and_reversible() {
-        for position in [0.0, 0.1, 0.5, 1.0] {
+    fn perceptual_volume_uses_half_decibel_steps() {
+        assert_eq!(VolumeScale::Perceptual.gain(0.0), 0.0);
+        assert_eq!(VolumeScale::Perceptual.gain(1.0), 1.0);
+
+        let mut previous_db = 20.0 * VolumeScale::Perceptual.gain(0.01).log10();
+        assert!((previous_db + 49.5).abs() < 1e-12);
+        for percent in 2..=100 {
+            let gain = VolumeScale::Perceptual.gain(f64::from(percent) / 100.0);
+            let db = 20.0 * gain.log10();
+            assert!((db - previous_db - 0.5).abs() < 1e-12);
+            previous_db = db;
+        }
+
+        for position in [0.01, 0.1, 0.5, 1.0] {
             let gain = VolumeScale::Perceptual.gain(position);
-            assert!((gain - position.powi(3)).abs() < f64::EPSILON);
             assert!((VolumeScale::Perceptual.position_for_gain(gain) - position).abs() < 1e-12);
         }
+        assert_eq!(VolumeScale::Perceptual.position_for_gain(0.0), 0.0);
     }
 
     #[test]
@@ -339,6 +358,25 @@ mod tests {
 
         assert_eq!(migrated.volume_scale, VolumeScale::Perceptual);
         assert!((migrated.volume_scale.gain(migrated.volume) - 0.5).abs() < 1e-12);
+    }
+
+    #[test]
+    fn explicit_perceptual_volume_round_trips_as_the_same_position() {
+        let settings = PlaybackSettings {
+            volume: 0.5,
+            volume_scale: VolumeScale::Perceptual,
+            ..PlaybackSettings::default()
+        };
+        let restored = serde_json::from_value::<PlaybackSettings>(
+            serde_json::to_value(settings).expect("serialize perceptual volume"),
+        )
+        .expect("restore perceptual volume");
+
+        assert_eq!(restored.volume_scale, VolumeScale::Perceptual);
+        assert_eq!(restored.volume, 0.5);
+        assert!(
+            (restored.volume_scale.gain(restored.volume) - 0.056_234_132_519_034_91).abs() < 1e-12
+        );
     }
 
     #[test]
@@ -367,7 +405,6 @@ mod tests {
         };
 
         settings.set_volume_scale_preserving_gain(VolumeScale::Perceptual);
-        assert!((settings.volume - 0.5_f64.cbrt()).abs() < 1e-12);
         assert!((settings.volume_scale.gain(settings.volume) - 0.5).abs() < 1e-12);
 
         settings.set_volume_scale_preserving_gain(VolumeScale::Linear);

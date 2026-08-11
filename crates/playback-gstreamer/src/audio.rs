@@ -1,6 +1,8 @@
 use super::ensure_gstreamer_initialized;
 use gst::prelude::*;
 use gstreamer as gst;
+#[cfg(test)]
+use gstreamer_app as gst_app;
 use library::TrackLoudness;
 use playback::{
     AudioOutput, BackendAudioSettings, EQUALIZER_BAND_COUNT, EqualizerSettings,
@@ -48,6 +50,8 @@ impl AudioGraph {
         let convert_out = make_element("audioconvert", "rufin-audio-convert-out")?;
         let resample = make_element("audioresample", "rufin-audio-resample")?;
         let output = make_audio_output(settings.audio_output.as_deref())?;
+        #[cfg(test)]
+        configure_sample_capture(&output);
         let mut elements = vec![convert_in.clone()];
 
         let equalizer = make_element("equalizer-nbands", "rufin-equalizer")?;
@@ -131,6 +135,16 @@ impl AudioGraph {
             .map(|factory| factory.name().to_string())
     }
 
+    #[cfg(test)]
+    pub(super) fn try_pull_output_sample(&self, timeout: gst::ClockTime) -> Option<gst::Sample> {
+        self.output
+            .downcast_ref::<gst_app::AppSink>()
+            .and_then(|sink| {
+                sink.try_pull_preroll(timeout)
+                    .or_else(|| sink.try_pull_sample(timeout))
+            })
+    }
+
     pub(super) fn apply_loudness(&self, loudness: &TrackLoudness) {
         if let Some(tags) = self.loudness_tags.as_ref() {
             tags.apply(loudness);
@@ -160,6 +174,23 @@ impl AudioGraph {
         }
         Ok(set_output_target(&self.output, target))
     }
+}
+
+#[cfg(test)]
+fn configure_sample_capture(output: &gst::Element) {
+    let Some(sink) = output.downcast_ref::<gst_app::AppSink>() else {
+        return;
+    };
+    let caps = gst::Caps::builder("audio/x-raw")
+        .field("format", "F32LE")
+        .field("layout", "interleaved")
+        .field("channels", 1_i32)
+        .field("rate", 8_000_i32)
+        .build();
+    sink.set_caps(Some(&caps));
+    sink.set_max_buffers(8);
+    sink.set_drop(false);
+    sink.set_sync(false);
 }
 
 pub(super) type SharedLoudnessTags = Arc<Mutex<Option<LoudnessTags>>>;

@@ -1282,7 +1282,7 @@ impl GstEngine {
         self.stop_pipeline(Slot::Primary);
         self.stop_pipeline(Slot::Secondary);
         self.secondary.set_visualizer_tap(None);
-        let volume = settings.volume;
+        let output_gain = settings.output_gain();
         let muted = settings.muted;
         let start_millis =
             SourceClock::from_stream(&item.stream).physical_seek(start_position_millis);
@@ -1318,7 +1318,7 @@ impl GstEngine {
             Slot::Primary,
             &item,
             &settings,
-            volume,
+            output_gain,
             muted,
             startup_state,
         )?;
@@ -3125,6 +3125,116 @@ mod tests {
     }
 
     #[test]
+    fn fresh_playback_applies_effective_gain_before_processing_state_changes() {
+        ensure_gstreamer_initialized().expect("initialize GStreamer");
+        let directory = tempfile::tempdir().expect("playback fixture directory");
+        let path = directory.path().join("initial-volume.wav");
+        write_silent_wave(&path);
+        let uri = gst::glib::filename_to_uri(&path, None).expect("playback fixture URI");
+
+        for (volume_scale, muted, expected_gain) in [
+            (VolumeScale::Perceptual, false, 0.056_234_132_519_034_91),
+            (VolumeScale::Linear, false, 0.5),
+            (VolumeScale::Perceptual, true, 0.056_234_132_519_034_91),
+        ] {
+            let events = Arc::new(Mutex::new(EventMailbox::default()));
+            let mut engine = GstEngine::new(events);
+            let settings = BackendAudioSettings {
+                volume: 0.5,
+                volume_scale,
+                muted,
+                audio_output: Some("fakesink".to_string()),
+                ..BackendAudioSettings::default()
+            };
+            lock_recover(&engine.shared).settings = settings;
+
+            engine
+                .play_prepared(
+                    PreparedRun {
+                        run: RunId::new(1),
+                        stream: ResolvedStream::new(uri.as_str()).into(),
+                    },
+                    None,
+                    0,
+                )
+                .expect("start fresh playback");
+
+            let (gain, pipeline_muted) = engine
+                .primary
+                .output_volume_state()
+                .expect("active primary pipeline");
+            assert!((gain - expected_gain).abs() < 1e-12);
+            assert_eq!(pipeline_muted, muted);
+            engine.shutdown();
+        }
+    }
+
+    #[test]
+    fn fresh_playback_scales_the_first_output_buffer() {
+        ensure_gstreamer_initialized().expect("initialize GStreamer");
+        let directory = tempfile::tempdir().expect("playback fixture directory");
+        let path = directory.path().join("initial-volume-samples.wav");
+        write_constant_wave(&path);
+        let uri = gst::glib::filename_to_uri(&path, None).expect("playback fixture URI");
+
+        let baseline = first_output_peak(uri.as_str(), VolumeScale::Linear, 1.0, false);
+        let perceptual = first_output_peak(uri.as_str(), VolumeScale::Perceptual, 0.5, false);
+        let muted = first_output_peak(uri.as_str(), VolumeScale::Perceptual, 0.5, true);
+
+        assert!(baseline > 0.4, "unexpected baseline peak: {baseline}");
+        let ratio = perceptual / baseline;
+        assert!(
+            (ratio - 0.056_234_132_519_034_91).abs() < 2e-4,
+            "unexpected first-buffer gain: baseline={baseline}, perceptual={perceptual}, ratio={ratio}"
+        );
+        assert_eq!(muted, 0.0);
+    }
+
+    fn first_output_peak(uri: &str, volume_scale: VolumeScale, volume: f64, muted: bool) -> f64 {
+        let events = Arc::new(Mutex::new(EventMailbox::default()));
+        let mut engine = GstEngine::new(events);
+        lock_recover(&engine.shared).settings = BackendAudioSettings {
+            volume,
+            volume_scale,
+            muted,
+            audio_output: Some("appsink".to_string()),
+            ..BackendAudioSettings::default()
+        };
+        engine
+            .play_prepared(
+                PreparedRun {
+                    run: RunId::new(1),
+                    stream: ResolvedStream::new(uri).into(),
+                },
+                None,
+                0,
+            )
+            .expect("start sample capture playback");
+        let deadline = Instant::now() + Duration::from_secs(2);
+        let sample = loop {
+            if let Some(sample) = engine
+                .primary
+                .try_pull_output_sample(gst::ClockTime::from_mseconds(20))
+            {
+                break sample;
+            }
+            assert!(Instant::now() < deadline, "first output sample");
+            std::thread::yield_now();
+        };
+        let buffer = sample.buffer().expect("sample buffer");
+        let map = buffer.map_readable().expect("map output samples");
+        let samples = map.as_slice();
+        assert_eq!(samples.len() % std::mem::size_of::<f32>(), 0);
+        let peak = samples
+            .chunks_exact(std::mem::size_of::<f32>())
+            .map(|bytes| f32::from_le_bytes(bytes.try_into().expect("32-bit sample")))
+            .map(f32::abs)
+            .fold(0.0_f32, f32::max);
+        engine.shutdown();
+        f64::from(peak)
+    }
+
+    #[test]
     fn unconfirmed_gapless_activation_keeps_the_old_run_until_playing() {
         for result in [
             gst::StateChangeSuccess::Async,
@@ -3421,7 +3531,7 @@ mod tests {
 
         assert!(fixture.engine.pending_handoff.is_some());
         let (gain, muted) = fixture.engine.output_gain_state();
-        assert!((gain - 0.125).abs() < f64::EPSILON);
+        assert!((gain - VolumeScale::Perceptual.gain(0.5)).abs() < f64::EPSILON);
         assert!(!muted);
         assert_eq!(
             fixture.engine.output_levels_at(gain, Instant::now()),
@@ -3688,6 +3798,14 @@ mod tests {
     }
 
     fn write_silent_wave(path: &std::path::Path) {
+        write_mono_wave(path, 0);
+    }
+
+    fn write_constant_wave(path: &std::path::Path) {
+        write_mono_wave(path, i16::MAX / 2);
+    }
+
+    fn write_mono_wave(path: &std::path::Path, sample: i16) {
         const SAMPLE_RATE: u32 = 8_000;
         const CHANNELS: u16 = 1;
         const BITS_PER_SAMPLE: u16 = 16;
@@ -3716,8 +3834,9 @@ mod tests {
         file.write_all(b"data").expect("write data tag");
         file.write_all(&data_len.to_le_bytes())
             .expect("write data size");
-        file.write_all(&vec![0; data_len as usize])
-            .expect("write samples");
+        for _ in 0..FRAMES {
+            file.write_all(&sample.to_le_bytes()).expect("write sample");
+        }
     }
 
     #[test]

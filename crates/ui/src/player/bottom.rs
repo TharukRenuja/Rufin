@@ -79,6 +79,13 @@ enum BottomPlayerActions {
     Queue,
 }
 
+#[derive(Clone, Copy)]
+struct VolumePointerDrag {
+    position: f64,
+    travel: f64,
+    inverted: bool,
+}
+
 pub(crate) struct PlayerControls {
     pub(crate) root: AllocationOwner,
     surface: gtk::Box,
@@ -1154,6 +1161,7 @@ fn build_player_action_controls() -> PlayerActionControls {
     volume.set_valign(gtk::Align::Center);
     volume.set_value(1.0);
     volume.set_draw_value(false);
+    install_volume_pointer_control(&volume);
     let volume_slot = bottom_player_allocated_slot(&volume, BOTTOM_PLAYER_VOLUME_MIN_WIDTH, 1);
     volume_slot.set_valign(gtk::Align::Fill);
     volume_group.append(&volume_slot);
@@ -1174,6 +1182,101 @@ fn build_player_action_controls() -> PlayerActionControls {
         volume_slot,
         volume,
         audio_output_button,
+    }
+}
+
+fn install_volume_pointer_control(scale: &gtk::Scale) {
+    let drag_state = Rc::new(Cell::new(None::<VolumePointerDrag>));
+    let click = gtk::GestureClick::new();
+    click.set_button(1);
+    click.set_propagation_phase(gtk::PropagationPhase::Capture);
+
+    let drag = gtk::GestureDrag::new();
+    drag.set_button(1);
+    drag.set_propagation_phase(gtk::PropagationPhase::Capture);
+    click.group_with(&drag);
+
+    let click_scale = scale.clone();
+    let click_drag_state = Rc::clone(&drag_state);
+    click.connect_pressed(move |gesture, _, x, _| {
+        gesture.set_state(gtk::EventSequenceState::Claimed);
+        click_scale.grab_focus();
+
+        let range = click_scale.range_rect();
+        let (thumb_start, thumb_end) = click_scale.slider_range();
+        let thumb_width = f64::from((thumb_end - thumb_start).max(0));
+        let travel = (f64::from(range.width()) - thumb_width).max(0.0);
+        let inverted = volume_scale_is_inverted(&click_scale);
+        let position = if x >= f64::from(thumb_start) && x <= f64::from(thumb_end) {
+            click_scale.value()
+        } else {
+            volume_position_for_pointer(
+                x,
+                f64::from(range.x()),
+                f64::from(range.width()),
+                thumb_width,
+                inverted,
+            )
+        };
+        click_scale.set_value(position);
+        click_drag_state.set(Some(VolumePointerDrag {
+            position,
+            travel,
+            inverted,
+        }));
+    });
+
+    let drag_scale = scale.clone();
+    drag.connect_drag_update(move |gesture, x_offset, _| {
+        gesture.set_state(gtk::EventSequenceState::Claimed);
+        let Some(state) = drag_state.get() else {
+            return;
+        };
+        drag_scale.set_value(volume_position_for_drag(
+            state.position,
+            x_offset,
+            state.travel,
+            state.inverted,
+        ));
+    });
+
+    scale.add_controller(click);
+    scale.add_controller(drag);
+}
+
+fn volume_scale_is_inverted(scale: &gtk::Scale) -> bool {
+    scale.is_inverted() ^ (scale.is_flippable() && scale.direction() == gtk::TextDirection::Rtl)
+}
+
+fn volume_position_for_pointer(
+    pointer_x: f64,
+    track_start: f64,
+    track_width: f64,
+    thumb_width: f64,
+    inverted: bool,
+) -> f64 {
+    let travel = (track_width - thumb_width).max(0.0);
+    if travel == 0.0 {
+        return if inverted { 0.0 } else { 1.0 };
+    }
+    let physical = ((pointer_x - track_start - thumb_width / 2.0) / travel).clamp(0.0, 1.0);
+    if inverted { 1.0 - physical } else { physical }
+}
+
+fn volume_position_for_drag(
+    start_position: f64,
+    x_offset: f64,
+    travel: f64,
+    inverted: bool,
+) -> f64 {
+    if travel == 0.0 {
+        return start_position;
+    }
+    let delta = x_offset / travel;
+    if inverted {
+        (start_position - delta).clamp(0.0, 1.0)
+    } else {
+        (start_position + delta).clamp(0.0, 1.0)
     }
 }
 
@@ -1913,6 +2016,36 @@ mod tests {
             super::volume_icon_state(true, 1.0),
             super::VolumeIcon::Muted
         );
+    }
+
+    #[test]
+    fn volume_pointer_uses_the_thumb_center_as_each_endpoint() {
+        assert_eq!(
+            super::volume_position_for_pointer(15.0, 10.0, 110.0, 10.0, false),
+            0.0
+        );
+        assert_eq!(
+            super::volume_position_for_pointer(65.0, 10.0, 110.0, 10.0, false),
+            0.5
+        );
+        assert_eq!(
+            super::volume_position_for_pointer(115.0, 10.0, 110.0, 10.0, false),
+            1.0
+        );
+        assert_eq!(
+            super::volume_position_for_pointer(15.0, 10.0, 110.0, 10.0, true),
+            1.0
+        );
+    }
+
+    #[test]
+    fn stationary_volume_drag_does_not_change_the_position() {
+        for inverted in [false, true] {
+            assert_eq!(
+                super::volume_position_for_drag(0.37, 0.0, 100.0, inverted),
+                0.37
+            );
+        }
     }
 
     #[test]
