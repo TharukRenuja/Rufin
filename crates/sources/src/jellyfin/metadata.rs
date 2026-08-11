@@ -2,8 +2,8 @@ use std::collections::BTreeSet;
 use std::sync::atomic::Ordering;
 
 use library::{
-    MetadataChange, MetadataDraft, MetadataEdit, MetadataEditing, MetadataError, MetadataField,
-    MetadataItem, MetadataValues,
+    MetadataApplication, MetadataChange, MetadataDraft, MetadataEdit, MetadataEditing,
+    MetadataError, MetadataField, MetadataIdentification, MetadataItem, MetadataValues,
 };
 use serde::Deserialize;
 use serde_json::{Map, Value, json};
@@ -109,7 +109,7 @@ impl JellyfinSource {
         &self,
         item: &MetadataItem,
         values: &MetadataValues,
-    ) -> Result<Option<MetadataValues>, String> {
+    ) -> Result<Option<MetadataIdentification>, String> {
         if !self.metadata_source_search(item) || values.title.trim().is_empty() {
             return Ok(None);
         }
@@ -171,12 +171,62 @@ impl JellyfinSource {
             return Err(MetadataError::Conflict);
         }
         if edit.changes.is_empty() {
-            return Ok(vec![raw_id.to_string()]);
+            if edit.application.is_none() {
+                return Ok(vec![raw_id.to_string()]);
+            }
         }
         let refresh_ids = self
             .metadata_refresh_ids(item, raw_id)
             .await
             .map_err(source_write_error)?;
+
+        if let Some(application) = &edit.application {
+            let candidate = serde_json::from_str::<Value>(application.as_str()).map_err(|_| {
+                MetadataError::Write(
+                    "Jellyfin could not apply the selected metadata result.".to_string(),
+                )
+            })?;
+            let mut url = endpoint(
+                &self.base_url,
+                &format!("Items/RemoteSearch/Apply/{raw_id}"),
+            )
+            .map_err(source_write_error)?;
+            url.query_pairs_mut()
+                .append_pair("ReplaceAllImages", "false");
+            self.send_unit(self.client.post(url).json(&candidate))
+                .await
+                .map_err(source_write_error)?;
+
+            let mut value = self
+                .read_metadata_item(raw_id)
+                .await
+                .map_err(|error| MetadataError::SavedRefreshFailed(error.to_string()))?;
+            let applied_values = values(&value, item);
+            let remaining = edit
+                .changes
+                .iter()
+                .filter(|change| !change.matches(&applied_values))
+                .collect::<Vec<_>>();
+            if remaining.is_empty() {
+                return Ok(refresh_ids);
+            }
+            let object = value.as_object_mut().ok_or_else(|| {
+                MetadataError::SavedRefreshFailed(
+                    "Jellyfin returned an invalid metadata item.".to_string(),
+                )
+            })?;
+            preserve_complete_artist_items(object);
+            for change in remaining {
+                apply_change(object, change);
+            }
+            let url = endpoint(&self.base_url, &format!("Items/{raw_id}"))
+                .map_err(|error| MetadataError::SavedRefreshFailed(error.to_string()))?;
+            self.send_unit(self.client.post(url).json(&value))
+                .await
+                .map_err(|error| MetadataError::SavedRefreshFailed(error.to_string()))?;
+            return Ok(refresh_ids);
+        }
+
         let mut value = self
             .read_metadata_item(raw_id)
             .await
@@ -311,7 +361,7 @@ fn select_identification_result(
     item: &MetadataItem,
     values: &MetadataValues,
     results: &[Value],
-) -> Option<MetadataValues> {
+) -> Option<MetadataIdentification> {
     let selected = match results {
         [] => return None,
         [result] => result,
@@ -331,7 +381,12 @@ fn select_identification_result(
             selected.expect("one highest-scoring Jellyfin result")
         }
     };
-    Some(identified_values(item, values, selected))
+    Some(MetadataIdentification::source(
+        identified_values(item, values, selected),
+        MetadataApplication::new(
+            serde_json::to_string(selected).expect("serialize Jellyfin remote search result"),
+        ),
+    ))
 }
 
 fn identification_score(item: &MetadataItem, values: &MetadataValues, result: &Value) -> u8 {

@@ -213,6 +213,46 @@ pub struct MetadataValues {
     pub musicbrainz_artist_id: Option<String>,
 }
 
+/// One metadata candidate and the source-owned operation that can apply it.
+///
+/// Sources without a native identification operation leave `application`
+/// empty and write the reviewed values as ordinary metadata changes.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MetadataIdentification {
+    pub values: MetadataValues,
+    pub application: Option<MetadataApplication>,
+}
+
+impl MetadataIdentification {
+    pub fn values(values: MetadataValues) -> Self {
+        Self {
+            values,
+            application: None,
+        }
+    }
+
+    pub fn source(values: MetadataValues, application: MetadataApplication) -> Self {
+        Self {
+            values,
+            application: Some(application),
+        }
+    }
+}
+
+/// Opaque input returned by a source's Identify operation and consumed by Save.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MetadataApplication(String);
+
+impl MetadataApplication {
+    pub fn new(value: impl Into<String>) -> Self {
+        Self(value.into())
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct MetadataDraft {
     pub item_id: MetadataItemId,
@@ -273,12 +313,48 @@ impl MetadataChange {
             Self::MusicBrainzArtistId(_) => MetadataField::MusicBrainzArtistId,
         }
     }
+
+    pub fn matches(&self, values: &MetadataValues) -> bool {
+        let normalized = |value: &Option<String>| {
+            value
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(str::to_string)
+        };
+        match self {
+            Self::Title(value) => values.title == value.trim(),
+            Self::SortTitle(value) => values.sort_title == normalized(value),
+            Self::Artist(value) => values.artist == normalized(value),
+            Self::Album(value) => values.album == normalized(value),
+            Self::AlbumArtist(value) => values.album_artist == normalized(value),
+            Self::TrackNumber(value) => values.track_number == *value,
+            Self::DiscNumber(value) => values.disc_number == *value,
+            Self::Year(value) => values.year == *value,
+            Self::Genre(value) => values.genre == normalized(value),
+            Self::Comment(value) => values.comment == normalized(value),
+            Self::Bpm(value) => values.bpm == *value,
+            Self::LockData(value) => values.lock_data == Some(*value),
+            Self::MusicBrainzRecordingId(value) => {
+                values.musicbrainz_recording_id == normalized(value)
+            }
+            Self::MusicBrainzReleaseTrackId(value) => {
+                values.musicbrainz_release_track_id == normalized(value)
+            }
+            Self::MusicBrainzAlbumId(value) => values.musicbrainz_album_id == normalized(value),
+            Self::MusicBrainzReleaseGroupId(value) => {
+                values.musicbrainz_release_group_id == normalized(value)
+            }
+            Self::MusicBrainzArtistId(value) => values.musicbrainz_artist_id == normalized(value),
+        }
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct MetadataEdit {
     pub item_id: MetadataItemId,
     pub revision: Option<String>,
+    pub application: Option<MetadataApplication>,
     pub changes: Vec<MetadataChange>,
 }
 
@@ -377,6 +453,7 @@ mod tests {
         MetadataEdit {
             item_id: MetadataItemId::Track(TrackId::fake(1)),
             revision: None,
+            application: None,
             changes,
         }
     }

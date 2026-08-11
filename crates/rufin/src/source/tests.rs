@@ -1730,6 +1730,7 @@ fn local_metadata_edit_prepares_the_written_file_for_library_acceptance() {
             MetadataEdit {
                 item_id: MetadataItemId::Track(edited_track.id.clone()),
                 revision: draft.revision,
+                application: None,
                 changes: vec![MetadataChange::Title("After".to_string())],
             },
             None,
@@ -1781,49 +1782,26 @@ fn private_mode_still_uses_source_metadata_search() {
             &editing,
             &current,
             async { panic!("private mode must not poll direct MusicBrainz lookup") },
-            async { Ok(Some(source_candidate)) },
+            async {
+                Ok(Some(library::MetadataIdentification::values(
+                    source_candidate,
+                )))
+            },
         ))
         .expect("source metadata search")
         .expect("source metadata search candidate");
-    assert_eq!(identified.title, "Source candidate");
+    assert_eq!(identified.values.title, "Source candidate");
 }
 
 #[test]
-fn direct_metadata_candidate_short_circuits_source_search() {
+fn source_metadata_candidate_short_circuits_direct_lookup() {
     let runtime = test_runtime();
     let editing = MetadataEditing::new(vec![library::MetadataField::Title]);
     let current = library::MetadataValues {
         title: "Current".to_string(),
         ..library::MetadataValues::default()
     };
-    let direct = library::MetadataValues {
-        title: "Direct".to_string(),
-        ..library::MetadataValues::default()
-    };
-
-    let identified = runtime
-        .block_on(resolve_identification(
-            true,
-            true,
-            &editing,
-            &current,
-            async { Ok(Some(direct)) },
-            async { panic!("an applicable direct candidate must not poll the source fallback") },
-        ))
-        .expect("direct identification")
-        .expect("direct candidate");
-    assert_eq!(identified.title, "Direct");
-}
-
-#[test]
-fn direct_miss_or_unchanged_candidate_falls_back_once() {
-    let runtime = test_runtime();
-    let editing = MetadataEditing::new(vec![library::MetadataField::Title]);
-    let current = library::MetadataValues {
-        title: "Current".to_string(),
-        ..library::MetadataValues::default()
-    };
-    let source_candidate = || library::MetadataValues {
+    let source_candidate = library::MetadataValues {
         title: "Source candidate".to_string(),
         ..library::MetadataValues::default()
     };
@@ -1834,12 +1812,32 @@ fn direct_miss_or_unchanged_candidate_falls_back_once() {
             true,
             &editing,
             &current,
-            async { Ok(None) },
-            async { Ok(Some(source_candidate())) },
+            async { panic!("an applicable source candidate must not poll direct MusicBrainz") },
+            async {
+                Ok(Some(library::MetadataIdentification::values(
+                    source_candidate,
+                )))
+            },
         ))
-        .expect("source fallback after direct miss")
-        .expect("source fallback candidate");
-    assert_eq!(identified.title, "Source candidate");
+        .expect("source identification")
+        .expect("source candidate");
+    assert_eq!(identified.values.title, "Source candidate");
+}
+
+#[test]
+fn source_miss_or_unchanged_candidate_falls_back_once() {
+    let runtime = test_runtime();
+    let editing = MetadataEditing::new(vec![library::MetadataField::Title]);
+    let current = library::MetadataValues {
+        title: "Current".to_string(),
+        ..library::MetadataValues::default()
+    };
+    let direct_candidate = || {
+        library::MetadataIdentification::values(library::MetadataValues {
+            title: "Direct candidate".to_string(),
+            ..library::MetadataValues::default()
+        })
+    };
 
     let identified = runtime
         .block_on(resolve_identification(
@@ -1847,12 +1845,29 @@ fn direct_miss_or_unchanged_candidate_falls_back_once() {
             true,
             &editing,
             &current,
-            async { Ok(Some(current.clone())) },
-            async { Ok(Some(source_candidate())) },
+            async { Ok(Some(direct_candidate())) },
+            async { Ok(None) },
         ))
-        .expect("source fallback after unchanged direct candidate")
-        .expect("source fallback candidate");
-    assert_eq!(identified.title, "Source candidate");
+        .expect("direct fallback after source miss")
+        .expect("direct fallback candidate");
+    assert_eq!(identified.values.title, "Direct candidate");
+
+    let identified = runtime
+        .block_on(resolve_identification(
+            true,
+            true,
+            &editing,
+            &current,
+            async { Ok(Some(direct_candidate())) },
+            async {
+                Ok(Some(library::MetadataIdentification::values(
+                    current.clone(),
+                )))
+            },
+        ))
+        .expect("direct fallback after unchanged source candidate")
+        .expect("direct fallback candidate");
+    assert_eq!(identified.values.title, "Direct candidate");
 }
 
 #[test]
