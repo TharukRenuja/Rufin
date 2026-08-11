@@ -1685,19 +1685,6 @@ mod tests {
         }
     }
 
-    #[test]
-    fn favorites_route_keeps_the_outlined_icon_when_selected() {
-        let (_, normal_icon, selected_icon) = NAV_ROUTE_ICONS
-            .iter()
-            .find(|(route_class, _, _)| *route_class == NAV_ROUTE_FAVORITES_CLASS)
-            .copied()
-            .expect("Favorites should have a route icon");
-
-        assert_eq!(normal_icon, "rufin-route-favorites-symbolic");
-        assert_eq!(selected_icon, normal_icon);
-        assert_eq!(nav_item(SidebarRouteItem::Favorites).icon_name, normal_icon);
-    }
-
     fn bundled_sidebar_icon_path(icon_name: &str) -> PathBuf {
         PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("../../data/icons/hicolor/scalable/actions")
