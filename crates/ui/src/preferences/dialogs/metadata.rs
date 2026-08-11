@@ -4,8 +4,8 @@ use std::rc::Rc;
 
 use adw::prelude::*;
 use library::{
-    MetadataChange, MetadataDraft, MetadataEdit, MetadataError, MetadataField, MetadataItemId,
-    MetadataScope, MetadataValues, SourceId,
+    MetadataChange, MetadataDraft, MetadataEdit, MetadataError, MetadataField,
+    MetadataIdentification, MetadataItemId, MetadataScope, MetadataValues, SourceId,
 };
 use localization::{msgid, tr, trn_with};
 use playback::SourceSessionEpoch;
@@ -181,6 +181,7 @@ pub(crate) struct EditorState {
     saving: Cell<bool>,
     identifying: Cell<bool>,
     identified_edits: RefCell<HashMap<MetadataField, IdentifiedEdit>>,
+    identification: RefCell<Option<MetadataIdentification>>,
 }
 
 impl EditorState {
@@ -307,6 +308,7 @@ fn build_dialog(shell: &Rc<Shell>, source: MetadataSource, draft: MetadataDraft)
         saving: Cell::new(false),
         identifying: Cell::new(false),
         identified_edits: RefCell::new(HashMap::new()),
+        identification: RefCell::new(None),
     });
     connect_field_changes(&state);
     connect_cancel(&state);
@@ -564,6 +566,9 @@ fn connect_field_changes(state: &Rc<EditorState>) {
                     edit.was_touched,
                 );
             }
+            if state.identified_edits.borrow().is_empty() {
+                state.identification.borrow_mut().take();
+            }
             refresh_identify_undo(&state);
             refresh_save_state(&state);
         });
@@ -603,9 +608,10 @@ impl MetadataRows {
 }
 
 fn refresh_save_state(state: &EditorState) {
-    let edit = metadata_edit(&state.draft, &state.rows);
+    let identification = state.identification.borrow();
+    let edit = metadata_edit(&state.draft, &state.rows, identification.as_ref());
     let can_save = match edit {
-        Ok(edit) => !edit.changes.is_empty(),
+        Ok(edit) => !edit.changes.is_empty() || edit.application.is_some(),
         Err(_) => true,
     };
     state.dialog.set_can_close(!state.saving.get());
@@ -627,13 +633,7 @@ fn refresh_identify_undo(state: &EditorState) {
     if state.identifying.get() {
         return;
     }
-    let mut identified = state.identified_edits.borrow_mut();
-    identified.retain(|field, edit| {
-        state
-            .rows
-            .entry(*field)
-            .is_some_and(|row| row.text().as_str() == edit.identified)
-    });
+    let identified = state.identified_edits.borrow();
     for row in &state.rows.fields {
         let visible = identified
             .get(&row.field)
@@ -657,7 +657,7 @@ fn refresh_identify_undo_field(state: &EditorState, field: MetadataField) {
     let mut identified = state.identified_edits.borrow_mut();
     if identified
         .get(&field)
-        .is_some_and(|edit| row.entry.text().as_str() != edit.identified)
+        .is_some_and(|edit| row.entry.text().as_str() == edit.original)
     {
         identified.remove(&field);
     }
@@ -669,6 +669,11 @@ fn refresh_identify_undo_field(state: &EditorState, field: MetadataField) {
         row.entry.add_css_class("metadata-identified-change");
     } else {
         row.entry.remove_css_class("metadata-identified-change");
+    }
+    let identification_undone = identified.is_empty();
+    drop(identified);
+    if identification_undone {
+        state.identification.borrow_mut().take();
     }
 }
 
@@ -689,8 +694,13 @@ fn connect_save(shell: &Rc<Shell>, source: MetadataSource, state: &Rc<EditorStat
         else {
             return;
         };
-        let edit = match metadata_edit(&state_for_save.draft, &state_for_save.rows) {
-            Ok(edit) if !edit.changes.is_empty() => edit,
+        let identification = state_for_save.identification.borrow();
+        let edit = match metadata_edit(
+            &state_for_save.draft,
+            &state_for_save.rows,
+            identification.as_ref(),
+        ) {
+            Ok(edit) if !edit.changes.is_empty() || edit.application.is_some() => edit,
             Ok(_) => return,
             Err(error) => {
                 show_error(&state_for_save, &error);
@@ -773,9 +783,10 @@ fn connect_identify(shell: &Rc<Shell>, source: MetadataSource, state: &Rc<Editor
                 return;
             };
             match response {
-                Ok(Ok(Some(values))) => {
-                    apply_identification(&state.rows, &state.draft.editing, &values);
+                Ok(Ok(Some(identification))) => {
+                    apply_identification(&state.rows, &state.draft.editing, &identification.values);
                     remember_identified_changes(&state, &before, &touched_before);
+                    *state.identification.borrow_mut() = Some(identification);
                 }
                 Ok(Ok(None)) => {}
                 Ok(Err(error)) => warn!(%error, "metadata identification failed"),
@@ -938,7 +949,14 @@ fn finish_committed_save(state: &EditorState, error: &str) {
     state.status.set_visible(true);
 }
 
-fn metadata_edit(draft: &MetadataDraft, rows: &MetadataRows) -> Result<MetadataEdit, String> {
+fn metadata_edit(
+    draft: &MetadataDraft,
+    rows: &MetadataRows,
+    identification: Option<&MetadataIdentification>,
+) -> Result<MetadataEdit, String> {
+    let compared = identification
+        .filter(|identification| identification.application.is_some())
+        .map_or(&draft.values, |identification| &identification.values);
     let mut changes = Vec::new();
     for (field, row) in rows.field_entries() {
         if !draft.editing.includes(field) {
@@ -949,19 +967,20 @@ fn metadata_edit(draft: &MetadataDraft, rows: &MetadataRows) -> Result<MetadataE
             continue;
         }
         let force = draft.mixed_fields.contains(&field) && touched;
-        if let Some(change) = metadata_change(&draft.values, field, row, force)? {
+        if let Some(change) = metadata_change(compared, field, row, force)? {
             changes.push(change);
         }
     }
     if let Some(row) = &rows.lock_data
         && draft.editing.includes(MetadataField::LockData)
-        && Some(row.is_active()) != draft.values.lock_data
+        && Some(row.is_active()) != compared.lock_data
     {
         changes.push(MetadataChange::LockData(row.is_active()));
     }
     let edit = MetadataEdit {
         item_id: draft.item_id.clone(),
         revision: draft.revision.clone(),
+        application: identification.and_then(|identification| identification.application.clone()),
         changes,
     };
     edit.validate(&draft.editing)

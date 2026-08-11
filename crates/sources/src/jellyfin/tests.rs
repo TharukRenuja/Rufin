@@ -1,5 +1,6 @@
 use std::collections::BTreeSet;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use library::{
     AlbumArtworkFacts, MetadataChange, MetadataEdit, MetadataField, MetadataItem, MetadataItemId,
@@ -306,7 +307,7 @@ async fn metadata_editor_fields_cover_jellyfin_albums_and_artists() {
 }
 
 #[tokio::test]
-async fn artist_identification_uses_jellyfin_remote_search_without_applying() {
+async fn artist_identification_keeps_the_jellyfin_result_for_save() {
     let server = MockServer::start().await;
     Mock::given(method("POST"))
         .and(path("/Items/RemoteSearch/MusicArtist"))
@@ -344,12 +345,16 @@ async fn artist_identification_uses_jellyfin_remote_search_without_applying() {
         .expect("identify Jellyfin artist")
         .expect("Jellyfin artist remote search candidate");
 
-    assert_eq!(identified.title, "Identified artist");
-    assert_eq!(identified.comment.as_deref(), Some("Identified overview"));
+    assert_eq!(identified.values.title, "Identified artist");
     assert_eq!(
-        identified.musicbrainz_artist_id.as_deref(),
+        identified.values.comment.as_deref(),
+        Some("Identified overview")
+    );
+    assert_eq!(
+        identified.values.musicbrainz_artist_id.as_deref(),
         Some("identified-artist-id")
     );
+    assert!(identified.application.is_some());
 }
 
 #[tokio::test]
@@ -407,23 +412,162 @@ async fn album_identification_selects_the_exact_provider_match() {
         .expect("identify Jellyfin album")
         .expect("Jellyfin album remote search candidate");
 
-    assert_eq!(identified.title, "Identified album");
-    assert_eq!(identified.year, Some(2000));
+    assert_eq!(identified.values.title, "Identified album");
+    assert_eq!(identified.values.year, Some(2000));
     assert_eq!(
-        identified.artist.as_deref(),
+        identified.values.artist.as_deref(),
         Some("Identified album artist")
     );
     assert_eq!(
-        identified.album_artist.as_deref(),
+        identified.values.album_artist.as_deref(),
         Some("Identified album artist")
     );
     assert_eq!(
-        identified.musicbrainz_album_id.as_deref(),
+        identified.values.musicbrainz_album_id.as_deref(),
         Some("expected-release-id")
     );
     assert_eq!(
-        identified.musicbrainz_release_group_id.as_deref(),
+        identified.values.musicbrainz_release_group_id.as_deref(),
         Some("identified-release-group-id")
+    );
+}
+
+#[tokio::test]
+async fn identified_album_save_applies_the_source_result_without_a_flat_metadata_post() {
+    let server = MockServer::start().await;
+    let remote_result = serde_json::json!({
+        "Name": "Album",
+        "AlbumArtist": { "Name": "Canonical artist" },
+        "ProviderIds": {
+            "MusicBrainzAlbum": "11111111-2222-3333-4444-555555555555"
+        }
+    });
+    Mock::given(method("POST"))
+        .and(path("/Items/RemoteSearch/MusicAlbum"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(serde_json::json!([remote_result.clone()])),
+        )
+        .expect(1)
+        .mount(&server)
+        .await;
+    metadata_editor(
+        &server,
+        METADATA_ALBUM_ID,
+        &["MusicBrainzAlbum", "MusicBrainzReleaseGroup"],
+    )
+    .await;
+    let reads = Arc::new(AtomicUsize::new(0));
+    Mock::given(method("GET"))
+        .and(path(format!("/Items/{METADATA_ALBUM_ID}")))
+        .and(query_param("Fields", super::metadata::METADATA_ITEM_FIELDS))
+        .respond_with({
+            let reads = Arc::clone(&reads);
+            move |_: &wiremock::Request| {
+                let body = if reads.fetch_add(1, Ordering::SeqCst) == 0 {
+                    serde_json::json!({
+                        "Id": METADATA_ALBUM_ID,
+                        "Etag": "before-revision",
+                        "Name": "Album",
+                        "AlbumArtists": [{ "Name": "Previous artist", "Id": "old-artist" }]
+                    })
+                } else {
+                    serde_json::json!({
+                        "Id": METADATA_ALBUM_ID,
+                        "Etag": "after-revision",
+                        "Name": "Album",
+                        "AlbumArtists": [{ "Name": "Canonical artist", "Id": "canonical-artist" }],
+                        "ProviderIds": {
+                            "MusicBrainzAlbum": "11111111-2222-3333-4444-555555555555"
+                        }
+                    })
+                };
+                ResponseTemplate::new(200).set_body_json(body)
+            }
+        })
+        .expect(2)
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/Items"))
+        .and(query_param("AlbumIds", METADATA_ALBUM_ID))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "Items": [],
+            "TotalRecordCount": 0
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path(format!(
+            "/Items/RemoteSearch/Apply/{METADATA_ALBUM_ID}"
+        )))
+        .and(query_param("ReplaceAllImages", "false"))
+        .and(body_json(remote_result))
+        .respond_with(ResponseTemplate::new(204))
+        .expect(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/Items"))
+        .and(query_param("Ids", METADATA_ALBUM_ID))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(query(serde_json::json!([{
+                "Id": METADATA_ALBUM_ID,
+                "Name": "Album",
+                "Type": "MusicAlbum",
+                "AlbumArtists": [{ "Name": "Canonical artist", "Id": "canonical-artist" }]
+            }]))),
+        )
+        .expect(1)
+        .mount(&server)
+        .await;
+    let source = provider(&server, "secret-token");
+    let album = metadata_album();
+    let identified = source
+        .identify_metadata(
+            &MetadataItem::Album(album.clone()),
+            &MetadataValues {
+                title: "Album".to_string(),
+                album_artist: Some("Previous artist".to_string()),
+                ..MetadataValues::default()
+            },
+        )
+        .await
+        .expect("identify Jellyfin album")
+        .expect("Jellyfin album candidate");
+
+    let raw_ids = source
+        .write_metadata(
+            &MetadataItem::Album(album.clone()),
+            &MetadataEdit {
+                item_id: MetadataItemId::Album(album.id.clone()),
+                revision: Some("etag:before-revision".to_string()),
+                application: identified.application,
+                changes: Vec::new(),
+            },
+        )
+        .await
+        .expect("apply identified Jellyfin metadata");
+
+    assert_eq!(raw_ids, [METADATA_ALBUM_ID]);
+    assert_eq!(reads.load(Ordering::SeqCst), 2);
+
+    let library = accepted_library(vec![library::CandidateBatch::Albums(vec![album])]);
+    let prepared = source
+        .prepare_change(&library, raw_ids.into_iter().collect(), BTreeSet::new())
+        .await
+        .expect("prepare the identified Jellyfin album");
+    let PreparedSourceChange::SourceUpdate(update) = prepared else {
+        panic!("an identified Album must remain an exact source update");
+    };
+    assert_eq!(update.albums.len(), 1);
+    assert_eq!(
+        update.albums[0].relations.album_artists[0].name,
+        "Canonical artist"
+    );
+    assert_eq!(
+        update.albums[0].relations.album_artists[0].id.as_str(),
+        "jellyfin:artist:canonical-artist"
     );
 }
 
@@ -551,6 +695,7 @@ async fn metadata_write_preserves_fields_required_by_jellyfin_updates() {
             &MetadataEdit {
                 item_id: MetadataItemId::Track(track.id.clone()),
                 revision: Some("etag:before-revision".to_string()),
+                application: None,
                 changes: vec![
                     MetadataChange::Title("After".to_string()),
                     MetadataChange::TrackNumber(Some(7)),
@@ -629,6 +774,7 @@ async fn album_metadata_write_pages_until_the_reported_total() {
             &MetadataEdit {
                 item_id: MetadataItemId::Album(album.id.clone()),
                 revision: Some("etag:before-revision".to_string()),
+                application: None,
                 changes: vec![MetadataChange::Title("After".to_string())],
             },
         )
@@ -669,6 +815,7 @@ async fn metadata_write_rejects_a_changed_jellyfin_etag_before_posting() {
             &MetadataEdit {
                 item_id: MetadataItemId::Track(track.id.clone()),
                 revision: Some("etag:original-revision".to_string()),
+                application: None,
                 changes: vec![MetadataChange::Title("After".to_string())],
             },
         )

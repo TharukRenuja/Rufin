@@ -438,7 +438,7 @@ impl Source {
         &self,
         subject: &library::MetadataSubject,
         values: &MetadataValues,
-    ) -> Result<Option<MetadataValues>, String> {
+    ) -> Result<Option<library::MetadataIdentification>, String> {
         match &self.implementation {
             Implementation::Jellyfin(source) => {
                 source.identify_metadata(subject.item(), values).await

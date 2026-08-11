@@ -1086,7 +1086,7 @@ fn verify_value_changes(
 ) -> Result<(), MetadataError> {
     if let Some(change) = changes
         .iter()
-        .find(|change| values.iter().any(|values| !change_matches(change, values)))
+        .find(|change| values.iter().any(|values| !change.matches(values)))
     {
         return Err(MetadataError::Write(format!(
             "The updated {} could not be verified.",
@@ -1433,42 +1433,6 @@ fn set_text(tag: &mut Tag, key: ItemKey, value: Option<&str>) {
             tag.remove_key(key);
         }
     }
-}
-
-fn change_matches(change: &MetadataChange, values: &MetadataValues) -> bool {
-    match change {
-        MetadataChange::Title(value) => values.title == value.trim(),
-        MetadataChange::SortTitle(value) => values.sort_title == normalized(value),
-        MetadataChange::Artist(value) => values.artist == normalized(value),
-        MetadataChange::Album(value) => values.album == normalized(value),
-        MetadataChange::AlbumArtist(value) => values.album_artist == normalized(value),
-        MetadataChange::TrackNumber(value) => values.track_number == *value,
-        MetadataChange::DiscNumber(value) => values.disc_number == *value,
-        MetadataChange::Year(value) => values.year == *value,
-        MetadataChange::Genre(value) => values.genre == normalized(value),
-        MetadataChange::Comment(value) => values.comment == normalized(value),
-        MetadataChange::Bpm(value) => values.bpm == *value,
-        MetadataChange::MusicBrainzRecordingId(value) => {
-            values.musicbrainz_recording_id == normalized(value)
-        }
-        MetadataChange::MusicBrainzReleaseTrackId(value) => {
-            values.musicbrainz_release_track_id == normalized(value)
-        }
-        MetadataChange::MusicBrainzAlbumId(value) => {
-            values.musicbrainz_album_id == normalized(value)
-        }
-        MetadataChange::MusicBrainzReleaseGroupId(value) => {
-            values.musicbrainz_release_group_id == normalized(value)
-        }
-        MetadataChange::MusicBrainzArtistId(value) => {
-            values.musicbrainz_artist_id == normalized(value)
-        }
-        MetadataChange::LockData(_) => false,
-    }
-}
-
-fn normalized(value: &Option<String>) -> Option<String> {
-    value.as_deref().and_then(clean)
 }
 
 fn field_name(field: library::MetadataField) -> &'static str {

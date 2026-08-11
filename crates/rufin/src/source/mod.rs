@@ -2181,7 +2181,7 @@ impl SelectedSourcePort for ActiveSource {
     fn edit_metadata(&self, edit: MetadataEdit) -> Receiver<Result<(), MetadataError>> {
         let (result, receiver) = async_channel::bounded(1);
         let reply = MetadataReply::new(result);
-        if edit.changes.is_empty() {
+        if edit.changes.is_empty() && edit.application.is_none() {
             reply.finish(Ok(()));
             return receiver;
         }
@@ -2201,7 +2201,7 @@ impl SelectedSourcePort for ActiveSource {
         item_id: MetadataItemId,
         editing: MetadataEditing,
         values: library::MetadataValues,
-    ) -> Receiver<Result<Option<library::MetadataValues>, String>> {
+    ) -> Receiver<Result<Option<library::MetadataIdentification>, String>> {
         let external_lookup_allowed = self
             .shared
             .upgrade()
@@ -2333,11 +2333,13 @@ async fn identify_metadata_with_fallback(
     current: library::MetadataValues,
     direct_applicable: bool,
     source_search_applicable: bool,
-) -> Result<Option<library::MetadataValues>, String> {
+) -> Result<Option<library::MetadataIdentification>, String> {
     let direct_item_id = item_id;
     let direct_values = current.clone();
     let direct = async move {
-        blocking(move || metadata_lookup::identify_metadata(&direct_item_id, &direct_values)).await
+        blocking(move || metadata_lookup::identify_metadata(&direct_item_id, &direct_values))
+            .await
+            .map(|candidate| candidate.map(library::MetadataIdentification::values))
     };
     let source_search_values = current.clone();
     let source_search = async move {
@@ -2363,31 +2365,35 @@ async fn resolve_identification<Direct, SourceSearch>(
     current: &library::MetadataValues,
     direct: Direct,
     source_search: SourceSearch,
-) -> Result<Option<library::MetadataValues>, String>
+) -> Result<Option<library::MetadataIdentification>, String>
 where
-    Direct: Future<Output = Result<Option<library::MetadataValues>, String>>,
-    SourceSearch: Future<Output = Result<Option<library::MetadataValues>, String>>,
+    Direct: Future<Output = Result<Option<library::MetadataIdentification>, String>>,
+    SourceSearch: Future<Output = Result<Option<library::MetadataIdentification>, String>>,
 {
-    let mut direct_failure = None;
-    if direct_applicable {
-        match direct.await {
-            Ok(Some(candidate)) if editing.identification_changes(current, &candidate) => {
+    let mut source_failure = None;
+    if source_search_applicable {
+        match source_search.await {
+            Ok(Some(candidate)) if editing.identification_changes(current, &candidate.values) => {
                 return Ok(Some(candidate));
             }
             Ok(_) => {}
-            Err(error) => direct_failure = Some(error),
+            Err(error) => source_failure = Some(error),
         }
     }
-    if source_search_applicable {
-        return match source_search.await {
-            Ok(Some(candidate)) if editing.identification_changes(current, &candidate) => {
+    if direct_applicable {
+        return match direct.await {
+            Ok(Some(candidate)) if editing.identification_changes(current, &candidate.values) => {
                 Ok(Some(candidate))
             }
-            Ok(_) => Ok(None),
-            Err(error) => Err(error),
+            Ok(_) => source_failure.map_or(Ok(None), Err),
+            Err(error) => match source_failure {
+                Some(source_error) => Err(source_error),
+                None if source_search_applicable => Ok(None),
+                None => Err(error),
+            },
         };
     }
-    match direct_failure {
+    match source_failure {
         Some(error) => Err(error),
         None => Ok(None),
     }

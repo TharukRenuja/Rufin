@@ -234,7 +234,7 @@ pub trait SelectedSourcePort: Send + Sync {
         item_id: MetadataItemId,
         editing: library::MetadataEditing,
         values: MetadataValues,
-    ) -> Receiver<Result<Option<MetadataValues>, String>>;
+    ) -> Receiver<Result<Option<library::MetadataIdentification>, String>>;
     fn save_metadata_local_access(
         &self,
         input: SourceLocalAccess,

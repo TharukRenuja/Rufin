@@ -498,6 +498,7 @@ fn metadata_write_preserves_unrelated_tags_and_artwork() {
             &library::MetadataEdit {
                 item_id: library::MetadataItemId::Track(track.id.clone()),
                 revision: draft.revision,
+                application: None,
                 changes: vec![
                     library::MetadataChange::Title("Updated title".to_string()),
                     library::MetadataChange::SortTitle(Some("Title, Updated".to_string())),
@@ -584,6 +585,7 @@ fn metadata_conflict_keeps_the_concurrent_file_change() {
     let edit = library::MetadataEdit {
         item_id: library::MetadataItemId::Track(track.id.clone()),
         revision: draft.revision,
+        application: None,
         changes: vec![library::MetadataChange::Title("Editor title".to_string())],
     };
     let concurrent = fs::read(&path)
@@ -620,6 +622,7 @@ fn metadata_failure_before_replace_leaves_the_original_unchanged() {
     let edit = library::MetadataEdit {
         item_id: library::MetadataItemId::Track(track.id.clone()),
         revision: draft.revision,
+        application: None,
         changes: vec![library::MetadataChange::Title("Editor title".to_string())],
     };
 
@@ -670,6 +673,7 @@ fn album_metadata_edit_prepares_every_track_and_preserves_track_tags() {
         &library::MetadataEdit {
             item_id: library::MetadataItemId::Album(album.id),
             revision: draft.revision,
+            application: None,
             changes: vec![
                 library::MetadataChange::Title("Renamed album".to_string()),
                 library::MetadataChange::Year(Some(2024)),
@@ -729,6 +733,7 @@ fn artist_metadata_edit_replaces_only_the_selected_credit() {
         &library::MetadataEdit {
             item_id: library::MetadataItemId::Artist(artist.id),
             revision: draft.revision,
+            application: None,
             changes: vec![library::MetadataChange::Title("Renamed".to_string())],
         },
         |_| Ok(()),
@@ -773,6 +778,7 @@ fn aggregate_commit_failure_restores_every_original_file() {
         &library::MetadataEdit {
             item_id: library::MetadataItemId::Album(album.id),
             revision: draft.revision,
+            application: None,
             changes: vec![library::MetadataChange::Title("Renamed".to_string())],
         },
         |index| {
