@@ -7,7 +7,7 @@ msgstr ""
 "Project-Id-Version: Rufin 0.6.0\n"
 "Report-Msgid-Bugs-To: https://github.com/screwys/Rufin/issues\n"
 "POT-Creation-Date: YEAR-MO-DA HO:MI+ZONE\n"
-"PO-Revision-Date: 2026-08-10 14:51+0000\n"
+"PO-Revision-Date: 2026-08-12 10:51+0000\n"
 "Last-Translator: Александр Стельмах <aguhadug@gmail.com>\n"
 "Language-Team: Russian <https://hosted.weblate.org/projects/rufin/app/ru/>\n"
 "Language: ru\n"
@@ -94,19 +94,19 @@ msgstr ""
 "Для работы функции радио используется API Jellyfin, что необходимо для "
 "работы плагинов рекомендаций"
 
-#, fuzzy
 msgid ""
 "This will log you out and clear your secrets including API ones. Your app "
 "cache is not touched."
 msgstr ""
-"Изменение секретного ключа приводит к удалению устаревших конфигурационных "
-"данных и завершению всех сеансов, включая ключи доступа к API. Кэш "
-"приложения не затрагивается."
+"Это завершит вашу сессию и очистит ваши конфиденциальные данные, включая "
+"ключи API. Кэш приложения при этом не будет затронут."
 
 msgid ""
 "Track evens out every song, while Album preserves the intended differences "
 "within each album"
 msgstr ""
+"Режим «Трек» выравнивает звучание каждой песни, а режим «Альбом» сохраняет "
+"задуманные различия между треками в каждом альбоме"
 
 msgid ""
 "Unsaved changes. {direct} direct, {prefix} prefix, {metadata} metadata, "
@@ -430,13 +430,13 @@ msgid "Control notifications"
 msgstr "Управление уведомлениями"
 
 msgid "Copy"
-msgstr ""
+msgstr "Копировать"
 
 msgid "Could not save diagnostic log"
 msgstr "Не удалось сохранить диагностический журнал"
 
 msgid "Could not update favorites"
-msgstr ""
+msgstr "Не удалось обновить список избранных"
 
 msgid "Couldn't connect to {service}"
 msgstr "Подключиться к {service}"
@@ -462,10 +462,8 @@ msgstr "Настраиваемый"
 msgid "Customize display"
 msgstr "Настроить отображение"
 
-#, fuzzy
-#| msgid "Custom"
 msgid "Cut"
-msgstr "Настраиваемый"
+msgstr "Вырезать"
 
 msgid "Dance"
 msgstr "Танцевальная"
@@ -848,7 +846,7 @@ msgid "Limit"
 msgstr "Ограничение"
 
 msgid "Linear"
-msgstr ""
+msgstr "Линейный"
 
 msgid "ListenBrainz scrobbling"
 msgstr "Отправка данных о прослушивании в ListenBrainz"
@@ -1190,16 +1188,18 @@ msgid "Password"
 msgstr "Пароль"
 
 msgid "Paste"
-msgstr ""
+msgstr "Вставить"
 
 msgid "Pause"
 msgstr "Приостановить"
 
 msgid "Perceptual for a finer control at low volume; Linear for a direct scale"
 msgstr ""
+"Перцептивный режим для более точной настройки на низкой громкости; линейный "
+"режим для прямой шкалы"
 
 msgid "Perceptual"
-msgstr ""
+msgstr "Восприятие"
 
 msgid "Pink"
 msgstr "Розовый"
@@ -1381,7 +1381,7 @@ msgid "Red"
 msgstr "Красный"
 
 msgid "Redo"
-msgstr ""
+msgstr "Повторить"
 
 msgid "Refresh section"
 msgstr "Обновить раздел"
@@ -1602,10 +1602,8 @@ msgstr "Переместить по треку"
 msgid "Seekbar"
 msgstr "Индикатор прогресса"
 
-#, fuzzy
-#| msgid "Selection"
 msgid "Select All"
-msgstr "Выбор"
+msgstr "Выбрать всё"
 
 msgid "Select Download Folder"
 msgstr "Выбрать папку для загрузки"
@@ -1716,10 +1714,8 @@ msgstr "Перемешать"
 msgid "Sidebar Items"
 msgstr "Элементы боковой панели"
 
-#, fuzzy
-#| msgid "Sidebar route by position"
 msgid "Sidebar item {position}"
-msgstr "Маршрут в боковой панели по расположению"
+msgstr "Элемент боковой панели {position}"
 
 msgid "Sidebar route by position"
 msgstr "Маршрут в боковой панели по расположению"
@@ -1869,7 +1865,7 @@ msgid "Undo identified value"
 msgstr "Отменить изменение значения"
 
 msgid "Undo"
-msgstr ""
+msgstr "Отменить"
 
 msgid "Unmuted"
 msgstr "Звук включен"
@@ -1942,7 +1938,7 @@ msgid "Waveform seekbar"
 msgstr "Индикатор прогресса воспроизведения в виде волновой формы"
 
 msgid "Window"
-msgstr ""
+msgstr "Окно"
 
 msgid "Year"
 msgstr "Год"
