@@ -604,9 +604,7 @@ impl GstEngine {
             let should_prepare = match next.transition {
                 NextTransition::Crossfade { .. } => true,
                 NextTransition::Gapless => {
-                    next.stream.window().is_some()
-                        && (!adjacent_window_can_reuse_pipeline(&shared.settings)
-                            || !streams_are_adjacent_windows(&current.stream, &next.stream))
+                    gapless_uses_separate_pipeline(&shared.settings, current, next)
                 }
             };
             should_prepare.then(|| {
@@ -2967,12 +2965,13 @@ pub(super) fn clear_prepared_next_state(shared: &mut SharedBackendState) -> Prep
 }
 
 fn gapless_preload_should_run(shared: &SharedBackendState, next: &PreparedNext) -> bool {
+    let Some(current) = shared.current.as_ref() else {
+        return false;
+    };
     next.transition == NextTransition::Gapless
         && next.stream.allows_preloading
-        && shared
-            .current
-            .as_ref()
-            .is_some_and(|current| current.stream.allows_preloading)
+        && current.stream.allows_preloading
+        && !gapless_uses_separate_pipeline(&shared.settings, current, next)
 }
 
 pub(super) fn gapless_preload_source_is_supported(uri: &str) -> bool {
@@ -2983,6 +2982,17 @@ fn inactive_slot(slot: Slot) -> Slot {
         Slot::Primary => Slot::Secondary,
         Slot::Secondary => Slot::Primary,
     }
+}
+
+fn gapless_uses_separate_pipeline(
+    settings: &BackendAudioSettings,
+    current: &PreparedRun,
+    next: &PreparedNext,
+) -> bool {
+    current.stream.stream == next.stream.stream
+        || (next.stream.window().is_some()
+            && (!adjacent_window_can_reuse_pipeline(settings)
+                || !streams_are_adjacent_windows(&current.stream, &next.stream)))
 }
 
 fn streams_are_adjacent_windows(current: &ResolvedStream, next: &ResolvedStream) -> bool {
@@ -3175,6 +3185,44 @@ mod tests {
 
         settings.loudness_normalization = LoudnessNormalizationMode::Album;
         assert!(!adjacent_window_can_reuse_pipeline(&settings));
+    }
+
+    #[test]
+    fn repeated_stream_uses_the_separate_gapless_pipeline() {
+        let pipeline = PipelineId(5);
+        let current_run = RunId::new(10);
+        let repeated = PreparedStream::from(ResolvedStream::new("file:///music/repeated.flac"));
+        let next = PreparedNext::new(RunId::new(11), repeated.clone(), NextTransition::Gapless);
+        let mut shared = SharedBackendState::new();
+        shared.active = Slot::Primary;
+        shared.current = Some(PreparedRun {
+            run: current_run,
+            stream: repeated,
+        });
+        shared.next = Some(next.clone());
+        shared.set_pipeline_id(Slot::Primary, Some(pipeline));
+
+        assert!(gapless_uses_separate_pipeline(
+            &shared.settings,
+            shared.current.as_ref().expect("current stream"),
+            &next,
+        ));
+        let distinct = PreparedNext::new(
+            RunId::new(12),
+            ResolvedStream::new("file:///music/distinct.flac"),
+            NextTransition::Gapless,
+        );
+        assert!(!gapless_uses_separate_pipeline(
+            &shared.settings,
+            shared.current.as_ref().expect("current stream"),
+            &distinct,
+        ));
+        assert_eq!(
+            about_to_finish_action_for_pipeline(&mut shared, Slot::Primary, pipeline, 1),
+            AboutToFinishAction::Ignore
+        );
+        assert_eq!(shared.next, Some(next));
+        assert!(shared.gapless_pending.is_none());
     }
 
     #[test]
