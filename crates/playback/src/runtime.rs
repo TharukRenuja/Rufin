@@ -165,6 +165,9 @@ enum RuntimeCommand {
     Projection {
         reply: Reply<PlaybackProjection>,
     },
+    Retire {
+        reply: Reply<()>,
+    },
     Shutdown {
         reply: Reply<()>,
     },
@@ -382,6 +385,11 @@ impl Playback {
         self.request(|reply| RuntimeCommand::Projection { reply })
     }
 
+    /// Ends the logical session and lets Playback finish shutting down its backend.
+    pub fn retire(&self) -> PlaybackResult<()> {
+        self.request(|reply| RuntimeCommand::Retire { reply })
+    }
+
     pub fn shutdown(&self) -> PlaybackResult<()> {
         let result = self.request(|reply| RuntimeCommand::Shutdown { reply });
         let joined = self.inner.join_threads();
@@ -594,6 +602,17 @@ fn apply_runtime_command(
         }
         RuntimeCommand::Projection { reply } => {
             let _ = reply.send(Ok(runtime.initial_projection()));
+        }
+        RuntimeCommand::Retire { reply } => {
+            let mut value = runtime
+                .retire(&sample)
+                .and_then(|update| publish_update(outputs, update));
+            if outputs.send(PlaybackOutput::Shutdown).is_err() && value.is_ok() {
+                value = Err(PlaybackError::Unavailable);
+            }
+            let _ = reply.send(value);
+            let _ = runtime.shutdown_backend();
+            return false;
         }
         RuntimeCommand::Shutdown { reply } => {
             let mut value = runtime
@@ -867,12 +886,20 @@ impl PlaybackRuntime {
         Ok(self.session.view().transport.current)
     }
 
-    fn shutdown(&mut self, sample: &ClockSample) -> PlaybackResult<PlaybackUpdate> {
+    fn retire(&mut self, sample: &ClockSample) -> PlaybackResult<PlaybackUpdate> {
         let session_update = self.session.shutdown(sample);
-        let update = self.finish(session_update, sample)?;
+        self.finish(session_update, sample)
+    }
+
+    fn shutdown_backend(&mut self) -> PlaybackResult<()> {
         self.backend
             .shutdown()
-            .map_err(|error| PlaybackError::BackendShutdown(error.to_string()))?;
+            .map_err(|error| PlaybackError::BackendShutdown(error.to_string()))
+    }
+
+    fn shutdown(&mut self, sample: &ClockSample) -> PlaybackResult<PlaybackUpdate> {
+        let update = self.retire(sample)?;
+        self.shutdown_backend()?;
         Ok(update)
     }
 
@@ -973,6 +1000,95 @@ mod tests {
         fn drain_events(&mut self) -> Vec<BackendEvent> {
             Vec::new()
         }
+    }
+
+    struct BlockingShutdownBackend {
+        shutdown_started: SyncSender<()>,
+        shutdown_release: Receiver<()>,
+        shutdown_finished: SyncSender<()>,
+    }
+
+    impl PlaybackBackend for BlockingShutdownBackend {
+        fn send(&mut self, _command: BackendCommand) -> Result<(), BackendError> {
+            Ok(())
+        }
+
+        fn drain_events(&mut self) -> Vec<BackendEvent> {
+            Vec::new()
+        }
+
+        fn shutdown(&mut self) -> Result<(), BackendError> {
+            self.shutdown_started
+                .send(())
+                .map_err(|error| BackendError::Backend(error.to_string()))?;
+            self.shutdown_release
+                .recv()
+                .map_err(|error| BackendError::Backend(error.to_string()))?;
+            self.shutdown_finished
+                .send(())
+                .map_err(|error| BackendError::Backend(error.to_string()))
+        }
+    }
+
+    #[test]
+    fn retirement_finishes_before_backend_shutdown() {
+        let (shutdown_started, started) = sync_channel(1);
+        let (shutdown_release, release) = sync_channel(1);
+        let (shutdown_finished, finished) = sync_channel(1);
+        let (persistence_flushed, flushed) = sync_channel(1);
+        let (retirement_finished, retired) = sync_channel(1);
+        let (playback, _) = Playback::start(
+            Sequence::new(SourceId::fake(1)),
+            SourceSessionEpoch::new(1),
+            "test",
+            PlaybackSettings::default(),
+            false,
+            2,
+            Box::new(BlockingShutdownBackend {
+                shutdown_started,
+                shutdown_release: release,
+                shutdown_finished,
+            }),
+            Arc::new(|| sample(0)),
+            move |update| {
+                if update
+                    .effects
+                    .iter()
+                    .any(|effect| matches!(effect, SessionEffect::FlushPersistence { .. }))
+                {
+                    let _ = persistence_flushed.send(());
+                }
+            },
+        )
+        .expect("start Playback");
+
+        let retire_thread = thread::spawn(move || {
+            let _ = retirement_finished.send(playback.retire());
+        });
+        started
+            .recv_timeout(Duration::from_secs(5))
+            .expect("backend shutdown started");
+        let retirement = match retired.recv_timeout(Duration::from_secs(5)) {
+            Ok(retirement) => retirement,
+            Err(error) => {
+                let _ = shutdown_release.send(());
+                panic!("Playback retirement waited for backend shutdown: {error}");
+            }
+        };
+        retirement.expect("retire Playback");
+        flushed
+            .recv_timeout(Duration::from_secs(5))
+            .expect("persistence flushed before retirement finished");
+        assert!(matches!(
+            finished.try_recv(),
+            Err(std::sync::mpsc::TryRecvError::Empty)
+        ));
+
+        shutdown_release.send(()).expect("release backend shutdown");
+        finished
+            .recv_timeout(Duration::from_secs(5))
+            .expect("backend shutdown finished");
+        retire_thread.join().expect("join retirement caller");
     }
 
     #[test]

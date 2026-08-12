@@ -151,7 +151,6 @@ pub enum SessionCommand {
     Play,
     Pause,
     Stop,
-    Retire,
     Next,
     Previous,
     Seek(u64),
@@ -528,7 +527,6 @@ impl PlaybackSession {
             SessionCommand::Play => Ok(self.set_playing(true)),
             SessionCommand::Pause => Ok(self.set_playing(false)),
             SessionCommand::Stop => Ok(self.stop(sample)),
-            SessionCommand::Retire => Ok(self.shutdown(sample)),
             SessionCommand::Next => Ok(self.next(sample)),
             SessionCommand::Previous => Ok(self.previous(sample)),
             SessionCommand::Seek(position_millis) => Ok(self.seek(position_millis)),
@@ -3252,7 +3250,7 @@ mod tests {
     }
 
     #[test]
-    fn stopped_seek_is_persisted_and_retirement_keeps_the_live_playhead() {
+    fn stopped_seek_is_persisted_and_shutdown_keeps_the_live_playhead() {
         let mut session = session(&[1]);
         let pending = session.reserve_materialization(Placement::End);
         let stopped_seek = session
@@ -3280,9 +3278,7 @@ mod tests {
             &sample(1_000),
         );
 
-        let shutdown = session
-            .handle_command(SessionCommand::Retire, &sample(1_000))
-            .expect("retire session");
+        let shutdown = session.shutdown(&sample(1_000));
         assert_eq!(session.sequence().progress_millis(), 37_000);
         assert!(
             shutdown

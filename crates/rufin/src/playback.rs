@@ -931,14 +931,17 @@ impl PlaybackOwner {
     }
 
     pub(crate) fn stop_for_source_switch(&self) -> PlaybackCutover {
-        self.stop_for_source_transition(true)
+        let active = self.take_active();
+        if let Some(active) = active
+            && let Err(error) = active.playback.retire()
+        {
+            warn!(%error, "could not retire Playback");
+        }
+        self.persistence.drain();
+        PlaybackCutover
     }
 
-    pub(crate) fn stop_for_source_add(&self) -> PlaybackCutover {
-        self.stop_for_source_transition(false)
-    }
-
-    fn stop_for_source_transition(&self, wait_for_backend: bool) -> PlaybackCutover {
+    fn take_active(&self) -> Option<ActivePlayback> {
         let active = self
             .active
             .lock()
@@ -948,25 +951,7 @@ impl PlaybackOwner {
         self.loudness.cancel();
         self.publish_current_media(None);
         self.observe_discord(None, false);
-        if let Some(active) = active {
-            if wait_for_backend {
-                if let Err(error) = active.playback.shutdown() {
-                    warn!(%error, "could not shut down retired Playback");
-                }
-            } else {
-                self.send_to(&active, SessionCommand::Retire);
-                let ActivePlayback { playback, .. } = active;
-                let _ = thread::Builder::new()
-                    .name("rufin-playback-cleanup".to_string())
-                    .spawn(move || {
-                        if let Err(error) = playback.shutdown() {
-                            warn!(%error, "could not shut down retired Playback");
-                        }
-                    });
-            }
-        }
-        self.persistence.drain();
-        PlaybackCutover
+        active
     }
 
     pub(crate) fn refresh_accepted_tracks(
@@ -1746,7 +1731,12 @@ impl TransportCommandPort for PlaybackOwner {
     }
 
     fn shutdown(&self) {
-        self.stop_for_source_switch();
+        if let Some(active) = self.take_active()
+            && let Err(error) = active.playback.shutdown()
+        {
+            warn!(%error, "could not shut down Playback");
+        }
+        self.persistence.drain();
     }
 }
 
