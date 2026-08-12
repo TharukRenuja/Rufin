@@ -255,7 +255,7 @@ impl RunContext {
             last_progress_bucket: None,
             desired_playing: true,
             resolved_stream: None,
-            seekable: false,
+            seekable: true,
         }
     }
 
@@ -735,7 +735,6 @@ impl PlaybackSession {
         }
         self.auto_dj_in_flight = None;
         if !self.auto_dj_enabled
-            || self.sequence.repeat_mode() == RepeatMode::One
             || self.sequence.source_id() != source_id
             || self.sequence.occurrence(seed_occurrence).is_none()
             || self.sequence.remaining_after_selected() >= self.auto_dj_refill_threshold
@@ -2066,7 +2065,6 @@ impl PlaybackSession {
 
     fn maybe_request_auto_dj(&mut self, effects: &mut Vec<SessionEffect>) {
         if !self.auto_dj_enabled
-            || self.sequence.repeat_mode() == RepeatMode::One
             || self.sequence.remaining_after_selected() >= self.auto_dj_refill_threshold
             || self.auto_dj_in_flight.is_some()
         {
@@ -2695,7 +2693,7 @@ mod tests {
     }
 
     #[test]
-    fn only_a_seekable_current_run_emits_a_position_discontinuity() {
+    fn new_run_stays_seekable_until_the_backend_reports_otherwise() {
         let mut session = session(&[1, 2]);
         assert!(session.view().transport.can_seek);
         let inactive = session
@@ -2712,6 +2710,15 @@ mod tests {
             .handle_command(SessionCommand::PlayPause, &sample(0))
             .expect("start");
         let run = session.current_run().expect("current run");
+        assert!(session.view().transport.can_seek);
+
+        session.handle_backend(
+            BackendEvent::Seekable {
+                run,
+                seekable: false,
+            },
+            &sample(0),
+        );
         let rejected = session
             .handle_command(SessionCommand::Seek(42_000), &sample(0))
             .expect("unseekable current run");
