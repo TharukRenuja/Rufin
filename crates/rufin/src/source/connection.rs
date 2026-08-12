@@ -287,7 +287,6 @@ impl SourceOwner {
         cancelled: Arc<AtomicBool>,
         protect_commit: bool,
     ) -> Result<(), String> {
-        let adding_source = previous.is_none();
         let same_session = self
             .shared
             .selected()
@@ -460,14 +459,7 @@ impl SourceOwner {
         self.retire_selected_access().await;
         let cutover = {
             let playback = Arc::clone(&playback);
-            blocking(move || {
-                Ok(if adding_source {
-                    playback.stop_for_source_add()
-                } else {
-                    playback.stop_for_source_switch()
-                })
-            })
-            .await?
+            blocking(move || Ok(playback.stop_for_source_switch())).await?
         };
         self.shared.release_selected().await;
         self.shared
