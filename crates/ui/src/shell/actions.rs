@@ -102,7 +102,7 @@ pub(crate) fn install_window_actions(shell: &Rc<Shell>) {
     });
     shell.chrome.window.add_action(&fullscreen);
 
-    add_window_action(shell, "play-pause", &["<Control>space"], {
+    add_window_action(shell, "play-pause", &["space"], {
         let transport = shell.products.playback.transport.clone();
         move || transport.play_pause()
     });
@@ -132,27 +132,51 @@ pub(crate) fn install_window_actions(shell: &Rc<Shell>) {
             .application
             .set_accels_for_action(&action_name, &[&accelerator]);
     }
-    add_window_action(shell, "previous-track", &["<Control>b"], {
+	#[cfg(target_os = "macos")]
+    let previous_track_accels = &["<Meta>Left"][..];
+    #[cfg(not(target_os = "macos"))]
+    let previous_track_accels = &["<Control>b"][..];
+    add_window_action(shell, "previous-track", previous_track_accels, {
         let transport = shell.products.playback.transport.clone();
         move || transport.previous()
     });
-    add_window_action(shell, "next-track", &["<Control>n"], {
+	#[cfg(target_os = "macos")]
+    let next_track_accels = &["<Meta>Right"][..];
+    #[cfg(not(target_os = "macos"))]
+    let next_track_accels = &["<Control>n"][..];
+    add_window_action(shell, "next-track", next_track_accels, {
         let transport = shell.products.playback.transport.clone();
         move || transport.next()
     });
-    add_window_action(shell, "seek-backward", &["<Control>Left"], {
+	#[cfg(target_os = "macos")]
+    let seek_backward_accels = &["Left", "<Shift><Meta>Left"][..];
+    #[cfg(not(target_os = "macos"))]
+    let seek_backward_accels = &["<Control>Left"][..];
+    add_window_action(shell, "seek-backward", seek_backward_accels, {
         let shell = Rc::clone(shell);
         move || seek_by(&shell, -KEY_SEEK_SECONDS)
     });
-    add_window_action(shell, "seek-forward", &["<Control>Right"], {
+	#[cfg(target_os = "macos")]
+    let seek_forward_accels = &["Right", "<Shift><Meta>Right"][..];
+    #[cfg(not(target_os = "macos"))]
+    let seek_forward_accels = &["<Control>Right"][..];
+    add_window_action(shell, "seek-forward", seek_forward_accels, {
         let shell = Rc::clone(shell);
         move || seek_by(&shell, KEY_SEEK_SECONDS)
     });
-    add_window_action(shell, "toggle-shuffle", &["<Control>s"], {
+	#[cfg(target_os = "macos")]
+    let shuffle_accels = &["<Meta>s"][..];
+    #[cfg(not(target_os = "macos"))]
+    let shuffle_accels = &["<Control>s"][..];
+    add_window_action(shell, "toggle-shuffle", shuffle_accels, {
         let shell = Rc::clone(shell);
         move || toggle_shuffle_shortcut(&shell)
     });
-    add_window_action(shell, "cycle-repeat", &["<Control>r"], {
+	#[cfg(target_os = "macos")]
+    let repeat_accels = &["<Meta>r"][..];
+    #[cfg(not(target_os = "macos"))]
+    let repeat_accels = &["<Control>r"][..];
+    add_window_action(shell, "cycle-repeat", repeat_accels, {
         let shell = Rc::clone(shell);
         move || cycle_repeat_shortcut(&shell)
     });
@@ -164,23 +188,43 @@ pub(crate) fn install_window_actions(shell: &Rc<Shell>) {
         let shell = Rc::clone(shell);
         move || shell.focus_current_route_search()
     });
-    add_window_action(shell, "toggle-favorite", &["<Control>l"], {
+	#[cfg(target_os = "macos")]
+    let favorite_accels = &["<Meta>l"][..];
+    #[cfg(not(target_os = "macos"))]
+    let favorite_accels = &["<Control>l"][..];
+    add_window_action(shell, "toggle-favorite", favorite_accels, {
         let shell = Rc::clone(shell);
         move || shell.toggle_current_track_favorite()
     });
-    add_window_action(shell, "toggle-auto-dj", &["<Control>d"], {
+	#[cfg(target_os = "macos")]
+    let auto_dj_accels = &["<Alt>space"][..];
+    #[cfg(not(target_os = "macos"))]
+    let auto_dj_accels = &["<Control>d"][..];
+    add_window_action(shell, "toggle-auto-dj", auto_dj_accels, {
         let shell = Rc::clone(shell);
         move || toggle_auto_dj_shortcut(&shell)
     });
-    add_window_action(shell, "mute", &["<Control>m"], {
+	#[cfg(target_os = "macos")]
+    let mute_accels = &["<Meta>m"][..];
+    #[cfg(not(target_os = "macos"))]
+    let mute_accels = &["<Control>m"][..];
+    add_window_action(shell, "mute", mute_accels, {
         let shell = Rc::clone(shell);
         move || toggle_mute_shortcut(&shell)
     });
-    add_window_action(shell, "volume-up", &["<Control>plus", "<Control>equal"], {
+	#[cfg(target_os = "macos")]
+    let volume_up_accels = &["<Meta>Up"][..];
+    #[cfg(not(target_os = "macos"))]
+    let volume_up_accels = &["<Control>plus", "<Control>equal"][..];
+    add_window_action(shell, "volume-up", volume_up_accels, {
         let shell = Rc::clone(shell);
         move || adjust_volume(&shell, KEY_VOLUME_STEP)
     });
-    add_window_action(shell, "volume-down", &["<Control>minus"], {
+	#[cfg(target_os = "macos")]
+    let volume_down_accels = &["<Meta>Down"][..];
+    #[cfg(not(target_os = "macos"))]
+	let volume_down_accels = &["<Control>minus"][..];
+    add_window_action(shell, "volume-down", volume_down_accels, {
         let shell = Rc::clone(shell);
         move || adjust_volume(&shell, -KEY_VOLUME_STEP)
     });
