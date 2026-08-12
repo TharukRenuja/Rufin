@@ -708,14 +708,17 @@ fn general_page(shell: &Rc<Shell>, dialog: &adw::Dialog) -> adw::PreferencesPage
         let window_group = adw::PreferencesGroup::builder()
             .title(tr("App settings"))
             .build();
+        #[cfg(not(target_os = "macos"))]
         let tray_row = adw::SwitchRow::builder()
             .title(tr("Show tray icon"))
             .active(settings.tray_enabled)
             .build();
+        #[cfg(not(target_os = "macos"))]
         let exit_to_tray_row = adw::SwitchRow::builder()
             .title(tr("Exit to tray"))
             .active(settings.tray_enabled && settings.exit_to_tray)
             .build();
+        #[cfg(not(target_os = "macos"))]
         let start_minimized_row = adw::SwitchRow::builder()
             .title(tr("Start minimized"))
             .active(settings.tray_enabled && settings.start_minimized)
@@ -724,11 +727,17 @@ fn general_page(shell: &Rc<Shell>, dialog: &adw::Dialog) -> adw::PreferencesPage
             .title(tr("Type to search"))
             .active(settings.type_to_search_enabled)
             .build();
+        #[cfg(not(target_os = "macos"))]
         exit_to_tray_row.set_visible(settings.tray_enabled);
+        #[cfg(not(target_os = "macos"))]
         start_minimized_row.set_visible(settings.tray_enabled);
+        #[cfg(not(target_os = "macos"))]
         let tray_shell = Rc::clone(shell);
+        #[cfg(not(target_os = "macos"))]
         let tray_exit_row = exit_to_tray_row.clone();
+        #[cfg(not(target_os = "macos"))]
         let start_minimized_row_for_tray = start_minimized_row.clone();
+        #[cfg(not(target_os = "macos"))]
         tray_row.connect_active_notify(move |row| {
             let enabled = row.is_active();
             tray_exit_row.set_visible(enabled);
@@ -739,11 +748,15 @@ fn general_page(shell: &Rc<Shell>, dialog: &adw::Dialog) -> adw::PreferencesPage
             }
             tray_shell.set_tray_enabled(enabled);
         });
+        #[cfg(not(target_os = "macos"))]
         let exit_to_tray_shell = Rc::clone(shell);
+        #[cfg(not(target_os = "macos"))]
         exit_to_tray_row.connect_active_notify(move |row| {
             exit_to_tray_shell.set_exit_to_tray_enabled(row.is_active());
         });
+        #[cfg(not(target_os = "macos"))]
         let start_minimized_shell = Rc::clone(shell);
+        #[cfg(not(target_os = "macos"))]
         start_minimized_row.connect_active_notify(move |row| {
             start_minimized_shell.set_start_minimized_enabled(row.is_active());
         });
@@ -751,8 +764,11 @@ fn general_page(shell: &Rc<Shell>, dialog: &adw::Dialog) -> adw::PreferencesPage
         type_to_search_row.connect_active_notify(move |row| {
             type_to_search_shell.set_type_to_search_enabled(row.is_active());
         });
+        #[cfg(not(target_os = "macos"))]
         window_group.add(&tray_row);
+        #[cfg(not(target_os = "macos"))]
         window_group.add(&exit_to_tray_row);
+        #[cfg(not(target_os = "macos"))]
         window_group.add(&start_minimized_row);
         window_group.add(&type_to_search_row);
         if shell

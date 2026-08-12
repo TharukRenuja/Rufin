@@ -346,15 +346,14 @@ mod freedesktop {
     }
 }
 
-#[cfg(any(target_os = "macos", target_os = "windows"))]
-mod windows_macos {
+#[cfg(target_os = "windows")]
+mod windows {
     use std::sync::mpsc::{Receiver, Sender, channel};
     use std::sync::{Mutex, Once, OnceLock};
 
     use localization::tr;
     use tray_icon::TrayIconEvent;
     use tray_icon::menu::{Menu, MenuEvent, MenuItem, PredefinedMenuItem};
-    #[cfg(target_os = "windows")]
     use tray_icon::{MouseButton, MouseButtonState};
     use tray_icon::{TrayIcon, TrayIconBuilder};
 
@@ -417,11 +416,6 @@ mod windows_macos {
                 .with_tooltip(tr("Rufin is running in the tray"))
                 .with_menu(Box::new(menu))
                 .with_icon(build_tray_icon()?);
-            #[cfg(target_os = "macos")]
-            let builder = builder
-                .with_icon_as_template(true)
-                .with_menu_on_left_click(true);
-            #[cfg(target_os = "windows")]
             let builder = builder.with_menu_on_left_click(false);
             let icon = builder
                 .build()
@@ -468,11 +462,6 @@ mod windows_macos {
                     send_event(intent);
                 }
             }));
-            #[cfg(target_os = "macos")]
-            TrayIconEvent::set_event_handler(Some(|_: TrayIconEvent| {
-                // Consume mouse events that tray-icon would otherwise retain.
-            }));
-            #[cfg(target_os = "windows")]
             TrayIconEvent::set_event_handler(Some(|event: TrayIconEvent| {
                 if matches!(
                     event,
@@ -575,7 +564,6 @@ mod windows_macos {
 }
 
 #[cfg(not(any(
-    target_os = "macos",
     target_os = "windows",
     all(unix, not(any(target_os = "android", target_vendor = "apple")))
 )))]
@@ -600,10 +588,9 @@ mod unsupported {
 #[cfg(all(unix, not(any(target_os = "android", target_vendor = "apple"))))]
 pub use freedesktop::Tray;
 #[cfg(not(any(
-    target_os = "macos",
     target_os = "windows",
     all(unix, not(any(target_os = "android", target_vendor = "apple")))
 )))]
 pub use unsupported::Tray;
-#[cfg(any(target_os = "macos", target_os = "windows"))]
-pub use windows_macos::Tray;
+#[cfg(target_os = "windows")]
+pub use windows::Tray;
