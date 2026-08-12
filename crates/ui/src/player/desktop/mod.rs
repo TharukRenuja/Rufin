@@ -2,7 +2,9 @@ pub(crate) mod lifecycle;
 
 use std::cell::RefCell;
 use std::rc::Rc;
-use std::sync::mpsc::{Receiver, TryRecvError, channel};
+#[cfg(not(target_os = "macos"))]
+use std::sync::mpsc::Receiver;
+use std::sync::mpsc::{TryRecvError, channel};
 use std::time::{Duration, Instant};
 
 use adw::prelude::*;
@@ -15,6 +17,7 @@ use crate::Settings as UiSettings;
 use crate::shell::Shell;
 use crate::shell::cover::THUMB_COVER_SIZE;
 
+#[cfg(not(target_os = "macos"))]
 const TRAY_POLL_INTERVAL: Duration = Duration::from_millis(120);
 const QUIT_POLL_INTERVAL: Duration = Duration::from_millis(50);
 const QUIT_TIMEOUT: Duration = Duration::from_secs(5);
@@ -180,6 +183,7 @@ impl Shell {
             .map(|uri| uri.to_string())
     }
 
+    #[cfg(not(target_os = "macos"))]
     pub(crate) fn set_tray_enabled(self: &Rc<Self>, enabled: bool) {
         if self
             .update_app_settings("tray setting", |settings| {
@@ -206,6 +210,7 @@ impl Shell {
         }
     }
 
+    #[cfg(not(target_os = "macos"))]
     pub(crate) fn set_exit_to_tray_enabled(self: &Rc<Self>, enabled: bool) {
         if self
             .update_app_settings("exit to tray setting", |settings| {
@@ -224,6 +229,7 @@ impl Shell {
         }
     }
 
+    #[cfg(not(target_os = "macos"))]
     pub(crate) fn set_start_minimized_enabled(self: &Rc<Self>, enabled: bool) {
         if self
             .update_app_settings("start minimized setting", |settings| {
@@ -242,6 +248,7 @@ impl Shell {
         }
     }
 
+    #[cfg(not(target_os = "macos"))]
     fn ensure_tray(self: &Rc<Self>) -> bool {
         if self.desktop.tray.borrow().is_some() {
             return true;
@@ -275,6 +282,7 @@ impl Shell {
         }
     }
 
+    #[cfg(not(target_os = "macos"))]
     fn install_tray_command_pump(
         self: &Rc<Self>,
         receiver: Receiver<desktop_integration::TrayIntent>,
@@ -311,31 +319,56 @@ impl Shell {
         *self.desktop.tray_command_source.borrow_mut() = Some(source);
     }
 
+    #[cfg(not(target_os = "macos"))]
     fn present_from_tray(&self) {
         crate::application::present_window(&self.chrome.window);
     }
 }
 
-pub(crate) fn install_tray(shell: &Rc<Shell>) {
+pub(crate) fn install_desktop_lifecycle(shell: &Rc<Shell>) {
+    #[cfg(not(target_os = "macos"))]
     if shell.settings.current.borrow().tray_enabled {
         shell.ensure_tray();
     }
     let close_shell = Rc::clone(shell);
-    shell.chrome.window.connect_close_request(move |_| {
-        let settings = close_shell.settings.current.borrow().clone();
-        let tray_available =
-            settings.tray_enabled && settings.exit_to_tray && close_shell.ensure_tray();
-        if settings.tray_enabled && settings.exit_to_tray && tray_available {
-            close_shell.save_window_state();
-            close_shell.chrome.window.set_visible(false);
-            glib::Propagation::Stop
-        } else {
-            close_shell.request_quit("window close");
-            glib::Propagation::Stop
-        }
-    });
+    shell
+        .chrome
+        .window
+        .connect_close_request(move |_| close_window(&close_shell));
 }
 
+#[cfg(target_os = "macos")]
+fn close_window(shell: &Rc<Shell>) -> glib::Propagation {
+    shell.save_window_state();
+    if let Err(error) = shell
+        .chrome
+        .window
+        .activate_action("gtkinternal.hide", None)
+    {
+        warn!(%error, "could not hide Rufin");
+    }
+    glib::Propagation::Stop
+}
+
+#[cfg(not(target_os = "macos"))]
+fn close_window(shell: &Rc<Shell>) -> glib::Propagation {
+    let settings = shell.settings.current.borrow().clone();
+    let tray_available = settings.tray_enabled && settings.exit_to_tray && shell.ensure_tray();
+    if settings.tray_enabled && settings.exit_to_tray && tray_available {
+        shell.save_window_state();
+        shell.chrome.window.set_visible(false);
+    } else {
+        shell.request_quit("window close");
+    }
+    glib::Propagation::Stop
+}
+
+#[cfg(target_os = "macos")]
+pub(crate) fn present_initial_window(shell: &Rc<Shell>, _force_visible: bool) {
+    crate::application::present_window(&shell.chrome.window);
+}
+
+#[cfg(not(target_os = "macos"))]
 pub(crate) fn present_initial_window(shell: &Rc<Shell>, force_visible: bool) {
     let settings = shell.settings.current.borrow().clone();
     let tray_available = settings.tray_enabled && settings.start_minimized && shell.ensure_tray();

@@ -18,7 +18,7 @@ use crate::player::{
     connect_player_controls, connect_queue_lyrics_overlay, connect_queue_panel_controls,
     default_audio_output_options, warm_audio_output_cache,
 };
-use crate::player::{install_tray, present_initial_window};
+use crate::player::{install_desktop_lifecycle, present_initial_window};
 use crate::preferences::PreferencesState;
 use crate::preferences::dialogs::release_notes::{
     check_for_release_update, schedule_periodic_release_checks,
@@ -525,7 +525,7 @@ pub fn build(
     }
     connect_shell_actions(&shell);
     install_application_quit(&shell);
-    install_tray(&shell);
+    install_desktop_lifecycle(&shell);
     connect_queue_panel_controls(&shell);
     connect_queue_lyrics_overlay(&shell);
     shell.connect_route_keyboard();

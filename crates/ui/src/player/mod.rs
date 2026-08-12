@@ -15,7 +15,7 @@ pub(crate) use bottom::{
     BOTTOM_PLAYER_HEIGHT, NOW_PLAYING_RAIL_WIDTH, PlayerControls, build_bottom_player,
     connect_player_controls,
 };
-pub(crate) use desktop::{install_tray, present_initial_window};
+pub(crate) use desktop::{install_desktop_lifecycle, present_initial_window};
 pub(crate) use desktop::{
     now_playing_notification_can_send, now_playing_notification_should_withdraw,
 };
