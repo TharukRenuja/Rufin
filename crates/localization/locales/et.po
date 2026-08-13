@@ -7,7 +7,7 @@ msgstr ""
 "Project-Id-Version: Rufin 0.3.13\n"
 "Report-Msgid-Bugs-To: https://github.com/screwys/Rufin/issues\n"
 "POT-Creation-Date: YEAR-MO-DA HO:MI+ZONE\n"
-"PO-Revision-Date: 2026-08-10 14:51+0000\n"
+"PO-Revision-Date: 2026-08-14 09:51+0000\n"
 "Last-Translator: Priit Jõerüüt <jrthwlate@users.noreply.hosted.weblate.org>\n"
 "Language-Team: Estonian <https://hosted.weblate.org/projects/rufin/app/et/>\n"
 "Language: et\n"
@@ -419,7 +419,7 @@ msgid "Control notifications"
 msgstr "Teavituste haldus"
 
 msgid "Copy"
-msgstr ""
+msgstr "Kopeeri"
 
 msgid "Could not save diagnostic log"
 msgstr "Diagnostikalogi salvestamine ei õnnestunud"
@@ -451,10 +451,8 @@ msgstr "Kohandatud"
 msgid "Customize display"
 msgstr "Kohanda ekraanivaadet"
 
-#, fuzzy
-#| msgid "Custom"
 msgid "Cut"
-msgstr "Kohandatud"
+msgstr "Lõika"
 
 msgid "Dance"
 msgstr "Tantsumuusika"
@@ -1177,7 +1175,7 @@ msgid "Password"
 msgstr "Salasõna"
 
 msgid "Paste"
-msgstr ""
+msgstr "Aseta"
 
 msgid "Pause"
 msgstr "Peata esitus"
@@ -1368,7 +1366,7 @@ msgid "Red"
 msgstr "Punane"
 
 msgid "Redo"
-msgstr ""
+msgstr "Korda tegevust"
 
 msgid "Refresh section"
 msgstr "Uuenda ploki andmeid"
@@ -1589,10 +1587,8 @@ msgstr "Keri taasesituses"
 msgid "Seekbar"
 msgstr "Kerimisriba"
 
-#, fuzzy
-#| msgid "Selection"
 msgid "Select All"
-msgstr "Valik"
+msgstr "Vali kõik"
 
 msgid "Select Download Folder"
 msgstr "Vali allalaadimiste kaust"
@@ -1702,10 +1698,8 @@ msgstr "Sega lood"
 msgid "Sidebar Items"
 msgstr "Külgpaani objektid"
 
-#, fuzzy
-#| msgid "Sidebar route by position"
 msgid "Sidebar item {position}"
-msgstr "Külgriba teekond asukoha alusel"
+msgstr "Külgriba objekt {position}"
 
 msgid "Sidebar route by position"
 msgstr "Külgriba teekond asukoha alusel"
@@ -1855,7 +1849,7 @@ msgid "Undo identified value"
 msgstr "Tühista kindlaksmääratud väärtus"
 
 msgid "Undo"
-msgstr ""
+msgstr "Võta tegevus tagasi"
 
 msgid "Unmuted"
 msgstr "Summutamine on lõpetatud"
