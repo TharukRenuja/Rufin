@@ -61,6 +61,7 @@
                 glib
                 gtk4
                 libadwaita
+                glib-networking
               ]
               ++ (with gst_all_1; [
                 gstreamer
@@ -169,6 +170,7 @@
                 glib
                 gtk4
                 libadwaita
+                glib-networking
               ])
               ++ (with pkgs.gst_all_1; [
                 gstreamer

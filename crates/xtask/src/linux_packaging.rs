@@ -31,7 +31,7 @@ const CARGO_NATIVE_CRATE_CANDIDATES: &[&str] = &[
     "gstreamer-pbutils",
     "gtk",
 ];
-const NIX_PACKAGES: &[&str] = &["glib", "gtk4", "libadwaita"];
+const NIX_PACKAGES: &[&str] = &["glib", "gtk4", "libadwaita", "glib-networking"];
 const NIX_GSTREAMER_PACKAGES: &[&str] = &[
     "gstreamer",
     "gst-plugins-base",
