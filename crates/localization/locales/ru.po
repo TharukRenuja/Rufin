@@ -7,7 +7,7 @@ msgstr ""
 "Project-Id-Version: Rufin 0.6.0\n"
 "Report-Msgid-Bugs-To: https://github.com/screwys/Rufin/issues\n"
 "POT-Creation-Date: YEAR-MO-DA HO:MI+ZONE\n"
-"PO-Revision-Date: 2026-08-12 10:51+0000\n"
+"PO-Revision-Date: 2026-08-15 22:12+0000\n"
 "Last-Translator: Александр Стельмах <aguhadug@gmail.com>\n"
 "Language-Team: Russian <https://hosted.weblate.org/projects/rufin/app/ru/>\n"
 "Language: ru\n"
@@ -881,10 +881,8 @@ msgstr "Сопоставление локальных файлов"
 msgid "Local library"
 msgstr "Локальная библиотека"
 
-#, fuzzy
-#| msgid "Local music folder"
 msgid "Local music folder is unavailable"
-msgstr "Локальная папка с музыкой"
+msgstr "Локальная папка с музыкой недоступна"
 
 msgid "Local music folder"
 msgstr "Локальная папка с музыкой"
@@ -892,10 +890,8 @@ msgstr "Локальная папка с музыкой"
 msgid "Local"
 msgstr "Локальный источник"
 
-#, fuzzy
-#| msgid "Local Folders"
 msgid "Locate Folder"
-msgstr "Локальные Папки"
+msgstr "Найти папку"
 
 msgid "Lock metadata"
 msgstr "Заблокировать метаданные"
