@@ -451,12 +451,11 @@ fn append_value_editor(
                 Some(SmartPlaylistRuleValue::Number(value)) => *value,
                 _ => default,
             };
-            let spin = number_spin(value, min, max);
+            let rating = rule.field == SmartPlaylistRuleField::Rating;
+            let spin = number_spin(value, min, max, rating);
             spin.connect_value_changed(move |spin| {
                 if let Some(rule) = rules.borrow_mut().get_mut(index) {
-                    rule.value = Some(SmartPlaylistRuleValue::Number(i64::from(
-                        spin.value_as_int(),
-                    )));
+                    rule.value = Some(SmartPlaylistRuleValue::Number(spin_value(spin, rating)));
                 }
             });
             container.append(&spin);
@@ -467,9 +466,10 @@ fn append_value_editor(
                 Some(SmartPlaylistRuleValue::NumberRange { min, max }) => (*min, *max),
                 _ => (default, default),
             };
-            let min_spin = number_spin(min_value, min_bound, max_bound);
-            let max_spin = number_spin(max_value, min_bound, max_bound);
-            connect_number_range(rules, index, min_spin.clone(), max_spin.clone());
+            let rating = rule.field == SmartPlaylistRuleField::Rating;
+            let min_spin = number_spin(min_value, min_bound, max_bound, rating);
+            let max_spin = number_spin(max_value, min_bound, max_bound, rating);
+            connect_number_range(rules, index, min_spin.clone(), max_spin.clone(), rating);
             container.append(&min_spin);
             container.append(&gtk::Label::new(Some(&tr("to"))));
             container.append(&max_spin);
@@ -524,6 +524,7 @@ fn connect_number_range(
     index: usize,
     min_spin: gtk::SpinButton,
     max_spin: gtk::SpinButton,
+    rating: bool,
 ) {
     let max_for_min = max_spin.downgrade();
     let min_rules = Rc::clone(&rules);
@@ -531,7 +532,7 @@ fn connect_number_range(
         let Some(max_spin) = max_for_min.upgrade() else {
             return;
         };
-        update_number_range(&min_rules, index, min_spin, &max_spin);
+        update_number_range(&min_rules, index, min_spin, &max_spin, rating);
     });
 
     let min_for_max = min_spin.downgrade();
@@ -539,7 +540,7 @@ fn connect_number_range(
         let Some(min_spin) = min_for_max.upgrade() else {
             return;
         };
-        update_number_range(&rules, index, &min_spin, max_spin);
+        update_number_range(&rules, index, &min_spin, max_spin, rating);
     });
 }
 
@@ -572,11 +573,12 @@ fn update_number_range(
     index: usize,
     min_spin: &gtk::SpinButton,
     max_spin: &gtk::SpinButton,
+    rating: bool,
 ) {
     if let Some(rule) = rules.borrow_mut().get_mut(index) {
         rule.value = Some(SmartPlaylistRuleValue::NumberRange {
-            min: i64::from(min_spin.value_as_int()),
-            max: i64::from(max_spin.value_as_int()),
+            min: spin_value(min_spin, rating),
+            max: spin_value(max_spin, rating),
         });
     }
 }
@@ -782,12 +784,24 @@ fn sort_index(sort: SmartPlaylistSortField) -> usize {
         .unwrap_or(0)
 }
 
-fn number_spin(value: i64, min: i64, max: i64) -> gtk::SpinButton {
-    let adjustment = gtk::Adjustment::new(value as f64, min as f64, max as f64, 1.0, 10.0, 0.0);
-    let spin = gtk::SpinButton::new(Some(&adjustment), 1.0, 0);
+fn number_spin(value: i64, min: i64, max: i64, rating: bool) -> gtk::SpinButton {
+    let scale = if rating { 2.0 } else { 1.0 };
+    let adjustment = gtk::Adjustment::new(
+        value as f64 / scale,
+        min as f64 / scale,
+        max as f64 / scale,
+        1.0 / scale,
+        10.0 / scale,
+        0.0,
+    );
+    let spin = gtk::SpinButton::new(Some(&adjustment), 1.0 / scale, u32::from(rating));
     spin.set_numeric(true);
     spin.set_width_chars(7);
     spin
+}
+
+fn spin_value(spin: &gtk::SpinButton, rating: bool) -> i64 {
+    (spin.value() * if rating { 2.0 } else { 1.0 }).round() as i64
 }
 
 fn text_placeholder(field: SmartPlaylistRuleField) -> String {

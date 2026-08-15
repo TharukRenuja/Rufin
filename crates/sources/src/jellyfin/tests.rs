@@ -3,8 +3,8 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use library::{
-    AlbumArtworkFacts, MetadataChange, MetadataEdit, MetadataField, MetadataItem, MetadataItemId,
-    MetadataValues, PlaylistId, RadioSeed, StreamQuality, StreamRequest, TrackId,
+    AlbumArtworkFacts, FavoriteItemId, MetadataChange, MetadataEdit, MetadataField, MetadataItem,
+    MetadataItemId, MetadataValues, PlaylistId, RadioSeed, StreamQuality, StreamRequest, TrackId,
 };
 use wiremock::matchers::{body_json, header_regex, method, path, query_param};
 use wiremock::{Mock, MockServer, ResponseTemplate};
@@ -88,6 +88,42 @@ fn provider(server: &MockServer, token: &str) -> JellyfinSource {
         Some("rufin-install-one".to_string()),
     )
     .expect("open Jellyfin provider")
+}
+
+#[tokio::test]
+async fn rating_uses_jellyfins_ten_point_value() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/UserItems/track-one/UserData"))
+        .and(query_param("userId", "user-one"))
+        .and(body_json(serde_json::json!({ "Rating": 7 })))
+        .respond_with(ResponseTemplate::new(204))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    provider(&server, "secret-token")
+        .set_rating(
+            FavoriteItemId::Track(TrackId::new("jellyfin:track:track-one")),
+            Some(7),
+        )
+        .await
+        .expect("set Jellyfin rating");
+}
+
+#[test]
+fn fractional_jellyfin_rating_decodes_to_the_nearest_half_star() {
+    let track = track_from_item(
+        serde_json::from_value::<JellyfinItem>(serde_json::json!({
+            "Id": "track-one",
+            "Name": "First",
+            "Type": "Audio",
+            "UserData": { "Rating": 7.4 }
+        }))
+        .expect("Jellyfin Track with fractional rating"),
+    );
+
+    assert_eq!(track.user_rating, Some(7));
 }
 
 fn accepted_library(batches: Vec<library::CandidateBatch>) -> Arc<library::Library> {

@@ -398,6 +398,24 @@ impl JellyfinSource {
             self.send_unit(self.client.delete(url)).await
         }
     }
+
+    pub(crate) async fn set_rating(
+        &self,
+        item: FavoriteItemId,
+        rating: Option<u8>,
+    ) -> SourceResult<()> {
+        let mut url = endpoint(
+            &self.base_url,
+            &format!("UserItems/{}/UserData", raw_item_id(item.as_str())),
+        )?;
+        url.query_pairs_mut().append_pair("userId", &self.user_id);
+        self.send_unit(
+            self.client
+                .post(url)
+                .json(&serde_json::json!({ "Rating": rating.unwrap_or(0) })),
+        )
+        .await
+    }
 }
 
 impl RemotePlaylistSource for JellyfinSource {

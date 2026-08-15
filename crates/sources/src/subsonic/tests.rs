@@ -1,4 +1,4 @@
-use library::{CandidateBatch, StreamQuality};
+use library::{CandidateBatch, FavoriteItemId, StreamQuality, TrackId};
 use wiremock::matchers::{method, path, query_param};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
@@ -94,6 +94,27 @@ fn provider(server: &MockServer) -> SubsonicSource {
     );
     open(&configuration, Some("fixed-salt:fixed-token".to_string()))
         .expect("open OpenSubsonic provider")
+}
+
+#[tokio::test]
+async fn half_rating_rounds_up_for_opensubsonic() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/rest/setRating.view"))
+        .and(query_param("id", "track-one"))
+        .and(query_param("rating", "4"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(envelope(serde_json::json!({}))))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    provider(&server)
+        .set_rating(
+            FavoriteItemId::Track(TrackId::new("subsonic:track:track-one")),
+            Some(7),
+        )
+        .await
+        .expect("set OpenSubsonic rating");
 }
 
 fn navidrome_provider(server: &MockServer) -> SubsonicSource {

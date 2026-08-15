@@ -18,6 +18,7 @@ use crate::interactions::{
 };
 use crate::player::state::current_playback_track;
 use crate::preferences::dialogs::metadata::present_metadata_dialog;
+use crate::ratings::context_rating_row;
 use crate::settings::ContextMenuItem;
 use crate::shell::Shell;
 use crate::shell::actions::{
@@ -433,6 +434,17 @@ fn present_resolved_track_context_menu(
             }
         });
     }
+    let rating_item = FavoriteItemId::Track(track.id.clone());
+    if library_backed && shell.rating_available(&rating_item) {
+        let shell = Rc::clone(shell);
+        let track_id = track.id.clone();
+        surface.append_fixed_widget(
+            "rating",
+            &context_rating_row(track.user_rating, surface.popover(), move |rating| {
+                shell.set_rating(FavoriteItemId::Track(track_id.clone()), rating);
+            }),
+        );
+    }
     surface.popup(&shell.settings.current.borrow().context_menu);
 }
 
@@ -647,6 +659,16 @@ fn present_resolved_album_context_menu_inner(
             glib::idle_add_local_once(move || shell.navigate(Route::AlbumDetail(album_id)));
         }
     });
+    if shell.rating_available(&FavoriteItemId::Album(album.album.id.clone())) {
+        let shell = Rc::clone(shell);
+        let album_id = album.album.id.clone();
+        surface.append_fixed_widget(
+            "rating",
+            &context_rating_row(album.album.user_rating, surface.popover(), move |rating| {
+                shell.set_rating(FavoriteItemId::Album(album_id.clone()), rating);
+            }),
+        );
+    }
     surface.popup(&shell.settings.current.borrow().context_menu);
 }
 
@@ -786,6 +808,20 @@ fn present_resolved_artist_context_menu(
         let artist_id = artist.artist.id.clone();
         move || shell.navigate(Route::ArtistDetail(artist_id.clone()))
     });
+    if shell.rating_available(&FavoriteItemId::Artist(artist.artist.id.clone())) {
+        let shell = Rc::clone(shell);
+        let artist_id = artist.artist.id.clone();
+        surface.append_fixed_widget(
+            "rating",
+            &context_rating_row(
+                artist.artist.user_rating,
+                surface.popover(),
+                move |rating| {
+                    shell.set_rating(FavoriteItemId::Artist(artist_id.clone()), rating);
+                },
+            ),
+        );
+    }
     surface.popup(&shell.settings.current.borrow().context_menu);
 }
 

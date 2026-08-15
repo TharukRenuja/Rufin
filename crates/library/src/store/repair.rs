@@ -112,6 +112,17 @@ fn prepare_replacement(
             &destination,
             &mut report,
             SimpleFamily {
+                name: "User ratings",
+                select: "SELECT source_id, item_kind, item_id, rating FROM user_ratings",
+                insert: "INSERT INTO user_ratings(source_id, item_kind, item_id, rating)
+                     VALUES (?1, ?2, ?3, ?4)",
+            },
+        )?;
+        salvage_simple_family(
+            source,
+            &destination,
+            &mut report,
+            SimpleFamily {
                 name: "Pending favorites",
                 select: "SELECT source_id, item_kind, item_id, favorite,
                                 previous_favorite, attempts, next_attempt_at

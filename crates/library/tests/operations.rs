@@ -1279,6 +1279,62 @@ fn remote_favorites_remain_optimistic_across_restart_and_retry() {
 }
 
 #[test]
+fn exact_rating_survives_source_refresh_and_reopen() {
+    let directory = tempfile::tempdir().expect("temporary Store directory");
+    let path = directory.path().join("library.db");
+    let source_id = SourceId::new("subsonic:server:ratings");
+    let libraries = Libraries::open(&path).expect("open Library");
+    let mut source_track = track();
+    source_track.user_rating = Some(8);
+    let accepted = accept_track(
+        &libraries,
+        source_id.clone(),
+        digest(121),
+        source_track.clone(),
+        None,
+        1,
+    );
+    let track_id = source_track.id.clone();
+
+    let change = accepted
+        .library
+        .set_rating(FavoriteItemId::Track(track_id.clone()), Some(7))
+        .expect("set exact rating");
+    assert_eq!(
+        change.tracks[0]
+            .track
+            .as_ref()
+            .expect("rated Track")
+            .user_rating,
+        Some(7)
+    );
+
+    accepted
+        .library
+        .accept_source_update(SourceLibraryUpdate {
+            tracks: vec![source_track],
+            ..SourceLibraryUpdate::default()
+        })
+        .expect("accept rounded source rating");
+    drop(accepted);
+    drop(libraries);
+
+    let reopened = Libraries::open(path)
+        .expect("reopen Libraries")
+        .load_source(&source_id)
+        .expect("load source")
+        .expect("rated source");
+    assert_eq!(
+        reopened
+            .track(&track_id)
+            .expect("read Track")
+            .expect("rated Track")
+            .user_rating,
+        Some(7)
+    );
+}
+
+#[test]
 fn remote_point_updates_restore_the_complete_refresh_shortcut() {
     let directory = tempfile::tempdir().expect("temporary Store directory");
     let library = Libraries::open(directory.path().join("library.db")).expect("open Library");

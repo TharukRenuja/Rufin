@@ -72,7 +72,7 @@ struct UserData {
     is_favorite: Option<bool>,
     play_count: Option<i32>,
     last_played_date: Option<String>,
-    rating: Option<i32>,
+    rating: Option<f64>,
 }
 
 pub(super) fn album_from_item(item: JellyfinItem) -> Album {
@@ -369,7 +369,7 @@ fn user_rating(user_data: &Option<UserData>) -> Option<u8> {
     user_data
         .as_ref()
         .and_then(|data| data.rating)
-        .map(|value| value.clamp(0, i32::from(u8::MAX)) as u8)
+        .and_then(library::rating_from_ten_point)
 }
 
 fn normalized_timestamp(value: Option<String>) -> Option<String> {

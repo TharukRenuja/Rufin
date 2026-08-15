@@ -327,6 +327,21 @@ impl SubsonicSource {
         self.get_unit(method, &[(key, raw_item_id(item_id.as_str()).to_string())])
             .await
     }
+
+    pub(crate) async fn set_rating(
+        &self,
+        item: FavoriteItemId,
+        rating: Option<u8>,
+    ) -> SourceResult<()> {
+        self.get_unit(
+            "setRating",
+            &[
+                ("id", raw_item_id(item.as_str()).to_string()),
+                ("rating", library::rating_to_whole_star(rating).to_string()),
+            ],
+        )
+        .await
+    }
 }
 
 impl RemotePlaylistSource for SubsonicSource {

@@ -177,7 +177,8 @@ pub(super) fn album_from_dto(source: &SubsonicSource, album: SubsonicAlbum) -> A
             .map(|value| value.min(u64::from(u32::MAX)) as u32),
         user_rating: album
             .user_rating
-            .map(|value| value.min(u32::from(u8::MAX)) as u8),
+            .filter(|value| *value > 0)
+            .map(|value| value.min(5).saturating_mul(2) as u8),
         favorite: favorite(&album.starred),
         color_seed: color_seed(&raw_id),
         image_ref: image_ref(source, album.cover_art),
@@ -236,7 +237,8 @@ pub(super) fn track_from_dto(source: &SubsonicSource, song: SubsonicSong) -> Tra
             .map(|value| value.min(u64::from(u32::MAX)) as u32),
         user_rating: song
             .user_rating
-            .map(|value| value.min(u32::from(u8::MAX)) as u8),
+            .filter(|value| *value > 0)
+            .map(|value| value.min(5).saturating_mul(2) as u8),
         duration_seconds: song.duration.unwrap_or_default(),
         favorite: favorite(&song.starred),
         disc_number: u16_from_option(song.disc_number),
@@ -300,7 +302,8 @@ pub(super) fn artist_from_dto(source: &SubsonicSource, artist: SubsonicArtist) -
             .map(|value| value.min(u64::from(u32::MAX)) as u32),
         user_rating: artist
             .user_rating
-            .map(|value| value.min(u32::from(u8::MAX)) as u8),
+            .filter(|value| *value > 0)
+            .map(|value| value.min(5).saturating_mul(2) as u8),
         musicbrainz_artist_id: clean_optional(artist.musicbrainz_artist_id),
         image_ref: image_ref(source, artist.cover_art),
         local_artwork: None,
