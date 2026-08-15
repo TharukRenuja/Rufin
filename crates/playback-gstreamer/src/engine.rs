@@ -3341,23 +3341,21 @@ mod tests {
         engine.handle_command(BackendCommand::ConfigureAudio(changed));
 
         let applied = lock_recover(&events).drain();
-        let resume_deadline = Instant::now() + Duration::from_secs(2);
-        let resumed = loop {
-            engine.poll_bus();
-            if engine
-                .primary
-                .wait_for_state(gst::State::Playing, gst::ClockTime::ZERO)
-            {
-                break true;
-            }
-            if Instant::now() >= resume_deadline {
-                break false;
-            }
-            std::thread::yield_now();
-        };
+        let pending_seek = engine.pending_seek.as_ref().expect("pending restart seek");
+        assert!(pending_seek.retry_on_async_done);
+        assert!(pending_seek.resume_after_seek);
+
+        engine.handle_async_done();
+
         let resumed_events = lock_recover(&events).drain();
         assert!(
-            resumed,
+            resumed_events.iter().any(|event| matches!(
+                event,
+                BackendEvent::State {
+                    run,
+                    state: BackendState::Playing,
+                } if *run == RunId::new(1)
+            )),
             "audio configuration events: {applied:?}; resume events: {resumed_events:?}"
         );
         engine.shutdown();

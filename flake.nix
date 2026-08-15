@@ -182,6 +182,7 @@
               ]);
             # Generated Linux development dependencies end.
 
+            GIO_EXTRA_MODULES = "${pkgs.glib-networking}/lib/gio/modules";
             RUFIN_LOCALEDIR = "crates/localization/locales";
           };
         in
