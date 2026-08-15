@@ -28,6 +28,7 @@ use super::home_layout::{
     HomeShowcaseMode, home_section_header, home_showcase_cover_size, home_showcase_is_compact,
     home_showcase_mode, home_showcase_spacing,
 };
+use super::library_fields::COLLECTION_GRID_CARD_MARGIN;
 use super::route::Route;
 use super::route_layout::{ROUTE_TOP_MARGIN, home_album_content_width, route_scroller_widget};
 
@@ -309,7 +310,9 @@ impl Shell {
         }
         let empty = self.route_empty_view(msgid("Nothing here yet"));
         content.append(&empty);
-        scroller.set_child(Some(&library_route_inset(content.clone().upcast())));
+        let inset_content = library_route_inset(content.clone().upcast());
+        inset_content.set_margin_start(COLLECTION_GRID_CARD_MARGIN);
+        scroller.set_child(Some(&inset_content));
 
         let projection = HomeRouteProjection {
             shell: Rc::clone(self),
@@ -384,6 +387,7 @@ impl Shell {
         body.set_halign(gtk::Align::Fill);
         body.set_valign(gtk::Align::Start);
         body.set_width_request(1);
+        body.set_margin_start(COLLECTION_GRID_CARD_MARGIN);
         body.set_overflow(gtk::Overflow::Hidden);
         cover.widget().add_css_class("home-showcase-cover");
         let cover_column = gtk::Box::new(gtk::Orientation::Vertical, 8);
@@ -493,11 +497,13 @@ impl Shell {
         let heading = localized_label(HomeBlockKind::Genres.title());
         heading.add_css_class("section-heading");
         heading.set_xalign(0.0);
+        heading.set_margin_start(COLLECTION_GRID_CARD_MARGIN);
         section.append(&heading);
         let flow = gtk::FlowBox::new();
         flow.add_css_class("home-genre-flow");
         flow.set_column_spacing(8);
         flow.set_row_spacing(8);
+        flow.set_margin_start(COLLECTION_GRID_CARD_MARGIN);
         flow.set_selection_mode(gtk::SelectionMode::None);
         flow.set_max_children_per_line(6);
         flow.set_min_children_per_line(2);
@@ -553,6 +559,7 @@ impl Shell {
         let section = gtk::Box::new(gtk::Orientation::Vertical, 10);
         section.set_hexpand(true);
         let header = home_section_header(section_kind.title());
+        header.root.set_margin_start(COLLECTION_GRID_CARD_MARGIN);
         let previous = header.previous.clone();
         let next = header.next.clone();
         let refresh = header.refresh.clone();
