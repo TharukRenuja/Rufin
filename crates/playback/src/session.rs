@@ -1082,6 +1082,7 @@ impl PlaybackSession {
                                     current: stream,
                                     next,
                                     start_position_millis: self.sequence.progress_millis(),
+                                    playback_rate: self.settings.playback_rate,
                                 }),
                             ],
                             view_changed: true,
@@ -1347,6 +1348,8 @@ impl PlaybackSession {
             return SessionUpdate::default();
         }
         let stream_changed = settings.stream_quality != self.settings.stream_quality;
+        let playback_rate_changed = settings.playback_rate != self.settings.playback_rate;
+        let playback_rate = settings.playback_rate;
         let output_changed = settings.volume != self.settings.volume
             || settings.volume_scale != self.settings.volume_scale
             || settings.muted != self.settings.muted;
@@ -1371,6 +1374,13 @@ impl PlaybackSession {
                     volume_scale: settings.volume_scale,
                     muted: settings.muted,
                 }));
+        }
+        if playback_rate_changed {
+            update
+                .effects
+                .push(SessionEffect::Backend(BackendCommand::SetPlaybackRate(
+                    playback_rate,
+                )));
         }
         if stream_changed {
             self.replan_next(true, &mut update.effects);
@@ -1443,6 +1453,7 @@ impl PlaybackSession {
                     current: stream,
                     next,
                     start_position_millis: self.sequence.progress_millis(),
+                    playback_rate: self.settings.playback_rate,
                 }),
             ],
             view_changed: true,
@@ -1675,6 +1686,7 @@ impl PlaybackSession {
                     current: stream,
                     next: None,
                     start_position_millis: 0,
+                    playback_rate: self.settings.playback_rate,
                 }));
             }
             NextResolution::Ready(stream) => {
@@ -2173,6 +2185,49 @@ mod tests {
         assert!(!update.effects.iter().any(|effect| matches!(
             effect,
             SessionEffect::Backend(BackendCommand::ConfigureAudio(_))
+        )));
+    }
+
+    #[test]
+    fn playback_rate_change_uses_the_rate_path() {
+        let mut session = session(&[1]);
+        let mut settings = session.settings().clone();
+        settings.playback_rate = 1.5;
+
+        let update = session
+            .handle_command(SessionCommand::UpdateSettings(settings), &sample(0))
+            .expect("change playback rate");
+
+        assert!(update.effects.iter().any(|effect| matches!(
+            effect,
+            SessionEffect::Backend(BackendCommand::SetPlaybackRate(rate))
+                if (*rate - 1.5).abs() < f64::EPSILON
+        )));
+        assert!(!update.effects.iter().any(|effect| matches!(
+            effect,
+            SessionEffect::Backend(BackendCommand::ConfigureAudio(_))
+        )));
+    }
+
+    #[test]
+    fn new_pipeline_starts_with_the_saved_playback_rate() {
+        let mut session = session(&[1]);
+        let mut settings = session.settings().clone();
+        settings.playback_rate = 1.5;
+        session
+            .handle_command(SessionCommand::UpdateSettings(settings), &sample(0))
+            .expect("save playback rate");
+        session
+            .handle_command(SessionCommand::Play, &sample(1))
+            .expect("start resolving");
+        let run = session.current_run().expect("current run");
+
+        let resolved = session.stream_resolved(run, ResolvedStream::new("file:///track.flac"));
+
+        assert!(resolved.effects.iter().any(|effect| matches!(
+            effect,
+            SessionEffect::Backend(BackendCommand::Start { playback_rate, .. })
+                if (*playback_rate - 1.5).abs() < f64::EPSILON
         )));
     }
 

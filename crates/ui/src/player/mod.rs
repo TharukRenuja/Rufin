@@ -5,6 +5,7 @@ pub(crate) mod fullscreen;
 mod icons;
 pub(crate) mod lyrics;
 mod outputs;
+mod playback_settings;
 mod progress;
 pub(crate) mod queue;
 mod random_play;
@@ -28,12 +29,12 @@ pub(crate) use fullscreen::{
     FullscreenPlayerParts, build_fullscreen_player, connect_fullscreen_player_controls,
 };
 pub(crate) use outputs::{
-    default_audio_output_options, present_audio_output_popover, selected_audio_output_title,
-    warm_audio_output_cache,
+    audio_output_dropdown, default_audio_output_options, warm_audio_output_cache,
 };
+pub(crate) use playback_settings::{crossfade_duration_row, playback_rate_row};
 pub(crate) use queue::connect_queue_panel_controls;
 pub(crate) use right_panel::{
-    apply_lyrics_panel_visibility, build_right_panel, connect_queue_lyrics_overlay,
+    apply_sidebar_media_visibility, build_right_panel, connect_queue_lyrics_overlay,
 };
 
 pub(crate) struct PlayerDesktopWidgets {

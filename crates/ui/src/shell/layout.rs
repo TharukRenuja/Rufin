@@ -491,12 +491,11 @@ impl Shell {
                 .right_split
                 .set_position(resolved.main_width);
         }
-        let player_visibility_changed =
-            self.player_view.player_controls.root.is_visible() != app_active;
         set_widget_visible(&self.player_view.player_controls.root, app_active);
 
         if right_visibility_changed || previous_right_visible != right_visible {
             self.update_right_panel_button();
+            self.sync_visualizer_state();
             let lyrics_shell = Rc::clone(self);
             glib::idle_add_local_once(move || {
                 if lyrics_shell.right_lyrics_surface_visible() {
@@ -506,10 +505,6 @@ impl Shell {
                 }
             });
         }
-        if player_visibility_changed || root_changed {
-            self.update_lyrics_panel_button();
-        }
-
         if previous_left != resolved.left_sidebar || previous_right_visible != right_visible {
             debug!(?resolved, "resolved layout changed");
         }

@@ -73,6 +73,9 @@ impl AudioGraph {
             elements.push(rgvolume);
         }
 
+        let scaletempo = make_element("scaletempo", "rufin-playback-rate")?;
+        elements.push(scaletempo);
+
         let visualizer_pad = convert_out.static_pad("src");
         elements.push(convert_out.clone());
         elements.push(resample);

@@ -155,6 +155,7 @@ gstreamer_plugin_names=(
     libgstapetag.dll
     libgstasf.dll
     libgstaudioconvert.dll
+    libgstaudiofx.dll
     libgstaudioparsers.dll
     libgstaudioresample.dll
     libgstautodetect.dll

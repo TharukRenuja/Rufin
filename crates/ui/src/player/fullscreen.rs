@@ -133,6 +133,7 @@ struct EqualizerPanel {
 pub(crate) fn build_fullscreen_player(
     hero_window_controls: &impl IsA<gtk::Widget>,
     inline_window_controls: &impl IsA<gtk::Widget>,
+    visualizer_levels: Rc<RefCell<Vec<f64>>>,
 ) -> FullscreenPlayerParts {
     let root = gtk::Overlay::new();
     root.add_css_class("fullscreen-player");
@@ -215,9 +216,8 @@ pub(crate) fn build_fullscreen_player(
     visualizer_panel.add_css_class("fullscreen-player-visualizer");
     visualizer_panel.set_hexpand(true);
     visualizer_panel.set_vexpand(true);
-    let visualizer_levels = Rc::new(RefCell::new(Vec::new()));
     let visualizer_targets = Rc::new(RefCell::new(Vec::new()));
-    let visualizer_area = build_fullscreen_visualizer_area(Rc::clone(&visualizer_levels));
+    let visualizer_area = build_visualizer_area(Rc::clone(&visualizer_levels));
     visualizer_panel.append(&visualizer_area);
     stack.add_titled(&visualizer_panel, Some("visualizer"), &tr("Visualizer"));
 
@@ -388,14 +388,13 @@ fn fullscreen_visualizer_icon() -> gtk::DrawingArea {
     area
 }
 
-fn build_fullscreen_visualizer_area(levels: Rc<RefCell<Vec<f64>>>) -> gtk::DrawingArea {
+pub(crate) fn build_visualizer_area(levels: Rc<RefCell<Vec<f64>>>) -> gtk::DrawingArea {
     let area = gtk::DrawingArea::new();
     area.add_css_class("fullscreen-player-visualizer-area");
     area.set_hexpand(true);
     area.set_vexpand(true);
     area.set_halign(gtk::Align::Fill);
     area.set_valign(gtk::Align::Fill);
-    area.set_content_height(230);
     area.set_draw_func(move |_, context, width, height| {
         let levels = levels.borrow();
         if levels.is_empty() {
@@ -446,9 +445,8 @@ fn draw_visualizer_bars(
     );
     let cell =
         ((available_width - gap * columns.saturating_sub(1) as f64) / columns as f64).max(2.0);
-    let grid_height = (height - FULLSCREEN_VISUALIZER_TOP_GAP).max(height * 0.64);
-    let rows = ((grid_height + gap) / (cell + gap)).floor() as usize;
-    let rows = rows.clamp(8, 32);
+    let (rows, row_height) = visualizer_row_geometry(height, cell, gap);
+    let row_stride = row_height + gap;
     let bottom = height;
     let bars = visualizer_bar_levels(levels, columns, normalize);
     if bars.is_empty() {
@@ -467,8 +465,8 @@ fn draw_visualizer_bars(
             };
             let (red, green, blue) = visualizer_bar_color(color_t);
             context.set_source_rgba(red, green, blue, alpha * (0.72 + color_t * 0.24));
-            let y = bottom - cell - row as f64 * (cell + gap);
-            context.rectangle(x, y, cell, cell);
+            let y = bottom - row_height - row as f64 * row_stride;
+            context.rectangle(x, y, cell, row_height);
             let _ = context.fill();
         }
 
@@ -477,11 +475,18 @@ fn draw_visualizer_bars(
         if cap_row > 0 && cap_row < rows && cap_alpha >= 0.14 {
             let (red, green, blue) = visualizer_bar_color(1.0);
             context.set_source_rgba(red, green, blue, alpha * cap_alpha * 0.76);
-            let y = bottom - cell - cap_row as f64 * (cell + gap);
-            context.rectangle(x, y, cell, cell);
+            let y = bottom - row_height - cap_row as f64 * row_stride;
+            context.rectangle(x, y, cell, row_height);
             let _ = context.fill();
         }
     }
+}
+
+fn visualizer_row_geometry(height: f64, cell: f64, gap: f64) -> (usize, f64) {
+    let grid_height = (height - FULLSCREEN_VISUALIZER_TOP_GAP).max(height * 0.64);
+    let rows = (((grid_height + gap) / (cell + gap)).floor() as usize).clamp(8, 32);
+    let row_height = ((grid_height - gap * rows.saturating_sub(1) as f64) / rows as f64).max(1.0);
+    (rows, row_height)
 }
 
 fn visualizer_bar_color(row_t: f64) -> (f64, f64, f64) {
@@ -1029,13 +1034,7 @@ pub(crate) fn connect_fullscreen_player_controls(shell: &Rc<Shell>) {
             if stack.visible_child_name().as_deref() != Some("lyrics") {
                 queue_tab_shell.update_lyrics_highlight();
             }
-            queue_tab_shell.sync_fullscreen_visualizer_state();
-            if stack.visible_child_name().as_deref() == Some("visualizer") {
-                let visualizer_shell = Rc::clone(&queue_tab_shell);
-                glib::timeout_add_local_once(Duration::from_millis(120), move || {
-                    visualizer_shell.sync_fullscreen_visualizer_state();
-                });
-            }
+            queue_tab_shell.sync_visualizer_state();
         });
 
     let equalizer_shell = Rc::clone(shell);
@@ -1175,7 +1174,7 @@ impl Shell {
                 },
             );
         }
-        self.sync_fullscreen_visualizer_state();
+        self.sync_visualizer_state();
         let _focused = self.player_view.fullscreen_player.close_button.grab_focus();
     }
 
@@ -1184,7 +1183,7 @@ impl Shell {
             return;
         }
         self.animate_fullscreen_player(false);
-        self.sync_fullscreen_visualizer_state();
+        self.sync_visualizer_state();
         self.update_lyrics_highlight();
     }
 
@@ -1219,7 +1218,6 @@ impl Shell {
         self.apply_fullscreen_responsive_layout();
         self.update_fullscreen_player_cover(&player);
         self.sync_fullscreen_equalizer_controls(&self.settings.current.borrow().playback.equalizer);
-        self.sync_fullscreen_visualizer_state();
     }
 
     pub(crate) fn refresh_fullscreen_player_layout(self: &Rc<Self>) {
@@ -1381,9 +1379,9 @@ impl Shell {
         });
     }
 
-    pub(crate) fn apply_fullscreen_visualizer_levels(self: &Rc<Self>, levels: Vec<f64>) {
+    pub(crate) fn apply_visualizer_levels(self: &Rc<Self>, levels: Vec<f64>) {
         if levels.is_empty() {
-            self.clear_fullscreen_visualizer();
+            self.clear_visualizer();
             return;
         }
         if !self.player_view.fullscreen_player.visualizer_active.get() {
@@ -1394,18 +1392,22 @@ impl Shell {
             .fullscreen_player
             .visualizer_targets
             .borrow_mut() = visualizer_display_levels(&levels);
-        self.start_fullscreen_visualizer_tick();
+        self.start_visualizer_tick();
     }
 
-    pub(crate) fn sync_fullscreen_visualizer_state(self: &Rc<Self>) {
-        let active = self.fullscreen_player_visible()
+    pub(crate) fn sync_visualizer_state(self: &Rc<Self>) {
+        let fullscreen_visible = self.fullscreen_player_visible()
             && self
                 .player_view
                 .fullscreen_player
                 .stack
                 .visible_child_name()
                 .as_deref()
-                == Some("visualizer")
+                == Some("visualizer");
+        let sidebar_visible = !self.fullscreen_player_visible()
+            && self.right_sidebar_visible()
+            && self.right_panel.visualizer_visible.get();
+        let active = (fullscreen_visible || sidebar_visible)
             && self.selected_playback().as_deref().is_some_and(|player| {
                 matches!(
                     player.transport.effective_state(),
@@ -1423,7 +1425,7 @@ impl Shell {
                 .playback
                 .transport
                 .set_visualizer_enabled(true);
-            self.start_fullscreen_visualizer_tick();
+            self.start_visualizer_tick();
             return;
         }
         if changed {
@@ -1431,12 +1433,12 @@ impl Shell {
                 .playback
                 .transport
                 .set_visualizer_enabled(false);
-            self.stop_fullscreen_visualizer_tick();
-            self.clear_fullscreen_visualizer();
+            self.stop_visualizer_tick();
+            self.clear_visualizer();
         }
     }
 
-    fn start_fullscreen_visualizer_tick(self: &Rc<Self>) {
+    fn start_visualizer_tick(self: &Rc<Self>) {
         if self
             .player_view
             .fullscreen_player
@@ -1448,27 +1450,26 @@ impl Shell {
         }
         let levels = Rc::clone(&self.player_view.fullscreen_player.visualizer_levels);
         let targets = Rc::clone(&self.player_view.fullscreen_player.visualizer_targets);
-        let tick = self
-            .player_view
-            .fullscreen_player
-            .visualizer_area
-            .add_tick_callback(move |area, _| {
-                let mut current = levels.borrow_mut();
-                let target = targets.borrow();
-                let len = target
-                    .len()
-                    .max(current.len())
-                    .max(FULLSCREEN_VISUALIZER_BANDS);
-                current.resize(len, 0.0);
-                for index in 0..len {
-                    let next = target.get(index).copied().unwrap_or(0.0);
-                    let value = current[index];
-                    current[index] = next * FULLSCREEN_VISUALIZER_EMA_WEIGHT
-                        + value * (1.0 - FULLSCREEN_VISUALIZER_EMA_WEIGHT);
-                }
-                area.queue_draw();
-                glib::ControlFlow::Continue
-            });
+        let fullscreen_area = self.player_view.fullscreen_player.visualizer_area.clone();
+        let sidebar_area = self.right_panel.visualizer_area.clone();
+        let tick = self.chrome.window.add_tick_callback(move |_, _| {
+            let mut current = levels.borrow_mut();
+            let target = targets.borrow();
+            let len = target
+                .len()
+                .max(current.len())
+                .max(FULLSCREEN_VISUALIZER_BANDS);
+            current.resize(len, 0.0);
+            for index in 0..len {
+                let next = target.get(index).copied().unwrap_or(0.0);
+                let value = current[index];
+                current[index] = next * FULLSCREEN_VISUALIZER_EMA_WEIGHT
+                    + value * (1.0 - FULLSCREEN_VISUALIZER_EMA_WEIGHT);
+            }
+            fullscreen_area.queue_draw();
+            sidebar_area.queue_draw();
+            glib::ControlFlow::Continue
+        });
         *self
             .player_view
             .fullscreen_player
@@ -1476,7 +1477,7 @@ impl Shell {
             .borrow_mut() = Some(tick);
     }
 
-    fn stop_fullscreen_visualizer_tick(&self) {
+    fn stop_visualizer_tick(&self) {
         if let Some(tick) = self
             .player_view
             .fullscreen_player
@@ -1488,7 +1489,7 @@ impl Shell {
         }
     }
 
-    fn clear_fullscreen_visualizer(&self) {
+    fn clear_visualizer(&self) {
         self.player_view
             .fullscreen_player
             .visualizer_levels
@@ -1503,6 +1504,7 @@ impl Shell {
             .fullscreen_player
             .visualizer_area
             .queue_draw();
+        self.right_panel.visualizer_area.queue_draw();
     }
 
     fn refresh_fullscreen_lyrics_position(self: &Rc<Self>) {
@@ -1950,6 +1952,19 @@ mod tests {
         assert!(fit.band_width < super::FULLSCREEN_EQUALIZER_MAX_BAND_WIDTH);
         assert!(fit.scale_height < super::FULLSCREEN_EQUALIZER_MAX_SCALE_HEIGHT);
         assert!(fit.show_right_levels);
+    }
+
+    #[test]
+    fn visualizer_grid_uses_its_allocated_height() {
+        for height in [230.0, 600.0] {
+            let gap = 2.0;
+            let (rows, row_height) = super::visualizer_row_geometry(height, 6.0, gap);
+            let occupied_height = row_height * rows as f64 + gap * rows.saturating_sub(1) as f64;
+            let available_height =
+                (height - super::FULLSCREEN_VISUALIZER_TOP_GAP).max(height * 0.64);
+
+            assert!((occupied_height - available_height).abs() < 0.001);
+        }
     }
 
     #[test]

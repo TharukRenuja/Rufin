@@ -150,7 +150,7 @@ fn release_selected_source(shell: &Rc<Shell>) {
     shell.update_bottom_player();
     shell.render_queue_panel();
     shell.render_lyrics_panel();
-    shell.apply_fullscreen_visualizer_levels(Vec::new());
+    shell.apply_visualizer_levels(Vec::new());
     shell.clear_fullscreen_player_cover();
     shell.withdraw_now_playing_notification();
     shell.update_media_controls();
@@ -630,7 +630,7 @@ fn finish_playback_projection(
     for notice in notices {
         match notice {
             playback::PlaybackNotice::Visualizer { levels, .. } => {
-                shell.apply_fullscreen_visualizer_levels(levels);
+                shell.apply_visualizer_levels(levels);
             }
             playback::PlaybackNotice::PositionDiscontinuity(discontinuity) => {
                 media_controls_discontinuity = Some(discontinuity);
@@ -668,8 +668,10 @@ fn finish_playback_projection(
     }
     match fullscreen_refresh {
         FullscreenPlaybackRefresh::Static => shell.update_fullscreen_player(),
-        FullscreenPlaybackRefresh::Visualizer => shell.sync_fullscreen_visualizer_state(),
-        FullscreenPlaybackRefresh::None => {}
+        FullscreenPlaybackRefresh::Visualizer | FullscreenPlaybackRefresh::None => {}
+    }
+    if fullscreen_refresh != FullscreenPlaybackRefresh::None {
+        shell.sync_visualizer_state();
     }
     if lyrics_timing_changed {
         shell.update_lyrics_highlight();

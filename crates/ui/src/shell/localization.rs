@@ -20,7 +20,6 @@ impl Shell {
         self.update_bottom_player();
         self.update_fullscreen_player();
         self.update_right_panel_button();
-        self.update_lyrics_panel_button();
     }
 
     pub(crate) fn install_locale_bindings(self: &Rc<Self>) {
@@ -52,8 +51,8 @@ impl Shell {
         );
         self.bind_icon_locale(&self.player_view.player_controls.mute_button, "Mute");
         self.bind_icon_locale(
-            &self.player_view.player_controls.audio_output_button,
-            "Audio output",
+            &self.player_view.player_controls.settings_button,
+            "Playback settings",
         );
 
         self.bind_icon_locale(

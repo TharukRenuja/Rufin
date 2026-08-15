@@ -9,10 +9,10 @@ use super::{
     quality_selection_row, selection_row, sidebar_items_expander,
 };
 use crate::player::{
-    build_equalizer_preset_row, connect_equalizer_scale_commit, equalizer_band_title,
-    equalizer_default_preset_bands, equalizer_preset_bands, equalizer_preset_name_at,
-    equalizer_preset_position, equalizer_selected_preset, install_equalizer_scroll,
-    present_audio_output_popover, selected_audio_output_title,
+    audio_output_dropdown, build_equalizer_preset_row, connect_equalizer_scale_commit,
+    crossfade_duration_row, equalizer_band_title, equalizer_default_preset_bands,
+    equalizer_preset_bands, equalizer_preset_name_at, equalizer_preset_position,
+    equalizer_selected_preset, install_equalizer_scroll, playback_rate_row,
 };
 use crate::runtime::{ScrobblingConnection, ScrobblingConnectionEvent};
 use crate::shell::Shell;
@@ -22,8 +22,7 @@ use library::StreamQuality;
 use localization::{tr, tr_with};
 use playback::{
     EQUALIZER_BAND_COUNT, LoudnessNormalizationMode, MAX_AUTO_DJ_REFILL_THRESHOLD,
-    MAX_CROSSFADE_SECONDS, MIN_AUTO_DJ_REFILL_THRESHOLD, MIN_CROSSFADE_SECONDS,
-    PlaybackTransitionMode, VolumeScale,
+    MIN_AUTO_DJ_REFILL_THRESHOLD, PlaybackTransitionMode, VolumeScale,
 };
 
 pub(crate) fn scrobbling_page(shell: &Rc<Shell>) -> adw::PreferencesPage {
@@ -440,26 +439,11 @@ pub(crate) fn playback_page(shell: &Rc<Shell>) -> adw::PreferencesPage {
     );
     transition_group.add(&transition_row);
 
-    let crossfade_row = adw::ActionRow::builder()
-        .title(tr("Crossfade duration"))
-        .subtitle(tr("Seconds"))
-        .build();
-    let crossfade = gtk::SpinButton::with_range(
-        f64::from(MIN_CROSSFADE_SECONDS),
-        f64::from(MAX_CROSSFADE_SECONDS),
-        1.0,
-    );
-    crossfade.set_value(f64::from(settings.crossfade_seconds));
-    crossfade.set_valign(gtk::Align::Center);
-    let crossfade_shell = Rc::clone(shell);
-    crossfade.connect_value_changed(move |spin| {
-        crossfade_shell.update_playback_settings(|settings| {
-            settings.crossfade_seconds = spin.value().round() as u8;
-        });
-    });
-    crossfade_row.add_suffix(&crossfade);
-    crossfade_row.set_activatable_widget(Some(&crossfade));
+    let crossfade_row = crossfade_duration_row(shell, settings.crossfade_seconds, 220);
     transition_group.add(&crossfade_row);
+
+    let speed_row = playback_rate_row(shell, settings.playback_rate, 220);
+    transition_group.add(&speed_row);
 
     let skip_same_album_crossfade_row = adw::SwitchRow::builder()
         .title(tr("Skip same-album crossfade"))
@@ -567,31 +551,10 @@ pub(crate) fn playback_page(shell: &Rc<Shell>) -> adw::PreferencesPage {
     );
     audio_group.add(&quality_row);
 
-    let output_row = adw::ActionRow::builder()
-        .title(tr("Audio output"))
-        .subtitle(selected_audio_output_title(
-            shell,
-            settings.audio_output.as_deref(),
-        ))
-        .build();
-    let output_shell = Rc::clone(shell);
-    let output_button = gtk::Button::with_label(&tr("Change"));
-    output_button.set_valign(gtk::Align::Center);
-    let output_row_for_button = output_row.clone();
-    output_button.connect_clicked(move |button| {
-        let output_row = output_row_for_button.clone();
-        let on_selected = Rc::new(move |_: Option<String>, title: String| {
-            output_row.set_subtitle(&title);
-        });
-        present_audio_output_popover(
-            button,
-            &output_shell,
-            gtk::PositionType::Bottom,
-            Some(on_selected),
-        );
-    });
-    output_row.add_suffix(&output_button);
-    output_row.set_activatable_widget(Some(&output_button));
+    let output_row = adw::ActionRow::builder().title(tr("Audio output")).build();
+    let output_dropdown = audio_output_dropdown(shell, 220);
+    output_row.add_suffix(&output_dropdown);
+    output_row.set_activatable_widget(Some(&output_dropdown));
     audio_group.add(&output_row);
     page.add(&audio_group);
 

@@ -1,3 +1,4 @@
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use crate::RightSidebarMode;
@@ -12,6 +13,7 @@ use crate::shell::layout::{
 use localization::tr;
 
 use super::bottom::BOTTOM_PLAYER_HEIGHT;
+use super::fullscreen::build_visualizer_area;
 const QUEUE_LYRICS_DEFAULT_LYRICS_HEIGHT: i32 = 300;
 const QUEUE_LYRICS_RESIZE_HANDLE_HEIGHT: i32 = 10;
 const QUEUE_HEADER_TOP_MARGIN: i32 = 10;
@@ -28,6 +30,8 @@ pub(crate) struct RightPanelWidgets {
     pub(crate) lyrics_surface: gtk::Box,
     pub(crate) lyrics_resize_handle: gtk::Box,
     pub(crate) lyrics_host: gtk::Box,
+    pub(crate) visualizer_area: gtk::DrawingArea,
+    pub(crate) visualizer_visible: Cell<bool>,
 }
 
 pub(crate) struct RightPanelParts {
@@ -39,6 +43,8 @@ pub(crate) struct RightPanelParts {
     pub(crate) lyrics_surface: gtk::Box,
     pub(crate) lyrics_resize_handle: gtk::Box,
     pub(crate) lyrics_host: gtk::Box,
+    pub(crate) visualizer_area: gtk::DrawingArea,
+    pub(crate) visualizer_levels: Rc<RefCell<Vec<f64>>>,
 }
 
 pub(crate) fn build_right_panel(end_window_controls: &impl IsA<gtk::Widget>) -> RightPanelParts {
@@ -84,6 +90,21 @@ pub(crate) fn build_right_panel(end_window_controls: &impl IsA<gtk::Widget>) -> 
     let lyrics_host = gtk::Box::new(gtk::Orientation::Vertical, 0);
     lyrics_host.set_hexpand(true);
     lyrics_host.set_vexpand(true);
+    let visualizer_levels = Rc::new(RefCell::new(Vec::new()));
+    let visualizer_area = build_visualizer_area(Rc::clone(&visualizer_levels));
+    visualizer_area.remove_css_class("fullscreen-player-visualizer-area");
+    visualizer_area.add_css_class("sidebar-visualizer-area");
+    let media_background = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    media_background.set_hexpand(true);
+    media_background.set_vexpand(true);
+    let media_overlay = gtk::Overlay::new();
+    media_overlay.set_hexpand(true);
+    media_overlay.set_vexpand(true);
+    media_overlay.set_child(Some(&media_background));
+    media_overlay.add_overlay(&visualizer_area);
+    media_overlay.set_measure_overlay(&visualizer_area, false);
+    media_overlay.add_overlay(&lyrics_host);
+    media_overlay.set_measure_overlay(&lyrics_host, false);
     let lyrics_resize_handle = gtk::Box::new(gtk::Orientation::Horizontal, 0);
     lyrics_resize_handle.add_css_class("queue-lyrics-resize-handle");
     lyrics_resize_handle.set_height_request(QUEUE_LYRICS_RESIZE_HANDLE_HEIGHT);
@@ -101,7 +122,7 @@ pub(crate) fn build_right_panel(end_window_controls: &impl IsA<gtk::Widget>) -> 
     lyrics_surface.set_halign(gtk::Align::Fill);
     lyrics_surface.set_valign(gtk::Align::End);
     lyrics_surface.append(&lyrics_resize_handle);
-    lyrics_surface.append(&lyrics_host);
+    lyrics_surface.append(&media_overlay);
 
     let queue_lyrics_overlay = gtk::Overlay::new();
     queue_lyrics_overlay.add_css_class("queue-lyrics-overlay");
@@ -127,12 +148,14 @@ pub(crate) fn build_right_panel(end_window_controls: &impl IsA<gtk::Widget>) -> 
         lyrics_surface,
         lyrics_resize_handle,
         lyrics_host,
+        visualizer_area,
+        visualizer_levels,
     }
 }
 
 impl Shell {
     fn save_queue_lyrics_height(&self, height: i32) {
-        if !self.lyrics.panel_visible.get() {
+        if !self.lyrics.panel_visible.get() && !self.right_panel.visualizer_visible.get() {
             return;
         }
         if height < QUEUE_LYRICS_RESIZE_HANDLE_HEIGHT {
@@ -148,7 +171,7 @@ impl Shell {
     }
 
     pub(crate) fn remember_queue_lyrics_open_position(&self) {
-        if !self.lyrics.panel_visible.get() {
+        if !self.lyrics.panel_visible.get() && !self.right_panel.visualizer_visible.get() {
             return;
         }
         self.save_queue_lyrics_height(self.right_panel.lyrics_surface.height());
@@ -218,10 +241,6 @@ impl Shell {
             .player_controls
             .queue_button
             .update_property(&[gtk::accessible::Property::Label(&label)]);
-        self.player_view
-            .player_controls
-            .lyrics_button
-            .set_visible(visible);
     }
 
     pub(crate) fn toggle_lyrics_panel(self: &Rc<Self>) {
@@ -237,44 +256,29 @@ impl Shell {
             self.remember_queue_lyrics_open_position();
         }
 
-        if self.lyrics.panel_visible.replace(visible) == visible {
-            self.update_lyrics_panel_button();
-            return;
+        if self.lyrics.panel_visible.replace(visible) != visible {
+            self.save_lyrics_panel_visibility(visible);
         }
-
-        self.save_lyrics_panel_visibility(visible);
-        self.update_lyrics_panel_button();
-        apply_lyrics_panel_visibility(Rc::clone(self), visible);
+        apply_sidebar_media_visibility(Rc::clone(self));
     }
 
-    pub(crate) fn update_lyrics_panel_button(&self) {
-        let visible = self.lyrics.panel_visible.get();
-        let label = if visible {
-            tr("Hide lyrics")
-        } else {
-            tr("Show lyrics")
-        };
-        self.player_view
-            .player_controls
-            .lyrics_icon_open
-            .set(visible);
-        self.player_view.player_controls.lyrics_icon.queue_draw();
-        self.player_view
-            .player_controls
-            .lyrics_button
-            .remove_css_class("active-toggle");
-        self.player_view
-            .player_controls
-            .lyrics_button
-            .set_visible(self.right_sidebar_visible());
-        self.player_view
-            .player_controls
-            .lyrics_button
-            .set_tooltip_text(Some(&label));
-        self.player_view
-            .player_controls
-            .lyrics_button
-            .update_property(&[gtk::accessible::Property::Label(&label)]);
+    pub(crate) fn set_visualizer_panel_visible(self: &Rc<Self>, visible: bool) {
+        if visible && !self.right_sidebar_visible() {
+            self.set_right_sidebar_visible(true);
+        }
+        if !visible {
+            self.remember_queue_lyrics_open_position();
+        }
+        if self.right_panel.visualizer_visible.replace(visible) != visible {
+            self.update_app_settings("visualizer panel visibility", |settings| {
+                if settings.visualizer_panel_visible == visible {
+                    return false;
+                }
+                settings.visualizer_panel_visible = visible;
+                true
+            });
+        }
+        apply_sidebar_media_visibility(Rc::clone(self));
     }
 }
 
@@ -353,8 +357,23 @@ pub(crate) fn connect_queue_lyrics_overlay(shell: &Rc<Shell>) {
     shell.right_panel.queue_lyrics_overlay.add_controller(drag);
 }
 
-pub(crate) fn apply_lyrics_panel_visibility(shell: Rc<Shell>, visible: bool) {
+pub(crate) fn apply_sidebar_media_visibility(shell: Rc<Shell>) {
+    let lyrics_visible = shell.lyrics.panel_visible.get();
+    let visualizer_visible = shell.right_panel.visualizer_visible.get();
+    let visible = lyrics_visible || visualizer_visible;
     shell.right_panel.lyrics_surface.set_visible(visible);
+    shell.right_panel.lyrics_host.set_visible(lyrics_visible);
+    shell
+        .right_panel
+        .visualizer_area
+        .set_visible(visualizer_visible);
+    shell
+        .right_panel
+        .visualizer_area
+        .set_opacity(if lyrics_visible { 0.32 } else { 1.0 });
+    shell.right_panel.lyrics_resize_handle.set_visible(visible);
+    shell.right_panel.lyrics_surface.set_valign(gtk::Align::End);
+    shell.right_panel.lyrics_surface.set_vexpand(false);
     if visible {
         let available_height = queue_lyrics_restore_available_height(&shell);
         let saved_height = shell.settings.current.borrow().queue_lyrics_height;
@@ -364,11 +383,12 @@ pub(crate) fn apply_lyrics_panel_visibility(shell: Rc<Shell>, visible: bool) {
             .set_height_request(queue_lyrics_initial_height(available_height, saved_height));
     }
     shell.schedule_queue_panel_render();
-    if visible {
+    if lyrics_visible {
         shell.sync_visible_lyrics_surfaces();
     } else {
         shell.update_lyrics_highlight();
     }
+    shell.sync_visualizer_state();
 }
 
 fn queue_lyrics_restore_available_height(shell: &Shell) -> i32 {

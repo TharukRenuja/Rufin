@@ -202,13 +202,6 @@ fn repeat_icon_area(repeat_mode: RepeatMode) -> gtk::DrawingArea {
     icon
 }
 
-pub(super) fn lyrics_icon_button(label: &str) -> (gtk::Button, gtk::DrawingArea, Rc<Cell<bool>>) {
-    let open = Rc::new(Cell::new(true));
-    let icon = lyrics_icon_area(Rc::clone(&open));
-    let button = drawing_icon_button(label, icon.clone());
-    (button, icon, open)
-}
-
 pub(super) fn volume_icon_button(
     label: &str,
 ) -> (gtk::Button, gtk::DrawingArea, Rc<Cell<VolumeIcon>>) {
@@ -253,58 +246,6 @@ pub(super) fn volume_icon_button(
     });
     let button = drawing_icon_button(label, icon.clone());
     (button, icon, state)
-}
-
-pub(super) fn audio_output_icon_button(label: &str) -> gtk::Button {
-    let icon = gtk::DrawingArea::new();
-    icon.set_content_width(VOLUME_ICON_SIZE);
-    icon.set_content_height(VOLUME_ICON_SIZE);
-    icon.set_halign(gtk::Align::Center);
-    icon.set_valign(gtk::Align::Center);
-    icon.set_draw_func(move |area, context, width, height| {
-        set_icon_source(area, context);
-        context.set_line_width(1.45);
-        context.set_line_cap(gtk::cairo::LineCap::Round);
-        context.set_line_join(gtk::cairo::LineJoin::Round);
-
-        let width = f64::from(width);
-        let height = f64::from(height);
-        let left = width * 0.205;
-        let top = height * 0.07;
-        let cabinet_width = width * 0.59;
-        let cabinet_height = height * 0.85;
-        let driver_radius = width * 0.0775;
-
-        context.rectangle(left, top, cabinet_width, cabinet_height);
-        let _ = context.stroke();
-
-        context.arc(
-            width * 0.50,
-            height * 0.295,
-            driver_radius,
-            0.0,
-            std::f64::consts::TAU,
-        );
-        let _ = context.stroke();
-
-        context.arc(
-            width * 0.50,
-            height * 0.65,
-            width * 0.145,
-            0.0,
-            std::f64::consts::TAU,
-        );
-        let _ = context.stroke();
-        context.arc(
-            width * 0.50,
-            height * 0.65,
-            driver_radius,
-            0.0,
-            std::f64::consts::TAU,
-        );
-        let _ = context.stroke();
-    });
-    drawing_icon_button(label, icon)
 }
 
 pub(super) fn lyrics_icon_area(open: Rc<Cell<bool>>) -> gtk::DrawingArea {
