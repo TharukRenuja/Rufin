@@ -9,6 +9,18 @@ use crate::{
     LibraryResult,
 };
 
+pub fn rating_from_five_star(value: f64) -> Option<u8> {
+    (value.is_finite() && value > 0.0).then(|| (value * 2.0).round().clamp(1.0, 10.0) as u8)
+}
+
+pub fn rating_from_ten_point(value: f64) -> Option<u8> {
+    (value.is_finite() && value > 0.0).then(|| value.round().clamp(1.0, 10.0) as u8)
+}
+
+pub fn rating_to_whole_star(rating: Option<u8>) -> u8 {
+    rating.map_or(0, |rating| rating.clamp(1, 10).div_ceil(2))
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PendingFavorite {
     pub item: FavoriteItemId,
@@ -34,6 +46,19 @@ pub enum FavoriteAcceptance {
 }
 
 impl Library {
+    pub fn set_rating(
+        &self,
+        item: FavoriteItemId,
+        rating: Option<u8>,
+    ) -> LibraryResult<AcceptedLibraryChange> {
+        self.store
+            .set_rating(self.source_id().clone(), item.clone(), rating)?;
+        let mut accepted = self.replace_rating(&item, rating)?;
+        accepted.home = AcceptedHomeChange::Rebuild;
+        accepted.download_coverage_changed = true;
+        Ok(accepted)
+    }
+
     pub fn accept_favorite(
         &self,
         acceptance: FavoriteAcceptance,

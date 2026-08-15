@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{SourceError, SourceInputIdentity, SourceResult, subsonic::SubsonicFlavor};
 
-const SOURCE_FACTS_VERSION: u32 = 1;
+const SOURCE_FACTS_VERSION: u32 = 2;
 
 /// Credential-free source configuration persisted by Rufin Settings.
 ///

@@ -493,11 +493,29 @@ pub fn default_value(
 
 pub fn number_bounds(field: SmartPlaylistRuleField) -> (i64, i64, i64) {
     match field {
-        SmartPlaylistRuleField::Rating => (0, 5, 4),
+        SmartPlaylistRuleField::Rating => (0, 10, 8),
         SmartPlaylistRuleField::Year => (0, 3000, 2000),
         SmartPlaylistRuleField::Bpm => (0, 400, 120),
         SmartPlaylistRuleField::PlayCount | SmartPlaylistRuleField::SkipCount => (0, 999_999, 1),
         _ => (0, 999_999, 0),
+    }
+}
+
+pub(crate) fn upgrade_rating_scale(definition: &mut SmartPlaylistDefinition) {
+    for rule in definition
+        .match_all
+        .iter_mut()
+        .chain(definition.match_any.iter_mut())
+        .filter(|rule| rule.field == SmartPlaylistRuleField::Rating)
+    {
+        match rule.value.as_mut() {
+            Some(SmartPlaylistRuleValue::Number(value)) => *value *= 2,
+            Some(SmartPlaylistRuleValue::NumberRange { min, max }) => {
+                *min *= 2;
+                *max *= 2;
+            }
+            _ => {}
+        }
     }
 }
 

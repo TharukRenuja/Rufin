@@ -1024,6 +1024,57 @@ impl SourceOwner {
         }
     }
 
+    async fn set_rating(
+        &mut self,
+        selected: Arc<SelectedSourceState>,
+        item: FavoriteItemId,
+        rating: Option<u8>,
+    ) {
+        let library = Arc::clone(&selected.library);
+        let accepted_item = item.clone();
+        match blocking(move || {
+            library
+                .set_rating(accepted_item, rating)
+                .map_err(string_error)
+        })
+        .await
+        {
+            Ok(change) => self.publish_accepted_change(&selected, change).await,
+            Err(error) => {
+                self.shared.warn_nonfatal(&error);
+                return;
+            }
+        }
+        if let Some(source) = selected.source.as_ref() {
+            let result = if selected.configuration.is_local() {
+                let library = Arc::clone(&selected.library);
+                let source = Arc::clone(source);
+                let track_id = match item {
+                    FavoriteItemId::Track(id) => Some(id),
+                    FavoriteItemId::Album(_) | FavoriteItemId::Artist(_) => None,
+                };
+                blocking(move || {
+                    let Some(track_id) = track_id else {
+                        return Ok(NativeSourceResult::Unavailable);
+                    };
+                    let track = library
+                        .track(&track_id)
+                        .map_err(string_error)?
+                        .ok_or_else(|| "the rated Track is no longer in the Library".to_string())?;
+                    source
+                        .set_local_rating(&track, rating)
+                        .map_err(string_error)
+                })
+                .await
+            } else {
+                source.set_rating(item, rating).await.map_err(string_error)
+            };
+            if let Err(error) = result {
+                self.shared.warn_nonfatal(&error);
+            }
+        }
+    }
+
     async fn retry_remote_favorites(&mut self, selected: Arc<SelectedSourceState>) {
         let Some(source) = selected.source.clone() else {
             return;
@@ -2133,6 +2184,12 @@ impl SelectedSourcePort for ActiveSource {
     fn set_favorite(&self, item: FavoriteItemId, favorite: bool) {
         self.spawn_selected(false, move |mut operations, selected, _| async move {
             operations.set_favorite(selected, item, favorite).await;
+        });
+    }
+
+    fn set_rating(&self, item: FavoriteItemId, rating: Option<u8>) {
+        self.spawn_selected(false, move |mut operations, selected, _| async move {
+            operations.set_rating(selected, item, rating).await;
         });
     }
 

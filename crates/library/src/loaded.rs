@@ -1162,6 +1162,62 @@ impl Library {
         })
     }
 
+    pub(crate) fn replace_rating(
+        &self,
+        item: &FavoriteItemId,
+        rating: Option<u8>,
+    ) -> LibraryQueryResult<AcceptedLibraryChange> {
+        let mut state = self.write()?;
+        let mut replacement = ItemReplacement::default();
+        match item {
+            FavoriteItemId::Track(id) => {
+                let mut track = state
+                    .tracks
+                    .get(id)
+                    .ok_or_else(|| LibraryQueryError::MissingItem {
+                        kind: "track",
+                        id: id.to_string(),
+                    })?
+                    .clone();
+                track.user_rating = rating;
+                replacement.tracks.push(track);
+            }
+            FavoriteItemId::Album(id) => {
+                let mut album = state
+                    .albums
+                    .get(id)
+                    .ok_or_else(|| LibraryQueryError::MissingItem {
+                        kind: "album",
+                        id: id.to_string(),
+                    })?
+                    .album
+                    .as_ref()
+                    .clone();
+                album.user_rating = rating;
+                replacement.albums.push(album);
+            }
+            FavoriteItemId::Artist(id) => {
+                let mut artist = state
+                    .artists
+                    .get(id)
+                    .ok_or_else(|| LibraryQueryError::MissingItem {
+                        kind: "artist",
+                        id: id.to_string(),
+                    })?
+                    .artist
+                    .as_ref()
+                    .clone();
+                artist.user_rating = rating;
+                replacement.artists.push(artist);
+            }
+        }
+        let change = apply_item_replacement(&mut state, replacement, Vec::new())?;
+        if matches!(item, FavoriteItemId::Track(_)) {
+            crate::download_coverage::rebuild_smart_playlist_download_coverage(&mut state);
+        }
+        Ok(change)
+    }
+
     pub(crate) fn replace_track_activity(
         &self,
         activity: TrackActivity,

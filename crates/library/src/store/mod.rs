@@ -350,6 +350,15 @@ impl StoreLane {
         })
     }
 
+    pub(crate) fn set_rating(
+        &self,
+        source_id: SourceId,
+        item_id: FavoriteItemId,
+        rating: Option<u8>,
+    ) -> StoreResult<()> {
+        self.execute(move |worker| worker.set_rating(&source_id, &item_id, rating))
+    }
+
     pub(crate) fn queue_remote_favorite(
         &self,
         source_id: SourceId,
@@ -1019,6 +1028,7 @@ impl Worker {
         )?;
         for table in [
             "local_favorites",
+            "user_ratings",
             "pending_favorites",
             "loudness_measurements",
             "smart_playlists",
@@ -1416,6 +1426,34 @@ impl Worker {
             invalidate_content_digest(&transaction, library_id)?;
         }
         transaction.commit()?;
+        Ok(())
+    }
+
+    fn set_rating(
+        &mut self,
+        source_id: &SourceId,
+        item_id: &FavoriteItemId,
+        rating: Option<u8>,
+    ) -> StoreResult<()> {
+        let rating = rating.unwrap_or(0);
+        if rating > 10 {
+            return Err(StoreError::InvalidValue {
+                kind: "rating",
+                value: rating.to_string(),
+            });
+        }
+        self.connection.execute(
+            "INSERT INTO user_ratings(source_id, item_kind, item_id, rating)
+             VALUES (?1, ?2, ?3, ?4)
+             ON CONFLICT(source_id, item_kind, item_id)
+             DO UPDATE SET rating = excluded.rating",
+            params![
+                source_id.as_str(),
+                item_id.kind().as_str(),
+                item_id.as_str(),
+                i64::from(rating)
+            ],
+        )?;
         Ok(())
     }
 
@@ -3253,6 +3291,7 @@ fn write_item_replacement(
     replacement: &mut ItemReplacement,
     local_observed_at: Option<i64>,
 ) -> StoreResult<(Vec<AlbumId>, Vec<LocalImport>)> {
+    apply_user_ratings_to_replacement(transaction, source_id, replacement)?;
     if local_observed_at.is_some() {
         for album in &mut replacement.albums {
             album.favorite = false;
@@ -3929,6 +3968,7 @@ fn complete_loaded_input(
     input.smart_playlists = load_smart_playlists(connection, source_id)?;
     input.local_favorites = load_local_favorites(connection, source_id)?;
     apply_pending_favorites(connection, source_id, &mut input)?;
+    apply_user_ratings(connection, source_id, &mut input)?;
     input.unresolved_album_releases =
         apply_album_release_info(connection, source_id, &mut input.albums)?;
     input.activity = load_track_activity(connection, source_id)?;
@@ -3939,6 +3979,94 @@ fn complete_loaded_input(
     }
     input.home = Some(home);
     Ok(input)
+}
+
+fn apply_user_ratings(
+    connection: &Connection,
+    source_id: &SourceId,
+    input: &mut LibraryInput,
+) -> StoreResult<()> {
+    let ratings = load_user_ratings(connection, source_id)?;
+    apply_ratings_to_items(
+        &ratings,
+        &mut input.albums,
+        &mut input.tracks,
+        &mut input.artists,
+    );
+    Ok(())
+}
+
+fn apply_ratings_to_items(
+    ratings: &HashMap<(String, String), Option<u8>>,
+    albums: &mut [Album],
+    tracks: &mut [Track],
+    artists: &mut [Artist],
+) {
+    for album in albums {
+        apply_rating(&ratings, "album", album.id.as_str(), &mut album.user_rating);
+    }
+    for track in tracks {
+        let id = track.id.as_str().to_string();
+        if let Some(rating) = ratings.get(&("track".to_string(), id)) {
+            track.make_mut().user_rating = *rating;
+        }
+    }
+    for artist in artists {
+        apply_rating(
+            &ratings,
+            "artist",
+            artist.id.as_str(),
+            &mut artist.user_rating,
+        );
+    }
+}
+
+fn apply_user_ratings_to_replacement(
+    connection: &Connection,
+    source_id: &SourceId,
+    replacement: &mut ItemReplacement,
+) -> StoreResult<()> {
+    let ratings = load_user_ratings(connection, source_id)?;
+    apply_ratings_to_items(
+        &ratings,
+        &mut replacement.albums,
+        &mut replacement.tracks,
+        &mut replacement.artists,
+    );
+    Ok(())
+}
+
+fn load_user_ratings(
+    connection: &Connection,
+    source_id: &SourceId,
+) -> StoreResult<HashMap<(String, String), Option<u8>>> {
+    let mut statement = connection
+        .prepare("SELECT item_kind, item_id, rating FROM user_ratings WHERE source_id = ?1")?;
+    statement
+        .query_map([source_id.as_str()], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, i64>(2)?,
+            ))
+        })?
+        .map(|row| {
+            let (kind, id, rating) = row?;
+            let rating = u8::try_from(rating).map_err(|_| StoreError::IntegerRange)?;
+            Ok(((kind, id), (rating > 0).then_some(rating)))
+        })
+        .collect()
+}
+
+fn apply_rating(
+    ratings: &HashMap<(String, String), Option<u8>>,
+    kind: &str,
+    id: &str,
+    rating: &mut Option<u8>,
+) {
+    if let Some(value) = ratings.get(&(kind.to_string(), id.to_string())) {
+        *rating = *value;
+    }
 }
 
 fn load_loudness(

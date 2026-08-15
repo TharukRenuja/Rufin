@@ -67,6 +67,7 @@ struct AudioMetadata {
     is_compilation: Option<bool>,
     local_artwork: Option<LocalArtworkRef>,
     source_format: Option<String>,
+    user_rating: Option<u8>,
 }
 
 #[derive(Default)]
@@ -227,6 +228,9 @@ fn audio_metadata_from_lofty(
         is_compilation,
         local_artwork,
         source_format: tagged_file.and_then(|file| source_format(path, file.file_type())),
+        user_rating: tag
+            .and_then(|tag| tag.ratings().next())
+            .map(|rating| (rating.rating() as u8) * 2),
     }
 }
 
@@ -328,6 +332,7 @@ fn audio_metadata_from_discoverer(
                     .filter(|value| !value.is_empty())
                     .map(ToString::to_string)
             }),
+        user_rating: None,
     }
 }
 
@@ -350,6 +355,7 @@ fn scanned_track(path: &Path, metadata: AudioMetadata) -> ScannedTrack {
         is_compilation,
         local_artwork,
         source_format,
+        user_rating,
     } = metadata;
     let BasicAudioMetadata {
         title,
@@ -401,7 +407,7 @@ fn scanned_track(path: &Path, metadata: AudioMetadata) -> ScannedTrack {
             date_added: None,
             last_played: None,
             play_count: None,
-            user_rating: None,
+            user_rating,
             duration_seconds,
             favorite: false,
             disc_number,

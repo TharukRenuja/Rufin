@@ -840,7 +840,9 @@ pub(crate) fn option_count(value: Option<u32>) -> String {
     value.map(|value| value.to_string()).unwrap_or_default()
 }
 pub(crate) fn option_rating(value: Option<u8>) -> String {
-    value.map(|value| value.to_string()).unwrap_or_default()
+    value
+        .map(|value| format!("{:.1}", f64::from(value) / 2.0))
+        .unwrap_or_default()
 }
 pub(crate) fn favorite_text(favorite: bool) -> String {
     if favorite { "♥" } else { "" }.to_string()

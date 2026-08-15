@@ -13,6 +13,7 @@ use lofty::file::{TaggedFile, TaggedFileExt};
 use lofty::id3::v2::Id3v2Tag;
 use lofty::picture::Picture;
 use lofty::prelude::*;
+use lofty::tag::items::popularimeter::{Popularimeter, StarRating};
 use lofty::tag::{ItemKey, ItemValue, Tag, TagItem, TagType};
 
 use super::lofty_metadata::{MetadataWriter, bpm_key, read_lofty_for_edit};
@@ -652,6 +653,78 @@ pub(super) fn write_subject(
     write_subject_targets(subject.item(), targets, edit)
 }
 
+pub(super) fn write_rating(
+    roots: &[PathBuf],
+    track: &Track,
+    rating: Option<u8>,
+) -> Result<bool, MetadataError> {
+    let Some(target) = accepted_target(roots, track) else {
+        return Ok(false);
+    };
+    if !target
+        .writer
+        .metadata_key_is_writable(ItemKey::Popularimeter)
+    {
+        return Ok(false);
+    }
+    let prepared = prepare_file(
+        &target,
+        |tag| {
+            replace_tag_rating(tag, rating);
+            Ok(HashSet::from([ItemKey::Popularimeter]))
+        },
+        |expected, actual| {
+            if rating_values(expected) == actual.map(rating_values).unwrap_or_default() {
+                Ok(())
+            } else {
+                Err(MetadataError::Write(
+                    "The rating did not survive the metadata update.".to_string(),
+                ))
+            }
+        },
+    )?;
+    commit_batch(vec![prepared], |_| Ok(()))?;
+    Ok(true)
+}
+
+fn replace_tag_rating(tag: &mut Tag, rating: Option<u8>) {
+    let mut ratings = tag.ratings().collect::<Vec<_>>();
+    tag.remove_key(ItemKey::Popularimeter);
+    if let Some(stars) = rating
+        .map(|rating| library::rating_to_whole_star(Some(rating)))
+        .and_then(star_rating)
+    {
+        if let Some(current) = ratings.first_mut() {
+            current.rating = stars;
+        } else {
+            ratings.push(Popularimeter::custom("Rufin", stars, 0));
+        }
+    } else if !ratings.is_empty() {
+        ratings.remove(0);
+    }
+    for rating in ratings {
+        tag.push_unchecked(TagItem::new(
+            ItemKey::Popularimeter,
+            ItemValue::Text(rating.to_string()),
+        ));
+    }
+}
+
+fn rating_values(tag: &Tag) -> Vec<String> {
+    tag.ratings().map(|rating| rating.to_string()).collect()
+}
+
+fn star_rating(value: u8) -> Option<StarRating> {
+    match value {
+        1 => Some(StarRating::One),
+        2 => Some(StarRating::Two),
+        3 => Some(StarRating::Three),
+        4 => Some(StarRating::Four),
+        5 => Some(StarRating::Five),
+        _ => None,
+    }
+}
+
 pub(super) fn write_mapped_subject(
     subject: &MetadataSubject,
     access: &[library::LocalAccessTarget],
@@ -830,6 +903,37 @@ fn prepare_batch_file(
     changes: &[MetadataChange],
 ) -> Result<PreparedBatchFile, MetadataError> {
     let target = &subject.target;
+    prepare_file(
+        target,
+        |tag| {
+            let mut changed = HashSet::new();
+            match item {
+                MetadataItem::Track(_) => {
+                    for change in changes {
+                        apply_change(tag, change, &mut changed);
+                    }
+                }
+                MetadataItem::Album(_) => apply_album_changes(tag, changes, &mut changed),
+                MetadataItem::Artist(artist) => {
+                    apply_artist_changes(tag, &subject.track, artist, changes, &mut changed)?
+                }
+            }
+            Ok(changed)
+        },
+        |_, verified_tag| {
+            verify_value_changes(
+                &verification_values(item, verified_tag, &subject.track)?,
+                changes,
+            )
+        },
+    )
+}
+
+fn prepare_file(
+    target: &MetadataTarget,
+    mutate: impl FnOnce(&mut Tag) -> Result<HashSet<ItemKey>, MetadataError>,
+    verify: impl FnOnce(&Tag, Option<&Tag>) -> Result<(), MetadataError>,
+) -> Result<PreparedBatchFile, MetadataError> {
     let expected_revision = file_revision(&target.path)?;
     let parent = target.path.parent().ok_or_else(|| {
         MetadataError::Write("The metadata file has no parent folder.".to_string())
@@ -844,19 +948,7 @@ fn prepare_batch_file(
     let tagged = read_tagged(temp.path(), target.writer)?;
     let mut tag = writable_tag(&tagged);
     let mut preserved = PreservedMetadata::new(&tag);
-    let mut changed = HashSet::new();
-    match item {
-        MetadataItem::Track(_) => {
-            for change in changes {
-                apply_change(&mut tag, change, &mut changed);
-            }
-        }
-        MetadataItem::Album(_) => apply_album_changes(&mut tag, changes, &mut changed),
-        MetadataItem::Artist(artist) => {
-            apply_artist_changes(&mut tag, &subject.track, artist, changes, &mut changed)?
-        }
-    }
-    preserved.allow_changes(changed);
+    preserved.allow_changes(mutate(&mut tag)?);
     save_tag(&tag, temp.path())?;
 
     let verified = read_tagged(temp.path(), target.writer)?;
@@ -866,10 +958,7 @@ fn prepare_batch_file(
             "Unrelated tags or artwork changed while preparing the metadata update.".to_string(),
         ));
     }
-    verify_value_changes(
-        &verification_values(item, verified_tag, &subject.track)?,
-        changes,
-    )?;
+    verify(&tag, verified_tag)?;
     temp.as_file()
         .sync_all()
         .map_err(|error| write_error("sync the updated metadata", error))?;
@@ -1598,5 +1687,27 @@ mod tests {
             assert!(changed.contains(&ItemKey::Bpm));
             assert!(changed.contains(&ItemKey::IntegerBpm));
         }
+    }
+
+    #[test]
+    fn rating_replaces_only_the_rating_read_by_rufin() {
+        let mut tag = Tag::new(TagType::Id3v2);
+        for rating in [
+            Popularimeter::musicbee(StarRating::Two, 7),
+            Popularimeter::picard(StarRating::Four, 11),
+        ] {
+            tag.push_unchecked(TagItem::new(
+                ItemKey::Popularimeter,
+                ItemValue::Text(rating.to_string()),
+            ));
+        }
+
+        replace_tag_rating(&mut tag, Some(9));
+
+        let ratings = tag.ratings().collect::<Vec<_>>();
+        assert_eq!(ratings[0].rating(), StarRating::Five);
+        assert_eq!(ratings[0].play_counter, 7);
+        assert_eq!(ratings[1].rating(), StarRating::Four);
+        assert_eq!(ratings[1].play_counter, 11);
     }
 }

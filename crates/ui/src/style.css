@@ -2140,3 +2140,6 @@ modelbutton.rufin-menu-selected:dir(ltr) {
 modelbutton.rufin-menu-selected:dir(rtl) {
   box-shadow: inset -2px 0 var(--accent-color);
 }
+.rating-stars {
+  color: var(--accent-color);
+}

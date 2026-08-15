@@ -218,6 +218,7 @@ pub trait SelectedSourcePort: Send + Sync {
     fn refresh_home(&self, kind: HomeSectionKind);
     fn set_music_folder(&self, folder_id: Option<MusicFolderId>);
     fn set_favorite(&self, item: FavoriteItemId, favorite: bool);
+    fn set_rating(&self, item: FavoriteItemId, rating: Option<u8>);
     fn add_playlist_tracks(&self, request: PlaylistTrackAdd) -> usize;
     fn edit_playlist(&self, edit: PlaylistEdit);
     fn folder(

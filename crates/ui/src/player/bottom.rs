@@ -23,6 +23,7 @@ use super::outputs::present_audio_output_popover;
 use super::progress::seekbar_target_seconds;
 use crate::interactions::add_widget_click;
 use crate::layout::{AllocationOwner, allocation_owner};
+use crate::ratings::RatingControl;
 use crate::routes::collection_context::{
     install_current_track_context_menu, present_current_track_context_menu,
 };
@@ -62,11 +63,12 @@ const BOTTOM_PLAYER_IDENTITY_HEIGHT: i32 = 58;
 const BOTTOM_PLAYER_TITLE_ROW_HEIGHT: i32 = 20;
 const BOTTOM_PLAYER_META_ROW_HEIGHT: i32 = 18;
 const BOTTOM_PLAYER_ACTION_SPACING: i32 = 0;
+const BOTTOM_PLAYER_ACTION_ROW_OFFSET_Y: i32 = 5;
 const BOTTOM_PLAYER_PROGRESS_SPACING: i32 = 6;
 const BOTTOM_PLAYER_VOLUME_SPACING: i32 = 1;
-const BOTTOM_PLAYER_VOLUME_MIN_WIDTH: i32 = 48;
-const BOTTOM_PLAYER_VOLUME_MAX_WIDTH: i32 = 160;
-const BOTTOM_PLAYER_VOLUME_WIDTH_RATIO: f64 = 1.0 / 16.0;
+const BOTTOM_PLAYER_VOLUME_WIDTH: i32 = 85;
+const BOTTOM_PLAYER_RATING_WIDTH: i32 = 85;
+const BOTTOM_PLAYER_RATING_HEIGHT: i32 = 24;
 const BOTTOM_PLAYER_TINY_TRANSPORT_WIDTH: i32 = 126;
 const BOTTOM_PLAYER_TINY_CONTROL_SPACING: i32 = 2;
 const BOTTOM_PLAYER_TINY_CONTROLS_WIDTH: i32 = BOTTOM_PLAYER_TINY_TRANSPORT_WIDTH;
@@ -136,6 +138,8 @@ pub(crate) struct PlayerControls {
     pub(super) lyrics_icon: gtk::DrawingArea,
     pub(super) lyrics_icon_open: Rc<Cell<bool>>,
     pub(crate) favorite_button: gtk::Button,
+    rating: RatingControl,
+    rating_available: Cell<bool>,
     progress_row: gtk::Box,
     elapsed: gtk::Label,
     progress_stack: gtk::Stack,
@@ -144,11 +148,10 @@ pub(crate) struct PlayerControls {
     waveform_key: RefCell<Option<CurrentMediaId>>,
     waveform_peak_count: Cell<usize>,
     duration: gtk::Label,
-    actions: gtk::Box,
+    actions: gtk::Overlay,
     pub(crate) mute_button: gtk::Button,
     mute_icon: gtk::DrawingArea,
     mute_icon_state: Rc<Cell<VolumeIcon>>,
-    volume_slot: gtk::Overlay,
     volume: gtk::Scale,
     pub(crate) audio_output_button: gtk::Button,
 }
@@ -183,7 +186,7 @@ struct TransportControls {
 }
 
 struct PlayerActionControls {
-    root: gtk::Box,
+    root: gtk::Overlay,
     queue_button: gtk::Button,
     queue_icon: gtk::DrawingArea,
     queue_icon_open: Rc<Cell<bool>>,
@@ -191,10 +194,10 @@ struct PlayerActionControls {
     lyrics_icon: gtk::DrawingArea,
     lyrics_icon_open: Rc<Cell<bool>>,
     favorite_button: gtk::Button,
+    rating: RatingControl,
     mute_button: gtk::Button,
     mute_icon: gtk::DrawingArea,
     mute_icon_state: Rc<Cell<VolumeIcon>>,
-    volume_slot: gtk::Overlay,
     volume: gtk::Scale,
     audio_output_button: gtk::Button,
 }
@@ -608,6 +611,15 @@ impl Shell {
                 .album
                 .set_sensitive(current.is_some_and(|entry| !entry.track.album.is_empty()));
             controls.favorite_button.set_sensitive(current.is_some());
+            let rating_available = current.is_some_and(|entry| {
+                self.rating_available(&library::FavoriteItemId::Track(entry.track.id.clone()))
+            });
+            controls.rating_available.set(rating_available);
+            controls.rating.widget().set_sensitive(rating_available);
+            controls.rating.widget().set_visible(rating_available);
+            controls
+                .rating
+                .set_rating(current.and_then(|entry| entry.track.user_rating));
         }
 
         controls.play_icon_playing.set(matches!(
@@ -808,10 +820,10 @@ pub(crate) fn build_bottom_player() -> PlayerControls {
         lyrics_icon,
         lyrics_icon_open,
         favorite_button,
+        rating,
         mute_button,
         mute_icon,
         mute_icon_state,
-        volume_slot,
         volume,
         audio_output_button,
     } = build_player_action_controls();
@@ -890,6 +902,8 @@ pub(crate) fn build_bottom_player() -> PlayerControls {
         lyrics_icon,
         lyrics_icon_open,
         favorite_button,
+        rating,
+        rating_available: Cell::new(false),
         progress_row,
         elapsed,
         progress_stack,
@@ -902,7 +916,6 @@ pub(crate) fn build_bottom_player() -> PlayerControls {
         mute_button,
         mute_icon,
         mute_icon_state,
-        volume_slot,
         volume,
         audio_output_button,
     }
@@ -1136,9 +1149,28 @@ fn build_transport_controls() -> TransportControls {
 }
 
 fn build_player_action_controls() -> PlayerActionControls {
-    let root = gtk::Box::new(gtk::Orientation::Horizontal, BOTTOM_PLAYER_ACTION_SPACING);
+    let root = gtk::Overlay::new();
     root.set_halign(gtk::Align::End);
-    root.set_valign(gtk::Align::Center);
+    root.set_valign(gtk::Align::Fill);
+    root.set_vexpand(true);
+    let rating = RatingControl::new(None);
+    rating
+        .widget()
+        .set_content_width(BOTTOM_PLAYER_RATING_WIDTH);
+    rating
+        .widget()
+        .set_content_height(BOTTOM_PLAYER_RATING_HEIGHT);
+    rating.widget().set_halign(gtk::Align::End);
+    rating.widget().set_valign(gtk::Align::Start);
+    rating.widget().set_margin_top(5);
+    rating.widget().set_margin_end(10);
+    root.add_overlay(rating.widget());
+    root.set_measure_overlay(rating.widget(), false);
+
+    let buttons = gtk::Box::new(gtk::Orientation::Horizontal, BOTTOM_PLAYER_ACTION_SPACING);
+    buttons.set_halign(gtk::Align::End);
+    buttons.set_valign(gtk::Align::Center);
+    buttons.set_margin_top(BOTTOM_PLAYER_ACTION_ROW_OFFSET_Y * 2);
     let (queue_button, queue_icon, queue_icon_open) = queue_sidebar_button("Hide sidebar");
     queue_icon.set_content_width(BOTTOM_PLAYER_ACTION_ICON_SIZE);
     queue_icon.set_content_height(BOTTOM_PLAYER_ACTION_ICON_SIZE);
@@ -1147,14 +1179,14 @@ fn build_player_action_controls() -> PlayerActionControls {
     lyrics_icon.set_content_height(BOTTOM_PLAYER_LYRICS_ICON_SIZE);
     lyrics_icon.set_margin_top(1);
     configure_player_action_button(&lyrics_button);
-    root.append(&lyrics_button);
+    buttons.append(&lyrics_button);
     configure_player_action_button(&queue_button);
-    root.append(&queue_button);
+    buttons.append(&queue_button);
     let favorite_button = favorite_icon_button("Favorite");
     favorite_button.add_css_class("player-favorite-button");
     set_button_image_pixel_size(&favorite_button, BOTTOM_PLAYER_ACTION_ICON_SIZE);
     configure_player_action_button(&favorite_button);
-    root.append(&favorite_button);
+    buttons.append(&favorite_button);
 
     let volume_group = gtk::Box::new(gtk::Orientation::Horizontal, BOTTOM_PLAYER_VOLUME_SPACING);
     volume_group.set_valign(gtk::Align::Center);
@@ -1165,6 +1197,8 @@ fn build_player_action_controls() -> PlayerActionControls {
     let (mute_button, mute_icon, mute_icon_state) = volume_icon_button("Mute");
     mute_icon.set_content_width(BOTTOM_PLAYER_VOLUME_ICON_SIZE);
     mute_icon.set_content_height(BOTTOM_PLAYER_VOLUME_ICON_SIZE);
+    mute_icon.set_halign(gtk::Align::End);
+    mute_icon.set_margin_end(2);
     mute_button.add_css_class("player-mute-button");
     configure_player_action_button(&mute_button);
     volume_group.append(&mute_button);
@@ -1176,10 +1210,11 @@ fn build_player_action_controls() -> PlayerActionControls {
     volume.set_value(1.0);
     volume.set_draw_value(false);
     install_volume_pointer_control(&volume);
-    let volume_slot = bottom_player_allocated_slot(&volume, BOTTOM_PLAYER_VOLUME_MIN_WIDTH, 1);
+    let volume_slot = bottom_player_allocated_slot(&volume, BOTTOM_PLAYER_VOLUME_WIDTH, 1);
     volume_slot.set_valign(gtk::Align::Fill);
     volume_group.append(&volume_slot);
-    root.append(&volume_group);
+    buttons.append(&volume_group);
+    root.set_child(Some(&buttons));
 
     PlayerActionControls {
         root,
@@ -1190,10 +1225,10 @@ fn build_player_action_controls() -> PlayerActionControls {
         lyrics_icon,
         lyrics_icon_open,
         favorite_button,
+        rating,
         mute_button,
         mute_icon,
         mute_icon_state,
-        volume_slot,
         volume,
         audio_output_button,
     }
@@ -1324,19 +1359,6 @@ fn set_button_image_pixel_size(button: &gtk::Button, size: i32) {
     }
 }
 
-fn bottom_player_volume_width(player_width: i32) -> i32 {
-    let actions = bottom_player_actions(player_width);
-    let fixed_width = bottom_player_action_min_width(actions) - BOTTOM_PLAYER_VOLUME_MIN_WIDTH;
-    let available_width = bottom_player_side_width(player_width).saturating_sub(fixed_width);
-    let proportional_width =
-        (f64::from(player_width) * BOTTOM_PLAYER_VOLUME_WIDTH_RATIO).round() as i32;
-
-    proportional_width.min(available_width).clamp(
-        BOTTOM_PLAYER_VOLUME_MIN_WIDTH,
-        BOTTOM_PLAYER_VOLUME_MAX_WIDTH,
-    )
-}
-
 fn bottom_player_action_count(actions: BottomPlayerActions) -> i32 {
     match actions {
         BottomPlayerActions::Volume => 0,
@@ -1352,7 +1374,7 @@ fn bottom_player_action_min_width(actions: BottomPlayerActions) -> i32 {
     BOTTOM_PLAYER_ACTION_BUTTON_SIZE * fixed_action_count
         + BOTTOM_PLAYER_ACTION_SPACING * visible_action_count
         + BOTTOM_PLAYER_VOLUME_SPACING * 2
-        + BOTTOM_PLAYER_VOLUME_MIN_WIDTH
+        + BOTTOM_PLAYER_VOLUME_WIDTH
 }
 
 fn bottom_player_side_width(player_width: i32) -> i32 {
@@ -1681,6 +1703,13 @@ pub(crate) fn connect_player_controls(shell: &Rc<Shell>) {
         .favorite_button
         .connect_clicked(move |_| favorite_shell.toggle_current_track_favorite());
 
+    let rating_shell = Rc::clone(shell);
+    shell
+        .player_view
+        .player_controls
+        .rating
+        .connect_commit(move |rating| rating_shell.set_current_track_rating(rating));
+
     let mute_shell = Rc::clone(shell);
     shell
         .player_view
@@ -1823,8 +1852,6 @@ impl Shell {
             self.apply_bottom_player_tiny(tiny);
             self.apply_bottom_player_actions(actions);
             let player = &self.player_view.player_controls;
-            let volume_width = bottom_player_volume_width(player_width);
-            player.volume_slot.set_width_request(volume_width);
             let desired_progress_width = bottom_player_progress_width(player_width);
             let progress_width = if tiny {
                 desired_progress_width
@@ -1944,6 +1971,10 @@ impl Shell {
         player
             .queue_button
             .set_visible(matches!(actions, BottomPlayerActions::Queue));
+        player
+            .rating
+            .widget()
+            .set_visible(player.rating_available.get());
     }
 }
 
@@ -1953,9 +1984,7 @@ mod tests {
     fn bottom_player_actions_never_outgrow_their_equal_side() {
         for player_width in super::BOTTOM_PLAYER_TINY_WIDTH..=4096 {
             let actions = super::bottom_player_actions(player_width);
-            let action_width = super::bottom_player_action_min_width(actions)
-                - super::BOTTOM_PLAYER_VOLUME_MIN_WIDTH
-                + super::bottom_player_volume_width(player_width);
+            let action_width = super::bottom_player_action_min_width(actions);
 
             assert!(
                 action_width <= super::bottom_player_side_width(player_width),

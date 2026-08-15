@@ -75,6 +75,7 @@ pub(crate) struct ContextMenuSurface {
     popover: gtk::PopoverMenu,
     actions: gio::SimpleActionGroup,
     entries: RefCell<Vec<ContextMenuEntry<gio::MenuItem>>>,
+    custom_children: RefCell<Vec<(String, gtk::Widget)>>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -97,6 +98,7 @@ impl ContextMenuSurface {
             menu,
             actions: gio::SimpleActionGroup::new(),
             entries: RefCell::new(Vec::new()),
+            custom_children: RefCell::new(Vec::new()),
         }
     }
 
@@ -112,6 +114,17 @@ impl ContextMenuSurface {
                 &format!("{}.{}", self.group_name, action),
                 icon_name,
             )));
+    }
+
+    pub(crate) fn append_fixed_widget(&self, id: &str, widget: &impl IsA<gtk::Widget>) {
+        let item = gio::MenuItem::new(None, None);
+        item.set_attribute_value("custom", Some(&id.to_variant()));
+        self.entries
+            .borrow_mut()
+            .push(ContextMenuEntry::Fixed(item));
+        self.custom_children
+            .borrow_mut()
+            .push((id.to_string(), widget.as_ref().clone()));
     }
 
     pub(crate) fn append_configurable_action(
@@ -167,6 +180,9 @@ impl ContextMenuSurface {
     pub(crate) fn popup(self, settings: &ContextMenuSettings) {
         for item in resolve_context_menu_entries(self.entries.into_inner(), settings) {
             self.menu.append_item(&item);
+        }
+        for (id, child) in self.custom_children.into_inner() {
+            debug_assert!(self.popover.add_child(&child, &id));
         }
         if self.menu.n_items() == 0 {
             self.popover.unparent();

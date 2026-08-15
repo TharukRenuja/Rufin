@@ -128,6 +128,14 @@ impl LocalSource {
         metadata::write_subject(&self.roots, subject, edit)
     }
 
+    pub(crate) fn write_rating(
+        &self,
+        track: &library::Track,
+        rating: Option<u8>,
+    ) -> Result<bool, library::MetadataError> {
+        metadata::write_rating(&self.roots, track, rating)
+    }
+
     pub(super) fn read_facts(
         &self,
         emitter: &BatchEmitter,

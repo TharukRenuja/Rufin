@@ -797,6 +797,46 @@ impl Source {
         }
     }
 
+    pub async fn set_rating(
+        &self,
+        item: FavoriteItemId,
+        rating: Option<u8>,
+    ) -> SourceResult<NativeSourceResult<()>> {
+        match &self.implementation {
+            Implementation::Local(_) => Ok(NativeSourceResult::Unavailable),
+            Implementation::Jellyfin(source) => source
+                .set_rating(item, rating)
+                .await
+                .map(NativeSourceResult::Available),
+            Implementation::OpenSubsonic(source) => source
+                .set_rating(item, rating)
+                .await
+                .map(NativeSourceResult::Available),
+        }
+    }
+
+    pub fn set_local_rating(
+        &self,
+        track: &library::Track,
+        rating: Option<u8>,
+    ) -> SourceResult<NativeSourceResult<()>> {
+        match &self.implementation {
+            Implementation::Local(source) => source
+                .write_rating(track, rating)
+                .map(|written| {
+                    if written {
+                        NativeSourceResult::Available(())
+                    } else {
+                        NativeSourceResult::Unavailable
+                    }
+                })
+                .map_err(|error| SourceError::Other(error.to_string())),
+            Implementation::Jellyfin(_) | Implementation::OpenSubsonic(_) => {
+                Ok(NativeSourceResult::Unavailable)
+            }
+        }
+    }
+
     pub async fn edit_playlist(&self, edit: PlaylistEdit) -> SourceResult<PlaylistAcceptance> {
         match &self.implementation {
             Implementation::Local(_) => Ok(PlaylistAcceptance::RufinOwned(edit)),
