@@ -200,6 +200,7 @@ pub trait SourcePort: Send + Sync {
     fn select_source(&self, source_id: SourceId);
     fn change_secret_storage(&self, mode: SecretStorageMode) -> Receiver<Result<(), String>>;
     fn add_local_folder(&self, path: PathBuf);
+    fn replace_local_folder(&self, current: String, replacement: PathBuf);
     fn remove_local_folder(&self, path: String);
     fn refresh_source(&self, source_id: SourceId);
     fn check_for_source_changes(&self);

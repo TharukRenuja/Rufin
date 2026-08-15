@@ -1914,6 +1914,57 @@ impl SourcePort for SourceOwner {
         });
     }
 
+    fn replace_local_folder(&self, current: String, replacement: PathBuf) {
+        let local = self
+            .shared
+            .settings
+            .load()
+            .sources
+            .configured
+            .iter()
+            .find(|source| {
+                matches!(
+                    source.configuration.editable(),
+                    Ok(sources::EditableSource::Local { .. })
+                )
+            })
+            .cloned();
+        let Some(local) = local else {
+            self.shared.warn_nonfatal("Local is not configured");
+            return;
+        };
+        let mut roots = match local_roots(&local.configuration) {
+            Ok(roots) => roots,
+            Err(error) => {
+                self.shared.warn_nonfatal(&error);
+                return;
+            }
+        };
+        let Some(root) = roots
+            .iter_mut()
+            .find(|root| root.to_string_lossy() == current)
+        else {
+            self.shared
+                .warn_nonfatal("The Local folder is no longer configured");
+            return;
+        };
+        if root == &replacement {
+            return;
+        }
+        *root = replacement;
+        let source_id = local.configuration.source_id;
+        self.spawn_serialized(true, move |mut operations, cancelled| async move {
+            operations
+                .apply_source_update(
+                    source_id,
+                    SourceSettingsInput::Local { roots },
+                    true,
+                    cancelled,
+                )
+                .await;
+        });
+    }
+
     fn remove_local_folder(&self, path: String) {
         let local = self
             .shared

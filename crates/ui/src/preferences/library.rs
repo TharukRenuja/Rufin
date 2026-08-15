@@ -1035,6 +1035,28 @@ fn confirm_remove_local_folder(shell: &Rc<Shell>, path: String, row: adw::Action
     );
 }
 
+pub(crate) fn locate_local_folder(shell: &Rc<Shell>, current: String) {
+    let shell = Rc::clone(shell);
+    gtk::glib::spawn_future_local(async move {
+        let chooser = gtk::FileDialog::builder()
+            .title(tr("Select Music Folder"))
+            .build();
+        let Ok(folder) = chooser
+            .select_folder_future(Some(&shell.chrome.window))
+            .await
+        else {
+            return;
+        };
+        let Some(replacement) = folder.path() else {
+            return;
+        };
+        shell
+            .products
+            .source
+            .replace_local_folder(current, replacement);
+    });
+}
+
 fn source_summary_subtitle(
     server: &SourceSummary,
     summary: Option<&SourceLocalAccessSummary>,

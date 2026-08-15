@@ -27,6 +27,7 @@ use layout::{
     left_sidebar_mode_from_index, left_sidebar_row, right_sidebar_mode_from_index,
     right_sidebar_row, visibility_position_subtitle,
 };
+pub(crate) use library::locate_local_folder;
 
 #[cfg(test)]
 mod tests;
