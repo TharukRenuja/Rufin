@@ -1993,6 +1993,11 @@ msgstr "není"
 msgid "is"
 msgstr "je"
 
+#, fuzzy
+#| msgid "128 kbps"
+msgid "kbps"
+msgstr "128 kbps"
+
 msgid "macOS"
 msgstr "macOS"
 

@@ -1997,6 +1997,11 @@ msgstr "ist nicht"
 msgid "is"
 msgstr "ist"
 
+#, fuzzy
+#| msgid "128 kbps"
+msgid "kbps"
+msgstr "128 kbps"
+
 msgid "macOS"
 msgstr "macOS"
 

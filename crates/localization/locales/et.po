@@ -1984,6 +1984,11 @@ msgstr "pole"
 msgid "is"
 msgstr "on"
 
+#, fuzzy
+#| msgid "128 kbps"
+msgid "kbps"
+msgstr "128 kbps"
+
 msgid "macOS"
 msgstr "macOS"
 

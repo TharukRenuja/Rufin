@@ -1990,6 +1990,11 @@ msgstr "nav"
 msgid "is"
 msgstr "ir"
 
+#, fuzzy
+#| msgid "128 kbps"
+msgid "kbps"
+msgstr "128 kbps"
+
 msgid "macOS"
 msgstr "macOS"
 
