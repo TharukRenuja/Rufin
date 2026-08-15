@@ -3383,17 +3383,16 @@ mod tests {
                 0,
             )
             .expect("start sample capture playback");
-        let deadline = Instant::now() + Duration::from_secs(2);
-        let sample = loop {
-            if let Some(sample) = engine
+        assert!(
+            engine
                 .primary
-                .try_pull_output_sample(gst::ClockTime::from_mseconds(20))
-            {
-                break sample;
-            }
-            assert!(Instant::now() < deadline, "first output sample");
-            std::thread::yield_now();
-        };
+                .wait_for_state(gst::State::Playing, gst::ClockTime::from_seconds(10)),
+            "sample capture playback state"
+        );
+        let sample = engine
+            .primary
+            .try_pull_output_sample(gst::ClockTime::ZERO)
+            .expect("first output sample");
         let buffer = sample.buffer().expect("sample buffer");
         let map = buffer.map_readable().expect("map output samples");
         let samples = map.as_slice();

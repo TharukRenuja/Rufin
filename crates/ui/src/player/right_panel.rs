@@ -53,7 +53,7 @@ pub(crate) fn build_right_panel(end_window_controls: &impl IsA<gtk::Widget>) -> 
     queue_header.set_valign(gtk::Align::Center);
     queue_header.set_margin_top(QUEUE_HEADER_TOP_MARGIN);
     queue_header.set_margin_bottom(0);
-    queue_header.set_margin_start(12);
+    queue_header.set_margin_start(QUEUE_HEADER_TOP_MARGIN);
     queue_header.set_margin_end(WINDOW_CHROME_MARGIN_END);
 
     let queue_search = gtk::SearchEntry::new();
@@ -71,7 +71,7 @@ pub(crate) fn build_right_panel(end_window_controls: &impl IsA<gtk::Widget>) -> 
     queue_panel.add_css_class("queue-panel");
     queue_panel.set_vexpand(true);
     queue_panel.set_margin_top(8);
-    queue_panel.set_margin_start(8);
+    queue_panel.set_margin_start(QUEUE_HEADER_TOP_MARGIN);
     queue_panel.set_margin_end(0);
     queue_panel.set_margin_bottom(0);
     queue_panel.set_overflow(gtk::Overflow::Hidden);
