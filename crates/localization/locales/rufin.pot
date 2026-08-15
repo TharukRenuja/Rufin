@@ -1945,6 +1945,9 @@ msgstr ""
 msgid "is"
 msgstr ""
 
+msgid "kbps"
+msgstr ""
+
 msgid "macOS"
 msgstr ""
 
