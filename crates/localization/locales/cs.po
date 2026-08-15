@@ -31,8 +31,7 @@ msgstr ""
 "V protokolech jsou utajené údaje a absolutní cesty ke složkám začerněny, ale "
 "možná budete chtít protokoly před jejich sdílením přesto zkontrolovat"
 
-msgid ""
-"No results \302\257\\_(\302\260\342\225\255\342\225\256\302\260)_/\302\257"
+msgid "No results ¯\\_(°╭╮°)_/¯"
 msgstr ""
 
 msgid ""
@@ -42,7 +41,6 @@ msgstr ""
 "Smazány budou pouze soubory stažené na základě tohoto pravidla. Sdílené a "
 "ručně stažené soubory zůstanou zachovány"
 
-#, rust-format
 msgid ""
 "Saved mapping. {direct} direct, {prefix} prefix, {metadata} metadata, "
 "{unmatched} unmatched of {total} track"
@@ -109,7 +107,6 @@ msgstr ""
 "Režim Skladba vyrovnává zvuk každé skladby, zatímco režim Album zachovává "
 "rozdíly mezi skladbami v rámci každého alba"
 
-#, rust-format
 msgid ""
 "Unsaved changes. {direct} direct, {prefix} prefix, {metadata} metadata, "
 "{unmatched} unmatched of {total} track"
@@ -327,7 +324,6 @@ msgstr "Změnit tajné úložiště"
 msgid "Change"
 msgstr "Změnit"
 
-#, rust-format
 msgid "Changes apply to {count} track"
 msgid_plural "Changes apply to {count} tracks"
 msgstr[0] "Změny se vztahují na {count} skladbu"
@@ -408,7 +404,6 @@ msgstr "Kompaktní"
 msgid "Connect"
 msgstr "Připojit"
 
-#, rust-format
 msgid "Connected as {username}"
 msgstr "Připojen jako {username}"
 
@@ -439,7 +434,6 @@ msgstr "Nelze uložit diagnostický protokol"
 msgid "Could not update favorites"
 msgstr "Nelze aktualizovat oblíbené"
 
-#, rust-format
 msgid "Couldn't connect to {service}"
 msgstr "Nelze se připojit k {service}"
 
@@ -881,11 +875,21 @@ msgstr "Mapování lokálních souborů"
 msgid "Local library"
 msgstr "Místní knihovna"
 
+#, fuzzy
+#| msgid "Local music folder"
+msgid "Local music folder is unavailable"
+msgstr "Místní hudební složka"
+
 msgid "Local music folder"
 msgstr "Místní hudební složka"
 
 msgid "Local"
 msgstr "Místní"
+
+#, fuzzy
+#| msgid "Local Folders"
+msgid "Locate Folder"
+msgstr "Místní složky"
 
 msgid "Lock metadata"
 msgstr "Uzamknout metadata"
@@ -1639,7 +1643,6 @@ msgstr "Ukázka serveru"
 msgid "Server Settings"
 msgstr "Nastavení serveru"
 
-#, rust-format
 msgid "Server discovery failed: {error}"
 msgstr "Server se nepodařilo nalézt: {error}"
 
@@ -1715,7 +1718,6 @@ msgstr "Promíchání"
 msgid "Sidebar Items"
 msgstr "Položky postranního panelu"
 
-#, rust-format
 msgid "Sidebar item {position}"
 msgstr "Položka postranního panelu {position}"
 
@@ -2006,56 +2008,48 @@ msgstr "dnes"
 msgid "yesterday"
 msgstr "včera"
 
-#, rust-format
 msgid "{count} album"
 msgid_plural "{count} albums"
 msgstr[0] "{count} album"
 msgstr[1] "{count} alba"
 msgstr[2] "{count} alb"
 
-#, rust-format
 msgid "{count} day ago"
 msgid_plural "{count} days ago"
 msgstr[0] "{count} dnem"
 msgstr[1] "{count} dny"
 msgstr[2] "{count} dny"
 
-#, rust-format
 msgid "{count} folder selected"
 msgid_plural "{count} folders selected"
 msgstr[0] "{count} složka vybrána"
 msgstr[1] "{count} složky vybrány"
 msgstr[2] "{count} složek vybráno"
 
-#, rust-format
 msgid "{count} month ago"
 msgid_plural "{count} months ago"
 msgstr[0] "před {count} měsícem"
 msgstr[1] "před {count} měsíci"
 msgstr[2] "před {count} měsíci"
 
-#, rust-format
 msgid "{count} result"
 msgid_plural "{count} results"
 msgstr[0] "{count} výsledek"
 msgstr[1] "{count} výsledky"
 msgstr[2] "{count} výsledků"
 
-#, rust-format
 msgid "{count} track"
 msgid_plural "{count} tracks"
 msgstr[0] "{count} skladba"
 msgstr[1] "{count} skladby"
 msgstr[2] "{count} skladeb"
 
-#, rust-format
 msgid "{count} week ago"
 msgid_plural "{count} weeks ago"
 msgstr[0] "před {count} týdnem"
 msgstr[1] "před {count} týdny"
 msgstr[2] "před {count} týdny"
 
-#, rust-format
 msgid "{count} year ago"
 msgid_plural "{count} years ago"
 msgstr[0] "Před {count} rokem"

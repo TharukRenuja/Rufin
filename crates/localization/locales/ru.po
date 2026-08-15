@@ -881,11 +881,21 @@ msgstr "Сопоставление локальных файлов"
 msgid "Local library"
 msgstr "Локальная библиотека"
 
+#, fuzzy
+#| msgid "Local music folder"
+msgid "Local music folder is unavailable"
+msgstr "Локальная папка с музыкой"
+
 msgid "Local music folder"
 msgstr "Локальная папка с музыкой"
 
 msgid "Local"
 msgstr "Локальный источник"
+
+#, fuzzy
+#| msgid "Local Folders"
+msgid "Locate Folder"
+msgstr "Локальные Папки"
 
 msgid "Lock metadata"
 msgstr "Заблокировать метаданные"

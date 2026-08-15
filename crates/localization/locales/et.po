@@ -868,11 +868,21 @@ msgstr "Kohalike failide vastendus"
 msgid "Local library"
 msgstr "Kohalik meediakogu"
 
+#, fuzzy
+#| msgid "Local music folder"
+msgid "Local music folder is unavailable"
+msgstr "Kohalik muusikakaust"
+
 msgid "Local music folder"
 msgstr "Kohalik muusikakaust"
 
 msgid "Local"
 msgstr "Kohalik andmekogu"
+
+#, fuzzy
+#| msgid "Local Folders"
+msgid "Locate Folder"
+msgstr "Kohalikud kaustad"
 
 msgid "Lock metadata"
 msgstr "Lukusta metateave"
