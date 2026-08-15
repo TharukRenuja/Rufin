@@ -7,8 +7,8 @@ msgstr ""
 "Project-Id-Version: Rufin 0.3.13\n"
 "Report-Msgid-Bugs-To: https://github.com/screwys/Rufin/issues\n"
 "POT-Creation-Date: YEAR-MO-DA HO:MI+ZONE\n"
-"PO-Revision-Date: 2026-08-14 09:51+0000\n"
-"Last-Translator: Priit Jõerüüt <jrthwlate@users.noreply.hosted.weblate.org>\n"
+"PO-Revision-Date: 2026-08-15 18:23+0000\n"
+"Last-Translator: Jakub Cabal <info@jakubcabal.cz>\n"
 "Language-Team: Estonian <https://hosted.weblate.org/projects/rufin/app/et/>\n"
 "Language: et\n"
 "MIME-Version: 1.0\n"
@@ -868,11 +868,21 @@ msgstr "Kohalike failide vastendus"
 msgid "Local library"
 msgstr "Kohalik meediakogu"
 
+#, fuzzy
+#| msgid "Local music folder"
+msgid "Local music folder is unavailable"
+msgstr "Kohalik muusikakaust"
+
 msgid "Local music folder"
 msgstr "Kohalik muusikakaust"
 
 msgid "Local"
 msgstr "Kohalik andmekogu"
+
+#, fuzzy
+#| msgid "Local Folders"
+msgid "Locate Folder"
+msgstr "Kohalikud kaustad"
 
 msgid "Lock metadata"
 msgstr "Lukusta metateave"

@@ -875,11 +875,21 @@ msgstr "Zuordnung lokaler Dateien"
 msgid "Local library"
 msgstr "Lokale Mediathek"
 
+#, fuzzy
+#| msgid "Local music folder"
+msgid "Local music folder is unavailable"
+msgstr "Lokaler Musikordner"
+
 msgid "Local music folder"
 msgstr "Lokaler Musikordner"
 
 msgid "Local"
 msgstr "Lokal"
+
+#, fuzzy
+#| msgid "Local Folders"
+msgid "Locate Folder"
+msgstr "Lokale Ordner"
 
 msgid "Lock metadata"
 msgstr "Metadaten sperren"

@@ -875,11 +875,21 @@ msgstr "Lokālo failu sasaiste"
 msgid "Local library"
 msgstr "Lokālā mūzikas bibliotēka"
 
+#, fuzzy
+#| msgid "Local music folder"
+msgid "Local music folder is unavailable"
+msgstr "Lokālā mūzikas mape"
+
 msgid "Local music folder"
 msgstr "Lokālā mūzikas mape"
 
 msgid "Local"
 msgstr "Lokāls"
+
+#, fuzzy
+#| msgid "Local Folders"
+msgid "Locate Folder"
+msgstr "Lokālās mapes"
 
 msgid "Lock metadata"
 msgstr "Bloķēt metadatus"
