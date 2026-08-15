@@ -6,7 +6,7 @@ use std::{
 use super::{
     LASTFM_API_CREATE_URL, LISTENBRAINZ_TOKEN_URL, SCROBBLING_ICON_NAME,
     context_menu::context_menus_expander, layout::populate_home_block_rows, layout_group,
-    selection_row, sidebar_items_expander,
+    quality_selection_row, selection_row, sidebar_items_expander,
 };
 use crate::player::{
     build_equalizer_preset_row, connect_equalizer_scale_commit, equalizer_band_title,
@@ -549,14 +549,14 @@ pub(crate) fn playback_page(shell: &Rc<Shell>) -> adw::PreferencesPage {
     audio_group.add(&volume_scale_row);
 
     let quality_shell = Rc::clone(shell);
-    let quality_row = selection_row(
+    let quality_row = quality_selection_row(
         &tr("Stream quality"),
         &[
-            tr("Original"),
-            tr("320 kbps"),
-            tr("256 kbps"),
-            tr("192 kbps"),
-            tr("128 kbps"),
+            StreamQuality::Original,
+            StreamQuality::MaxBitrateKbps(320),
+            StreamQuality::MaxBitrateKbps(256),
+            StreamQuality::MaxBitrateKbps(192),
+            StreamQuality::MaxBitrateKbps(128),
         ],
         stream_quality_index(settings.stream_quality),
         move |selected| {

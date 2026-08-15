@@ -13,7 +13,7 @@ use localization::{msgid, tr};
 use super::{
     PreferencesNavigationControls,
     layout::button_row,
-    selection_row,
+    quality_selection_row,
     source::{
         configured_source_display_name, configured_source_icon_name,
         configured_source_kind_display_name,
@@ -301,19 +301,14 @@ fn library_sources_page(
         let quality_source_id = server.id.clone();
         let quality_choices =
             download_quality_choices(server.transcoded_download_bitrate_limit_kbps);
-        let quality_labels = quality_choices
-            .iter()
-            .copied()
-            .map(download_quality_label)
-            .collect::<Vec<_>>();
         let quality_index = quality_choices
             .iter()
             .position(|quality| *quality == download_settings.quality)
             .unwrap_or_default() as u32;
         let selected_qualities = quality_choices.clone();
-        let quality = selection_row(
+        let quality = quality_selection_row(
             &tr("Download quality"),
-            &quality_labels,
+            &quality_choices,
             quality_index,
             move |selected| {
                 let quality = selected_qualities
@@ -1143,17 +1138,6 @@ fn download_quality_choices(limit_kbps: Option<u32>) -> Vec<StreamQuality> {
                 .is_none_or(|bitrate| limit_kbps.is_none_or(|limit| bitrate <= limit))
         })
         .collect()
-}
-
-fn download_quality_label(quality: StreamQuality) -> String {
-    match quality {
-        StreamQuality::Original => tr("Original"),
-        StreamQuality::MaxBitrateKbps(320) => tr("320 kbps"),
-        StreamQuality::MaxBitrateKbps(256) => tr("256 kbps"),
-        StreamQuality::MaxBitrateKbps(192) => tr("192 kbps"),
-        StreamQuality::MaxBitrateKbps(128) => tr("128 kbps"),
-        StreamQuality::MaxBitrateKbps(bitrate) => format!("{bitrate} kbps"),
-    }
 }
 
 #[cfg(test)]
