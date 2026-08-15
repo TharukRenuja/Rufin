@@ -1,3 +1,4 @@
+use std::path::Path;
 use std::rc::Rc;
 use std::sync::Arc;
 
@@ -13,7 +14,9 @@ use crate::player::{now_playing_notification_can_send, now_playing_notification_
 use crate::preferences::dialogs::release_notes::apply_release_update;
 use crate::routes::playlist_picker::refresh_context_playlist_picker;
 use crate::routes::route::Route;
-use crate::runtime::source::{DiscoveryStatus, DiscoveryUpdate, SourceOperation};
+use crate::runtime::source::{
+    ConfiguredSources, DiscoveryStatus, DiscoveryUpdate, LocalFolder, SourceOperation,
+};
 use crate::runtime::{
     HomePublication, ProductReceivers, SelectedLibraryUpdate, SourceEvent, SourceNotice,
     SourceNoticeKind, WaveformProjection,
@@ -540,6 +543,13 @@ fn finish_playback_projection(
     notices: Vec<playback::PlaybackNotice>,
     queue_page_changed: bool,
 ) {
+    if let Some(folder) = unavailable_local_folder_for_failed_playback(
+        previous_player.as_ref(),
+        &next_player,
+        &shell.source.configured.borrow(),
+    ) {
+        show_local_folder_recovery(shell, folder);
+    }
     let previous_media = previous_player
         .as_ref()
         .and_then(|player| player.transport.current.as_ref())
@@ -681,6 +691,55 @@ fn finish_playback_projection(
     }
 }
 
+fn unavailable_local_folder_for_failed_playback(
+    previous: Option<&playback::PlaybackView>,
+    next: &playback::PlaybackView,
+    configured: &ConfiguredSources,
+) -> Option<String> {
+    let error = next.transport.error.as_ref()?;
+    if previous.and_then(|player| player.transport.error.as_ref()) == Some(error) {
+        return None;
+    }
+    if !configured
+        .sources
+        .iter()
+        .any(|source| source.id == next.transport.source_id && source.kind == "local")
+    {
+        return None;
+    }
+    let source_path = next
+        .transport
+        .current
+        .as_ref()?
+        .track
+        .source_path
+        .as_deref()?;
+    unavailable_local_folder_for_path(&configured.local_folders, source_path)
+}
+
+fn unavailable_local_folder_for_path(folders: &[LocalFolder], source_path: &str) -> Option<String> {
+    let source_path = Path::new(source_path);
+    folders
+        .iter()
+        .find(|folder| {
+            let root = Path::new(&folder.path);
+            source_path.starts_with(root) && std::fs::read_dir(root).is_err()
+        })
+        .map(|folder| folder.path.clone())
+}
+
+fn show_local_folder_recovery(shell: &Rc<Shell>, folder: String) {
+    let toast = adw::Toast::new(&tr("Local music folder is unavailable"));
+    toast.set_button_label(Some(&tr("Locate Folder")));
+    toast.set_timeout(0);
+    let recovery_shell = Rc::clone(shell);
+    toast.connect_button_clicked(move |toast| {
+        toast.dismiss();
+        crate::preferences::locate_local_folder(&recovery_shell, folder.clone());
+    });
+    shell.chrome.toast_overlay.add_toast(toast);
+}
+
 fn queue_panel_refresh_needed(
     page_changed: bool,
     previous_current: Option<&playback::OccurrenceId>,
@@ -766,8 +825,11 @@ mod tests {
     use super::{
         bottom_player_can_update_position_only, media_controls_static_state_changed,
         queue_panel_refresh_needed, source_add_completed, source_operation_started_blocking,
+        unavailable_local_folder_for_path,
     };
-    use crate::runtime::source::{SourceOperation, SourceProgress, SourceProgressStage};
+    use crate::runtime::source::{
+        LocalFolder, SourceOperation, SourceProgress, SourceProgressStage,
+    };
 
     fn adding() -> SourceOperation {
         SourceOperation::Adding {
@@ -832,6 +894,29 @@ mod tests {
             Some(&current),
             Some(&current)
         ));
+    }
+
+    #[test]
+    fn local_folder_recovery_requires_the_tracks_root_to_be_unavailable() {
+        let directory = tempfile::tempdir().expect("temporary local folder parent");
+        let root = directory.path().join("Music");
+        std::fs::create_dir(&root).expect("create Local root");
+        let root_text = root.to_string_lossy().into_owned();
+        let folders = [LocalFolder {
+            path: root_text.clone(),
+        }];
+        let track = root.join("Artist").join("Track.flac");
+
+        assert_eq!(
+            unavailable_local_folder_for_path(&folders, &track.to_string_lossy()),
+            None
+        );
+
+        std::fs::remove_dir(&root).expect("make Local root unavailable");
+        assert_eq!(
+            unavailable_local_folder_for_path(&folders, &track.to_string_lossy()),
+            Some(root_text)
+        );
     }
 
     #[test]

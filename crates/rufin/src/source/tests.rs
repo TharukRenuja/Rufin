@@ -705,6 +705,76 @@ fn stopping_observer_waits_for_its_thread_to_release_owned_state() {
 }
 
 #[test]
+fn replacing_unavailable_local_folder_recovers_configured_source() {
+    let directory = tempfile::tempdir().expect("temporary Rufin data directory");
+    let unavailable = directory.path().join("Unavailable");
+    let replacement = directory.path().join("Replacement");
+    std::fs::create_dir(&unavailable).expect("create original Local root");
+    std::fs::create_dir(&replacement).expect("create replacement Local root");
+    let runtime = test_runtime();
+    let connected = runtime
+        .block_on(Source::connect(SourceSetupInput::Local(
+            LocalFolderHostInput {
+                roots: vec![unavailable.clone()],
+            },
+        )))
+        .expect("connect original Local source");
+    let (configuration, _source, credential) = connected.into_parts();
+    assert_eq!(credential, None);
+    let source_id = configuration.source_id.clone();
+    let configured_root = local_roots(&configuration)
+        .expect("configured Local roots")
+        .into_iter()
+        .next()
+        .expect("original Local root");
+    std::fs::remove_dir(&unavailable).expect("make original Local root unavailable");
+
+    let settings = SettingsFile::memory();
+    settings
+        .update(|stored| {
+            stored.sources.configured = vec![ConfiguredSource {
+                configuration,
+                credential_ref: None,
+                music_folder_id: None,
+                local_access: None,
+            }];
+            Ok(())
+        })
+        .expect("save original Local source");
+    let libraries = Libraries::open(directory.path().join("library.db")).expect("open Library");
+    let (bootstrap, events) = test_owner(directory.path(), &runtime, libraries, settings);
+
+    SourcePort::replace_local_folder(
+        bootstrap.owner.as_ref(),
+        configured_root.to_string_lossy().into_owned(),
+        replacement.clone(),
+    );
+    runtime.block_on(async {
+        tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                if matches!(events.recv().await, Ok(SourceEvent::Configured(_))) {
+                    break;
+                }
+            }
+        })
+        .await
+        .expect("folder replacement completes");
+    });
+
+    let saved = configured_source(&bootstrap.owner.shared.settings.load().sources, &source_id)
+        .expect("replacement keeps the configured Local source");
+    assert_eq!(saved.configuration.source_id, source_id);
+    assert_eq!(
+        local_roots(&saved.configuration).expect("saved replacement Local roots"),
+        vec![
+            replacement
+                .canonicalize()
+                .expect("canonical replacement root")
+        ]
+    );
+}
+
+#[test]
 fn same_session_executor_change_retires_previous_access_tasks() {
     let directory = tempfile::tempdir().expect("temporary Rufin data directory");
     let root_a = directory.path().join("A");
