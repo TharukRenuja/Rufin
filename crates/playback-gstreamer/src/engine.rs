@@ -1528,6 +1528,21 @@ impl GstEngine {
     }
 
     pub(super) fn start_seek(&mut self, millis: u64) -> Result<(), String> {
+        if millis != 0 {
+            let now = Instant::now();
+            let physical_target = self.active_pipeline().physical_seek_target(millis);
+            if self.pending_seek.as_ref().is_some_and(|pending| {
+                pending.kind == PendingSeekKind::Interactive
+                    && pending.target_millis == physical_target
+                    && now < pending.expires_at
+            }) {
+                debug!(
+                    target_millis = millis,
+                    "ignored repeated seek while the same target remains unsettled"
+                );
+                return Ok(());
+            }
+        }
         let logical_state = if self.desired_playing {
             BackendState::Playing
         } else {
@@ -3482,6 +3497,32 @@ mod tests {
 
         assert!(!levels.is_empty());
         engine.shutdown();
+    }
+
+    #[test]
+    fn unsettled_seek_keeps_ownership_of_its_exact_target() {
+        let events = Arc::new(Mutex::new(EventMailbox::default()));
+        let mut engine = GstEngine::new(events);
+        engine.pending_seek = Some(PendingSeek::interactive(
+            1_000,
+            BackendState::Playing,
+            Instant::now(),
+        ));
+        let first_expiry = engine
+            .pending_seek
+            .as_ref()
+            .expect("pending seek")
+            .expires_at;
+
+        engine.start_seek(1_000).expect("same pending target");
+        assert_eq!(
+            engine.pending_seek.as_ref().unwrap().expires_at,
+            first_expiry
+        );
+        assert!(engine.start_seek(1_500).is_err(), "different target");
+
+        engine.pending_seek.as_mut().unwrap().expires_at = Instant::now();
+        assert!(engine.start_seek(1_000).is_err(), "expired target retry");
     }
 
     #[test]
