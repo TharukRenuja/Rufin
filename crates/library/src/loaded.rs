@@ -443,7 +443,7 @@ pub(crate) struct LoadedState {
     pub(crate) artwork_items: HashMap<String, HashSet<LocalArtworkItemId>>,
     pub(crate) local_access_mapping: Option<LocalAccessMapping>,
     pub(crate) local_access: Vec<LocalAccessFile>,
-    pub(crate) local_access_paths: HashSet<String>,
+    pub(crate) local_access_paths: HashSet<PathBuf>,
     pub(crate) local_access_index: HashMap<LocalMatchKey, Vec<usize>>,
     pub(crate) downloaded_files: HashMap<TrackId, PathBuf>,
     pub(crate) download_coverage: crate::download_coverage::DownloadCoverage,
