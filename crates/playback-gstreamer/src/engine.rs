@@ -1310,13 +1310,29 @@ impl GstEngine {
                 run,
                 position_millis,
             } => {
+                debug!(
+                    run = %run,
+                    target_millis = position_millis,
+                    "started handling GStreamer seek command"
+                );
                 if self.run_is_current(run) {
                     let result = self.start_seek(position_millis);
                     if result.is_ok() {
                         self.prepare_reserved_incoming();
                     }
+                    debug!(
+                        run = %run,
+                        target_millis = position_millis,
+                        succeeded = result.is_ok(),
+                        "finished handling GStreamer seek command"
+                    );
                     result
                 } else {
+                    debug!(
+                        run = %run,
+                        target_millis = position_millis,
+                        "ignored stale GStreamer seek command"
+                    );
                     Ok(())
                 }
             }
@@ -1669,11 +1685,18 @@ impl GstEngine {
     }
 
     fn poll_bus(&mut self) {
-        while let Some((id, message)) = self.primary.pop_bus_message() {
-            self.handle_message(Slot::Primary, id, &message);
-        }
-        while let Some((id, message)) = self.secondary.pop_bus_message() {
-            self.handle_message(Slot::Secondary, id, &message);
+        let started_at = Instant::now();
+        let mut messages = 0_u64;
+        let mut reported_slow_drain = false;
+        for slot in [Slot::Primary, Slot::Secondary] {
+            while let Some((id, message)) = self.pipeline_for_slot(slot).pop_bus_message() {
+                self.handle_message(slot, id, &message);
+                messages += 1;
+                if !reported_slow_drain && started_at.elapsed() >= Duration::from_millis(250) {
+                    warn!(messages, "GStreamer bus drain has not yielded to commands");
+                    reported_slow_drain = true;
+                }
+            }
         }
     }
 
