@@ -680,9 +680,6 @@ msgstr ""
 msgid "Hidden"
 msgstr ""
 
-msgid "Hide lyrics"
-msgstr ""
-
 msgid "Hide sidebar"
 msgstr ""
 
@@ -1211,6 +1208,12 @@ msgstr ""
 msgid "Play/Pause"
 msgstr ""
 
+msgid "Playback settings"
+msgstr ""
+
+msgid "Playback speed"
+msgstr ""
+
 msgid "Playback"
 msgstr ""
 
@@ -1532,9 +1535,6 @@ msgstr ""
 msgid "Searching..."
 msgstr ""
 
-msgid "Seconds"
-msgstr ""
-
 msgid "Secret storage"
 msgstr ""
 
@@ -1616,9 +1616,6 @@ msgstr ""
 msgid "Shared secret"
 msgstr ""
 
-msgid "Show Lyrics Panel"
-msgstr ""
-
 msgid "Show Rufin"
 msgstr ""
 
@@ -1641,6 +1638,9 @@ msgid "Show sidebar"
 msgstr ""
 
 msgid "Show tray icon"
+msgstr ""
+
+msgid "Show visualizer"
 msgstr ""
 
 msgid "Show/hide lyrics"
@@ -1935,6 +1935,9 @@ msgid "is not"
 msgstr ""
 
 msgid "is"
+msgstr ""
+
+msgid "kbps"
 msgstr ""
 
 msgid "macOS"

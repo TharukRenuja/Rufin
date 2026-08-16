@@ -714,9 +714,6 @@ msgstr "Abiteave"
 msgid "Hidden"
 msgstr "Peidetud"
 
-msgid "Hide lyrics"
-msgstr "Peida laulusõnad"
-
 msgid "Hide sidebar"
 msgstr "Peida külgriba"
 
@@ -1255,6 +1252,16 @@ msgstr "Esita"
 msgid "Play/Pause"
 msgstr "Esita/Peata esitus"
 
+#, fuzzy
+#| msgid "Lyrics settings"
+msgid "Playback settings"
+msgstr "Laulusõnade seadistused"
+
+#, fuzzy
+#| msgid "Playback"
+msgid "Playback speed"
+msgstr "Taasesitus"
+
 msgid "Playback"
 msgstr "Taasesitus"
 
@@ -1576,9 +1583,6 @@ msgstr "Otsing algab automaatselt"
 msgid "Searching..."
 msgstr "Otsin…"
 
-msgid "Seconds"
-msgstr "Sekundites"
-
 msgid "Secret storage"
 msgstr "Salajane salvestusruum"
 
@@ -1660,9 +1664,6 @@ msgstr "Märgi Discordis tegevuseks kuulamine (Listening)"
 msgid "Shared secret"
 msgstr "Jagatud saladus"
 
-msgid "Show Lyrics Panel"
-msgstr "Näita laulusõnade riba"
-
 msgid "Show Rufin"
 msgstr "Näita Rufinit"
 
@@ -1686,6 +1687,11 @@ msgstr "Näita külgriba"
 
 msgid "Show tray icon"
 msgstr "Näita süsteemisalve ikooni"
+
+#, fuzzy
+#| msgid "Visualizer"
+msgid "Show visualizer"
+msgstr "Visualiseerija"
 
 msgid "Show/hide lyrics"
 msgstr "Kuva/peida laulusõnad"
@@ -1984,6 +1990,11 @@ msgstr "pole"
 msgid "is"
 msgstr "on"
 
+#, fuzzy
+#| msgid "128 kbps"
+msgid "kbps"
+msgstr "128 kbps"
+
 msgid "macOS"
 msgstr "macOS"
 
@@ -2038,6 +2049,15 @@ msgid "{count} year ago"
 msgid_plural "{count} years ago"
 msgstr[0] "{count} aasta tagasi"
 msgstr[1] "{count} aastat tagasi"
+
+#~ msgid "Hide lyrics"
+#~ msgstr "Peida laulusõnad"
+
+#~ msgid "Seconds"
+#~ msgstr "Sekundites"
+
+#~ msgid "Show Lyrics Panel"
+#~ msgstr "Näita laulusõnade riba"
 
 #~ msgid "ReplayGain"
 #~ msgstr "Esitusvaljuse tundlikkus"

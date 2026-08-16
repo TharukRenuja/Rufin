@@ -722,9 +722,6 @@ msgstr "Hilfe"
 msgid "Hidden"
 msgstr "Versteckt"
 
-msgid "Hide lyrics"
-msgstr "Songtexte ausblenden"
-
 msgid "Hide sidebar"
 msgstr "Seitenleiste ausblenden"
 
@@ -1264,6 +1261,16 @@ msgstr "Abspielen"
 msgid "Play/Pause"
 msgstr "Wiedergabe/Pause"
 
+#, fuzzy
+#| msgid "Lyrics settings"
+msgid "Playback settings"
+msgstr "Liedtexteinstellungen"
+
+#, fuzzy
+#| msgid "Playback"
+msgid "Playback speed"
+msgstr "Wiedergabe"
+
 msgid "Playback"
 msgstr "Wiedergabe"
 
@@ -1586,9 +1593,6 @@ msgstr "Die Suche startet automatisch"
 msgid "Searching..."
 msgstr "Suche..."
 
-msgid "Seconds"
-msgstr "Sekunden"
-
 msgid "Secret storage"
 msgstr "Anmeldedaten-Speicher"
 
@@ -1672,9 +1676,6 @@ msgstr "Discord-Aktivitätstyp auf „Hört gerade“ festlegen"
 msgid "Shared secret"
 msgstr "Shared Secret"
 
-msgid "Show Lyrics Panel"
-msgstr "Songtext-Bereich anzeigen"
-
 msgid "Show Rufin"
 msgstr "Rufin anzeigen"
 
@@ -1698,6 +1699,11 @@ msgstr "Seitenleiste einblenden"
 
 msgid "Show tray icon"
 msgstr "Symbol im Infobereich anzeigen"
+
+#, fuzzy
+#| msgid "Visualizer"
+msgid "Show visualizer"
+msgstr "Visualisierung"
 
 msgid "Show/hide lyrics"
 msgstr "Songtexte anzeigen/ausblenden"
@@ -1997,6 +2003,11 @@ msgstr "ist nicht"
 msgid "is"
 msgstr "ist"
 
+#, fuzzy
+#| msgid "128 kbps"
+msgid "kbps"
+msgstr "128 kbps"
+
 msgid "macOS"
 msgstr "macOS"
 
@@ -2051,6 +2062,15 @@ msgid "{count} year ago"
 msgid_plural "{count} years ago"
 msgstr[0] "vor {count} Jahr"
 msgstr[1] "vor {count} Jahren"
+
+#~ msgid "Hide lyrics"
+#~ msgstr "Songtexte ausblenden"
+
+#~ msgid "Seconds"
+#~ msgstr "Sekunden"
+
+#~ msgid "Show Lyrics Panel"
+#~ msgstr "Songtext-Bereich anzeigen"
 
 #~ msgid "ReplayGain"
 #~ msgstr "ReplayGain"

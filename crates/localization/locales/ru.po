@@ -7,7 +7,7 @@ msgstr ""
 "Project-Id-Version: Rufin 0.6.0\n"
 "Report-Msgid-Bugs-To: https://github.com/screwys/Rufin/issues\n"
 "POT-Creation-Date: YEAR-MO-DA HO:MI+ZONE\n"
-"PO-Revision-Date: 2026-08-12 10:51+0000\n"
+"PO-Revision-Date: 2026-08-16 00:36+0000\n"
 "Last-Translator: Александр Стельмах <aguhadug@gmail.com>\n"
 "Language-Team: Russian <https://hosted.weblate.org/projects/rufin/app/ru/>\n"
 "Language: ru\n"
@@ -727,9 +727,6 @@ msgstr "Помощь"
 msgid "Hidden"
 msgstr "Скрыт"
 
-msgid "Hide lyrics"
-msgstr "Скрыть текст песни"
-
 msgid "Hide sidebar"
 msgstr "Скрыть боковую панель"
 
@@ -881,10 +878,8 @@ msgstr "Сопоставление локальных файлов"
 msgid "Local library"
 msgstr "Локальная библиотека"
 
-#, fuzzy
-#| msgid "Local music folder"
 msgid "Local music folder is unavailable"
-msgstr "Локальная папка с музыкой"
+msgstr "Локальная папка с музыкой недоступна"
 
 msgid "Local music folder"
 msgstr "Локальная папка с музыкой"
@@ -892,10 +887,8 @@ msgstr "Локальная папка с музыкой"
 msgid "Local"
 msgstr "Локальный источник"
 
-#, fuzzy
-#| msgid "Local Folders"
 msgid "Locate Folder"
-msgstr "Локальные Папки"
+msgstr "Найти папку"
 
 msgid "Lock metadata"
 msgstr "Заблокировать метаданные"
@@ -1268,6 +1261,16 @@ msgstr "Воспроизвести"
 msgid "Play/Pause"
 msgstr "Воспроизвести/Приостановить"
 
+#, fuzzy
+#| msgid "Lyrics settings"
+msgid "Playback settings"
+msgstr "Настройки текстов"
+
+#, fuzzy
+#| msgid "Playback"
+msgid "Playback speed"
+msgstr "Плеер"
+
 msgid "Playback"
 msgstr "Плеер"
 
@@ -1591,9 +1594,6 @@ msgstr "Поиск начнётся автоматически"
 msgid "Searching..."
 msgstr "Выполняется поиск..."
 
-msgid "Seconds"
-msgstr "Секунды"
-
 msgid "Secret storage"
 msgstr "Скрытое хранилище"
 
@@ -1675,9 +1675,6 @@ msgstr "Установите тип активности в Discord на \"Пр�
 msgid "Shared secret"
 msgstr "Общий секретный ключ"
 
-msgid "Show Lyrics Panel"
-msgstr "Показать панель с текстом песни"
-
 msgid "Show Rufin"
 msgstr "Показать Rufin"
 
@@ -1702,6 +1699,11 @@ msgstr "Показать боковую панель"
 
 msgid "Show tray icon"
 msgstr "Показывать значок в системном трее"
+
+#, fuzzy
+#| msgid "Visualizer"
+msgid "Show visualizer"
+msgstr "Визуализатор"
 
 msgid "Show/hide lyrics"
 msgstr "Показать/скрыть текст песни"
@@ -2001,6 +2003,9 @@ msgstr "не является"
 msgid "is"
 msgstr "является"
 
+msgid "kbps"
+msgstr "кбит/с"
+
 msgid "macOS"
 msgstr "macOS"
 
@@ -2063,6 +2068,15 @@ msgid_plural "{count} years ago"
 msgstr[0] "{count} год назад"
 msgstr[1] "{count} года назад"
 msgstr[2] "{count} лет назад"
+
+#~ msgid "Hide lyrics"
+#~ msgstr "Скрыть текст песни"
+
+#~ msgid "Seconds"
+#~ msgstr "Секунды"
+
+#~ msgid "Show Lyrics Panel"
+#~ msgstr "Показать панель с текстом песни"
 
 #~ msgid "ReplayGain"
 #~ msgstr "Нормализация громкости"

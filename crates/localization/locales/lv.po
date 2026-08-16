@@ -723,9 +723,6 @@ msgstr "Palīdzība"
 msgid "Hidden"
 msgstr "Paslēpts"
 
-msgid "Hide lyrics"
-msgstr "Paslēpt tekstus"
-
 msgid "Hide sidebar"
 msgstr "Paslēpt sānu paneli"
 
@@ -1262,6 +1259,16 @@ msgstr "Atskaņot"
 msgid "Play/Pause"
 msgstr "Atskaņot/Pauzēt"
 
+#, fuzzy
+#| msgid "Lyrics settings"
+msgid "Playback settings"
+msgstr "Tekstu iestatījumi"
+
+#, fuzzy
+#| msgid "Playback"
+msgid "Playback speed"
+msgstr "Atskaņošana"
+
 msgid "Playback"
 msgstr "Atskaņošana"
 
@@ -1583,9 +1590,6 @@ msgstr "Meklēšana tiks automātiski uzsākta"
 msgid "Searching..."
 msgstr "Tiek veikta meklēšana..."
 
-msgid "Seconds"
-msgstr "Sekundes"
-
 msgid "Secret storage"
 msgstr "Slēptā krātuve"
 
@@ -1667,9 +1671,6 @@ msgstr "Iestatīt Discord aktivitātes veidu uz Klausīšanās"
 msgid "Shared secret"
 msgstr "Slepenā atslēga"
 
-msgid "Show Lyrics Panel"
-msgstr "Rādīt tekstu paneli"
-
 msgid "Show Rufin"
 msgstr "Rādīt Rufin"
 
@@ -1693,6 +1694,11 @@ msgstr "Rādīt sānu paneli"
 
 msgid "Show tray icon"
 msgstr "Rādīt sistēmas joslas ikonu"
+
+#, fuzzy
+#| msgid "Visualizer"
+msgid "Show visualizer"
+msgstr "Vizualizācija"
 
 msgid "Show/hide lyrics"
 msgstr "Rādīt/paslēpt tekstus"
@@ -1990,6 +1996,11 @@ msgstr "nav"
 msgid "is"
 msgstr "ir"
 
+#, fuzzy
+#| msgid "128 kbps"
+msgid "kbps"
+msgstr "128 kbps"
+
 msgid "macOS"
 msgstr "macOS"
 
@@ -2052,6 +2063,15 @@ msgid_plural "{count} years ago"
 msgstr[0] "pirms {count} gadiem"
 msgstr[1] "pirms {count} gada"
 msgstr[2] "pirms {count} gadiem"
+
+#~ msgid "Hide lyrics"
+#~ msgstr "Paslēpt tekstus"
+
+#~ msgid "Seconds"
+#~ msgstr "Sekundes"
+
+#~ msgid "Show Lyrics Panel"
+#~ msgstr "Rādīt tekstu paneli"
 
 #~ msgid "ReplayGain"
 #~ msgstr "ReplayGain"
