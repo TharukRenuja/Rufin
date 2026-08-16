@@ -626,7 +626,7 @@ fn normal_primary_menu_button(
     popover_slot: &RefCell<Option<gtk::PopoverMenu>>,
     shell: &Rc<Shell>,
 ) -> gtk::MenuButton {
-    button.set_icon_name("open-menu-bundled-symbolic");
+    button.set_icon_name("open-menu-symbolic");
     bind_widget_tooltip(button, msgid("Menu"));
     bind_widget_accessible_label(button, msgid("Menu"));
     if popover_slot.borrow().is_none() {
@@ -801,7 +801,7 @@ fn replace_primary_menu_model(menu: &gio::Menu, shell: &Rc<Shell>) {
         &information,
         &tr("Version History"),
         "win.show-release-notes",
-        "rufin-view-list-symbolic",
+        "appointment-new-bundled-symbolic",
     );
     append_menu_action(
         &information,
@@ -868,7 +868,7 @@ fn sidebar_menu_content(compact: bool) -> gtk::Box {
     } else {
         NORMAL_NAV_ICON_SIZE
     };
-    let icon = gtk::Image::from_icon_name("open-menu-bundled-symbolic");
+    let icon = gtk::Image::from_icon_name("open-menu-symbolic");
     icon.add_css_class("nav-icon");
     icon.set_pixel_size(icon_size);
     icon.set_size_request(icon_size, icon_size);

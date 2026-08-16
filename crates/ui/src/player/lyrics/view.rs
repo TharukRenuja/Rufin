@@ -83,7 +83,7 @@ impl LyricsPane {
         root.set_margin_end(0);
         root.set_margin_bottom(8);
 
-        let clear_auto_search_button = gtk::Button::from_icon_name("window-close-bundled-symbolic");
+        let clear_auto_search_button = gtk::Button::from_icon_name("process-stop-bundled-symbolic");
         clear_auto_search_button.add_css_class("icon-button");
         clear_auto_search_button.add_css_class("flat");
         clear_auto_search_button.add_css_class("circular");
@@ -119,7 +119,7 @@ impl LyricsPane {
         offset_entry.add_css_class("lyrics-offset-value");
         let offset_increase_button = lyrics_control_button("list-add-bundled-symbolic");
 
-        let save_button = lyrics_control_button("document-save-bundled-symbolic");
+        let save_button = lyrics_control_button("document-save-disk-bundled-symbolic");
 
         let controls = gtk::Box::new(gtk::Orientation::Horizontal, 8);
         controls.add_css_class("lyrics-controls");
