@@ -65,10 +65,6 @@ jobs:
             done
           }
 
-          workspace_version_at() {
-            git show "$1:Cargo.toml" | sed -n 's/^version = "\([^"]*\)"$/\1/p'
-          }
-
           build_container_image=false
           check_workflows=false
           use_current_nix=false
@@ -107,18 +103,8 @@ jobs:
 
               case "$path" in
                 Cargo.lock|Cargo.toml|*/Cargo.toml)
-                  add_jobs "${workspace_jobs[@]}" cargo-deny nix
-                  if [[ "$path" == "Cargo.toml" ]]; then
-                    base_version="$(workspace_version_at "$merge_base")"
-                    head_version="$(workspace_version_at "$HEAD_SHA")"
-                    if [[ -z "$base_version" || -z "$head_version" ]]; then
-                      echo "Could not read the workspace version from Cargo.toml" >&2
-                      exit 1
-                    fi
-                    if [[ "$base_version" != "$head_version" ]]; then
-                      add_jobs "${release_build_jobs[@]}"
-                    fi
-                  fi
+                  add_jobs "${workspace_jobs[@]}" cargo-deny
+                  add_jobs "${release_build_jobs[@]}"
                   ;;
               esac
 
