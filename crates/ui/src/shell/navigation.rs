@@ -1,11 +1,13 @@
 use std::{cell::RefCell, rc::Rc};
 
 use crate::interactions::{
-    install_context_menu_openers, keep_parent_grab_for_nested_native_menus, popdown_native_menu,
-    replace_native_menu_checkmarks, show_native_menu_icons,
+    CONTEXT_MENU_HOVER_HELD_CLASS, CONTEXT_MENU_HOVER_OWNER_CLASS, install_context_menu_openers,
+    keep_parent_grab_for_nested_native_menus, popdown_native_menu, replace_native_menu_checkmarks,
+    show_native_menu_icons,
 };
 use crate::localization::{bind_widget_accessible_label, bind_widget_tooltip};
 use crate::preferences::source::selector::source_submenu;
+use crate::routes::cards::cover_play_only_hover_controls;
 use crate::routes::collection_context::{
     present_album_context_menu, present_artist_context_menu, present_genre_context_menu,
     present_playlist_context_menu, present_smart_playlist_context_menu,
@@ -58,6 +60,7 @@ const NAV_ROUTE_SMART_PLAYLISTS_CLASS: &str = "nav-route-smart-playlists";
 const SIDEBAR_PIN_ROW_CLASS: &str = "sidebar-pin-row";
 const SIDEBAR_PIN_PLAYING_CLASS: &str = "playing";
 const SIDEBAR_PIN_COVER_SIZE: i32 = 40;
+const COMPACT_SIDEBAR_PIN_COVER_SIZE: i32 = 56;
 const PRIMARY_MENU_CLASS: &str = "rufin-primary-menu";
 const NAV_ROUTE_ICONS: [(&str, &str, &str); 13] = [
     (
@@ -189,6 +192,7 @@ pub(super) fn build_compact_navigation(shell: &Rc<Shell>) {
             item.route.clone(),
         ));
     }
+    append_compact_sidebar_pins(shell);
     shell.navigation_view.compact_nav.append(&sidebar_spacer());
 }
 
@@ -314,43 +318,45 @@ pub(crate) fn update_sidebar_pin_playback(shell: &Shell) {
         .and_then(|(current, _)| current.context.as_ref())
         .map(|context| context.context_id.as_ref());
 
-    let mut pin_rows = Vec::new();
-    let mut child = shell.navigation_view.normal_nav_pins.first_child();
-    while let Some(widget) = child {
-        child = widget.next_sibling();
-        if !widget.has_css_class(SIDEBAR_PIN_ROW_CLASS) {
-            continue;
-        }
-        let pin_context_id = widget
-            .widget_name()
-            .strip_prefix("sidebar-pin-")
-            .map(str::to_string);
-        if let Some(pin_context_id) = pin_context_id {
-            pin_rows.push((widget, pin_context_id));
-        }
-    }
-    let playing_index = playback_context_id.and_then(|playback_context_id| {
+    let mut pin_rows = sidebar_pin_widgets(&shell.navigation_view.normal_nav_pins);
+    pin_rows.extend(sidebar_pin_widgets(&shell.navigation_view.compact_nav));
+    let playing_context_id = playback_context_id.and_then(|playback_context_id| {
         pin_rows
             .iter()
-            .enumerate()
-            .filter(|(_, (_, pin_context_id))| {
+            .filter(|(_, pin_context_id)| {
                 sidebar_pin_context_matches(pin_context_id, playback_context_id)
             })
-            .max_by_key(|(_, (_, pin_context_id))| {
+            .max_by_key(|(_, pin_context_id)| {
                 (
                     pin_context_id.as_str() == playback_context_id,
                     pin_context_id.len(),
                 )
             })
-            .map(|(index, _)| index)
+            .map(|(_, pin_context_id)| pin_context_id.clone())
     });
-    for (index, (widget, _)) in pin_rows.into_iter().enumerate() {
-        if playing_index == Some(index) {
+    for (widget, pin_context_id) in pin_rows {
+        if playing_context_id.as_ref() == Some(&pin_context_id) {
             widget.add_css_class(SIDEBAR_PIN_PLAYING_CLASS);
         } else {
             widget.remove_css_class(SIDEBAR_PIN_PLAYING_CLASS);
         }
     }
+}
+
+fn sidebar_pin_widgets(container: &gtk::Box) -> Vec<(gtk::Widget, String)> {
+    let mut pin_rows = Vec::new();
+    let mut child = container.first_child();
+    while let Some(widget) = child {
+        child = widget.next_sibling();
+        if let Some(pin_context_id) = widget
+            .has_css_class(SIDEBAR_PIN_ROW_CLASS)
+            .then(|| widget.widget_name())
+            .and_then(|name| name.strip_prefix("sidebar-pin-").map(str::to_string))
+        {
+            pin_rows.push((widget, pin_context_id));
+        }
+    }
+    pin_rows
 }
 
 fn sidebar_pin_context_matches(pin_context_id: &str, playback_context_id: &str) -> bool {
@@ -543,14 +549,18 @@ pub(super) fn install_normal_navigation_activation(shell: &Rc<Shell>) {
 
 fn update_button_navigation_selection(container: &gtk::Box, active_route: &Route) {
     let active_route_class = nav_route_class(active_route);
+    let active_pin_key = sidebar_pin_route_key(active_route);
     let mut child = container.first_child();
     while let Some(widget) = child {
         child = widget.next_sibling();
         if !widget.has_css_class("nav-button") {
             continue;
         }
-        let selected =
-            active_route_class.is_some_and(|route_class| widget.has_css_class(route_class));
+        let selected = active_route_class
+            .is_some_and(|route_class| widget.has_css_class(route_class))
+            || active_pin_key
+                .as_ref()
+                .is_some_and(|key| widget.widget_name().as_str() == key);
         if selected {
             widget.add_css_class(NAV_SELECTED_CLASS);
         } else {
@@ -1031,6 +1041,24 @@ fn append_sidebar_pins(shell: &Rc<Shell>) {
     }
 }
 
+fn append_compact_sidebar_pins(shell: &Rc<Shell>) {
+    let prefer_server_playlist_covers = shell
+        .settings
+        .current
+        .borrow()
+        .prefer_server_playlist_covers;
+    for pin in sidebar_pin_items(shell) {
+        shell
+            .navigation_view
+            .compact_nav
+            .append(&compact_sidebar_pin(
+                shell,
+                pin,
+                prefer_server_playlist_covers,
+            ));
+    }
+}
+
 fn sidebar_pin_items(shell: &Shell) -> Vec<SidebarPinItem> {
     let pins = {
         let settings = shell.settings.current.borrow();
@@ -1100,6 +1128,7 @@ fn sidebar_pin_row(
     let row = gtk::Overlay::new();
     row.add_css_class("nav-button");
     row.add_css_class(SIDEBAR_PIN_ROW_CLASS);
+    row.add_css_class(CONTEXT_MENU_HOVER_OWNER_CLASS);
     row.set_overflow(gtk::Overflow::Hidden);
     row.set_widget_name(
         sidebar_pin_route_key(&route)
@@ -1176,15 +1205,94 @@ fn sidebar_pin_row(
     let controls_for_enter = controls.clone();
     motion.connect_enter(move |_, _, _| controls_for_enter.set_visible(true));
     let controls_for_leave = controls.clone();
-    motion.connect_leave(move |_| controls_for_leave.set_visible(false));
+    let row_for_leave = row.clone();
+    motion.connect_leave(move |_| {
+        if !row_for_leave.has_css_class(CONTEXT_MENU_HOVER_HELD_CLASS) {
+            controls_for_leave.set_visible(false);
+        }
+    });
+    let motion_for_hold = motion.clone();
+    let controls_for_hold = controls.clone();
+    row.connect_css_classes_notify(move |row| {
+        if !row.has_css_class(CONTEXT_MENU_HOVER_HELD_CLASS) {
+            controls_for_hold.set_visible(motion_for_hold.contains_pointer());
+        }
+    });
     row.add_controller(motion);
 
     let context_shell = Rc::clone(shell);
     let context_pin = pin.clone();
     install_context_menu_openers(
-        &activate,
+        &row,
         Rc::new(move |target, position| {
             context_pin.present_context_menu(target, &context_shell, position);
+        }),
+    );
+    row
+}
+
+fn compact_sidebar_pin(
+    shell: &Rc<Shell>,
+    pin: SidebarPinItem,
+    prefer_server_playlist_covers: bool,
+) -> gtk::Overlay {
+    let route = pin.route();
+    let title = pin.title();
+    let artwork = pin.artwork(prefer_server_playlist_covers);
+    let route_key =
+        sidebar_pin_route_key(&route).expect("a compact sidebar pin always has a detail route");
+    let seed = stable_seed(&route_key);
+
+    let row = gtk::Overlay::new();
+    row.add_css_class("nav-button");
+    row.add_css_class(SIDEBAR_PIN_ROW_CLASS);
+    row.add_css_class("compact-sidebar-pin");
+    row.set_widget_name(&route_key);
+    row.set_halign(gtk::Align::Center);
+    row.set_overflow(gtk::Overflow::Hidden);
+    row.set_tooltip_text(Some(&title));
+
+    let activate = gtk::Button::new();
+    activate.add_css_class("flat");
+    activate.add_css_class("compact-sidebar-pin-activate");
+    activate.set_tooltip_text(Some(&title));
+    activate.update_property(&[gtk::accessible::Property::Label(&title)]);
+    let cover = shell
+        .cover_group_projection_for_artwork(
+            &artwork,
+            seed,
+            COMPACT_SIDEBAR_PIN_COVER_SIZE,
+            COMPACT_SIDEBAR_PIN_COVER_SIZE,
+        )
+        .widget();
+    cover.set_can_target(false);
+    activate.set_child(Some(&cover));
+    let navigation_shell = Rc::clone(shell);
+    activate.connect_clicked(move |_| navigation_shell.navigate(route.clone()));
+    row.set_child(Some(&activate));
+
+    let (controls, play) = cover_play_only_hover_controls(COMPACT_SIDEBAR_PIN_COVER_SIZE, "Play");
+    play.add_css_class("compact-sidebar-pin-play");
+    play.set_size_request(32, 32);
+    play.set_tooltip_text(Some(&title));
+    let playback_shell = Rc::clone(shell);
+    let playback_target = pin.playback_target();
+    let queue = shell.products.playback.queue.clone();
+    play.connect_clicked(move |_| {
+        if let Some(request) =
+            playback_target.play_request(&playback_shell, QueuePlacement::Now, true)
+        {
+            queue.play_loaded(request);
+        }
+    });
+    controls.add_to_overlay(&row);
+    controls.connect_hover(&row);
+
+    let context_shell = Rc::clone(shell);
+    install_context_menu_openers(
+        &row,
+        Rc::new(move |target, position| {
+            pin.present_context_menu(target, &context_shell, position);
         }),
     );
     row
