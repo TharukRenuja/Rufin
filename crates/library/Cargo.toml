@@ -9,6 +9,7 @@ description.workspace = true
 repository.workspace = true
 readme.workspace = true
 publish.workspace = true
+autotests = false
 
 [dependencies]
 blake3.workspace = true
@@ -26,3 +27,7 @@ tempfile.workspace = true
 
 [lints]
 workspace = true
+
+[[test]]
+name = "integration"
+path = "tests/integration.rs"

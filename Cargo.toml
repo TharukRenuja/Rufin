@@ -106,8 +106,16 @@ string_slice = "deny"
 
 [profile.dev]
 debug = "line-tables-only"
-incremental = false
 
 [profile.test]
 debug = "line-tables-only"
-incremental = false
+
+[profile.dev.package.libsqlite3-sys]
+opt-level = 3
+
+[profile.test.package.libsqlite3-sys]
+opt-level = 3
+
+[profile.release]
+lto = "fat"
+codegen-units = 1

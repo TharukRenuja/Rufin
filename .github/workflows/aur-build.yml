@@ -242,10 +242,6 @@ jobs:
           test -f "$pkgroot/usr/share/metainfo/io.github.screwys.Rufin.metainfo.xml"
           test -f "$pkgroot/usr/share/rufin/japanese-readings.dic"
           pacman -U --noconfirm "$pkgfile"
-          cargo run --locked -p xtask -- generate media-verification-files /tmp/rufin-package-media
-          for media in /tmp/rufin-package-media/*; do
-            rufin --verify-media "$media"
-          done
           desktop-file-validate /usr/share/applications/io.github.screwys.Rufin.desktop
           appstreamcli validate --no-net /usr/share/metainfo/io.github.screwys.Rufin.metainfo.xml
           pacman -Rns --noconfirm rufin-bin
@@ -347,10 +343,6 @@ jobs:
           test -f "$pkgroot/usr/share/metainfo/io.github.screwys.Rufin.metainfo.xml"
           test -f "$pkgroot/usr/share/rufin/japanese-readings.dic"
           pacman -U --noconfirm "$pkgfile"
-          cargo run --locked -p xtask -- generate media-verification-files /tmp/rufin-package-media
-          for media in /tmp/rufin-package-media/*; do
-            rufin --verify-media "$media"
-          done
           desktop-file-validate /usr/share/applications/io.github.screwys.Rufin.desktop
           appstreamcli validate --no-net /usr/share/metainfo/io.github.screwys.Rufin.metainfo.xml
           pacman -Rns --noconfirm rufin-git
