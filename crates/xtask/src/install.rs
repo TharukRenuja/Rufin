@@ -1,6 +1,6 @@
 use std::env;
 use std::fs;
-use std::path::{Component, Path, PathBuf};
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use crate::Result;
@@ -86,10 +86,10 @@ pub(crate) fn run(mut args: Vec<String>) -> Result<()> {
     Ok(())
 }
 
-fn parse_options(args: Vec<String>) -> Result<(PathBuf, PathBuf, PathBuf)> {
+fn parse_options(args: Vec<String>) -> Result<(PathBuf, PathBuf, String)> {
     let mut binary = None;
     let mut destdir = None;
-    let mut prefix = PathBuf::from("/usr");
+    let mut prefix = "/usr".to_owned();
     let mut args = args.into_iter();
 
     while let Some(option) = args.next() {
@@ -99,7 +99,7 @@ fn parse_options(args: Vec<String>) -> Result<(PathBuf, PathBuf, PathBuf)> {
         match option.as_str() {
             "--binary" if binary.is_none() => binary = Some(PathBuf::from(value)),
             "--destdir" if destdir.is_none() => destdir = Some(PathBuf::from(value)),
-            "--prefix" => prefix = PathBuf::from(value),
+            "--prefix" => prefix = value,
             "--binary" | "--destdir" => {
                 return Err(format!("{option} may only be passed once").into());
             }
@@ -114,17 +114,16 @@ fn parse_options(args: Vec<String>) -> Result<(PathBuf, PathBuf, PathBuf)> {
     ))
 }
 
-fn destination_root(destdir: &Path, prefix: &Path) -> Result<PathBuf> {
-    if !prefix.is_absolute() {
+fn destination_root(destdir: &Path, prefix: &str) -> Result<PathBuf> {
+    let Some(prefix) = prefix.strip_prefix('/') else {
         return Err("--prefix must be an absolute path".into());
-    }
+    };
     let mut relative = PathBuf::new();
-    for component in prefix.components() {
+    for component in prefix.split('/') {
         match component {
-            Component::RootDir | Component::CurDir => {}
-            Component::Normal(component) => relative.push(component),
-            Component::ParentDir => return Err("--prefix may not contain '..'".into()),
-            Component::Prefix(_) => return Err("--prefix must use a Unix path".into()),
+            "" | "." => {}
+            ".." => return Err("--prefix may not contain '..'".into()),
+            component => relative.push(component),
         }
     }
     Ok(destdir.join(relative))
@@ -212,10 +211,15 @@ mod tests {
     #[test]
     fn destination_stays_below_destdir() {
         assert_eq!(
-            destination_root(Path::new("/stage"), Path::new("/usr")).unwrap(),
+            destination_root(Path::new("/stage"), "/usr").unwrap(),
             PathBuf::from("/stage/usr")
         );
-        assert!(destination_root(Path::new("/stage"), Path::new("usr")).is_err());
-        assert!(destination_root(Path::new("/stage"), Path::new("/usr/../opt")).is_err());
+        assert_eq!(
+            destination_root(Path::new("/stage"), "/usr//./local").unwrap(),
+            PathBuf::from("/stage/usr/local")
+        );
+        assert!(destination_root(Path::new("/stage"), "usr").is_err());
+        assert!(destination_root(Path::new("/stage"), "C:/usr").is_err());
+        assert!(destination_root(Path::new("/stage"), "/usr/../opt").is_err());
     }
 }

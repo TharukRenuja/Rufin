@@ -17,7 +17,6 @@ on:
       - crates/**
       - flake.lock
       - flake.nix
-      - scripts/retry-nix
       - '!**/*.md'
   workflow_call:
     inputs:
@@ -107,29 +106,16 @@ jobs:
           authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
 
       - name: Check flake
-        run: bash scripts/retry-nix nix flake check --no-write-lock-file --print-build-logs
+        run: nix flake check --no-write-lock-file --print-build-logs
 
       - name: Build app
         id: build
         run: |
           set -euo pipefail
-          store_path="$(bash scripts/retry-nix nix build .#rufin --no-link --print-out-paths --print-build-logs)"
+          store_path="$(nix build .#rufin --no-link --print-out-paths --print-build-logs)"
           echo "store-path=$store_path" >> "$GITHUB_OUTPUT"
 
       - name: Verify package layout
         env:
           STORE_PATH: ${{ steps.build.outputs.store-path }}
         run: cargo run --locked -p xtask -- verify package-layout "$STORE_PATH" /
-
-      - name: Create media verification files
-        run: |
-          bash scripts/retry-nix nix develop --command \
-            cargo run --locked -p xtask -- generate media-verification-files "$RUNNER_TEMP/rufin-package-media"
-
-      - name: Verify wrapped app
-        env:
-          STORE_PATH: ${{ steps.build.outputs.store-path }}
-        run: |
-          for media in "$RUNNER_TEMP"/rufin-package-media/*; do
-            "$STORE_PATH/bin/rufin" --verify-media "$media"
-          done

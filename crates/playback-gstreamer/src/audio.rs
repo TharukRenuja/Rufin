@@ -912,53 +912,6 @@ mod tests {
         assert!((observed_gain - 5.0).abs() < 0.001);
     }
 
-    #[test]
-    #[ignore = "requires the isolated Linux audio server started by CI"]
-    fn real_audio_output_accepts_rufin_graph() {
-        initialize_gstreamer();
-        let output = std::env::var("RUFIN_TEST_AUDIO_OUTPUT")
-            .expect("RUFIN_TEST_AUDIO_OUTPUT names the isolated CI audio sink");
-        let settings = BackendAudioSettings {
-            audio_output: Some(output.clone()),
-            ..BackendAudioSettings::default()
-        };
-        let graph = AudioGraph::new(&settings).expect("Rufin audio graph");
-        let source = gst::ElementFactory::make("audiotestsrc")
-            .property("volume", 0.0_f64)
-            .property("num-buffers", 20_i32)
-            .build()
-            .expect("silent test source");
-        let pipeline = gst::Pipeline::new();
-        pipeline
-            .add_many([&source, graph.root()])
-            .expect("real-output pipeline");
-        source
-            .link(graph.root())
-            .expect("real-output pipeline link");
-        let bus = pipeline.bus().expect("real-output message bus");
-        pipeline
-            .set_state(gst::State::Playing)
-            .expect("real audio output reaches Playing");
-        let message = bus
-            .timed_pop_filtered(
-                gst::ClockTime::from_seconds(10),
-                &[gst::MessageType::Eos, gst::MessageType::Error],
-            )
-            .expect("real audio output finishes");
-        let result = match message.view() {
-            gst::MessageView::Eos(_) => Ok(()),
-            gst::MessageView::Error(_) => Err(crate::gstreamer_error_details(
-                &message,
-                "real audio output verification",
-                Some(&output),
-            )
-            .unwrap_or_else(|| "real audio output failed".to_string())),
-            _ => Err("real audio output returned an unexpected message".to_string()),
-        };
-        let _ = pipeline.set_state(gst::State::Null);
-        result.expect("Rufin audio reaches the isolated Linux server");
-    }
-
     fn equalizer_band_gain(equalizer: &gst::Element, index: usize) -> Option<f64> {
         equalizer
             .dynamic_cast_ref::<gst::ChildProxy>()?

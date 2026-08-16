@@ -12,7 +12,6 @@ on:
       - crates/**
       - flake.lock
       - flake.nix
-      - scripts/retry-nix
       - scripts/rust-cache-command
       - sgconfig.yml
       - '!**/*.md'
@@ -55,6 +54,7 @@ jobs:
         run: |
           set -euo pipefail
           all_build_jobs=(aur_bin aur_git container flatpak macos nix rpm windows)
+          workspace_jobs=(workspace workspace_macos workspace_windows)
           release_build_jobs=(aur_bin flatpak macos nix rpm windows)
           declare -A selected_jobs=()
 
@@ -65,21 +65,18 @@ jobs:
             done
           }
 
-          workspace_version_at() {
-            git show "$1:Cargo.toml" | sed -n 's/^version = "\([^"]*\)"$/\1/p'
-          }
-
           build_container_image=false
           check_workflows=false
           use_current_nix=false
 
           if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]]; then
             add_jobs "${all_build_jobs[@]}"
+            add_jobs "${workspace_jobs[@]}" cargo-deny
             build_container_image=true
             check_workflows=true
             use_current_nix=true
           elif [[ "$GITHUB_EVENT_NAME" == "push" ]]; then
-            add_jobs workspace
+            add_jobs "${workspace_jobs[@]}"
           else
             git cat-file -e "${BASE_SHA}^{commit}"
             git cat-file -e "${HEAD_SHA}^{commit}"
@@ -106,24 +103,20 @@ jobs:
 
               case "$path" in
                 Cargo.lock|Cargo.toml|*/Cargo.toml)
-                  add_jobs workspace cargo-deny nix
-                  if [[ "$path" == "Cargo.toml" ]]; then
-                    base_version="$(workspace_version_at "$merge_base")"
-                    head_version="$(workspace_version_at "$HEAD_SHA")"
-                    if [[ -z "$base_version" || -z "$head_version" ]]; then
-                      echo "Could not read the workspace version from Cargo.toml" >&2
-                      exit 1
-                    fi
-                    if [[ "$base_version" != "$head_version" ]]; then
-                      add_jobs "${release_build_jobs[@]}"
-                    fi
-                  fi
+                  add_jobs "${workspace_jobs[@]}" cargo-deny
+                  add_jobs "${release_build_jobs[@]}"
+                  ;;
+              esac
+
+              case "$path" in
+                .cargo/*|crates/*)
+                  add_jobs "${workspace_jobs[@]}"
                   ;;
               esac
 
               case "$path" in
                 .github/workflows/checks.yml)
-                  add_jobs workspace cargo-deny
+                  add_jobs "${workspace_jobs[@]}" cargo-deny
                   ;;
                 .github/workflows/aur-build.yml)
                   add_jobs aur_bin aur_git
@@ -144,7 +137,7 @@ jobs:
                   add_jobs windows
                   ;;
                 crates/windows-updater/*)
-                  add_jobs workspace windows
+                  add_jobs windows
                   ;;
                 crates/xtask/src/install.rs)
                   add_jobs workspace aur_bin aur_git flatpak nix rpm
@@ -156,27 +149,26 @@ jobs:
                   add_jobs container
                   ;;
                 justfile)
-                  add_jobs "${all_build_jobs[@]}"
+                  add_jobs container flatpak macos windows
                   ;;
                 .github/workflows/*.yml|.github/workflows/*.yaml)
                   ;;
                 Cargo.lock|Cargo.toml|*/Cargo.toml)
                   ;;
                 .cargo/*)
-                  add_jobs workspace macos
+                  add_jobs macos
                   ;;
-                crates/*|sgconfig.yml)
+                crates/*)
+                  ;;
+                sgconfig.yml)
                   add_jobs workspace
                   ;;
                 flake.lock|flake.nix)
-                  add_jobs workspace container nix
+                  add_jobs container nix
                   use_current_nix=true
                   ;;
-                scripts/retry-nix)
-                  add_jobs workspace nix
-                  ;;
                 scripts/rust-cache-command)
-                  add_jobs workspace windows
+                  add_jobs workspace workspace_windows
                   ;;
                 deny.toml)
                   add_jobs cargo-deny
@@ -291,7 +283,7 @@ jobs:
       ref: ${{ github.event.pull_request.head.sha || github.sha }}
 
   macos:
-    name: macOS
+    name: Build macOS
     needs: changes
     if: contains(fromJSON(needs.changes.outputs.jobs), 'macos')
     uses: ./.github/workflows/macos-build.yml
@@ -299,7 +291,7 @@ jobs:
       ref: ${{ github.event.pull_request.head.sha || github.sha }}
 
   windows:
-    name: Windows
+    name: Build Windows
     needs: changes
     if: contains(fromJSON(needs.changes.outputs.jobs), 'windows')
     uses: ./.github/workflows/windows-build.yml
@@ -341,6 +333,10 @@ jobs:
     needs: changes
     if: contains(fromJSON(needs.changes.outputs.jobs), 'workspace')
     runs-on: ubuntu-latest
+    env:
+      RUSTC_WRAPPER: sccache
+      SCCACHE_GHA_ENABLED: "on"
+      SCCACHE_GHA_RW_MODE: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && 'READ_WRITE' || 'READ_ONLY' }}
 
     steps:
       - name: Check out repository
@@ -373,61 +369,180 @@ jobs:
             max-substitution-jobs = 4
             stalled-download-timeout = 90
 
+      - name: Set up Rust compiler cache
+        uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
+        with:
+          version: v0.17.0
+
+      - name: Restore Rust build cache
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+        with:
+          cache-bin: "false"
+          cache-targets: "false"
+          prefix-key: v1-rust
+          save-if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+          cmd-format: bash scripts/rust-cache-command nix "${{ steps.nix-environment.outputs.target }}" {0}
+
+      - name: Check Linux package dependencies
+        if: github.event_name != 'push'
+        run: nix --accept-flake-config develop "${{ steps.nix-environment.outputs.target }}" --command cargo run --locked -p xtask -- generate linux-packaging --check
+
+      - name: Check translation template
+        if: github.event_name != 'push'
+        run: nix --accept-flake-config develop "${{ steps.nix-environment.outputs.target }}" --command cargo run --locked -p xtask -- generate i18n-template --check
+
+      - name: Check Rust formatting
+        if: github.event_name != 'push'
+        run: nix --accept-flake-config develop "${{ steps.nix-environment.outputs.target }}" --command cargo fmt --all -- --check
+
+      - name: Check RefCell borrows
+        if: github.event_name != 'push'
+        run: >-
+          nix --accept-flake-config develop "${{ steps.nix-environment.outputs.target }}" --command
+          just _ast-grep
+
+      - name: Check Rust lints
+        if: github.event_name != 'push'
+        run: >-
+          nix --accept-flake-config develop "${{ steps.nix-environment.outputs.target }}" --command
+          just _lint
+
+      - name: Run Rust tests
+        if: github.event_name != 'push'
+        run: >-
+          nix --accept-flake-config develop "${{ steps.nix-environment.outputs.target }}" --command
+          just _test
+
+      - name: Warm Rust build cache
+        if: github.event_name == 'push'
+        run: |
+          nix --accept-flake-config develop "${{ steps.nix-environment.outputs.target }}" --command \
+            cargo check --workspace --all-targets --locked
+          nix --accept-flake-config develop "${{ steps.nix-environment.outputs.target }}" --command \
+            cargo test --workspace --locked --no-run --lib --bins --tests --benches --examples
+
+  workspace_macos:
+    name: Workspace (macOS)
+    needs: changes
+    if: contains(fromJSON(needs.changes.outputs.jobs), 'workspace_macos')
+    runs-on: macos-15
+    env:
+      CARGO_TARGET_DIR: ${{ github.workspace }}/.local/target
+      HOMEBREW_NO_ANALYTICS: 1
+      HOMEBREW_NO_AUTO_UPDATE: 1
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+
+      - name: Install test dependencies
+        run: brew install gstreamer gtk4 libadwaita pkgconf
+
+      - name: Select Xcode 26
+        run: |
+          set -euo pipefail
+          xcode_app="$(
+            find /Applications -maxdepth 1 -type d -name 'Xcode_26.*.app' -print |
+              sort -V |
+              tail -n 1
+          )"
+          test -n "$xcode_app"
+          developer_dir="$xcode_app/Contents/Developer"
+          test -d "$developer_dir"
+          echo "DEVELOPER_DIR=$developer_dir" >> "$GITHUB_ENV"
+          sdk_version="$(DEVELOPER_DIR="$developer_dir" xcrun --sdk macosx --show-sdk-version)"
+          [[ "$sdk_version" == 26.* ]]
+          echo "Using $xcode_app with macOS SDK $sdk_version."
+
       - name: Restore Rust build cache
         uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
         with:
           cache-bin: "false"
           prefix-key: v1-rust
           save-if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
-          cmd-format: bash scripts/rust-cache-command nix "${{ steps.nix-environment.outputs.target }}" {0}
+          shared-key: macos-arm64
+          workspaces: ". -> .local/target"
 
-      - name: Check Flatpak cargo sources
-        if: github.event_name != 'push'
-        run: bash scripts/retry-nix nix --accept-flake-config develop "${{ steps.nix-environment.outputs.target }}" --command cargo run --locked -p xtask -- generate flatpak-sources --check
-
-      - name: Check Linux package dependencies
-        if: github.event_name != 'push'
-        run: bash scripts/retry-nix nix --accept-flake-config develop "${{ steps.nix-environment.outputs.target }}" --command cargo run --locked -p xtask -- generate linux-packaging --check
-
-      - name: Check translation template
-        if: github.event_name != 'push'
-        run: bash scripts/retry-nix nix --accept-flake-config develop "${{ steps.nix-environment.outputs.target }}" --command cargo run --locked -p xtask -- generate i18n-template --check
-
-      - name: Check Rust formatting
-        if: github.event_name != 'push'
-        run: bash scripts/retry-nix nix --accept-flake-config develop "${{ steps.nix-environment.outputs.target }}" --command cargo fmt --all -- --check
-
-      - name: Check RefCell borrows
+      - name: Run platform tests
         if: github.event_name != 'push'
         run: >-
-          bash scripts/retry-nix nix --accept-flake-config develop "${{ steps.nix-environment.outputs.target }}" --command
-          just _ast-grep
-
-      - name: Check Rust lints
-        if: github.event_name != 'push'
-        run: >-
-          bash scripts/retry-nix nix --accept-flake-config develop "${{ steps.nix-environment.outputs.target }}" --command
-          just _lint
-
-      - name: Run Rust tests
-        if: github.event_name != 'push'
-        run: |
-          bash scripts/retry-nix nix --accept-flake-config develop "${{ steps.nix-environment.outputs.target }}" --command \
-            bash -c 'nextest_jobs="${NEXTEST_JOBS:-4}"; if [[ ! "$nextest_jobs" =~ ^[1-9][0-9]*$ ]]; then echo "NEXTEST_JOBS must be a positive integer." >&2; exit 1; fi; if command -v cargo-nextest >/dev/null 2>&1; then cargo nextest run --workspace --locked --test-threads "$nextest_jobs"; else echo "cargo-nextest is unavailable; falling back to cargo test." >&2; cargo test --workspace --locked --lib --bins --tests --benches --examples; fi'
-
-      - name: Check real audio output
-        if: github.event_name != 'push'
-        run: |
-          bash scripts/retry-nix nix --accept-flake-config develop "${{ steps.nix-environment.outputs.target }}" --command \
-            bash scripts/check-real-audio-output
+          cargo test --workspace --locked
+          --lib --bins --tests --benches --examples
 
       - name: Warm Rust build cache
         if: github.event_name == 'push'
+        run: >-
+          cargo test --workspace --locked --no-run
+          --lib --bins --tests --benches --examples
+
+  workspace_windows:
+    name: Workspace (Windows)
+    needs: changes
+    if: contains(fromJSON(needs.changes.outputs.jobs), 'workspace_windows')
+    runs-on: windows-latest
+    env:
+      CHERE_INVOKING: 1
+      MSYSTEM: UCRT64
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+
+      - name: Set up MSYS2
+        uses: msys2/setup-msys2@66cd2cce69caa17b53920067426061ca1de3a884 # v2
+        with:
+          msystem: UCRT64
+          update: true
+          install: >-
+            base-devel
+            git
+            mingw-w64-ucrt-x86_64-cmake
+            mingw-w64-ucrt-x86_64-gst-plugins-base
+            mingw-w64-ucrt-x86_64-gst-plugins-good
+            mingw-w64-ucrt-x86_64-gstreamer
+            mingw-w64-ucrt-x86_64-gtk4
+            mingw-w64-ucrt-x86_64-libadwaita
+            mingw-w64-ucrt-x86_64-ninja
+            mingw-w64-ucrt-x86_64-perl
+            mingw-w64-ucrt-x86_64-pkgconf
+            mingw-w64-ucrt-x86_64-rust
+            mingw-w64-ucrt-x86_64-toolchain
+
+      - name: Configure Rust paths
+        shell: msys2 {0}
         run: |
-          bash scripts/retry-nix nix --accept-flake-config develop "${{ steps.nix-environment.outputs.target }}" --command \
-            cargo check --workspace --all-targets --locked
-          bash scripts/retry-nix nix --accept-flake-config develop "${{ steps.nix-environment.outputs.target }}" --command \
-            cargo test --workspace --locked --no-run --lib --bins --tests --benches --examples
+          echo "CARGO_HOME=$(cygpath -m "$GITHUB_WORKSPACE/.local/cargo")" >> "$GITHUB_ENV"
+          echo "CARGO_TARGET_DIR=$(cygpath -m "$GITHUB_WORKSPACE/.local/target")" >> "$GITHUB_ENV"
+
+      - name: Restore Rust build cache
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+        with:
+          cache-bin: "false"
+          cmd-format: msys2 -c "bash scripts/rust-cache-command direct {0}"
+          prefix-key: v1-rust
+          save-if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+          shared-key: windows-ucrt64
+          workspaces: ". -> .local/target"
+
+      - name: Run platform tests
+        if: github.event_name != 'push'
+        shell: msys2 {0}
+        run: >-
+          cargo test --workspace --locked
+          --lib --bins --tests --benches --examples
+
+      - name: Warm Rust build cache
+        if: github.event_name == 'push'
+        shell: msys2 {0}
+        run: >-
+          cargo test --workspace --locked --no-run
+          --lib --bins --tests --benches --examples
 
   cargo-deny:
     name: cargo-deny
@@ -462,6 +577,8 @@ jobs:
       - windows
       - container
       - workspace
+      - workspace_macos
+      - workspace_windows
       - cargo-deny
     if: always()
     runs-on: ubuntu-latest

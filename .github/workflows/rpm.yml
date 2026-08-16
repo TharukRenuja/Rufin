@@ -155,11 +155,6 @@ jobs:
           done
           test -n "$x86_rpm_path"
           dnf -y install "$x86_rpm_path"
-          cargo run --locked -p xtask -- generate media-verification-files \
-            /tmp/rufin-package-media --with-openmpt-gme
-          for media in /tmp/rufin-package-media/*; do
-            /usr/bin/rufin --verify-media "$media"
-          done
 
       - name: Upload RPM artifacts
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7

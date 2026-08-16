@@ -470,7 +470,7 @@ impl Library {
 pub(crate) fn index_local_access(
     files: &[LocalAccessFile],
     mapping: Option<&LocalAccessMapping>,
-) -> (HashSet<String>, HashMap<LocalMatchKey, Vec<usize>>) {
+) -> (HashSet<PathBuf>, HashMap<LocalMatchKey, Vec<usize>>) {
     let Some(mapping) = mapping else {
         return (HashSet::new(), HashMap::new());
     };
@@ -481,7 +481,7 @@ pub(crate) fn index_local_access(
         if file.root != configured_root {
             continue;
         }
-        paths.insert(file.path.clone());
+        paths.insert(PathBuf::from(&file.path));
         index
             .entry(local_match_key(
                 &file.title,
@@ -548,7 +548,7 @@ fn local_access_file_for(
     track: &Track,
     mapping: Option<&LocalAccessMapping>,
     files: &[LocalAccessFile],
-    paths: &HashSet<String>,
+    paths: &HashSet<PathBuf>,
     index: &HashMap<LocalMatchKey, Vec<usize>>,
 ) -> Option<(PlayableFile, LocalAccessMatch)> {
     let mapping = mapping?;
@@ -569,15 +569,15 @@ fn local_access_file_for(
 fn exact_local_access_path(
     track: &Track,
     mapping: &LocalAccessMapping,
-    paths: &HashSet<String>,
+    paths: &HashSet<PathBuf>,
 ) -> Option<(PathBuf, LocalAccessMatch)> {
     let source_path = track.source_path.as_deref()?;
-    if paths.contains(source_path) {
+    if paths.contains(Path::new(source_path)) {
         return Some((source_path.into(), LocalAccessMatch::Direct));
     }
     let path = project_local_access_path(source_path, mapping)?;
     paths
-        .contains(path.to_string_lossy().as_ref())
+        .contains(&path)
         .then_some((path, LocalAccessMatch::Prefix))
 }
 

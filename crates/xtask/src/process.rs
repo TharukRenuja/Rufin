@@ -78,28 +78,6 @@ where
     }
 }
 
-pub(crate) fn run_retry_without_ld_preload<I, S>(args: I) -> Result<()>
-where
-    I: IntoIterator<Item = S>,
-    S: AsRef<OsStr>,
-{
-    let root = repo_root()?;
-    let status = Command::new("bash")
-        .arg("scripts/retry-nix")
-        .args(args)
-        .current_dir(root)
-        .env_remove("LD_PRELOAD")
-        .stdin(Stdio::inherit())
-        .stdout(Stdio::inherit())
-        .stderr(Stdio::inherit())
-        .status()?;
-    if status.success() {
-        Ok(())
-    } else {
-        Err(format!("Nix command failed with status {status}").into())
-    }
-}
-
 pub(crate) fn ensure_command(command: &str) -> Result<()> {
     if find_on_path(command) {
         Ok(())
