@@ -340,10 +340,8 @@ pub(crate) fn install_desktop_lifecycle(shell: &Rc<Shell>) {
 #[cfg(target_os = "macos")]
 fn close_window(shell: &Rc<Shell>) -> glib::Propagation {
     shell.save_window_state();
-    if let Err(error) = shell
-        .chrome
-        .window
-        .activate_action("gtkinternal.hide", None)
+    if let Err(error) =
+        gtk::prelude::WidgetExt::activate_action(&shell.chrome.window, "gtkinternal.hide", None)
     {
         warn!(%error, "could not hide Rufin");
     }
