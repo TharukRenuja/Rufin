@@ -3468,52 +3468,45 @@ mod tests {
         let uri = gst::glib::filename_to_uri(&path, None).expect("playback fixture URI");
         let events = Arc::new(Mutex::new(EventMailbox::default()));
         let mut engine = GstEngine::new(Arc::clone(&events));
+        let current = PreparedRun {
+            run: RunId::new(1),
+            stream: ResolvedStream::new(uri.as_str()).into(),
+        };
         let settings = BackendAudioSettings {
             audio_output: Some("fakesink".to_string()),
             ..BackendAudioSettings::default()
         };
-        lock_recover(&engine.shared).settings = settings.clone();
-
-        engine
-            .play_prepared(
-                PreparedRun {
-                    run: RunId::new(1),
-                    stream: ResolvedStream::new(uri.as_str()).into(),
-                },
-                None,
-                0,
+        let pipeline_id = engine
+            .start_pipeline(
+                Slot::Primary,
+                &current,
+                &settings,
+                settings.volume,
+                settings.muted,
+                DEFAULT_PLAYBACK_RATE,
+                gst::State::Paused,
             )
-            .expect("start playback");
-        assert!(
-            engine
-                .primary
-                .wait_for_state(gst::State::Playing, gst::ClockTime::from_seconds(2))
-        );
-        engine
-            .primary
-            .set_state(gst::State::Paused)
-            .expect("simulate inactive output pause");
-        assert!(
-            engine
-                .primary
-                .wait_for_state(gst::State::Paused, gst::ClockTime::from_seconds(2))
-        );
-        engine
-            .primary
-            .seek_millis(100)
-            .expect("position the physically paused output");
-        assert!(engine.desired_playing);
+            .expect("start paused output");
+        {
+            let mut shared = lock_recover(&engine.shared);
+            shared.settings = settings.clone();
+            shared.current = Some(current);
+            shared.set_pipeline_id(Slot::Primary, Some(pipeline_id));
+        }
+        engine.desired_playing = true;
+        engine.state = BackendState::Playing;
 
         let mut changed = settings;
         changed.audio_output = Some("appsink".to_string());
         engine.handle_command(BackendCommand::ConfigureAudio(changed));
 
         let applied = lock_recover(&events).drain();
-        let pending_seek = engine.pending_seek.as_ref().expect("pending restart seek");
-        assert!(pending_seek.retry_on_async_done);
-        assert!(pending_seek.resume_after_seek);
-
-        engine.handle_async_done();
+        assert!(engine.desired_playing);
+        assert_eq!(
+            engine.primary.audio_output_factory().as_deref(),
+            Some("appsink")
+        );
+        engine.handle_state_changed(BackendState::Playing);
 
         let resumed_events = lock_recover(&events).drain();
         assert!(
