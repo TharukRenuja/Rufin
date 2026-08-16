@@ -253,7 +253,7 @@ fn mood_summary_items(mood: &MoodSummary) -> Vec<(&'static str, String)> {
     )];
     if mood.duration_seconds > 0 {
         items.push((
-            "preferences-system-time-symbolic",
+            "preferences-system-time-bundled-symbolic",
             format_duration_units(mood.duration_seconds),
         ));
     }

@@ -1168,7 +1168,7 @@ fn build_player_action_controls() -> PlayerActionControls {
     configure_player_action_button(&queue_button);
     buttons.append(&queue_button);
     let settings_button =
-        icon_button_without_tooltip("preferences-system-symbolic", "Playback settings");
+        icon_button_without_tooltip("preferences-system-bundled-symbolic", "Playback settings");
     settings_button.add_css_class("player-settings-button");
     configure_player_action_button(&settings_button);
     buttons.append(&settings_button);

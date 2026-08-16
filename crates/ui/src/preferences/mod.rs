@@ -41,7 +41,7 @@ const PREFERENCES_DIALOG_WIDTH: i32 = 700;
 const PREFERENCES_DIALOG_HEIGHT: i32 = 640;
 const LASTFM_API_CREATE_URL: &str = "https://www.last.fm/api/account/create";
 const LISTENBRAINZ_TOKEN_URL: &str = "https://listenbrainz.org/settings/";
-const SCROBBLING_ICON_NAME: &str = "io.github.screwys.Rufin.scrobbling-symbolic";
+const INTEGRATIONS_ICON_NAME: &str = "network-workgroup-bundled-symbolic";
 
 pub(crate) struct PreferencesState {
     pub(crate) dialog: RefCell<Option<gtk::glib::WeakRef<adw::Dialog>>>,
@@ -218,7 +218,7 @@ impl Shell {
 enum PreferencesPageKind {
     General,
     Appearance,
-    Scrobbling,
+    Integrations,
     Playback,
     Library,
 }
@@ -227,7 +227,7 @@ impl PreferencesPageKind {
     const ALL: [Self; 5] = [
         Self::General,
         Self::Appearance,
-        Self::Scrobbling,
+        Self::Integrations,
         Self::Playback,
         Self::Library,
     ];
@@ -236,7 +236,7 @@ impl PreferencesPageKind {
         match self {
             Self::General => "general",
             Self::Appearance => "appearance",
-            Self::Scrobbling => "scrobbling",
+            Self::Integrations => "integrations",
             Self::Playback => "playback",
             Self::Library => "library",
         }
@@ -246,7 +246,7 @@ impl PreferencesPageKind {
         match self {
             Self::General => tr("General"),
             Self::Appearance => tr("Appearance"),
-            Self::Scrobbling => tr("Scrobbling"),
+            Self::Integrations => tr("Integrations"),
             Self::Playback => tr("Playback"),
             Self::Library => tr("Library"),
         }
@@ -254,11 +254,11 @@ impl PreferencesPageKind {
 
     fn icon_name(self) -> &'static str {
         match self {
-            Self::General => "preferences-system-symbolic",
-            Self::Appearance => "preferences-desktop-appearance-symbolic",
-            Self::Scrobbling => SCROBBLING_ICON_NAME,
-            Self::Playback => "media-playback-start-symbolic",
-            Self::Library => "rufin-route-tracks-symbolic",
+            Self::General => "preferences-system-bundled-symbolic",
+            Self::Appearance => "preferences-desktop-appearance-bundled-symbolic",
+            Self::Integrations => INTEGRATIONS_ICON_NAME,
+            Self::Playback => "media-playback-start-bundled-symbolic",
+            Self::Library => "drive-multidisk-bundled-symbolic",
         }
     }
 
@@ -286,7 +286,7 @@ pub(crate) struct PreferencesNavigationControls {
 
 impl PreferencesNavigationControls {
     fn new() -> Self {
-        let back = gtk::Button::from_icon_name("go-previous-symbolic");
+        let back = gtk::Button::from_icon_name("go-previous-bundled-symbolic");
         back.add_css_class("flat");
         back.add_css_class("preferences-nested-back");
         back.update_property(&[gtk::accessible::Property::Label(&tr("Back"))]);
@@ -402,7 +402,7 @@ fn rebuild_preferences_dialog(
         .build();
     let navigation_controls = PreferencesNavigationControls::new();
     let search_button = gtk::ToggleButton::builder()
-        .icon_name("system-search-symbolic")
+        .icon_name("system-search-bundled-symbolic")
         .tooltip_text(tr("Search"))
         .build();
     search_button.add_css_class("flat");
@@ -411,7 +411,7 @@ fn rebuild_preferences_dialog(
     let start_controls = gtk::Box::new(gtk::Orientation::Horizontal, 4);
     start_controls.append(&search_button);
     start_controls.append(&navigation_controls.back);
-    let close_button = gtk::Button::from_icon_name("window-close-symbolic");
+    let close_button = gtk::Button::from_icon_name("window-close-bundled-symbolic");
     close_button.add_css_class("flat");
     close_button.add_css_class("preferences-dialog-close");
     close_button.set_tooltip_text(Some(&tr("Close")));
@@ -579,7 +579,7 @@ fn rebuild_preferences_dialog(
                 .activatable(true)
                 .build();
             row.add_prefix(&gtk::Image::from_icon_name(item.page.icon_name()));
-            row.add_suffix(&gtk::Image::from_icon_name("go-next-symbolic"));
+            row.add_suffix(&gtk::Image::from_icon_name("go-next-bundled-symbolic"));
             let page = item.page;
             let target = item.target.clone();
             let expander = item.expander.clone();
@@ -739,7 +739,7 @@ fn build_preferences_page(
     match kind {
         PreferencesPageKind::General => general_page(shell, dialog).upcast(),
         PreferencesPageKind::Appearance => appearance_page(shell).upcast(),
-        PreferencesPageKind::Scrobbling => scrobbling_page(shell).upcast(),
+        PreferencesPageKind::Integrations => scrobbling_page(shell).upcast(),
         PreferencesPageKind::Playback => playback_page(shell).upcast(),
         PreferencesPageKind::Library => library::library_page(
             shell,
@@ -753,7 +753,7 @@ fn build_preferences_page(
 fn general_page(shell: &Rc<Shell>, dialog: &adw::Dialog) -> adw::PreferencesPage {
     let page = adw::PreferencesPage::builder()
         .title(tr("General"))
-        .icon_name("preferences-system-symbolic")
+        .icon_name("preferences-system-bundled-symbolic")
         .build();
 
     let settings = shell.settings.current.borrow().clone();
@@ -1408,13 +1408,13 @@ fn sidebar_item_row(
     visible.set_active(entry.visible);
     visible.set_valign(gtk::Align::Center);
 
-    let up = gtk::Button::from_icon_name("go-up-symbolic");
+    let up = gtk::Button::from_icon_name("go-up-bundled-symbolic");
     up.add_css_class("flat");
     up.set_tooltip_text(Some(&tr("Move up")));
     up.set_valign(gtk::Align::Center);
     row.add_suffix(&up);
 
-    let down = gtk::Button::from_icon_name("go-down-symbolic");
+    let down = gtk::Button::from_icon_name("go-down-bundled-symbolic");
     down.add_css_class("flat");
     down.set_tooltip_text(Some(&tr("Move down")));
     down.set_valign(gtk::Align::Center);

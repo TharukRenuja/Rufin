@@ -4,7 +4,7 @@ use std::rc::Rc;
 use adw::prelude::*;
 use gtk::{gio, glib};
 
-use localization::tr;
+use localization::{msgid, tr};
 
 use crate::settings::{ContextMenuItem, ContextMenuSettings};
 use crate::shell::Shell;
@@ -16,10 +16,11 @@ const NATIVE_MENU_SELECTION_CLASS: &str = "rufin-menu-selection";
 const NATIVE_MENU_SELECTED_CLASS: &str = "rufin-menu-selected";
 const NATIVE_MENU_PARENT_GRAB_CLASS: &str = "rufin-menu-parent-grab";
 
-pub(crate) const ADD_TO_PLAYLIST_ICON: &str = "rufin-route-playlists-symbolic";
+pub(crate) const ADD_TO_PLAYLIST_ICON: &str = "route-playlists-compact-bundled-symbolic";
 pub(crate) const ALBUM_ICON: &str = "rufin-route-albums-symbolic";
 pub(crate) const ARTIST_ICON: &str = "rufin-route-artists-symbolic";
-pub(crate) const DOWNLOAD_ICON: &str = "folder-download-symbolic";
+pub(crate) const DOWNLOAD_ICON: &str = "folder-download-bundled-symbolic";
+pub(crate) const GO_TO_ICON: &str = "adw-external-link-compact-bundled-symbolic";
 pub(crate) const RADIO_ICON: &str = "rufin-audio-radio-symbolic";
 
 pub(crate) type ContextMenuOpen = Rc<dyn Fn(&gtk::Widget, Option<(f64, f64)>)>;
@@ -245,8 +246,11 @@ fn resolve_context_menu_entries<T>(
 
 #[cfg(test)]
 mod context_menu_tests {
-    use super::{ContextMenuEntry, resolve_context_menu_entries};
+    use super::{ContextMenuEntry, go_to_context_submenu, resolve_context_menu_entries};
     use crate::settings::{ContextMenuItem, ContextMenuItemSettings, ContextMenuSettings};
+    use gio::prelude::MenuModelExt;
+    use glib::prelude::IsA;
+    use gtk::{gio, glib};
 
     fn settings(order: &[(ContextMenuItem, bool)]) -> ContextMenuSettings {
         ContextMenuSettings {
@@ -257,6 +261,7 @@ mod context_menu_tests {
                     visible: *visible,
                 })
                 .collect(),
+            rating_visible: true,
         }
     }
 
@@ -309,6 +314,36 @@ mod context_menu_tests {
         )];
 
         assert!(resolve_context_menu_entries(entries, &settings).is_empty());
+    }
+
+    #[test]
+    fn go_to_submenu_keeps_all_artist_and_album_destinations() {
+        let menu = go_to_context_submenu(
+            "track",
+            &["First Artist".to_string(), "Second Artist".to_string()],
+            true,
+        );
+        assert_eq!(menu.n_items(), 2);
+
+        let artists = menu
+            .item_link(0, "submenu")
+            .expect("multiple artists submenu");
+        assert_eq!(artists.n_items(), 2);
+        assert_eq!(
+            menu_action(&artists, 0).as_deref(),
+            Some("track.go-artist-0")
+        );
+        assert_eq!(
+            menu_action(&artists, 1).as_deref(),
+            Some("track.go-artist-1")
+        );
+        assert_eq!(menu_action(&menu, 1).as_deref(), Some("track.go-album"));
+    }
+
+    fn menu_action(model: &impl IsA<gio::MenuModel>, index: i32) -> Option<String> {
+        model
+            .item_attribute_value(index, "action", Some(glib::VariantTy::STRING))
+            .and_then(|value| value.str().map(str::to_string))
     }
 }
 
@@ -365,6 +400,44 @@ pub(crate) fn radio_context_submenu(group: &str) -> gio::Menu {
         &format!("{group}.play-radio-last"),
         PLAY_LATER_ICON,
     );
+    menu
+}
+
+pub(crate) fn go_to_context_submenu(
+    group: &str,
+    artist_names: &[String],
+    has_album: bool,
+) -> gio::Menu {
+    let menu = gio::Menu::new();
+    match artist_names {
+        [] => {}
+        [_] => append_menu_action(
+            &menu,
+            msgid("Go to Artist"),
+            &format!("{group}.go-artist"),
+            ARTIST_ICON,
+        ),
+        _ => {
+            let artists = gio::Menu::new();
+            for (index, artist_name) in artist_names.iter().enumerate() {
+                artists.append(
+                    Some(artist_name),
+                    Some(&format!("{group}.go-artist-{index}")),
+                );
+            }
+            let item = gio::MenuItem::new_submenu(Some(&tr("Go to Artist")), &artists);
+            item.set_icon(&gio::ThemedIcon::new(ARTIST_ICON));
+            menu.append_item(&item);
+        }
+    }
+    if has_album {
+        append_menu_action(
+            &menu,
+            msgid("Go to Album"),
+            &format!("{group}.go-album"),
+            ALBUM_ICON,
+        );
+    }
     menu
 }
 

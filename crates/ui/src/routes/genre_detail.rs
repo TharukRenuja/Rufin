@@ -288,7 +288,7 @@ fn genre_summary_items(genre: &GenreSummary) -> Vec<(&'static str, String)> {
     )];
     if genre.duration_seconds > 0 {
         items.push((
-            "preferences-system-time-symbolic",
+            "preferences-system-time-bundled-symbolic",
             format_duration_units(genre.duration_seconds),
         ));
     }

@@ -398,7 +398,7 @@ pub(super) fn normal_sidebar_header(
     shell: &Rc<Shell>,
     start_window_controls: &impl IsA<gtk::Widget>,
 ) -> adw::HeaderBar {
-    let search = gtk::Button::from_icon_name("system-search-symbolic");
+    let search = gtk::Button::from_icon_name("system-search-bundled-symbolic");
     bind_widget_tooltip(&search, msgid("Search"));
     let search_shell = Rc::clone(shell);
     search.connect_clicked(move |_| search_shell.navigate(Route::Search));
@@ -626,7 +626,7 @@ fn normal_primary_menu_button(
     popover_slot: &RefCell<Option<gtk::PopoverMenu>>,
     shell: &Rc<Shell>,
 ) -> gtk::MenuButton {
-    button.set_icon_name("open-menu-symbolic");
+    button.set_icon_name("open-menu-bundled-symbolic");
     bind_widget_tooltip(button, msgid("Menu"));
     bind_widget_accessible_label(button, msgid("Menu"));
     if popover_slot.borrow().is_none() {
@@ -765,13 +765,13 @@ fn replace_primary_menu_model(menu: &gio::Menu, shell: &Rc<Shell>) {
         &preferences,
         &tr("Preferences"),
         "app.preferences",
-        "preferences-system-symbolic",
+        "preferences-system-bundled-symbolic",
     );
     append_menu_action(
         &preferences,
         &primary_menu_private_mode_label(shell.as_ref()),
         "win.toggle-private-mode",
-        "system-lock-screen-symbolic",
+        "system-lock-screen-bundled-symbolic",
     );
     menu.append_section(None, &preferences);
 
@@ -780,13 +780,13 @@ fn replace_primary_menu_model(menu: &gio::Menu, shell: &Rc<Shell>) {
         &window,
         &tr("Keyboard Shortcuts"),
         "app.show-shortcuts",
-        "preferences-desktop-keyboard-shortcuts-symbolic",
+        "preferences-desktop-keyboard-shortcuts-bundled-symbolic",
     );
     append_menu_action(
         &window,
         &tr("Toggle Fullscreen"),
         "win.toggle-fullscreen",
-        "view-fullscreen-symbolic",
+        "view-fullscreen-bundled-symbolic",
     );
     append_menu_action(
         &window,
@@ -807,13 +807,13 @@ fn replace_primary_menu_model(menu: &gio::Menu, shell: &Rc<Shell>) {
         &information,
         &tr("Troubleshooting"),
         "win.troubleshooting",
-        "utilities-terminal-symbolic",
+        "utilities-terminal-bundled-symbolic",
     );
     append_menu_action(
         &information,
         &tr("About Rufin"),
         "app.about",
-        "help-about-symbolic",
+        "help-about-bundled-symbolic",
     );
     menu.append_section(None, &information);
 }
@@ -836,7 +836,7 @@ fn primary_menu_sidebar_toggle_icon(shell: &Shell) -> &'static str {
     if shell.left_sidebar_mode() == ResolvedLeftSidebarMode::Full {
         "rufin-sidebar-hide-symbolic"
     } else {
-        "sidebar-show-symbolic"
+        "sidebar-show-bundled-symbolic"
     }
 }
 
@@ -868,7 +868,7 @@ fn sidebar_menu_content(compact: bool) -> gtk::Box {
     } else {
         NORMAL_NAV_ICON_SIZE
     };
-    let icon = gtk::Image::from_icon_name("open-menu-symbolic");
+    let icon = gtk::Image::from_icon_name("open-menu-bundled-symbolic");
     icon.add_css_class("nav-icon");
     icon.set_pixel_size(icon_size);
     icon.set_size_request(icon_size, icon_size);
@@ -1222,7 +1222,7 @@ fn sidebar_pin_metadata(track_count: u32, duration_seconds: u32) -> gtk::Box {
     duration_metadata.set_valign(gtk::Align::Center);
     duration_metadata.set_overflow(gtk::Overflow::Hidden);
 
-    let duration_icon = gtk::Image::from_icon_name("preferences-system-time-symbolic");
+    let duration_icon = gtk::Image::from_icon_name("preferences-system-time-bundled-symbolic");
     duration_icon.add_css_class("sidebar-pin-metadata-icon");
     duration_icon.set_pixel_size(12);
     duration_icon.set_size_request(12, 12);

@@ -4,7 +4,7 @@ use std::{
 };
 
 use super::{
-    LASTFM_API_CREATE_URL, LISTENBRAINZ_TOKEN_URL, SCROBBLING_ICON_NAME,
+    INTEGRATIONS_ICON_NAME, LASTFM_API_CREATE_URL, LISTENBRAINZ_TOKEN_URL,
     context_menu::context_menus_expander, layout::populate_home_block_rows, layout_group,
     quality_selection_row, selection_row, sidebar_items_expander,
 };
@@ -27,8 +27,8 @@ use playback::{
 
 pub(crate) fn scrobbling_page(shell: &Rc<Shell>) -> adw::PreferencesPage {
     let page = adw::PreferencesPage::builder()
-        .title(tr("Scrobbling"))
-        .icon_name(SCROBBLING_ICON_NAME)
+        .title(tr("Integrations"))
+        .icon_name(INTEGRATIONS_ICON_NAME)
         .build();
     let settings = shell.products.scrobbling.preferences();
 
@@ -707,7 +707,7 @@ pub(crate) fn playback_page(shell: &Rc<Shell>) -> adw::PreferencesPage {
 pub(crate) fn appearance_page(shell: &Rc<Shell>) -> adw::PreferencesPage {
     let page = adw::PreferencesPage::builder()
         .title(tr("Appearance"))
-        .icon_name("preferences-desktop-appearance-symbolic")
+        .icon_name("preferences-desktop-appearance-bundled-symbolic")
         .build();
 
     page.add(&theme_group(shell));

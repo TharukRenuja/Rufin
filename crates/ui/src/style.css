@@ -422,7 +422,7 @@ row:focus {
 }
 
 .left-opening-primary-menu arrow.right {
-  -gtk-icon-source: -gtk-icontheme("go-previous-symbolic");
+  -gtk-icon-source: -gtk-icontheme("go-previous-bundled-symbolic");
 }
 
 .album-detail-track-cells {

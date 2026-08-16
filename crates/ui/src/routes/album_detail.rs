@@ -1196,7 +1196,7 @@ pub(crate) fn album_detail_track_header_cell(field: LibraryField, width: i32) ->
         let row = gtk::Box::new(gtk::Orientation::Horizontal, 0);
         row.set_width_request(width);
         row.set_halign(gtk::Align::Fill);
-        let image = gtk::Image::from_icon_name("preferences-system-time-symbolic");
+        let image = gtk::Image::from_icon_name("preferences-system-time-bundled-symbolic");
         let label = tr("Duration");
         image.add_css_class("muted");
         image.set_halign(gtk::Align::Start);
