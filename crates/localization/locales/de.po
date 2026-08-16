@@ -7,7 +7,7 @@ msgstr ""
 "Project-Id-Version: Rufin\n"
 "Report-Msgid-Bugs-To: https://github.com/screwys/Rufin/issues\n"
 "POT-Creation-Date: YEAR-MO-DA HO:MI+ZONE\n"
-"PO-Revision-Date: 2026-08-10 14:51+0000\n"
+"PO-Revision-Date: 2026-08-16 17:14+0000\n"
 "Last-Translator: Sebastian <sevachka@users.noreply.hosted.weblate.org>\n"
 "Language-Team: German <https://hosted.weblate.org/projects/rufin/app/de/>\n"
 "Language: de\n"
@@ -29,7 +29,7 @@ msgid ""
 "to review the logs before sharing them"
 msgstr ""
 "In den Protokollen wurden Geheimnisse und absolute Ordnerpfade unkenntlich "
-"gemacht. Trotzdem solltest du die Protokolle vor dem Teilen überprüfen."
+"gemacht. Trotzdem solltest du die Protokolle vor dem Teilen überprüfen"
 
 msgid "No results ¯\\_(°╭╮°)_/¯"
 msgstr "Keine Ergebnisse ¯\\(°╭╮°)/¯"
@@ -422,7 +422,7 @@ msgid "Control notifications"
 msgstr "Benachrichtigungen verwalten"
 
 msgid "Copy"
-msgstr ""
+msgstr "Kopie"
 
 msgid "Could not save diagnostic log"
 msgstr "Diagnoseprotokoll konnte nicht gespeichert werden"
@@ -454,10 +454,8 @@ msgstr "Benutzerdefiniert"
 msgid "Customize display"
 msgstr "Ansicht anpassen"
 
-#, fuzzy
-#| msgid "Custom"
 msgid "Cut"
-msgstr "Benutzerdefiniert"
+msgstr "Ausschneiden"
 
 msgid "Dance"
 msgstr "Dance"
@@ -707,6 +705,11 @@ msgstr "Zum Album gehen"
 msgid "Go to Artist"
 msgstr "Zum Künstler springen"
 
+#, fuzzy
+#| msgid "Go to Album"
+msgid "Go to"
+msgstr "Zum Album gehen"
+
 msgid "Green"
 msgstr "Grün"
 
@@ -770,6 +773,11 @@ msgstr "Installiert"
 
 msgid "Instrumental"
 msgstr "Instrumental"
+
+#, fuzzy
+#| msgid "Duration"
+msgid "Integrations"
+msgstr "Dauer"
 
 msgid "JACK"
 msgstr "JACK"
@@ -872,10 +880,8 @@ msgstr "Zuordnung lokaler Dateien"
 msgid "Local library"
 msgstr "Lokale Mediathek"
 
-#, fuzzy
-#| msgid "Local music folder"
 msgid "Local music folder is unavailable"
-msgstr "Lokaler Musikordner"
+msgstr "Lokaler Musikordner ist nicht verfügbar"
 
 msgid "Local music folder"
 msgstr "Lokaler Musikordner"
@@ -883,10 +889,8 @@ msgstr "Lokaler Musikordner"
 msgid "Local"
 msgstr "Lokal"
 
-#, fuzzy
-#| msgid "Local Folders"
 msgid "Locate Folder"
-msgstr "Lokale Ordner"
+msgstr "Ordner auswählen"
 
 msgid "Lock metadata"
 msgstr "Metadaten sperren"
@@ -1191,7 +1195,7 @@ msgid "Password"
 msgstr "Passwort"
 
 msgid "Paste"
-msgstr ""
+msgstr "Einfügen"
 
 msgid "Pause"
 msgstr "Pause"
@@ -1261,15 +1265,11 @@ msgstr "Abspielen"
 msgid "Play/Pause"
 msgstr "Wiedergabe/Pause"
 
-#, fuzzy
-#| msgid "Lyrics settings"
 msgid "Playback settings"
-msgstr "Liedtexteinstellungen"
+msgstr "Wiedergabeeinstellungen"
 
-#, fuzzy
-#| msgid "Playback"
 msgid "Playback speed"
-msgstr "Wiedergabe"
+msgstr "Wiedergabegeschwindigkeit"
 
 msgid "Playback"
 msgstr "Wiedergabe"
@@ -1393,7 +1393,7 @@ msgid "Red"
 msgstr "Rot"
 
 msgid "Redo"
-msgstr ""
+msgstr "Wiederholen"
 
 msgid "Refresh section"
 msgstr "Bereich aktualisieren"
@@ -1560,9 +1560,6 @@ msgstr "Gespeichert, mit den Übereinstimmungen der Vorschau synchronisieren"
 msgid "Saving..."
 msgstr "Wird gespeichert …"
 
-msgid "Scrobbling"
-msgstr "Scrobbling"
-
 msgid "Search Again"
 msgstr "Erneut suchen"
 
@@ -1611,10 +1608,8 @@ msgstr "Spulen"
 msgid "Seekbar"
 msgstr "Wiedergabeleiste"
 
-#, fuzzy
-#| msgid "Selection"
 msgid "Select All"
-msgstr "Auswahl"
+msgstr "Alle auswählen"
 
 msgid "Select Download Folder"
 msgstr "Download-Ordner auswählen"
@@ -1700,10 +1695,8 @@ msgstr "Seitenleiste einblenden"
 msgid "Show tray icon"
 msgstr "Symbol im Infobereich anzeigen"
 
-#, fuzzy
-#| msgid "Visualizer"
 msgid "Show visualizer"
-msgstr "Visualisierung"
+msgstr "Visualizer anzeigen"
 
 msgid "Show/hide lyrics"
 msgstr "Songtexte anzeigen/ausblenden"
@@ -1726,10 +1719,8 @@ msgstr "Zufallswiedergabe"
 msgid "Sidebar Items"
 msgstr "Seitenleisten-Einträge"
 
-#, fuzzy
-#| msgid "Sidebar route by position"
 msgid "Sidebar item {position}"
-msgstr "Seitenleistenroute nach Position"
+msgstr "Seitenleistenelement {position}"
 
 msgid "Sidebar route by position"
 msgstr "Seitenleistenroute nach Position"
@@ -1879,7 +1870,7 @@ msgid "Undo identified value"
 msgstr "Erkannten Wert rückgängig machen"
 
 msgid "Undo"
-msgstr ""
+msgstr "Rückgängig machen"
 
 msgid "Unmuted"
 msgstr "Stummschaltung aufgehoben"
@@ -2003,10 +1994,8 @@ msgstr "ist nicht"
 msgid "is"
 msgstr "ist"
 
-#, fuzzy
-#| msgid "128 kbps"
 msgid "kbps"
-msgstr "128 kbps"
+msgstr "kbps"
 
 msgid "macOS"
 msgstr "macOS"
@@ -2062,6 +2051,9 @@ msgid "{count} year ago"
 msgid_plural "{count} years ago"
 msgstr[0] "vor {count} Jahr"
 msgstr[1] "vor {count} Jahren"
+
+#~ msgid "Scrobbling"
+#~ msgstr "Scrobbling"
 
 #~ msgid "Hide lyrics"
 #~ msgstr "Songtexte ausblenden"

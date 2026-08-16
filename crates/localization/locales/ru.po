@@ -7,7 +7,7 @@ msgstr ""
 "Project-Id-Version: Rufin 0.6.0\n"
 "Report-Msgid-Bugs-To: https://github.com/screwys/Rufin/issues\n"
 "POT-Creation-Date: YEAR-MO-DA HO:MI+ZONE\n"
-"PO-Revision-Date: 2026-08-16 00:36+0000\n"
+"PO-Revision-Date: 2026-08-16 17:14+0000\n"
 "Last-Translator: Александр Стельмах <aguhadug@gmail.com>\n"
 "Language-Team: Russian <https://hosted.weblate.org/projects/rufin/app/ru/>\n"
 "Language: ru\n"
@@ -712,6 +712,11 @@ msgstr "Перейти к альбому"
 msgid "Go to Artist"
 msgstr "Перейти к исполнителю"
 
+#, fuzzy
+#| msgid "Go to Album"
+msgid "Go to"
+msgstr "Перейти к альбому"
+
 msgid "Green"
 msgstr "Зелёный"
 
@@ -776,6 +781,11 @@ msgstr "Установлено"
 
 msgid "Instrumental"
 msgstr "Инструментальная"
+
+#, fuzzy
+#| msgid "Duration"
+msgid "Integrations"
+msgstr "Продолжительность"
 
 msgid "JACK"
 msgstr "JACK"
@@ -1261,15 +1271,11 @@ msgstr "Воспроизвести"
 msgid "Play/Pause"
 msgstr "Воспроизвести/Приостановить"
 
-#, fuzzy
-#| msgid "Lyrics settings"
 msgid "Playback settings"
-msgstr "Настройки текстов"
+msgstr "Настройки воспроизведения"
 
-#, fuzzy
-#| msgid "Playback"
 msgid "Playback speed"
-msgstr "Плеер"
+msgstr "Скорость воспроизведения"
 
 msgid "Playback"
 msgstr "Плеер"
@@ -1561,9 +1567,6 @@ msgstr "Сохранено, синхронизируйте для предвар
 msgid "Saving..."
 msgstr "Сохранение..."
 
-msgid "Scrobbling"
-msgstr "Скробблинг"
-
 msgid "Search Again"
 msgstr "Повторить поиск"
 
@@ -1700,10 +1703,8 @@ msgstr "Показать боковую панель"
 msgid "Show tray icon"
 msgstr "Показывать значок в системном трее"
 
-#, fuzzy
-#| msgid "Visualizer"
 msgid "Show visualizer"
-msgstr "Визуализатор"
+msgstr "Показать визуализатор"
 
 msgid "Show/hide lyrics"
 msgstr "Показать/скрыть текст песни"
@@ -2068,6 +2069,9 @@ msgid_plural "{count} years ago"
 msgstr[0] "{count} год назад"
 msgstr[1] "{count} года назад"
 msgstr[2] "{count} лет назад"
+
+#~ msgid "Scrobbling"
+#~ msgstr "Скробблинг"
 
 #~ msgid "Hide lyrics"
 #~ msgstr "Скрыть текст песни"

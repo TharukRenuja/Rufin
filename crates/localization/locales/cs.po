@@ -706,6 +706,11 @@ msgstr "Přejít do alba"
 msgid "Go to Artist"
 msgstr "Přejít na interpreta"
 
+#, fuzzy
+#| msgid "Go to Album"
+msgid "Go to"
+msgstr "Přejít do alba"
+
 msgid "Green"
 msgstr "Zelená"
 
@@ -770,6 +775,11 @@ msgstr "Nainstalováno"
 
 msgid "Instrumental"
 msgstr "Instrumentální"
+
+#, fuzzy
+#| msgid "Duration"
+msgid "Integrations"
+msgstr "Délka"
 
 msgid "JACK"
 msgstr "JACK"
@@ -1560,9 +1570,6 @@ msgstr "Uloženo, synchronizuje se s náhledem pro nalezení shod"
 msgid "Saving..."
 msgstr "Ukládání..."
 
-msgid "Scrobbling"
-msgstr "Scrobblování"
-
 msgid "Search Again"
 msgstr "Hledat znovu"
 
@@ -2066,6 +2073,9 @@ msgid_plural "{count} years ago"
 msgstr[0] "Před {count} rokem"
 msgstr[1] "Před {count} roky"
 msgstr[2] "Před {count} roky"
+
+#~ msgid "Scrobbling"
+#~ msgstr "Scrobblování"
 
 #~ msgid "Hide lyrics"
 #~ msgstr "Skrýt text skladby"
