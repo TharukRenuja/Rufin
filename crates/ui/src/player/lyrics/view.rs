@@ -644,6 +644,7 @@ impl LyricsPane {
 fn lyrics_label(text: &str) -> gtk::Label {
     let label = gtk::Label::new(Some(text));
     label.set_wrap(true);
+    label.set_wrap_mode(gtk::pango::WrapMode::WordChar);
     label.set_xalign(0.5);
     label.set_justify(gtk::Justification::Center);
     label.set_hexpand(true);

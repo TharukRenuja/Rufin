@@ -257,6 +257,12 @@ pub(crate) fn lyrics_with_displayable_content(mut lyrics: Lyrics) -> Option<Lyri
             document
                 .lines
                 .retain(|line| provider_line_has_content(provider, line));
+            if provider == ExternalLyricsProvider::Genius {
+                let page_chrome_lines = genius_page_chrome_line_count(
+                    document.lines.iter().map(|line| line.text.as_str()),
+                );
+                document.lines.drain(..page_chrome_lines);
+            }
         }
     }
     lyrics
@@ -1585,7 +1591,38 @@ pub(crate) fn extract_genius_lyrics(body: &str) -> Option<String> {
         }
     }
     let lyrics = sections.join("\n");
+    let page_chrome_lines = genius_page_chrome_line_count(lyrics.lines());
+    let lyrics = lyrics
+        .lines()
+        .skip(page_chrome_lines)
+        .collect::<Vec<_>>()
+        .join("\n");
     (!lyrics.trim().is_empty()).then(|| lyrics.trim().to_string())
+}
+fn genius_page_chrome_line_count<'a>(lines: impl IntoIterator<Item = &'a str>) -> usize {
+    let mut lines = lines.into_iter();
+    let Some(contributors) = lines.next() else {
+        return 0;
+    };
+    let Some(translations) = lines.next() else {
+        return 0;
+    };
+    if !genius_contributors_heading(contributors)
+        || !translations.trim().eq_ignore_ascii_case("translations")
+    {
+        return 0;
+    }
+    2 + usize::from(lines.next().is_some())
+}
+fn genius_contributors_heading(line: &str) -> bool {
+    let mut words = line.split_whitespace();
+    words
+        .next()
+        .is_some_and(|count| count.chars().all(|character| character.is_ascii_digit()))
+        && words.next().is_some_and(|label| {
+            label.eq_ignore_ascii_case("contributor") || label.eq_ignore_ascii_case("contributors")
+        })
+        && words.next().is_none()
 }
 fn strip_html_tags(value: &str) -> String {
     let mut stripped = String::new();
