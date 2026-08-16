@@ -75,7 +75,6 @@ fn accepted_tracks(
     let mut candidate = library
         .begin_source_candidate(CandidateHeader {
             source_id,
-            input_version: 1,
             input_digest: [4; 32],
         })
         .expect("begin source candidate");
@@ -570,7 +569,6 @@ async fn attach_removes_downloads_absent_from_the_accepted_source() {
     let loaded = library
         .begin_source_candidate(CandidateHeader {
             source_id,
-            input_version: 1,
             input_digest: [1; 32],
         })
         .expect("begin source candidate")

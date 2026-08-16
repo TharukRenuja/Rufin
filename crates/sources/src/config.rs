@@ -6,8 +6,6 @@ use serde::{Deserialize, Serialize};
 
 use crate::{SourceError, SourceInputIdentity, SourceResult, subsonic::SubsonicFlavor};
 
-const SOURCE_FACTS_VERSION: u32 = 2;
-
 /// Credential-free source configuration persisted by Rufin Settings.
 ///
 /// The provider payload is opaque outside Sources. Cache health never affects
@@ -169,7 +167,9 @@ impl SourceConfiguration {
     ) -> SourceResult<SourceInputIdentity> {
         let mut digest = blake3::Hasher::new();
         digest.update(b"rufin-source-input");
-        digest.update(&SOURCE_FACTS_VERSION.to_le_bytes());
+        // Preserve the released digest encoding. Reader freshness belongs to
+        // provider markers and Local parser revisions, not source identity.
+        digest.update(&1_u32.to_le_bytes());
         digest_part(&mut digest, self.source_id.as_str().as_bytes());
         digest_part(&mut digest, self.kind.as_bytes());
         match self.kind.as_str() {
@@ -200,7 +200,6 @@ impl SourceConfiguration {
         }
         Ok(SourceInputIdentity {
             source_id: self.source_id.clone(),
-            version: SOURCE_FACTS_VERSION,
             digest: *digest.finalize().as_bytes(),
         })
     }

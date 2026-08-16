@@ -1267,6 +1267,94 @@ fn failed_target_prepare_leaves_no_selected_session() {
 }
 
 #[test]
+fn cached_local_library_is_published_before_an_unavailable_root_is_scanned() {
+    let directory = tempfile::tempdir().expect("temporary Rufin data directory");
+    let missing_root = directory.path().join("unavailable");
+    let runtime = test_runtime();
+    let libraries = Libraries::open(directory.path().join("library.db")).expect("open Library");
+    let configuration = SourceConfiguration::local(
+        SourceId::new("local:server:library"),
+        "Local",
+        vec![missing_root.clone()],
+    )
+    .expect("Local configuration");
+    let identity = configuration
+        .input_identity()
+        .expect("Local input identity");
+    let track_id = library::TrackId::new("local:track:cached-before-scan");
+    let mut candidate = libraries
+        .begin_source_candidate(CandidateHeader {
+            source_id: identity.source_id,
+            input_digest: identity.digest,
+        })
+        .expect("begin cached Local library");
+    candidate
+        .write(CandidateBatch::Tracks(vec![test_track(
+            track_id.clone(),
+            "Cached",
+            missing_root.join("Cached.flac"),
+            None,
+        )]))
+        .expect("write cached track");
+    candidate
+        .finish(
+            CandidateFinish {
+                freshness: None,
+                home: HomeFacts::RufinDefined,
+                accepted_at: 1,
+            },
+            None,
+        )
+        .and_then(|candidate| candidate.accept())
+        .expect("accept cached Local library");
+    let source_id = configuration.source_id.clone();
+    let settings = SettingsFile::memory();
+    settings
+        .update(|stored| {
+            stored.sources.configured = vec![ConfiguredSource {
+                configuration,
+                credential_ref: None,
+                music_folder_id: None,
+                local_access: None,
+            }];
+            Ok(())
+        })
+        .expect("save Local source");
+    let (bootstrap, events) = test_owner(directory.path(), &runtime, libraries, settings);
+    let playback = attach_test_playback(&bootstrap.owner, &runtime, directory.path());
+
+    runtime.block_on(async {
+        bootstrap.owner.select_source(source_id.clone());
+        loop {
+            match events.recv().await.expect("source selection event") {
+                SourceEvent::Selected { selected, .. } if selected.source_id == source_id => {
+                    assert_eq!(
+                        selected
+                            .library
+                            .track(&track_id)
+                            .expect("read cached track")
+                            .expect("cached track remains available")
+                            .title,
+                        "Cached"
+                    );
+                    break;
+                }
+                SourceEvent::ReleaseSelected { acknowledged } => {
+                    acknowledged.send(()).await.expect("acknowledge release");
+                }
+                SourceEvent::Operation(SourceOperation::Failed { message, .. }) => {
+                    panic!("cached Local source failed before publication: {message}");
+                }
+                _ => {}
+            }
+        }
+    });
+
+    runtime.block_on(bootstrap.owner.retire_selected_access());
+    let _ = playback.stop_for_source_switch();
+}
+
+#[test]
 fn completed_source_switch_releases_the_previous_state_and_library() {
     let directory = tempfile::tempdir().expect("temporary Rufin data directory");
     let previous_root = directory.path().join("previous");
@@ -1449,7 +1537,6 @@ fn activity_publishes_while_candidate_acquisition_is_blocked_and_rebases_once() 
     let mut replacement = libraries
         .begin_source_candidate(CandidateHeader {
             source_id: source_id.clone(),
-            input_version: 1,
             input_digest: [2; 32],
         })
         .expect("begin replacement candidate");
@@ -2293,7 +2380,6 @@ fn accept_library(
     let mut candidate = libraries
         .begin_source_candidate(CandidateHeader {
             source_id,
-            input_version: 1,
             input_digest: [digest; 32],
         })
         .expect("begin source candidate");

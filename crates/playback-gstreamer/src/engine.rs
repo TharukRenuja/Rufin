@@ -366,6 +366,7 @@ impl PendingSeek {
         }
     }
 }
+
 #[derive(Debug)]
 pub(super) struct SharedBackendState {
     pub(super) settings: BackendAudioSettings,
@@ -3159,6 +3160,7 @@ mod tests {
         assert_eq!(crossfade_start_remaining_millis(5_000, 1.5), 7_500);
         assert_eq!(crossfade_start_remaining_millis(5_000, 2.0), 10_000);
     }
+
     const INCOMING_PIPELINE: PipelineId = PipelineId(8);
 
     struct HandoffFixture {

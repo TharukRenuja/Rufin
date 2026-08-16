@@ -685,12 +685,6 @@ impl Worker {
     }
 
     fn begin_candidate(&mut self, header: CandidateHeader) -> StoreResult<i64> {
-        if header.input_version == 0 {
-            return Err(StoreError::InvalidValue {
-                kind: "candidate input version",
-                value: "0".to_string(),
-            });
-        }
         let unfinished = self
             .connection
             .query_row(
@@ -708,12 +702,8 @@ impl Worker {
         self.connection.execute(
             "INSERT INTO source_libraries(
                 source_id, input_version, input_digest
-             ) VALUES (?1, ?2, ?3)",
-            params![
-                header.source_id.as_str(),
-                i64::from(header.input_version),
-                header.input_digest.as_slice()
-            ],
+             ) VALUES (?1, 1, ?2)",
+            params![header.source_id.as_str(), header.input_digest.as_slice()],
         )?;
         Ok(self.connection.last_insert_rowid())
     }
@@ -778,11 +768,10 @@ impl Worker {
             home,
             accepted_at,
         } = finish;
-        let (candidate_input_version, candidate_input_digest) = self.connection.query_row(
-            "SELECT input_version, input_digest
-             FROM source_libraries WHERE library_id = ?1",
+        let candidate_input_digest = self.connection.query_row(
+            "SELECT input_digest FROM source_libraries WHERE library_id = ?1",
             [library_id],
-            |row| Ok((row.get::<_, i64>(0)?, row.get::<_, Vec<u8>>(1)?)),
+            |row| row.get::<_, Vec<u8>>(0),
         )?;
         if freshness
             .as_ref()
@@ -795,8 +784,7 @@ impl Worker {
             .connection
             .query_row(
                 "SELECT
-                    library_id, input_version, input_digest,
-                    content_digest, home_digest
+                    library_id, input_digest, content_digest, home_digest
                  FROM source_libraries
                  WHERE source_id = ?1 AND accepted_at IS NOT NULL
                  ORDER BY library_id DESC
@@ -805,18 +793,15 @@ impl Worker {
                 |row| {
                     Ok((
                         row.get::<_, i64>(0)?,
-                        row.get::<_, i64>(1)?,
-                        row.get::<_, Vec<u8>>(2)?,
+                        row.get::<_, Vec<u8>>(1)?,
+                        row.get::<_, Option<Vec<u8>>>(2)?,
                         row.get::<_, Option<Vec<u8>>>(3)?,
-                        row.get::<_, Option<Vec<u8>>>(4)?,
                     ))
                 },
             )
             .optional()?;
         let content_digest = candidate_content_digest(&self.connection, library_id)?;
-        if let Some((current_id, current_input_version, current_input_digest, current_digest, _)) =
-            current.as_mut()
-            && *current_input_version == candidate_input_version
+        if let Some((current_id, current_input_digest, current_digest, _)) = current.as_mut()
             && *current_input_digest == candidate_input_digest
             && current_digest.is_none()
         {
@@ -828,14 +813,7 @@ impl Worker {
         }
 
         let current_library_id = current.as_ref().map(|(library_id, ..)| *library_id);
-        if let Some((
-            _,
-            current_input_version,
-            current_input_digest,
-            current_digest,
-            current_home_digest,
-        )) = current
-            && current_input_version == candidate_input_version
+        if let Some((_, current_input_digest, current_digest, current_home_digest)) = current
             && current_input_digest == candidate_input_digest
             && current_digest.as_deref() == Some(content_digest.as_slice())
         {
@@ -863,7 +841,6 @@ impl Worker {
         let input = self.load_candidate_library(
             library_id,
             &source_id,
-            candidate_input_version,
             candidate_input_digest,
             freshness.clone(),
             home.clone(),
@@ -1225,40 +1202,27 @@ impl Worker {
     }
 
     fn load_library(&self, library_id: i64) -> StoreResult<LibraryInput> {
-        let (
-            source_id,
-            input_version,
-            input_digest,
-            freshness_version,
-            freshness_marker,
-            home_json,
-        ) = self
+        let (source_id, input_digest, freshness_version, freshness_marker, home_json) = self
             .connection
             .query_row(
                 "SELECT
-                    source_id, input_version, input_digest,
-                    freshness_version, freshness_marker, home_json
+                    source_id, input_digest, freshness_version, freshness_marker, home_json
                  FROM source_libraries
                  WHERE library_id = ?1 AND accepted_at IS NOT NULL",
                 [library_id],
                 |row| {
                     Ok((
                         row.get::<_, String>(0)?,
-                        row.get::<_, i64>(1)?,
-                        row.get::<_, Vec<u8>>(2)?,
-                        row.get::<_, Option<i64>>(3)?,
-                        row.get::<_, Option<Vec<u8>>>(4)?,
-                        row.get::<_, Option<String>>(5)?,
+                        row.get::<_, Vec<u8>>(1)?,
+                        row.get::<_, Option<i64>>(2)?,
+                        row.get::<_, Option<Vec<u8>>>(3)?,
+                        row.get::<_, Option<String>>(4)?,
                     ))
                 },
             )
             .optional()?
             .ok_or(StoreError::CandidateMissing(library_id))?;
         let source_id = SourceId::new(source_id);
-        let input_version = u32::try_from(input_version).map_err(|_| StoreError::InvalidValue {
-            kind: "source input version",
-            value: input_version.to_string(),
-        })?;
         let input_digest =
             <[u8; 32]>::try_from(input_digest).map_err(|value| StoreError::InvalidValue {
                 kind: "source input digest",
@@ -1280,13 +1244,7 @@ impl Worker {
                 });
             }
         };
-        let mut input = LibraryInput::new(
-            source_id.clone(),
-            library_id,
-            input_version,
-            input_digest,
-            freshness,
-        );
+        let mut input = LibraryInput::new(source_id.clone(), library_id, input_digest, freshness);
         input.albums = load_albums(&self.connection, library_id)?;
         input.tracks = load_tracks(&self.connection, library_id)?;
         input.artists = load_artists(&self.connection, library_id)?;
@@ -1309,30 +1267,19 @@ impl Worker {
         &self,
         library_id: i64,
         source_id: &SourceId,
-        input_version: i64,
         input_digest: Vec<u8>,
         freshness: Option<ProviderFreshness>,
         home: HomeFacts,
         accepted_at: i64,
     ) -> StoreResult<LibraryInput> {
         self.require_unaccepted(library_id)?;
-        let input_version = u32::try_from(input_version).map_err(|_| StoreError::InvalidValue {
-            kind: "source input version",
-            value: input_version.to_string(),
-        })?;
         let input_digest =
             <[u8; 32]>::try_from(input_digest).map_err(|value| StoreError::InvalidValue {
                 kind: "source input digest",
                 value: format!("{} bytes", value.len()),
             })?;
         let rufin_defined_home = home.is_rufin_defined();
-        let mut input = LibraryInput::new(
-            source_id.clone(),
-            library_id,
-            input_version,
-            input_digest,
-            freshness,
-        );
+        let mut input = LibraryInput::new(source_id.clone(), library_id, input_digest, freshness);
         input.albums = load_albums(&self.connection, library_id)?;
         input.tracks = load_tracks(&self.connection, library_id)?;
         input.artists = load_artists(&self.connection, library_id)?;
@@ -2210,8 +2157,7 @@ impl Worker {
             .connection
             .query_row(
                 "SELECT
-                    origin, input_version, input_digest,
-                    payload, cached_at
+                    origin, input_digest, payload, cached_at
                  FROM lyrics_cache
                  WHERE source_id = ?1
                    AND track_id = ?2
@@ -2228,31 +2174,25 @@ impl Worker {
                 |row| {
                     Ok((
                         row.get::<_, String>(0)?,
-                        row.get::<_, i64>(1)?,
-                        row.get::<_, Vec<u8>>(2)?,
-                        row.get::<_, String>(3)?,
-                        row.get::<_, i64>(4)?,
+                        row.get::<_, Vec<u8>>(1)?,
+                        row.get::<_, String>(2)?,
+                        row.get::<_, i64>(3)?,
                     ))
                 },
             )
             .optional()?;
-        let Some((origin, input_version, input_digest, payload, cached_at)) = stored else {
+        let Some((origin, input_digest, payload, cached_at)) = stored else {
             return Ok(None);
         };
         let decoded = (|| {
             let digest = <[u8; 32]>::try_from(input_digest).ok()?;
-            if u32::try_from(input_version).ok()? != expected_input.version
-                || digest != expected_input.digest
-            {
+            if digest != expected_input.digest {
                 return None;
             }
             Some(crate::CachedLyrics {
                 key: key.clone(),
                 authority: LyricsCacheAuthority::from_stored(&origin)?,
-                input: LyricsCacheInput {
-                    version: u32::try_from(input_version).ok()?,
-                    digest,
-                },
+                input: LyricsCacheInput { digest },
                 payload,
                 cached_at,
             })
@@ -2272,11 +2212,10 @@ impl Worker {
                 source_id, track_id, role, language, script, origin,
                 input_version, input_digest, payload,
                 cached_at
-             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, 1, ?7, ?8, ?9)
              ON CONFLICT(source_id, track_id, role, language, script)
              DO UPDATE SET
                 origin = excluded.origin,
-                input_version = excluded.input_version,
                 input_digest = excluded.input_digest,
                 payload = excluded.payload,
                 cached_at = excluded.cached_at",
@@ -2287,7 +2226,6 @@ impl Worker {
                 write.key.language,
                 write.key.script,
                 write.authority.as_str(),
-                i64::from(write.input.version),
                 write.input.digest.as_slice(),
                 write.payload,
                 write.cached_at,

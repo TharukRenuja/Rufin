@@ -1180,7 +1180,6 @@ pub(super) fn cache_input_matches(identity: &SourceInputIdentity, loaded: &Libra
 pub(super) fn loaded_input_identity(loaded: &Library) -> SourceInputIdentity {
     SourceInputIdentity {
         source_id: loaded.source_id().clone(),
-        version: loaded.input_version(),
         digest: *loaded.input_digest(),
     }
 }

@@ -131,7 +131,6 @@ fn accepted_library(batches: Vec<library::CandidateBatch>) -> Arc<library::Libra
     let mut candidate = libraries
         .begin_source_candidate(library::CandidateHeader {
             source_id: SourceId::new("jellyfin:server:test:user:user-one"),
-            input_version: 1,
             input_digest: [1; 32],
         })
         .expect("begin Jellyfin candidate");

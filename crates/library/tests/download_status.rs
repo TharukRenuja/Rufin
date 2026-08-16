@@ -23,7 +23,6 @@ fn collection_download_status_distinguishes_any_from_all_tracks() {
     let mut candidate = library
         .begin_source_candidate(CandidateHeader {
             source_id,
-            input_version: 1,
             input_digest: [6; 32],
         })
         .expect("begin source candidate");

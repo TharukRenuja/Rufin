@@ -987,7 +987,7 @@ pub(crate) fn initialize(connection: &Connection) -> StoreResult<()> {
     if (application_id, user_version, has_schema) == (0, 0, false) {
         connection.execute_batch(CREATE_SCHEMA)?;
     } else if application_id == APPLICATION_ID && has_schema {
-        while user_version != SCHEMA_VERSION {
+        while user_version < SCHEMA_VERSION {
             let Some(migration) = MIGRATIONS
                 .iter()
                 .find(|migration| migration.from_version == user_version)
@@ -1362,43 +1362,11 @@ fn backfill_recent_plays(connection: &Connection) -> StoreResult<()> {
 pub(crate) fn validate(connection: &Connection) -> StoreResult<()> {
     let application_id = pragma_i64(connection, "application_id")?;
     let user_version = pragma_i64(connection, "user_version")?;
-    if application_id != APPLICATION_ID || user_version != SCHEMA_VERSION {
+    if application_id != APPLICATION_ID || user_version < SCHEMA_VERSION {
         return Err(StoreError::UnsupportedSchema {
             application_id,
             user_version,
         });
-    }
-
-    let reference = Connection::open_in_memory()?;
-    reference.pragma_update(None, "foreign_keys", true)?;
-    reference.execute_batch(CREATE_SCHEMA)?;
-    let expected = schema_inventory(&reference)?;
-    let actual = schema_inventory(connection)?;
-    if actual != expected {
-        let mismatch = actual
-            .iter()
-            .zip(&expected)
-            .position(|(actual, expected)| actual != expected)
-            .map_or_else(
-                || {
-                    format!(
-                        "object count {} instead of {}",
-                        actual.len(),
-                        expected.len()
-                    )
-                },
-                |index| {
-                    format!(
-                        "object {} differs from the final schema",
-                        actual
-                            .get(index)
-                            .map_or("<missing>", |object| object.1.as_str())
-                    )
-                },
-            );
-        return Err(StoreError::InvalidFinalSchema(format!(
-            "schema inventory mismatch: {mismatch}"
-        )));
     }
 
     let foreign_keys: i64 =
@@ -1409,23 +1377,6 @@ pub(crate) fn validate(connection: &Connection) -> StoreResult<()> {
         ));
     }
     Ok(())
-}
-
-type SchemaObject = (String, String, String, Option<String>);
-
-fn schema_inventory(connection: &Connection) -> StoreResult<Vec<SchemaObject>> {
-    let mut statement = connection.prepare(
-        "SELECT type, name, tbl_name, sql
-         FROM sqlite_schema
-         WHERE name NOT LIKE 'sqlite_%'
-           AND type IN ('table', 'index', 'trigger', 'view')
-         ORDER BY type, name",
-    )?;
-    Ok(statement
-        .query_map([], |row| {
-            Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
-        })?
-        .collect::<Result<Vec<_>, _>>()?)
 }
 
 fn pragma_i64(connection: &Connection, name: &str) -> rusqlite::Result<i64> {
@@ -1445,6 +1396,23 @@ mod tests {
             expected = migration.to_version;
         }
         assert_eq!(expected, SCHEMA_VERSION);
+    }
+
+    #[test]
+    fn newer_additive_store_keeps_known_tables_available() {
+        let connection = Connection::open_in_memory().expect("open Store");
+        initialize(&connection).expect("initialize current Store");
+        connection
+            .execute_batch(
+                "CREATE TABLE future_facts(value TEXT) STRICT;
+                 PRAGMA user_version = 41;",
+            )
+            .expect("prepare newer additive Store");
+
+        initialize(&connection).expect("open known tables in newer Store");
+        connection
+            .query_row("SELECT count(*) FROM source_libraries", [], |_| Ok(()))
+            .expect("read a known table");
     }
 
     #[test]

@@ -14,10 +14,7 @@ fn lyrics_cache_reopens_as_an_opaque_bounded_value() {
         language: "ja".to_string(),
         script: "Jpan".to_string(),
     };
-    let input = LyricsCacheInput {
-        version: 2,
-        digest: [7; 32],
-    };
+    let input = LyricsCacheInput { digest: [7; 32] };
     let payload = "Lyrics owns the representation; Library preserves these bytes.".to_string();
 
     {
@@ -76,10 +73,7 @@ fn incompatible_lyrics_input_discards_the_rebuildable_row() {
         language: String::new(),
         script: String::new(),
     };
-    let stored_input = LyricsCacheInput {
-        version: 1,
-        digest: [1; 32],
-    };
+    let stored_input = LyricsCacheInput { digest: [1; 32] };
     library
         .store_lyrics(LyricsCacheWrite {
             key: key.clone(),
@@ -92,13 +86,7 @@ fn incompatible_lyrics_input_discards_the_rebuildable_row() {
 
     assert!(
         library
-            .cached_lyrics(
-                key.clone(),
-                LyricsCacheInput {
-                    version: 2,
-                    digest: [2; 32],
-                },
-            )
+            .cached_lyrics(key.clone(), LyricsCacheInput { digest: [2; 32] },)
             .expect("reject incompatible cache input")
             .is_none()
     );
@@ -117,10 +105,7 @@ fn clearing_fetched_track_lyrics_removes_every_language_variant_only() {
         Libraries::open(directory.path().join("library.db")).expect("open temporary Library");
     let source_id = SourceId::new("subsonic:lyrics-cache");
     let track_id = TrackId::new("track:variants");
-    let input = LyricsCacheInput {
-        version: 1,
-        digest: [3; 32],
-    };
+    let input = LyricsCacheInput { digest: [3; 32] };
     for (role, language, authority) in [
         ("original", "", LyricsCacheAuthority::External),
         ("translation", "en", LyricsCacheAuthority::External),
