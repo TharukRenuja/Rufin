@@ -13,10 +13,10 @@ use crate::player::lyrics::state::LyricsState;
 use crate::player::right_panel::RightPanelWidgets;
 use crate::player::state::PlaybackState;
 use crate::player::{
-    BOTTOM_PLAYER_HEIGHT, PlayerDesktopWidgets, apply_lyrics_panel_visibility, build_bottom_player,
-    build_fullscreen_player, build_right_panel, connect_fullscreen_player_controls,
-    connect_player_controls, connect_queue_lyrics_overlay, connect_queue_panel_controls,
-    default_audio_output_options, warm_audio_output_cache,
+    BOTTOM_PLAYER_HEIGHT, PlayerDesktopWidgets, apply_sidebar_media_visibility,
+    build_bottom_player, build_fullscreen_player, build_right_panel,
+    connect_fullscreen_player_controls, connect_player_controls, connect_queue_lyrics_overlay,
+    connect_queue_panel_controls, default_audio_output_options, warm_audio_output_cache,
 };
 use crate::player::{install_desktop_lifecycle, present_initial_window};
 use crate::preferences::PreferencesState;
@@ -273,6 +273,8 @@ pub fn build(
     let lyrics_surface = right_panel_parts.lyrics_surface;
     let lyrics_resize_handle = right_panel_parts.lyrics_resize_handle;
     let lyrics_host = right_panel_parts.lyrics_host;
+    let visualizer_area = right_panel_parts.visualizer_area;
+    let visualizer_levels = right_panel_parts.visualizer_levels;
 
     let content_chrome = build_content_chrome(&main_area, &right_panel);
     let right_split = content_chrome.right_split;
@@ -299,6 +301,7 @@ pub fn build(
     let fullscreen_player = build_fullscreen_player(
         &fullscreen_hero_window_controls,
         &fullscreen_inline_window_controls,
+        Rc::clone(&visualizer_levels),
     );
     let player_controls = build_bottom_player();
 
@@ -454,6 +457,8 @@ pub fn build(
         lyrics_surface,
         lyrics_resize_handle,
         lyrics_host,
+        visualizer_area,
+        visualizer_visible: Cell::new(settings.visualizer_panel_visible),
     };
     let player_view = PlayerDesktopWidgets {
         fullscreen_player,
@@ -545,10 +550,7 @@ pub fn build(
     shell.update_bottom_player();
     shell.update_fullscreen_player();
     shell.update_right_panel_button();
-    shell.update_lyrics_panel_button();
-    if !shell.lyrics.panel_visible.get() {
-        apply_lyrics_panel_visibility(Rc::clone(&shell), false);
-    }
+    apply_sidebar_media_visibility(Rc::clone(&shell));
     shell.request_initial_lyrics_if_needed();
     install_product_event_receivers(&shell, receivers);
 

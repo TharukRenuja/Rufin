@@ -144,6 +144,7 @@ pub enum BackendCommand {
         current: PreparedStream,
         next: Option<PreparedNext>,
         start_position_millis: u64,
+        playback_rate: f64,
     },
     PrepareNext {
         current_run: RunId,
@@ -168,6 +169,7 @@ pub enum BackendCommand {
         muted: bool,
     },
     ConfigureAudio(BackendAudioSettings),
+    SetPlaybackRate(f64),
     SetVisualizerEnabled(bool),
 }
 
@@ -182,6 +184,7 @@ impl BackendCommand {
             Self::PrepareNext { current_run, .. } => Some(*current_run),
             Self::SetOutputVolume { .. }
             | Self::ConfigureAudio(_)
+            | Self::SetPlaybackRate(_)
             | Self::SetVisualizerEnabled(_) => None,
         }
     }

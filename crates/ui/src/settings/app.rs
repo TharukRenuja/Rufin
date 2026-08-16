@@ -88,6 +88,8 @@ pub struct Settings {
     pub window_height: Option<i32>,
     #[serde(default = "default_lyrics_panel_visible")]
     pub lyrics_panel_visible: bool,
+    #[serde(default)]
+    pub visualizer_panel_visible: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub queue_lyrics_height: Option<i32>,
     #[serde(default)]
@@ -134,6 +136,7 @@ impl Default for Settings {
             window_width: None,
             window_height: None,
             lyrics_panel_visible: true,
+            visualizer_panel_visible: false,
             queue_lyrics_height: None,
             library_lists: default_library_list_settings(),
             folder_view: FolderViewSettings::default(),

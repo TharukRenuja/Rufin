@@ -23,6 +23,10 @@ pub(crate) mod persistence;
 pub(crate) mod source;
 
 use general::{appearance_page, playback_page, scrobbling_page};
+pub(crate) use general::{
+    loudness_normalization_from_index, loudness_normalization_index, transition_from_index,
+    transition_index, volume_scale_from_index, volume_scale_index,
+};
 use layout::{
     discord_display_from_index, discord_display_index, discord_link_from_index, discord_link_index,
     left_sidebar_mode_from_index, left_sidebar_row, right_sidebar_mode_from_index,
@@ -60,7 +64,7 @@ impl PreferencesState {
     }
 }
 
-fn selection_row<F>(
+pub(crate) fn selection_row<F>(
     title: &str,
     option_titles: &[String],
     selected: u32,
@@ -1209,7 +1213,7 @@ fn layout_group(shell: &Rc<Shell>) -> adw::PreferencesGroup {
     group.add(&default_right_row);
 
     let lyrics_panel_row = adw::SwitchRow::builder()
-        .title(tr("Show Lyrics Panel"))
+        .title(tr("Show lyrics"))
         .active(settings.lyrics_panel_visible)
         .build();
     let lyrics_panel_shell = Rc::clone(shell);
@@ -1217,6 +1221,16 @@ fn layout_group(shell: &Rc<Shell>) -> adw::PreferencesGroup {
         lyrics_panel_shell.set_lyrics_panel_visible(row.is_active());
     });
     group.add(&lyrics_panel_row);
+
+    let visualizer_panel_row = adw::SwitchRow::builder()
+        .title(tr("Show visualizer"))
+        .active(settings.visualizer_panel_visible)
+        .build();
+    let visualizer_panel_shell = Rc::clone(shell);
+    visualizer_panel_row.connect_active_notify(move |row| {
+        visualizer_panel_shell.set_visualizer_panel_visible(row.is_active());
+    });
+    group.add(&visualizer_panel_row);
 
     let narrow_row = adw::SwitchRow::builder()
         .title(tr("Use different layout below a threshold width"))

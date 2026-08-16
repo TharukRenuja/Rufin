@@ -253,6 +253,7 @@ gstreamer_plugin_names=(
     libgstapetag.dylib
     libgstasf.dylib
     libgstaudioconvert.dylib
+    libgstaudiofx.dylib
     libgstaudioparsers.dylib
     libgstaudioresample.dylib
     libgstautodetect.dylib

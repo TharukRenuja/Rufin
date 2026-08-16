@@ -101,6 +101,27 @@ fn playback_modes_are_one_app_wide_settings_value() {
 }
 
 #[test]
+fn sidebar_visualizer_is_opt_in_and_persists() {
+    let mut legacy = serde_json::to_value(Settings::default()).expect("serialize settings");
+    legacy
+        .as_object_mut()
+        .expect("settings object")
+        .remove("visualizer_panel_visible");
+    let restored = serde_json::from_value::<Settings>(legacy).expect("restore older settings");
+    assert!(!restored.visualizer_panel_visible);
+
+    let settings = Settings {
+        visualizer_panel_visible: true,
+        ..Settings::default()
+    };
+    let restored = serde_json::from_value::<Settings>(
+        serde_json::to_value(settings).expect("serialize visualizer setting"),
+    )
+    .expect("restore visualizer setting");
+    assert!(restored.visualizer_panel_visible);
+}
+
+#[test]
 fn context_menu_settings_migrate_and_restore_custom_order() {
     let mut legacy = serde_json::to_value(Settings::default()).expect("serialize settings");
     legacy

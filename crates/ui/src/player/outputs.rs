@@ -2,14 +2,13 @@ use crate::shell::Shell;
 use gtk::prelude::*;
 use localization::tr;
 use playback::AudioOutput;
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 use std::sync::mpsc::TryRecvError;
 use std::thread;
 use std::time::{Duration, Instant};
 
 type AudioOutputOptions = Vec<(Option<String>, String)>;
-type AudioOutputSelected = Rc<dyn Fn(Option<String>, String)>;
 const AUDIO_OUTPUT_REFRESH_INTERVAL: Duration = Duration::from_secs(2);
 
 pub(crate) fn default_audio_output_options() -> AudioOutputOptions {
@@ -41,12 +40,7 @@ pub(crate) fn selected_audio_output_title(shell: &Rc<Shell>, selected: Option<&s
         })
 }
 
-pub(crate) fn present_audio_output_popover(
-    anchor: &impl IsA<gtk::Widget>,
-    shell: &Rc<Shell>,
-    position: gtk::PositionType,
-    on_selected: Option<AudioOutputSelected>,
-) {
+pub(crate) fn audio_output_dropdown(shell: &Rc<Shell>, width: i32) -> gtk::DropDown {
     let selected = shell
         .settings
         .current
@@ -54,45 +48,73 @@ pub(crate) fn present_audio_output_popover(
         .playback
         .audio_output
         .clone();
-    let options = shell.playback.audio_output_options.borrow().clone();
-    let shown_options = Rc::new(RefCell::new(options.clone()));
+    let selected = Rc::new(RefCell::new(selected));
+    let options = Rc::new(RefCell::new(Vec::new()));
+    let syncing = Rc::new(Cell::new(false));
+    let dropdown = gtk::DropDown::from_strings(&[]);
+    dropdown.add_css_class("audio-output-dropdown");
+    dropdown.set_valign(gtk::Align::Center);
+    dropdown.set_width_request(width);
+    refresh_audio_output_dropdown(&dropdown, shell, &options, &selected, &syncing);
 
-    let popover = gtk::Popover::new();
-    popover.add_css_class("audio-output-popover");
-    popover.set_autohide(true);
-    popover.set_has_arrow(false);
-    popover.set_position(position);
-    popover.set_parent(anchor);
-
-    let list = gtk::Box::new(gtk::Orientation::Vertical, 1);
-    list.set_margin_top(4);
-    list.set_margin_bottom(4);
-    list.set_margin_start(0);
-    list.set_margin_end(0);
-    list.set_width_request(236);
-    populate_audio_output_rows(
-        &list,
-        &popover,
-        shell,
-        selected.as_deref(),
-        options,
-        on_selected.as_ref(),
-    );
-    popover.set_child(Some(&list));
-    popover.connect_closed(|popover| popover.unparent());
-    popover.popup();
+    let output_shell = Rc::clone(shell);
+    let output_options = Rc::clone(&options);
+    let output_selected = Rc::clone(&selected);
+    let output_syncing = Rc::clone(&syncing);
+    dropdown.connect_selected_notify(move |dropdown| {
+        if output_syncing.get() {
+            return;
+        }
+        let Some((id, title)) = output_options
+            .borrow()
+            .get(dropdown.selected() as usize)
+            .cloned()
+        else {
+            return;
+        };
+        *output_selected.borrow_mut() = id.clone();
+        dropdown.set_tooltip_text(Some(&title));
+        output_shell.update_playback_settings(|settings| settings.audio_output = id);
+    });
 
     let seen_generation = shell.playback.audio_output_refresh_generation.get();
     request_audio_output_refresh(shell);
-    watch_audio_output_refresh(
+    watch_audio_output_dropdown_refresh(
         shell,
-        &popover,
-        &list,
-        selected,
+        &dropdown,
         seen_generation,
-        shown_options,
-        on_selected,
+        options,
+        selected,
+        syncing,
     );
+    dropdown
+}
+
+fn refresh_audio_output_dropdown(
+    dropdown: &gtk::DropDown,
+    shell: &Rc<Shell>,
+    options: &Rc<RefCell<AudioOutputOptions>>,
+    selected: &Rc<RefCell<Option<String>>>,
+    syncing: &Rc<Cell<bool>>,
+) {
+    let selected_id = selected.borrow().clone();
+    let selected_title = selected_audio_output_title(shell, selected_id.as_deref());
+    let cached_options = shell.playback.audio_output_options.borrow().clone();
+    let shown =
+        include_selected_audio_output(cached_options, selected_id.as_deref(), selected_title);
+    let selected_index = audio_output_index(&shown, selected_id.as_deref()).unwrap_or_default();
+    let titles = shown
+        .iter()
+        .map(|(_, title)| title.as_str())
+        .collect::<Vec<_>>();
+    let model = gtk::StringList::new(&titles);
+
+    syncing.set(true);
+    dropdown.set_model(Some(&model));
+    dropdown.set_selected(selected_index as u32);
+    dropdown.set_tooltip_text(shown.get(selected_index).map(|(_, title)| title.as_str()));
+    syncing.set(false);
+    *options.borrow_mut() = shown;
 }
 
 fn request_audio_output_refresh(shell: &Rc<Shell>) {
@@ -148,36 +170,23 @@ fn request_audio_output_refresh(shell: &Rc<Shell>) {
     });
 }
 
-fn watch_audio_output_refresh(
+fn watch_audio_output_dropdown_refresh(
     shell: &Rc<Shell>,
-    popover: &gtk::Popover,
-    list: &gtk::Box,
-    selected: Option<String>,
+    dropdown: &gtk::DropDown,
     seen_generation: u64,
-    shown_options: Rc<RefCell<AudioOutputOptions>>,
-    on_selected: Option<AudioOutputSelected>,
+    options: Rc<RefCell<AudioOutputOptions>>,
+    selected: Rc<RefCell<Option<String>>>,
+    syncing: Rc<Cell<bool>>,
 ) {
-    let popover = popover.clone();
-    let list = list.clone();
+    let dropdown = dropdown.downgrade();
     let shell = Rc::clone(shell);
     gtk::glib::timeout_add_local(Duration::from_millis(50), move || {
-        if !popover.is_visible() {
+        let Some(dropdown) = dropdown.upgrade() else {
             return gtk::glib::ControlFlow::Break;
-        }
+        };
         let current_generation = shell.playback.audio_output_refresh_generation.get();
         if current_generation != seen_generation {
-            let options = shell.playback.audio_output_options.borrow().clone();
-            if *shown_options.borrow() != options {
-                populate_audio_output_rows(
-                    &list,
-                    &popover,
-                    &shell,
-                    selected.as_deref(),
-                    options.clone(),
-                    on_selected.as_ref(),
-                );
-                *shown_options.borrow_mut() = options;
-            }
+            refresh_audio_output_dropdown(&dropdown, &shell, &options, &selected, &syncing);
             return gtk::glib::ControlFlow::Break;
         }
         if shell.playback.audio_output_refresh_running.get() {
@@ -197,6 +206,20 @@ fn playback_output_options(discovered: Vec<AudioOutput>) -> AudioOutputOptions {
             .map(|output| (Some(output.id), output.name)),
     );
     outputs
+}
+
+fn include_selected_audio_output(
+    mut options: AudioOutputOptions,
+    selected: Option<&str>,
+    selected_title: String,
+) -> AudioOutputOptions {
+    let selected = selected.filter(|id| *id != "autoaudiosink");
+    if let Some(selected) = selected
+        && audio_output_index(&options, Some(selected)).is_none()
+    {
+        options.push((Some(selected.to_string()), selected_title));
+    }
+    options
 }
 
 fn audio_output_index(
@@ -220,81 +243,9 @@ fn static_audio_output_title(id: &str) -> Option<String> {
     })
 }
 
-fn populate_audio_output_rows(
-    list: &gtk::Box,
-    popover: &gtk::Popover,
-    shell: &Rc<Shell>,
-    selected: Option<&str>,
-    options: AudioOutputOptions,
-    on_selected: Option<&AudioOutputSelected>,
-) {
-    let selected_index = audio_output_index(&options, selected);
-    while let Some(child) = list.first_child() {
-        list.remove(&child);
-    }
-    for (index, (id, title)) in options.into_iter().enumerate() {
-        list.append(&audio_output_row(
-            popover,
-            shell,
-            Some(index) == selected_index,
-            id,
-            title,
-            on_selected,
-        ));
-    }
-}
-
-fn audio_output_row(
-    popover: &gtk::Popover,
-    shell: &Rc<Shell>,
-    active: bool,
-    id: Option<String>,
-    title: String,
-    on_selected: Option<&AudioOutputSelected>,
-) -> gtk::Button {
-    let row = gtk::Button::new();
-    row.add_css_class("flat");
-    row.add_css_class("audio-output-row");
-    row.set_halign(gtk::Align::Fill);
-    row.set_tooltip_text(Some(&title));
-
-    let content = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-    content.set_halign(gtk::Align::Fill);
-    content.set_valign(gtk::Align::Center);
-    let check = gtk::Image::from_icon_name("object-select-symbolic");
-    check.set_pixel_size(16);
-    check.set_size_request(16, 16);
-    check.set_opacity(if active { 1.0 } else { 0.0 });
-    content.append(&check);
-    let label = gtk::Label::new(Some(&title));
-    label.set_xalign(0.0);
-    label.set_hexpand(true);
-    label.set_max_width_chars(30);
-    label.set_ellipsize(gtk::pango::EllipsizeMode::End);
-    content.append(&label);
-    row.set_child(Some(&content));
-
-    let row_shell = Rc::clone(shell);
-    let row_popover = popover.downgrade();
-    let on_selected = on_selected.cloned();
-    row.connect_clicked(move |_| {
-        let selected = id.clone();
-        row_shell.update_playback_settings(|settings| {
-            settings.audio_output = selected.clone();
-        });
-        if let Some(on_selected) = on_selected.as_ref() {
-            on_selected(selected, title.clone());
-        }
-        if let Some(popover) = row_popover.upgrade() {
-            popover.popdown();
-        }
-    });
-    row
-}
-
 #[cfg(test)]
 mod tests {
-    use super::{audio_output_index, default_audio_output_options};
+    use super::{audio_output_index, default_audio_output_options, include_selected_audio_output};
 
     #[test]
     fn unavailable_selected_output_does_not_mark_system_default_active() {
@@ -302,5 +253,20 @@ mod tests {
 
         assert_eq!(audio_output_index(&outputs, None), Some(0));
         assert_eq!(audio_output_index(&outputs, Some("gst-device:gone")), None);
+    }
+
+    #[test]
+    fn unavailable_selected_output_remains_selectable() {
+        let outputs = include_selected_audio_output(
+            default_audio_output_options(),
+            Some("gst-device:gone"),
+            "Selected device".to_string(),
+        );
+
+        assert_eq!(audio_output_index(&outputs, None), Some(0));
+        assert_eq!(
+            audio_output_index(&outputs, Some("gst-device:gone")),
+            Some(1)
+        );
     }
 }
