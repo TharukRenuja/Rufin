@@ -13,7 +13,7 @@ use crate::layout::width_allocation_owner;
 use crate::localization::bind_label_text_with;
 use crate::shell::Shell;
 use crate::shell::actions::{ActionButtonVariant, configure_action_button, icon_button};
-use crate::shell::actions::{PLAY_LATER_ICON, PLAY_NEXT_ICON, REMOVE_ICON};
+use crate::shell::actions::{DELETE_ICON, PLAY_LATER_ICON, PLAY_NEXT_ICON};
 use crate::shell::cover::presentation::add_album_seed_gradient_class;
 use crate::shell::cover::{
     ArtworkTile, CoverGroupProjection, LARGE_COVER_SIZE, cover_fetch_size_for_display,
@@ -347,7 +347,10 @@ impl DetailSummaryProjection {
 
     pub(crate) fn replace(&self, values: &[(&str, String)]) {
         for (index, (item, icon, label)) in self.items.iter().enumerate() {
-            if let Some((icon_name, text)) = values.get(index) {
+            if let Some((icon_name, text)) = values
+                .get(index)
+                .filter(|(_, text)| summary_value_is_visible(text))
+            {
                 icon.set_icon_name(Some(icon_name));
                 label.set_text(text);
                 item.set_visible(true);
@@ -362,6 +365,10 @@ impl DetailSummaryProjection {
             bind_label_text_with(label, text);
         }
     }
+}
+
+fn summary_value_is_visible(text: &str) -> bool {
+    !text.is_empty()
 }
 
 pub(crate) fn detail_action_button(icon_name: &str, label: &str) -> gtk::Button {
@@ -517,11 +524,11 @@ pub(crate) fn detail_delete_button(label: &str) -> gtk::Button {
     button.add_css_class("circular");
     button.set_valign(gtk::Align::Center);
     button.set_tooltip_text(Some(&tr(label)));
-    button.set_child(Some(&gtk::Image::from_icon_name(REMOVE_ICON)));
+    button.set_child(Some(&gtk::Image::from_icon_name(DELETE_ICON)));
     configure_action_button(
         &button,
         ActionButtonVariant::DetailAction,
-        Some(REMOVE_ICON),
+        Some(DELETE_ICON),
     );
     button
 }
@@ -672,7 +679,7 @@ pub(crate) fn detail_showcase_frame_with_back(
     overlay.set_width_request(1);
     overlay.set_child(Some(&frame));
 
-    let back = icon_button("go-previous-symbolic", "Back");
+    let back = icon_button("go-previous-bundled-symbolic", "Back");
     back.add_css_class("detail-back-button");
     back.set_halign(gtk::Align::Start);
     back.set_valign(gtk::Align::Start);
@@ -921,7 +928,7 @@ fn percent_encode_path_segment(value: &str) -> String {
 mod tests {
     use super::{
         detail_cover_render_size, detail_external_links_visible, full_artwork_size,
-        lastfm_album_url, lastfm_artist_url, musicbrainz_album_url,
+        lastfm_album_url, lastfm_artist_url, musicbrainz_album_url, summary_value_is_visible,
     };
     use crate::routes::route_layout::detail_showcase_cover_size;
 
@@ -939,6 +946,12 @@ mod tests {
         assert!(!detail_external_links_visible(false, true));
         assert!(!detail_external_links_visible(true, true));
         assert!(detail_external_links_visible(true, false));
+    }
+
+    #[test]
+    fn empty_summary_values_hide_the_icon_and_text() {
+        assert!(!summary_value_is_visible(""));
+        assert!(summary_value_is_visible("1 track"));
     }
 
     #[test]

@@ -257,7 +257,7 @@ pub fn build(
     compact_nav_slot.add_css_class("compact-rail-slot");
     let normal_main_menu = gtk::MenuButton::new();
     let compact_main_menu = gtk::Button::new();
-    let window_bar_search = gtk::Button::from_icon_name("system-search-symbolic");
+    let window_bar_search = gtk::Button::from_icon_name("system-search-bundled-symbolic");
 
     let main_area_parts = build_main_area();
     let main_area = main_area_parts.root;
@@ -280,7 +280,7 @@ pub fn build(
     let right_split = content_chrome.right_split;
     let right_panel_slot = content_chrome.right_panel_slot;
     let right_resize_handle = content_chrome.right_resize_handle;
-    let tiny_nav_button = gtk::Button::from_icon_name("sidebar-show-symbolic");
+    let tiny_nav_button = gtk::Button::from_icon_name("sidebar-show-bundled-symbolic");
     tiny_nav_button.add_css_class("icon-button");
     tiny_nav_button.add_css_class("flat");
     tiny_nav_button.add_css_class("circular");
@@ -380,7 +380,7 @@ pub fn build(
     operation_feedback_text.append(&operation_feedback_title);
     operation_feedback_text.append(&operation_feedback_subtitle);
     operation_feedback.append(&operation_feedback_text);
-    let operation_feedback_close = gtk::Button::from_icon_name("window-close-symbolic");
+    let operation_feedback_close = gtk::Button::from_icon_name("window-close-bundled-symbolic");
     operation_feedback_close.add_css_class("flat");
     operation_feedback_close.set_valign(gtk::Align::Center);
     operation_feedback_close.set_tooltip_text(Some(&tr("Close")));

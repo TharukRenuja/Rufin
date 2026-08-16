@@ -20,6 +20,29 @@ pub(crate) fn context_menus_expander(shell: &Rc<Shell>) -> adw::ExpanderRow {
     expander
 }
 
+fn context_menu_rating_row(shell: &Rc<Shell>) -> adw::ActionRow {
+    let visible = gtk::Switch::builder()
+        .active(shell.settings.current.borrow().context_menu.rating_visible)
+        .valign(gtk::Align::Center)
+        .build();
+    let row = adw::ActionRow::builder().title(tr(msgid("Rating"))).build();
+    row.add_suffix(&visible);
+    row.set_activatable_widget(Some(&visible));
+
+    let shell = Rc::clone(shell);
+    visible.connect_active_notify(move |switch| {
+        let is_visible = switch.is_active();
+        shell.update_app_settings("context menu rating setting", |settings| {
+            if settings.context_menu.rating_visible == is_visible {
+                return false;
+            }
+            settings.context_menu.rating_visible = is_visible;
+            true
+        });
+    });
+    row
+}
+
 fn populate_context_menu_rows(
     shell: &Rc<Shell>,
     expander: &adw::ExpanderRow,
@@ -37,6 +60,9 @@ fn populate_context_menu_rows(
         expander.add_row(&row);
         rows.borrow_mut().push(row.downgrade());
     }
+    let rating = context_menu_rating_row(shell);
+    expander.add_row(&rating);
+    rows.borrow_mut().push(rating.downgrade());
 }
 
 fn context_menu_item_row(
@@ -56,13 +82,13 @@ fn context_menu_item_row(
     drag.set_tooltip_text(Some(&tr("Drag to reorder")));
     row.add_prefix(&drag);
 
-    let up = gtk::Button::from_icon_name("go-up-symbolic");
+    let up = gtk::Button::from_icon_name("go-up-bundled-symbolic");
     up.add_css_class("flat");
     up.set_tooltip_text(Some(&tr("Move up")));
     up.set_valign(gtk::Align::Center);
     row.add_suffix(&up);
 
-    let down = gtk::Button::from_icon_name("go-down-symbolic");
+    let down = gtk::Button::from_icon_name("go-down-bundled-symbolic");
     down.add_css_class("flat");
     down.set_tooltip_text(Some(&tr("Move down")));
     down.set_valign(gtk::Align::Center);
@@ -235,8 +261,7 @@ fn context_menu_item_title(item: ContextMenuItem) -> &'static str {
         ContextMenuItem::Favorites => msgid("Favorites"),
         ContextMenuItem::EditMetadata => msgid("Edit metadata"),
         ContextMenuItem::Pins => msgid("Pins"),
-        ContextMenuItem::GoToArtist => msgid("Go to Artist"),
-        ContextMenuItem::GoToAlbum => msgid("Go to Album"),
+        ContextMenuItem::GoTo => msgid("Go to"),
         ContextMenuItem::Download => msgid("Download"),
     }
 }
@@ -251,8 +276,7 @@ fn context_menu_item_drag_id(item: ContextMenuItem) -> &'static str {
         ContextMenuItem::Favorites => "Favorites",
         ContextMenuItem::EditMetadata => "EditMetadata",
         ContextMenuItem::Pins => "Pins",
-        ContextMenuItem::GoToArtist => "GoToArtist",
-        ContextMenuItem::GoToAlbum => "GoToAlbum",
+        ContextMenuItem::GoTo => "GoTo",
         ContextMenuItem::Download => "Download",
     }
 }

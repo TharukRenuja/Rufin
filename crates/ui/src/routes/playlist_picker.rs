@@ -429,7 +429,7 @@ fn playlist_picker_row(
         &track_count_text(playlist.track_count.into()),
     ));
     meta.append(&playlist_picker_meta(
-        "preferences-system-time-symbolic",
+        "preferences-system-time-bundled-symbolic",
         &format_duration_units(playlist.duration_seconds),
     ));
     let genres = gtk::Box::new(gtk::Orientation::Horizontal, 6);

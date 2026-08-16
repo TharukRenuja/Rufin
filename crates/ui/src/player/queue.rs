@@ -19,7 +19,7 @@ use crate::favorites::{
 };
 use crate::interactions::install_context_menu_openers;
 use crate::interactions::{
-    ADD_TO_PLAYLIST_ICON, ALBUM_ICON, ARTIST_ICON, ContextMenuSurface, RADIO_ICON,
+    ADD_TO_PLAYLIST_ICON, ContextMenuSurface, GO_TO_ICON, RADIO_ICON, go_to_context_submenu,
     radio_context_submenu,
 };
 use crate::layout::width_allocation_owner;
@@ -1377,7 +1377,7 @@ fn queue_header_fixed_label(text: &str, width: i32) -> gtk::Label {
 }
 
 fn queue_duration_header_icon() -> gtk::Image {
-    let image = gtk::Image::from_icon_name("preferences-system-time-symbolic");
+    let image = gtk::Image::from_icon_name("preferences-system-time-bundled-symbolic");
     let label = tr("Duration");
     image.add_css_class("muted");
     image.set_width_request(QUEUE_DURATION_COLUMN_WIDTH);
@@ -1754,37 +1754,17 @@ fn show_resolved_queue_row_context_menu(
     } else {
         entry.track.relations.artists.clone()
     };
-    match artist_credits.as_slice() {
-        [] => {}
-        [_] => surface.append_configurable_action(
-            ContextMenuItem::GoToArtist,
-            msgid("Go to Artist"),
-            "go-artist",
-            ARTIST_ICON,
-        ),
-        _ => {
-            let submenu = gio::Menu::new();
-            for (index, artist) in artist_credits.iter().enumerate() {
-                submenu.append(
-                    Some(&artist.name),
-                    Some(&format!("queue.go-artist-{index}")),
-                );
-            }
-            surface.append_configurable_submenu(
-                ContextMenuItem::GoToArtist,
-                msgid("Go to Artist"),
-                &submenu,
-                ARTIST_ICON,
-            );
-        }
-    }
     let album_route = entry.track.album_id.clone().map(Route::AlbumDetail);
-    if album_route.is_some() {
-        surface.append_configurable_action(
-            ContextMenuItem::GoToAlbum,
-            msgid("Go to Album"),
-            "go-album",
-            ALBUM_ICON,
+    if !artist_credits.is_empty() || album_route.is_some() {
+        let artist_names = artist_credits
+            .iter()
+            .map(|artist| artist.name.clone())
+            .collect::<Vec<_>>();
+        surface.append_configurable_submenu(
+            ContextMenuItem::GoTo,
+            msgid("Go to"),
+            &go_to_context_submenu("queue", &artist_names, album_route.is_some()),
+            GO_TO_ICON,
         );
     }
     install_download_actions(&surface, shell, &PlaybackTarget::Track(track.id.clone()));

@@ -12,13 +12,13 @@ pub enum ContextMenuItem {
     Favorites,
     EditMetadata,
     Pins,
-    GoToArtist,
-    GoToAlbum,
+    #[serde(alias = "GoToArtist", alias = "GoToAlbum")]
+    GoTo,
     Download,
 }
 
 impl ContextMenuItem {
-    pub const fn all() -> [Self; 11] {
+    pub const fn all() -> [Self; 10] {
         [
             Self::Play,
             Self::PlayNext,
@@ -28,8 +28,7 @@ impl ContextMenuItem {
             Self::Favorites,
             Self::EditMetadata,
             Self::Pins,
-            Self::GoToArtist,
-            Self::GoToAlbum,
+            Self::GoTo,
             Self::Download,
         ]
     }
@@ -46,12 +45,15 @@ pub struct ContextMenuItemSettings {
 pub struct ContextMenuSettings {
     #[serde(default = "default_context_menu_items")]
     pub items: Vec<ContextMenuItemSettings>,
+    #[serde(default = "default_true")]
+    pub rating_visible: bool,
 }
 
 impl Default for ContextMenuSettings {
     fn default() -> Self {
         Self {
             items: default_context_menu_items(),
+            rating_visible: true,
         }
     }
 }
@@ -118,6 +120,7 @@ mod tests {
                     visible: true,
                 },
             ],
+            rating_visible: true,
         };
 
         settings.sanitize();
@@ -134,5 +137,41 @@ mod tests {
                 .count(),
             1
         );
+    }
+
+    #[test]
+    fn legacy_artist_and_album_destinations_merge_into_one_go_to_setting() {
+        let mut settings: ContextMenuSettings = serde_json::from_value(serde_json::json!({
+            "items": [
+                { "item": "GoToAlbum", "visible": false },
+                { "item": "GoToArtist", "visible": true }
+            ]
+        }))
+        .expect("legacy context menu settings");
+
+        settings.sanitize();
+
+        assert_eq!(
+            settings
+                .items
+                .iter()
+                .filter(|entry| entry.item == ContextMenuItem::GoTo)
+                .count(),
+            1
+        );
+        assert_eq!(settings.items[0].item, ContextMenuItem::GoTo);
+        assert!(!settings.items[0].visible);
+    }
+
+    #[test]
+    fn rating_is_visible_by_default_and_in_older_settings() {
+        assert!(ContextMenuSettings::default().rating_visible);
+
+        let settings: ContextMenuSettings = serde_json::from_value(serde_json::json!({
+            "items": []
+        }))
+        .expect("older context menu settings");
+
+        assert!(settings.rating_visible);
     }
 }

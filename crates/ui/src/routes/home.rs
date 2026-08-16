@@ -28,7 +28,7 @@ use super::home_layout::{
     HomeShowcaseMode, home_section_header, home_showcase_cover_size, home_showcase_is_compact,
     home_showcase_mode, home_showcase_spacing,
 };
-use super::library_fields::COLLECTION_GRID_CARD_MARGIN;
+use super::library_fields::{COLLECTION_GRID_CARD_MARGIN, nonzero_year};
 use super::route::Route;
 use super::route_layout::{ROUTE_TOP_MARGIN, home_album_content_width, route_scroller_widget};
 
@@ -397,13 +397,13 @@ impl Shell {
         body.append(&cover_column);
 
         let facts = DetailSummaryProjection::new(&[
-            ("x-office-calendar-symbolic", year.to_string()),
+            ("x-office-calendar-bundled-symbolic", nonzero_year(year)),
             (
                 "rufin-route-tracks-symbolic",
                 track_count_text(track_count.into()),
             ),
             (
-                "preferences-system-time-symbolic",
+                "preferences-system-time-bundled-symbolic",
                 format_duration_units(duration),
             ),
         ]);

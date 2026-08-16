@@ -31,6 +31,7 @@ use super::detail_showcase::{
     detail_playback_controls, detail_radio_button, fit_detail_text, fitted_detail_title_label,
     media_detail_showcase,
 };
+use super::library_fields::nonzero_year;
 use super::release_kind::album_release_kind_label;
 use super::route::Route;
 use super::route_layout::{
@@ -496,13 +497,16 @@ pub(crate) fn load_album_detail(
 
 fn album_summary_items(summary: &AlbumSummary) -> Vec<(&'static str, String)> {
     vec![
-        ("x-office-calendar-symbolic", summary.album.year.to_string()),
+        (
+            "x-office-calendar-bundled-symbolic",
+            nonzero_year(summary.album.year),
+        ),
         (
             "rufin-route-tracks-symbolic",
             track_count_text(summary.track_count.into()),
         ),
         (
-            "preferences-system-time-symbolic",
+            "preferences-system-time-bundled-symbolic",
             format_duration_units(summary.duration_seconds),
         ),
     ]

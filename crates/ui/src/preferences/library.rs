@@ -97,7 +97,7 @@ fn library_sources_page(
 ) -> adw::PreferencesPage {
     let page = adw::PreferencesPage::builder()
         .title(tr("Library"))
-        .icon_name("rufin-route-tracks-symbolic")
+        .icon_name("drive-multidisk-bundled-symbolic")
         .build();
 
     let configured = shell.source.configured.borrow().clone();
@@ -152,9 +152,11 @@ fn library_sources_page(
             icon.set_valign(gtk::Align::Center);
             row.add_prefix(&icon);
             if selected {
-                row.add_suffix(&gtk::Image::from_icon_name("object-select-symbolic"));
+                row.add_suffix(&gtk::Image::from_icon_name(
+                    "object-select-bundled-symbolic",
+                ));
             }
-            row.add_suffix(&gtk::Image::from_icon_name("go-next-symbolic"));
+            row.add_suffix(&gtk::Image::from_icon_name("go-next-bundled-symbolic"));
             row.set_activatable(true);
             let settings_shell = Rc::clone(shell);
             let navigation = navigation.clone();
@@ -183,7 +185,7 @@ fn library_sources_page(
         }
     }
 
-    let add_server = button_row("Add server", "list-add-symbolic");
+    let add_server = button_row("Add server", "list-add-bundled-symbolic");
     let add_shell = Rc::clone(shell);
     let add_navigation = navigation.clone();
     let add_navigation_controls = navigation_controls.clone();
@@ -224,7 +226,7 @@ fn library_sources_page(
                     .unwrap_or_else(|| tr(DEFAULT_DOWNLOAD_DIRECTORY_SUBTITLE)),
             )
             .build();
-        let reset_folder = gtk::Button::from_icon_name("edit-clear-symbolic");
+        let reset_folder = gtk::Button::from_icon_name("edit-clear-bundled-symbolic");
         reset_folder.add_css_class("flat");
         reset_folder.set_valign(gtk::Align::Center);
         reset_folder.set_tooltip_text(Some(&tr("Use Rufin data folder")));
@@ -341,7 +343,7 @@ fn library_sources_page(
         let actions_row = adw::PreferencesRow::new();
         let actions = action_button_box();
         actions.append(&add_rule);
-        let remove_all = row_action_button("Remove all downloads", "user-trash-symbolic");
+        let remove_all = row_action_button("Remove all downloads", "user-trash-bundled-symbolic");
         remove_all.add_css_class("destructive-action");
         let remove_shell = Rc::clone(shell);
         let source_id = server.id.clone();
@@ -387,7 +389,7 @@ fn library_sources_page(
                 .subtitle(folder.path.clone())
                 .build();
             row.add_prefix(&gtk::Image::from_icon_name("rufin-route-folders-symbolic"));
-            let remove = gtk::Button::from_icon_name("window-close-symbolic");
+            let remove = gtk::Button::from_icon_name("window-close-bundled-symbolic");
             remove.set_tooltip_text(Some(&tr("Remove")));
             remove.add_css_class("flat");
             remove.add_css_class("destructive-action");
@@ -409,7 +411,7 @@ fn library_sources_page(
 
     let local_actions = adw::PreferencesRow::new();
     let action_buttons = action_button_box();
-    let add_local = row_action_button("Add a music folder", "folder-new-symbolic");
+    let add_local = row_action_button("Add a music folder", "folder-new-bundled-symbolic");
     let add_shell = Rc::clone(shell);
     let add_dialog = dialog.downgrade();
     add_local.connect_clicked(move |_| {
@@ -435,7 +437,7 @@ fn library_sources_page(
         });
     });
     action_buttons.append(&add_local);
-    let resync_local = row_action_button("Resync Library", "view-refresh-symbolic");
+    let resync_local = row_action_button("Resync Library", "view-refresh-bundled-symbolic");
     let local_source_id = configured
         .sources
         .iter()
@@ -481,7 +483,7 @@ fn add_download_rules(
         artwork.set_margin_bottom(6);
         row.add_prefix(&artwork);
         let more = gtk::MenuButton::new();
-        more.set_icon_name("view-more-symbolic");
+        more.set_icon_name("view-more-bundled-symbolic");
         more.add_css_class("flat");
         more.set_valign(gtk::Align::Center);
         more.set_tooltip_text(Some(&tr("Rule actions")));
@@ -570,7 +572,7 @@ fn add_download_rules(
     let add = gtk::MenuButton::new();
     add.set_child(Some(&row_action_content(
         "New download rule",
-        "list-add-symbolic",
+        "list-add-bundled-symbolic",
     )));
     add.add_css_class("flat");
     add.set_halign(gtk::Align::Fill);
@@ -715,9 +717,9 @@ fn add_download_queue(
             .unwrap_or_default();
         pause_downloads.set_visible(!snapshot.jobs.is_empty());
         let (icon, label) = if snapshot.paused {
-            ("media-playback-start-symbolic", tr("Continue"))
+            ("media-playback-start-bundled-symbolic", tr("Continue"))
         } else {
-            ("media-playback-pause-symbolic", tr("Pause"))
+            ("media-playback-pause-bundled-symbolic", tr("Pause"))
         };
         pause_downloads.set_icon_name(icon);
         pause_downloads.set_tooltip_text(Some(&label));
@@ -745,7 +747,7 @@ fn add_download_queue(
             artwork.set_margin_bottom(6);
             row.add_prefix(&artwork);
             row.add_prefix(&drag);
-            let up = gtk::Button::from_icon_name("go-up-symbolic");
+            let up = gtk::Button::from_icon_name("go-up-bundled-symbolic");
             up.add_css_class("flat");
             up.set_valign(gtk::Align::Center);
             up.set_tooltip_text(Some(&tr("Move up")));
@@ -765,7 +767,7 @@ fn add_download_queue(
                 }
             });
             row.add_suffix(&up);
-            let down = gtk::Button::from_icon_name("go-down-symbolic");
+            let down = gtk::Button::from_icon_name("go-down-bundled-symbolic");
             down.add_css_class("flat");
             down.set_valign(gtk::Align::Center);
             down.set_tooltip_text(Some(&tr("Move down")));
@@ -785,7 +787,7 @@ fn add_download_queue(
                 }
             });
             row.add_suffix(&down);
-            let cancel = gtk::Button::from_icon_name("window-close-symbolic");
+            let cancel = gtk::Button::from_icon_name("window-close-bundled-symbolic");
             cancel.add_css_class("flat");
             cancel.set_valign(gtk::Align::Center);
             cancel.set_tooltip_text(Some(&tr("Cancel download")));
@@ -796,7 +798,7 @@ fn add_download_queue(
                 downloads.cancel(job_source_id.clone(), job_id.clone());
             });
             row.add_suffix(&cancel);
-            let clear = gtk::Button::from_icon_name("user-trash-symbolic");
+            let clear = gtk::Button::from_icon_name("user-trash-bundled-symbolic");
             clear.add_css_class("flat");
             clear.add_css_class("destructive-action");
             clear.set_valign(gtk::Align::Center);
@@ -993,7 +995,7 @@ fn download_queue_header() -> (adw::PreferencesRow, gtk::Button) {
     label.add_css_class("heading");
     label.set_halign(gtk::Align::Start);
     content.append(&label);
-    let pause = gtk::Button::from_icon_name("media-playback-pause-symbolic");
+    let pause = gtk::Button::from_icon_name("media-playback-pause-bundled-symbolic");
     pause.add_css_class("circular");
     pause.add_css_class("suggested-action");
     pause.add_css_class("download-queue-pause");
