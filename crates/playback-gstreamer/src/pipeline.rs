@@ -74,18 +74,6 @@ struct PipelineSession {
     current_stream: PreparedStream,
     playback_rate: f64,
 }
-
-macro_rules! trace_synchronous_call {
-    ($pipeline:expr, $operation:expr, $call:expr) => {{
-        let pipeline = $pipeline;
-        let operation = $operation;
-        debug!(%pipeline, %operation, "starting synchronous GStreamer call");
-        let result = $call;
-        debug!(%pipeline, %operation, "finished synchronous GStreamer call");
-        result
-    }};
-}
-
 impl PlayerPipeline {
     pub(super) fn new(name: &str, shared: Arc<Mutex<SharedBackendState>>) -> Self {
         Self {
@@ -107,24 +95,17 @@ impl PlayerPipeline {
         startup_state: gst::State,
     ) -> Result<(), String> {
         let session_name = format!("{}-{}", self.name, id.0);
-        let session = trace_synchronous_call!(&session_name, "pipeline-construction", {
-            PipelineSession::new(
-                &session_name,
-                id,
-                slot,
-                Arc::clone(&self.shared),
-                &item.stream,
-                playback_rate,
-            )
-        });
-        let mut session = session?;
-        trace_synchronous_call!(&session_name, "audio-graph-configuration", {
-            session.configure_audio(settings)
-        })?;
-        trace_synchronous_call!(&session_name, "stream-configuration", {
-            session.set_stream(&item.stream);
-            session.set_output_volume(volume, muted);
-        });
+        let mut session = PipelineSession::new(
+            &session_name,
+            id,
+            slot,
+            Arc::clone(&self.shared),
+            &item.stream,
+            playback_rate,
+        )?;
+        session.configure_audio(settings)?;
+        session.set_stream(&item.stream);
+        session.set_output_volume(volume, muted);
         if let Err(error) = session.set_state(startup_state) {
             session.stop();
             return Err(error);
@@ -200,11 +181,7 @@ impl PlayerPipeline {
 
     pub(super) fn stop(&mut self) {
         if let Some(mut session) = self.session.take() {
-            let session_name = session.pipeline.name().to_string();
-            trace_synchronous_call!(&session_name, "pipeline-retirement", {
-                session.stop();
-                drop(session);
-            });
+            session.stop();
         }
     }
 
@@ -466,13 +443,7 @@ impl PipelineSession {
     }
 
     pub(super) fn set_state(&self, state: gst::State) -> Result<gst::StateChangeSuccess, String> {
-        let operation = format!("state-change-{state:?}");
-        let result = trace_synchronous_call!(
-            self.pipeline.name(),
-            &operation,
-            self.pipeline.set_state(state)
-        );
-        result.map_err(|error| {
+        self.pipeline.set_state(state).map_err(|error| {
             self.bus
                 .pop_filtered(&[gst::MessageType::Error])
                 .and_then(|message| {
@@ -503,11 +474,7 @@ impl PipelineSession {
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
             .take();
-        let _ = trace_synchronous_call!(
-            self.pipeline.name(),
-            "stop",
-            self.pipeline.set_state(gst::State::Null)
-        );
+        let _ = self.pipeline.set_state(gst::State::Null);
     }
 
     pub(super) fn seek_millis(&self, millis: u64) -> Result<(), String> {
@@ -526,20 +493,18 @@ impl PipelineSession {
                 )
             },
         );
-        let result = trace_synchronous_call!(self.pipeline.name(), "seek", {
-            self.pipeline.seek(
-                self.playback_rate,
-                seek_flags,
-                gst::SeekType::Set,
-                gst::ClockTime::from_mseconds(
-                    self.clock
-                        .end_millis()
-                        .map_or(millis, |end_millis| millis.min(end_millis)),
-                ),
-                stop_type,
-                stop,
-            )
-        });
+        let result = self.pipeline.seek(
+            self.playback_rate,
+            seek_flags,
+            gst::SeekType::Set,
+            gst::ClockTime::from_mseconds(
+                self.clock
+                    .end_millis()
+                    .map_or(millis, |end_millis| millis.min(end_millis)),
+            ),
+            stop_type,
+            stop,
+        );
         result.map_err(|error| error.to_string())
     }
 
@@ -590,37 +555,20 @@ impl PipelineSession {
     }
 
     pub(super) fn position(&self) -> Option<gst::ClockTime> {
-        trace_synchronous_call!(
-            self.pipeline.name(),
-            "position-query",
-            self.pipeline.query_position::<gst::ClockTime>()
-        )
+        self.pipeline.query_position::<gst::ClockTime>()
     }
 
     pub(super) fn duration(&self) -> Option<gst::ClockTime> {
-        trace_synchronous_call!(
-            self.pipeline.name(),
-            "duration-query",
-            self.pipeline.query_duration::<gst::ClockTime>()
-        )
+        self.pipeline.query_duration::<gst::ClockTime>()
     }
 
     pub(super) fn running_time(&self) -> Option<gst::ClockTime> {
-        trace_synchronous_call!(
-            self.pipeline.name(),
-            "running-time-query",
-            self.pipeline.current_running_time()
-        )
+        self.pipeline.current_running_time()
     }
 
     pub(super) fn seekable(&self) -> bool {
         let mut query = gst::query::Seeking::new(gst::Format::Time);
-        let answered = trace_synchronous_call!(
-            self.pipeline.name(),
-            "seekable-query",
-            self.pipeline.query(&mut query)
-        );
-        answered && query.result().0
+        self.pipeline.query(&mut query) && query.result().0
     }
 
     pub(super) fn audio_output_factory(&self) -> Option<String> {
