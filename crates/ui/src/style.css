@@ -651,6 +651,43 @@ row:focus {
   padding: 0;
 }
 
+.compact-sidebar-pin {
+  margin: 0 6px;
+  border-radius: 12px;
+}
+
+.compact-sidebar-pin.selected,
+.compact-sidebar-pin.playing {
+  box-shadow: 0 0 0 2px var(--accent-color);
+}
+
+.compact-sidebar-pin-activate {
+  min-width: 56px;
+  min-height: 56px;
+  padding: 0;
+  border-radius: 12px;
+  background: transparent;
+  box-shadow: none;
+}
+
+.compact-sidebar-pin-activate:hover,
+.compact-sidebar-pin-activate:active {
+  background: transparent;
+  box-shadow: none;
+}
+
+.icon-button.cover-play-button.compact-sidebar-pin-play {
+  min-width: 32px;
+  min-height: 32px;
+  -gtk-icon-size: 16px;
+}
+
+.cover-play-button.compact-sidebar-pin-play .cover-hover-face,
+.cover-play-button.compact-sidebar-pin-play .action-button-shadow {
+  min-width: 32px;
+  min-height: 32px;
+}
+
 .sidebar-pin-activate {
   min-width: 0;
   padding: 4px;

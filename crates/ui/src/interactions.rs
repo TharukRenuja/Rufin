@@ -15,6 +15,8 @@ const CONTEXT_MENU_PLAYLIST_MIN_WIDTH: i32 = 380;
 const NATIVE_MENU_SELECTION_CLASS: &str = "rufin-menu-selection";
 const NATIVE_MENU_SELECTED_CLASS: &str = "rufin-menu-selected";
 const NATIVE_MENU_PARENT_GRAB_CLASS: &str = "rufin-menu-parent-grab";
+pub(crate) const CONTEXT_MENU_HOVER_OWNER_CLASS: &str = "context-menu-hover-owner";
+pub(crate) const CONTEXT_MENU_HOVER_HELD_CLASS: &str = "context-menu-hover-held";
 
 pub(crate) const ADD_TO_PLAYLIST_ICON: &str = "route-playlists-compact-bundled-symbolic";
 pub(crate) const ALBUM_ICON: &str = "rufin-route-albums-symbolic";
@@ -191,6 +193,10 @@ impl ContextMenuSurface {
         }
         self.target
             .insert_action_group(self.group_name, Some(&self.actions));
+        let hover_owners = Rc::new(context_menu_hover_owners(&self.target));
+        for owner in hover_owners.iter() {
+            owner.add_css_class(CONTEXT_MENU_HOVER_HELD_CLASS);
+        }
         show_native_menu_icons(&self.popover);
         keep_parent_grab_for_nested_native_menus(&self.popover);
         let unmap_handler = Rc::new(RefCell::new(Some(popdown_on_anchor_unmap(
@@ -204,15 +210,49 @@ impl ContextMenuSurface {
             let popover = popover.clone();
             let target = target.clone();
             let unmap_handler = Rc::clone(&unmap_handler);
+            let hover_owners = Rc::clone(&hover_owners);
             glib::idle_add_local_once(move || {
                 if let Some(handler) = unmap_handler.borrow_mut().take() {
                     target.disconnect(handler);
                 }
                 popover.unparent();
+                for owner in hover_owners.iter() {
+                    owner.remove_css_class(CONTEXT_MENU_HOVER_HELD_CLASS);
+                }
             });
         });
         self.popover.popup();
     }
+}
+
+fn context_menu_hover_owners(target: &gtk::Widget) -> Vec<gtk::Widget> {
+    fn append_descendants(widget: &gtk::Widget, owners: &mut Vec<gtk::Widget>) {
+        if widget.has_css_class(CONTEXT_MENU_HOVER_OWNER_CLASS)
+            && !owners.iter().any(|owner| owner == widget)
+        {
+            owners.push(widget.clone());
+        }
+        let mut child = widget.first_child();
+        while let Some(widget) = child {
+            child = widget.next_sibling();
+            append_descendants(&widget, owners);
+        }
+    }
+
+    let mut owners = Vec::new();
+    let mut ancestor = Some(target.clone());
+    while let Some(widget) = ancestor {
+        ancestor = widget.parent();
+        if widget.has_css_class(CONTEXT_MENU_HOVER_OWNER_CLASS)
+            && !owners.iter().any(|owner| owner == &widget)
+        {
+            owners.push(widget);
+        }
+    }
+    if owners.is_empty() {
+        append_descendants(target, &mut owners);
+    }
+    owners
 }
 
 fn resolve_context_menu_entries<T>(
