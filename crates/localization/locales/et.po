@@ -699,6 +699,11 @@ msgstr "Vaata albumit"
 msgid "Go to Artist"
 msgstr "Suundu esitaja juurde"
 
+#, fuzzy
+#| msgid "Go to Album"
+msgid "Go to"
+msgstr "Vaata albumit"
+
 msgid "Green"
 msgstr "Roheline"
 
@@ -763,6 +768,11 @@ msgstr "Paigaldatud"
 
 msgid "Instrumental"
 msgstr "Instrumentaallugu"
+
+#, fuzzy
+#| msgid "Transitions"
+msgid "Integrations"
+msgstr "Üleminekud"
 
 msgid "JACK"
 msgstr "JACK"
@@ -1550,9 +1560,6 @@ msgstr "Salvestatud, vastenduse eelvaateks sünkrooni"
 msgid "Saving..."
 msgstr "Salvestan…"
 
-msgid "Scrobbling"
-msgstr "Kraasimine"
-
 msgid "Search Again"
 msgstr "Otsi uuesti"
 
@@ -2050,6 +2057,9 @@ msgid_plural "{count} years ago"
 msgstr[0] "{count} aasta tagasi"
 msgstr[1] "{count} aastat tagasi"
 
+#~ msgid "Scrobbling"
+#~ msgstr "Kraasimine"
+
 #~ msgid "Hide lyrics"
 #~ msgstr "Peida laulusõnad"
 
@@ -2500,9 +2510,6 @@ msgstr[1] "{count} aastat tagasi"
 
 #~ msgid "This removes the folder from the Local source"
 #~ msgstr "Järgnevaga eemaldad selle kausta kohalike allikate seast"
-
-#~ msgid "Transitions"
-#~ msgstr "Üleminekud"
 
 #~ msgid "Try to fetch artwork from internet when server artwork is missing"
 #~ msgstr ""

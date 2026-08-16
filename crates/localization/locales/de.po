@@ -705,6 +705,11 @@ msgstr "Zum Album gehen"
 msgid "Go to Artist"
 msgstr "Zum Künstler springen"
 
+#, fuzzy
+#| msgid "Go to Album"
+msgid "Go to"
+msgstr "Zum Album gehen"
+
 msgid "Green"
 msgstr "Grün"
 
@@ -768,6 +773,11 @@ msgstr "Installiert"
 
 msgid "Instrumental"
 msgstr "Instrumental"
+
+#, fuzzy
+#| msgid "Duration"
+msgid "Integrations"
+msgstr "Dauer"
 
 msgid "JACK"
 msgstr "JACK"
@@ -1550,9 +1560,6 @@ msgstr "Gespeichert, mit den Übereinstimmungen der Vorschau synchronisieren"
 msgid "Saving..."
 msgstr "Wird gespeichert …"
 
-msgid "Scrobbling"
-msgstr "Scrobbling"
-
 msgid "Search Again"
 msgstr "Erneut suchen"
 
@@ -2044,6 +2051,9 @@ msgid "{count} year ago"
 msgid_plural "{count} years ago"
 msgstr[0] "vor {count} Jahr"
 msgstr[1] "vor {count} Jahren"
+
+#~ msgid "Scrobbling"
+#~ msgstr "Scrobbling"
 
 #~ msgid "Hide lyrics"
 #~ msgstr "Songtexte ausblenden"

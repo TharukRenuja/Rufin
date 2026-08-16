@@ -665,6 +665,9 @@ msgstr ""
 msgid "Go to Artist"
 msgstr ""
 
+msgid "Go to"
+msgstr ""
+
 msgid "Green"
 msgstr ""
 
@@ -726,6 +729,9 @@ msgid "Installed"
 msgstr ""
 
 msgid "Instrumental"
+msgstr ""
+
+msgid "Integrations"
 msgstr ""
 
 msgid "JACK"
@@ -1500,9 +1506,6 @@ msgid "Saved, sync to preview matches"
 msgstr ""
 
 msgid "Saving..."
-msgstr ""
-
-msgid "Scrobbling"
 msgstr ""
 
 msgid "Search Again"

@@ -712,6 +712,11 @@ msgstr "Перейти к альбому"
 msgid "Go to Artist"
 msgstr "Перейти к исполнителю"
 
+#, fuzzy
+#| msgid "Go to Album"
+msgid "Go to"
+msgstr "Перейти к альбому"
+
 msgid "Green"
 msgstr "Зелёный"
 
@@ -776,6 +781,11 @@ msgstr "Установлено"
 
 msgid "Instrumental"
 msgstr "Инструментальная"
+
+#, fuzzy
+#| msgid "Duration"
+msgid "Integrations"
+msgstr "Продолжительность"
 
 msgid "JACK"
 msgstr "JACK"
@@ -1557,9 +1567,6 @@ msgstr "Сохранено, синхронизируйте для предвар
 msgid "Saving..."
 msgstr "Сохранение..."
 
-msgid "Scrobbling"
-msgstr "Скробблинг"
-
 msgid "Search Again"
 msgstr "Повторить поиск"
 
@@ -2062,6 +2069,9 @@ msgid_plural "{count} years ago"
 msgstr[0] "{count} год назад"
 msgstr[1] "{count} года назад"
 msgstr[2] "{count} лет назад"
+
+#~ msgid "Scrobbling"
+#~ msgstr "Скробблинг"
 
 #~ msgid "Hide lyrics"
 #~ msgstr "Скрыть текст песни"
