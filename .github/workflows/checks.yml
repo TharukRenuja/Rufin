@@ -65,6 +65,10 @@ jobs:
             done
           }
 
+          workspace_version_at() {
+            git show "$1:Cargo.toml" | sed -n 's/^version = "\([^"]*\)"$/\1/p'
+          }
+
           build_container_image=false
           check_workflows=false
           use_current_nix=false
@@ -103,8 +107,18 @@ jobs:
 
               case "$path" in
                 Cargo.lock|Cargo.toml|*/Cargo.toml)
-                  add_jobs "${workspace_jobs[@]}" cargo-deny
-                  add_jobs "${release_build_jobs[@]}"
+                  add_jobs "${workspace_jobs[@]}" cargo-deny nix
+                  if [[ "$path" == "Cargo.toml" ]]; then
+                    base_version="$(workspace_version_at "$merge_base")"
+                    head_version="$(workspace_version_at "$HEAD_SHA")"
+                    if [[ -z "$base_version" || -z "$head_version" ]]; then
+                      echo "Could not read the workspace version from Cargo.toml" >&2
+                      exit 1
+                    fi
+                    if [[ "$base_version" != "$head_version" ]]; then
+                      add_jobs "${release_build_jobs[@]}"
+                    fi
+                  fi
                   ;;
               esac
 
@@ -149,8 +163,7 @@ jobs:
                   add_jobs container
                   ;;
                 justfile)
-                  add_jobs "${all_build_jobs[@]}"
-                  add_jobs "${workspace_jobs[@]}" cargo-deny
+                  add_jobs container flatpak macos windows
                   ;;
                 .github/workflows/*.yml|.github/workflows/*.yaml)
                   ;;
@@ -197,6 +210,10 @@ jobs:
                   ;;
               esac
             done
+          fi
+
+          if [[ -n "${selected_jobs[container]+selected}" ]]; then
+            unset 'selected_jobs[cargo-deny]' 'selected_jobs[workspace]'
           fi
 
           if ((${#selected_jobs[@]})); then
@@ -427,6 +444,22 @@ jobs:
 
       - name: Install test dependencies
         run: brew install gstreamer gtk4 libadwaita pkgconf
+
+      - name: Select Xcode 26
+        run: |
+          set -euo pipefail
+          xcode_app="$(
+            find /Applications -maxdepth 1 -type d -name 'Xcode_26.*.app' -print |
+              sort -V |
+              tail -n 1
+          )"
+          test -n "$xcode_app"
+          developer_dir="$xcode_app/Contents/Developer"
+          test -d "$developer_dir"
+          echo "DEVELOPER_DIR=$developer_dir" >> "$GITHUB_ENV"
+          sdk_version="$(DEVELOPER_DIR="$developer_dir" xcrun --sdk macosx --show-sdk-version)"
+          [[ "$sdk_version" == 26.* ]]
+          echo "Using $xcode_app with macOS SDK $sdk_version."
 
       - name: Restore Rust build cache
         uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1

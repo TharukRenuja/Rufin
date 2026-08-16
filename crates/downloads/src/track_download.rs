@@ -662,6 +662,22 @@ fn load_download_state(
     root: &Path,
     source_id: &SourceId,
 ) -> Result<(HashMap<TrackId, PathBuf>, HashMap<TrackId, DownloadRecord>), String> {
+    match std::fs::metadata(root) {
+        Ok(metadata) if !metadata.is_dir() => {
+            return Err(format!(
+                "could not read downloads at {}: not a directory",
+                root.display()
+            ));
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => {
+            return Err(format!(
+                "could not read downloads at {}: {error}",
+                root.display()
+            ));
+        }
+        Ok(_) => {}
+    }
     let directory = source_directory(root, source_id);
     let entries = match std::fs::read_dir(&directory) {
         Ok(entries) => entries,
