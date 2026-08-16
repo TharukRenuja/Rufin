@@ -721,9 +721,6 @@ msgstr "Nápověda"
 msgid "Hidden"
 msgstr "Skryté"
 
-msgid "Hide lyrics"
-msgstr "Skrýt text skladby"
-
 msgid "Hide sidebar"
 msgstr "Skrýt postranní panel"
 
@@ -1263,6 +1260,16 @@ msgstr "Přehrát"
 msgid "Play/Pause"
 msgstr "Přehrát/Pozastavit"
 
+#, fuzzy
+#| msgid "Lyrics settings"
+msgid "Playback settings"
+msgstr "Nastavení textu skladeb"
+
+#, fuzzy
+#| msgid "Playback"
+msgid "Playback speed"
+msgstr "Přehrávání"
+
 msgid "Playback"
 msgstr "Přehrávání"
 
@@ -1586,9 +1593,6 @@ msgstr "Vyhledávání se spustí automaticky"
 msgid "Searching..."
 msgstr "Hledání..."
 
-msgid "Seconds"
-msgstr "Sekundy"
-
 msgid "Secret storage"
 msgstr "Tajné úložiště"
 
@@ -1670,9 +1674,6 @@ msgstr "Nastavte typ aktivity v Discordu na „Poslech“"
 msgid "Shared secret"
 msgstr "Sdílený tajný klíč"
 
-msgid "Show Lyrics Panel"
-msgstr "Zobrazit panel s texty skladeb"
-
 msgid "Show Rufin"
 msgstr "Zobrazit Rufin"
 
@@ -1696,6 +1697,11 @@ msgstr "Zobrazit postranní panel"
 
 msgid "Show tray icon"
 msgstr "Zobrazit ikonu v systémové liště"
+
+#, fuzzy
+#| msgid "Visualizer"
+msgid "Show visualizer"
+msgstr "Vizualizace"
 
 msgid "Show/hide lyrics"
 msgstr "Zobrazit/skrýt texty skladeb"
@@ -2060,3 +2066,12 @@ msgid_plural "{count} years ago"
 msgstr[0] "Před {count} rokem"
 msgstr[1] "Před {count} roky"
 msgstr[2] "Před {count} roky"
+
+#~ msgid "Hide lyrics"
+#~ msgstr "Skrýt text skladby"
+
+#~ msgid "Seconds"
+#~ msgstr "Sekundy"
+
+#~ msgid "Show Lyrics Panel"
+#~ msgstr "Zobrazit panel s texty skladeb"

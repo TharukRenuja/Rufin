@@ -727,9 +727,6 @@ msgstr "Помощь"
 msgid "Hidden"
 msgstr "Скрыт"
 
-msgid "Hide lyrics"
-msgstr "Скрыть текст песни"
-
 msgid "Hide sidebar"
 msgstr "Скрыть боковую панель"
 
@@ -1264,6 +1261,16 @@ msgstr "Воспроизвести"
 msgid "Play/Pause"
 msgstr "Воспроизвести/Приостановить"
 
+#, fuzzy
+#| msgid "Lyrics settings"
+msgid "Playback settings"
+msgstr "Настройки текстов"
+
+#, fuzzy
+#| msgid "Playback"
+msgid "Playback speed"
+msgstr "Плеер"
+
 msgid "Playback"
 msgstr "Плеер"
 
@@ -1587,9 +1594,6 @@ msgstr "Поиск начнётся автоматически"
 msgid "Searching..."
 msgstr "Выполняется поиск..."
 
-msgid "Seconds"
-msgstr "Секунды"
-
 msgid "Secret storage"
 msgstr "Скрытое хранилище"
 
@@ -1671,9 +1675,6 @@ msgstr "Установите тип активности в Discord на \"Пр�
 msgid "Shared secret"
 msgstr "Общий секретный ключ"
 
-msgid "Show Lyrics Panel"
-msgstr "Показать панель с текстом песни"
-
 msgid "Show Rufin"
 msgstr "Показать Rufin"
 
@@ -1698,6 +1699,11 @@ msgstr "Показать боковую панель"
 
 msgid "Show tray icon"
 msgstr "Показывать значок в системном трее"
+
+#, fuzzy
+#| msgid "Visualizer"
+msgid "Show visualizer"
+msgstr "Визуализатор"
 
 msgid "Show/hide lyrics"
 msgstr "Показать/скрыть текст песни"
@@ -2062,6 +2068,15 @@ msgid_plural "{count} years ago"
 msgstr[0] "{count} год назад"
 msgstr[1] "{count} года назад"
 msgstr[2] "{count} лет назад"
+
+#~ msgid "Hide lyrics"
+#~ msgstr "Скрыть текст песни"
+
+#~ msgid "Seconds"
+#~ msgstr "Секунды"
+
+#~ msgid "Show Lyrics Panel"
+#~ msgstr "Показать панель с текстом песни"
 
 #~ msgid "ReplayGain"
 #~ msgstr "Нормализация громкости"
