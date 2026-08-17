@@ -2269,7 +2269,6 @@ mod loaded_play_tests {
         let mut candidate = library
             .begin_source_candidate(CandidateHeader {
                 source_id: source_id.clone(),
-                input_version: 1,
                 input_digest: [1; 32],
             })
             .expect("begin loaded Play candidate");
@@ -2365,7 +2364,6 @@ mod loaded_play_tests {
         let mut candidate = library
             .begin_source_candidate(CandidateHeader {
                 source_id: source_id.clone(),
-                input_version: 1,
                 input_digest: [2; 32],
             })
             .expect("begin replacement candidate");
@@ -2729,7 +2727,6 @@ mod loaded_play_tests {
         let mut candidate = library
             .begin_source_candidate(CandidateHeader {
                 source_id: source_id.clone(),
-                input_version: 1,
                 input_digest: [9; 32],
             })
             .expect("begin Local candidate");

@@ -17,9 +17,11 @@ use std::env;
 use std::ffi::OsStr;
 use std::io::{self, Write};
 use std::path::PathBuf;
+#[cfg(unix)]
+use std::process::Command;
 use std::process::ExitCode;
 #[cfg(target_os = "macos")]
-use std::{fs, path::Path, process::Command};
+use std::{fs, path::Path};
 #[cfg(target_os = "windows")]
 use tracing::error;
 use tracing::info;
@@ -27,6 +29,10 @@ use tracing::info;
 fn main() -> ExitCode {
     #[cfg(target_os = "macos")]
     if let Some(result) = restart_in_macos_bundle() {
+        return result;
+    }
+    #[cfg(unix)]
+    if let Some(result) = restart_with_gstreamer_http1() {
         return result;
     }
     if let Some(result) = verify_media_argument() {
@@ -55,6 +61,28 @@ fn main() -> ExitCode {
     } else {
         ui::run_application(bootstrap)
     }
+}
+
+#[cfg(unix)]
+fn restart_with_gstreamer_http1() -> Option<ExitCode> {
+    if env::var_os("SOUP_FORCE_HTTP1").is_some() {
+        return None;
+    }
+    // Establish libsoup's process setting before GTK or GStreamer can create threads.
+    let executable = env::current_exe().ok()?;
+    let mut command = Command::new(executable);
+    command
+        .args(env::args_os().skip(1))
+        .env("SOUP_FORCE_HTTP1", "1");
+
+    use std::os::unix::process::CommandExt as _;
+
+    let error = command.exec();
+    let _ = writeln!(
+        io::stderr().lock(),
+        "Could not enable GStreamer HTTP/1; continuing with the system default: {error}"
+    );
+    None
 }
 
 #[cfg(target_os = "macos")]
@@ -167,6 +195,7 @@ fn macos_bundle_command(
         )
         .env("RUFIN_LOCALEDIR", resources_dir.join("share/locale"))
         .env("XDG_DATA_DIRS", resources_dir.join("share"));
+    command.env("SOUP_FORCE_HTTP1", "1");
     if registry_path
         .parent()
         .is_some_and(|parent| fs::create_dir_all(parent).is_ok())

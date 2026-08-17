@@ -366,6 +366,30 @@ impl PendingSeek {
         }
     }
 }
+
+#[derive(Clone, Copy, Debug)]
+struct RepeatedSeekGuard {
+    target_millis: u64,
+    quiet_until: Instant,
+}
+
+impl RepeatedSeekGuard {
+    fn new(target_millis: u64, now: Instant) -> Self {
+        Self {
+            target_millis,
+            quiet_until: now + SEEK_SETTLE_WINDOW,
+        }
+    }
+
+    fn suppresses(&mut self, target_millis: u64, now: Instant) -> bool {
+        if self.target_millis != target_millis || now >= self.quiet_until {
+            return false;
+        }
+        self.quiet_until = now + SEEK_SETTLE_WINDOW;
+        true
+    }
+}
+
 #[derive(Debug)]
 pub(super) struct SharedBackendState {
     pub(super) settings: BackendAudioSettings,
@@ -472,6 +496,7 @@ pub(super) struct GstEngine {
     pub(super) last_position_tick: Instant,
     pub(super) state: BackendState,
     pub(super) pending_seek: Option<PendingSeek>,
+    repeated_seek_guard: Option<RepeatedSeekGuard>,
     pub(super) status_fade: Option<StatusFade>,
     pub(super) restore_output_on_playing: bool,
     pub(super) play_command_started_at: Option<Instant>,
@@ -496,6 +521,7 @@ impl GstEngine {
             last_position_tick: Instant::now(),
             state: BackendState::Stopped,
             pending_seek: None,
+            repeated_seek_guard: None,
             status_fade: None,
             restore_output_on_playing: false,
             play_command_started_at: None,
@@ -1277,6 +1303,7 @@ impl GstEngine {
                 self.desired_playing = false;
                 let _ = self.cancel_status_fade();
                 self.pending_seek = None;
+                self.repeated_seek_guard = None;
                 self.ended_run = None;
                 self.incoming = None;
                 self.pending_handoff = None;
@@ -1346,6 +1373,7 @@ impl GstEngine {
         self.play_command_started_at = Some(command_started_at);
         let _ = self.cancel_status_fade();
         self.pending_seek = None;
+        self.repeated_seek_guard = None;
         self.ended_run = None;
         self.clear_incoming();
         self.pending_handoff = None;
@@ -1556,10 +1584,22 @@ impl GstEngine {
             self.push_logical_position(0);
             return Ok(());
         }
+        let now = Instant::now();
+        let physical_target = self.active_pipeline().physical_seek_target(millis);
+        if self
+            .repeated_seek_guard
+            .as_mut()
+            .is_some_and(|guard| guard.suppresses(physical_target, now))
+        {
+            debug!(
+                target_millis = millis,
+                "ignored repeated seek until same-target input settles"
+            );
+            return Ok(());
+        }
         if logical_state == BackendState::Paused {
             self.active_pipeline().set_state(gst::State::Paused)?;
         }
-        let physical_target = self.active_pipeline().physical_seek_target(millis);
         if let Err(error) = self.active_pipeline().seek_millis(millis) {
             warn!(
                 %error,
@@ -1571,6 +1611,7 @@ impl GstEngine {
             }
             return Ok(());
         }
+        self.repeated_seek_guard = Some(RepeatedSeekGuard::new(physical_target, Instant::now()));
         self.pending_seek = Some(PendingSeek::interactive(
             physical_target,
             logical_state,
@@ -1629,6 +1670,7 @@ impl GstEngine {
         position_millis: u64,
         target_state: gst::State,
     ) -> Result<(u64, bool), String> {
+        self.repeated_seek_guard = None;
         let (settings, volume, muted, playback_rate, visualizer_enabled, slot) =
             self.session_context();
         let start_millis = SourceClock::from_stream(&item.stream).physical_seek(position_millis);
@@ -3159,6 +3201,7 @@ mod tests {
         assert_eq!(crossfade_start_remaining_millis(5_000, 1.5), 7_500);
         assert_eq!(crossfade_start_remaining_millis(5_000, 2.0), 10_000);
     }
+
     const INCOMING_PIPELINE: PipelineId = PipelineId(8);
 
     struct HandoffFixture {
@@ -3457,6 +3500,19 @@ mod tests {
 
         assert!(!levels.is_empty());
         engine.shutdown();
+    }
+
+    #[test]
+    fn repeated_seek_guard_stays_active_until_input_quiets() {
+        let started_at = Instant::now();
+        let mut guard = RepeatedSeekGuard::new(1_000, started_at);
+        let first_deadline = guard.quiet_until;
+
+        assert!(guard.suppresses(1_000, started_at + Duration::from_millis(118)));
+        assert!(guard.quiet_until > first_deadline);
+        assert!(guard.suppresses(1_000, first_deadline));
+        assert!(!guard.suppresses(1_500, first_deadline));
+        assert!(!guard.suppresses(1_000, guard.quiet_until));
     }
 
     #[test]

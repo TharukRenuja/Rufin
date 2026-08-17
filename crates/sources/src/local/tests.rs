@@ -302,7 +302,6 @@ fn mapped_metadata_reads_only_the_exact_projected_file() {
     let mut candidate = library
         .begin_source_candidate(CandidateHeader {
             source_id: SourceId::new("navidrome:server:mapped"),
-            input_version: 1,
             input_digest: [12; 32],
         })
         .expect("begin mapped candidate");
@@ -400,7 +399,6 @@ fn aggregate_metadata_read_requires_every_backing_track() {
     let mut candidate = library
         .begin_source_candidate(CandidateHeader {
             source_id: SourceId::new(LOCAL_LIBRARY_SOURCE_ID),
-            input_version: 1,
             input_digest: [9; 32],
         })
         .expect("begin Local candidate");
@@ -442,7 +440,6 @@ fn aggregate_metadata_read_requires_every_backing_track() {
     let mut candidate = library
         .begin_source_candidate(CandidateHeader {
             source_id: SourceId::new("local:unsupported"),
-            input_version: 1,
             input_digest: [10; 32],
         })
         .expect("begin unsupported Local candidate");
@@ -1051,7 +1048,6 @@ fn unchanged_rescan_returns_no_component_plan() {
     let mut candidate = library
         .begin_source_candidate(CandidateHeader {
             source_id,
-            input_version: 1,
             input_digest: [1; 32],
         })
         .expect("begin Local candidate");
@@ -1121,7 +1117,6 @@ fn unchanged_file_identity_keeps_an_accepted_unreadable_file() {
     let mut candidate = library
         .begin_source_candidate(CandidateHeader {
             source_id: SourceId::new(LOCAL_LIBRARY_SOURCE_ID),
-            input_version: 1,
             input_digest: [6; 32],
         })
         .expect("begin Local candidate");
@@ -1167,7 +1162,6 @@ fn exact_reread_failure_keeps_the_accepted_path_backed_track() {
     let mut candidate = library
         .begin_source_candidate(CandidateHeader {
             source_id: SourceId::new(LOCAL_LIBRARY_SOURCE_ID),
-            input_version: 1,
             input_digest: [7; 32],
         })
         .expect("begin Local candidate");
@@ -1245,7 +1239,6 @@ fn exact_change_to_rejected_media_removes_the_old_track() {
     let mut candidate = libraries
         .begin_source_candidate(CandidateHeader {
             source_id: SourceId::new(LOCAL_LIBRARY_SOURCE_ID),
-            input_version: 1,
             input_digest: [8; 32],
         })
         .expect("begin Local candidate");
@@ -1314,7 +1307,6 @@ fn exact_file_change_does_not_parse_or_replace_flat_folder_siblings() {
     let mut candidate = library
         .begin_source_candidate(CandidateHeader {
             source_id: SourceId::new(LOCAL_LIBRARY_SOURCE_ID),
-            input_version: 1,
             input_digest: [2; 32],
         })
         .expect("begin Local candidate");
@@ -1498,7 +1490,6 @@ FILE "album.wav" WAVE
     let mut candidate = library
         .begin_source_candidate(CandidateHeader {
             source_id: SourceId::new(LOCAL_LIBRARY_SOURCE_ID),
-            input_version: 1,
             input_digest: [4; 32],
         })
         .expect("begin Local candidate");
@@ -1625,7 +1616,6 @@ fn arbitrary_part_directories_share_one_album_and_parent_cover() {
     let mut candidate = library
         .begin_source_candidate(CandidateHeader {
             source_id: source_id.clone(),
-            input_version: 1,
             input_digest: [3; 32],
         })
         .expect("begin Local candidate");
@@ -1810,7 +1800,6 @@ fn new_cross_directory_album_uses_an_existing_parent_cover() {
     let mut candidate = library
         .begin_source_candidate(CandidateHeader {
             source_id: SourceId::new(LOCAL_LIBRARY_SOURCE_ID),
-            input_version: 1,
             input_digest: [5; 32],
         })
         .expect("begin Local candidate");
@@ -1882,7 +1871,6 @@ fn artist_directory_image_does_not_become_album_art_after_an_exact_edit() {
     let mut candidate = library
         .begin_source_candidate(CandidateHeader {
             source_id: SourceId::new(LOCAL_LIBRARY_SOURCE_ID),
-            input_version: 1,
             input_digest: [7; 32],
         })
         .expect("begin Local candidate");

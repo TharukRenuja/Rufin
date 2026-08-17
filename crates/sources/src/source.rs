@@ -257,7 +257,6 @@ pub enum SourceCandidatePreparationError {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SourceInputIdentity {
     pub source_id: SourceId,
-    pub version: u32,
     pub digest: [u8; 32],
 }
 
@@ -894,7 +893,6 @@ impl Source {
     ) -> Result<PreparedSourceCandidate, SourceCandidatePreparationError> {
         let header = CandidateHeader {
             source_id: identity.source_id,
-            input_version: identity.version,
             input_digest: identity.digest,
         };
         let (batches, receiver) = async_channel::bounded(1);

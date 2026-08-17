@@ -1147,7 +1147,6 @@ fn cache_write(
 
 fn cache_input(input: &SourceInputIdentity) -> LyricsCacheInput {
     LyricsCacheInput {
-        version: input.version,
         digest: input.digest,
     }
 }
@@ -1704,7 +1703,6 @@ mod tests {
         let mut candidate = library
             .begin_source_candidate(CandidateHeader {
                 source_id: source_id.clone(),
-                input_version: 1,
                 input_digest: [1; 32],
             })
             .expect("begin lyrics source");
@@ -1748,7 +1746,6 @@ mod tests {
             media,
             input: SourceInputIdentity {
                 source_id,
-                version: 1,
                 digest: [1; 32],
             },
             source: None,

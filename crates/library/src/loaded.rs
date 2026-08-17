@@ -43,7 +43,6 @@ pub type LibraryQueryResult<T> = Result<T, LibraryQueryError>;
 pub(crate) struct LibraryInput {
     pub(crate) library_id: i64,
     pub(crate) source_id: Option<SourceId>,
-    pub(crate) input_version: u32,
     pub(crate) input_digest: [u8; 32],
     pub(crate) freshness: Option<crate::ProviderFreshness>,
     pub(crate) albums: Vec<Album>,
@@ -105,14 +104,12 @@ impl LibraryInput {
     pub(crate) fn new(
         source_id: SourceId,
         library_id: i64,
-        input_version: u32,
         input_digest: [u8; 32],
         freshness: Option<crate::ProviderFreshness>,
     ) -> Self {
         Self {
             library_id,
             source_id: Some(source_id),
-            input_version,
             input_digest,
             freshness,
             albums: Vec::new(),
@@ -467,7 +464,6 @@ pub struct Library {
     pub(crate) home_sessions: Arc<crate::home::HomeSessions>,
     source_id: SourceId,
     library_id: i64,
-    input_version: u32,
     input_digest: [u8; 32],
     state: RwLock<LoadedState>,
 }
@@ -478,7 +474,6 @@ impl std::fmt::Debug for Library {
             .debug_struct("Library")
             .field("source_id", &self.source_id)
             .field("library_id", &self.library_id)
-            .field("input_version", &self.input_version)
             .field("input_digest", &self.input_digest)
             .finish_non_exhaustive()
     }
@@ -675,7 +670,6 @@ impl Library {
             home_sessions,
             source_id,
             library_id: input.library_id,
-            input_version: input.input_version,
             input_digest: input.input_digest,
             state: RwLock::new(state),
         }))
@@ -687,10 +681,6 @@ impl Library {
 
     pub const fn library_id(&self) -> i64 {
         self.library_id
-    }
-
-    pub const fn input_version(&self) -> u32 {
-        self.input_version
     }
 
     pub const fn input_digest(&self) -> &[u8; 32] {
@@ -3939,7 +3929,7 @@ mod tests {
     }
 
     fn library_with(tracks: Vec<Track>, activity: Vec<TrackActivity>) -> Arc<Library> {
-        let mut input = LibraryInput::new(SourceId::new("test:loaded"), 1, 1, [1; 32], None);
+        let mut input = LibraryInput::new(SourceId::new("test:loaded"), 1, [1; 32], None);
         input.home = Some(HomeFacts::RufinDefined);
         input.tracks = tracks;
         input.activity = activity;

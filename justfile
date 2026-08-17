@@ -4,7 +4,7 @@ default:
     @just --list
 
 build target="" architecture="":
-    if [[ "{{ target }}" == "arch" && -z "{{ architecture }}" ]]; then \
+    @if [[ "{{ target }}" == "arch" && -z "{{ architecture }}" ]]; then \
         scripts/container run default none just _build-arch; \
     elif [[ "{{ target }}" == "dmg" && -z "{{ architecture }}" ]]; then \
         just _build-dmg; \
@@ -24,8 +24,37 @@ build target="" architecture="":
     fi
 
 _build:
-    target_dir="${CARGO_TARGET_DIR:-$PWD/target}"; \
+    @target_dir="${CARGO_TARGET_DIR:-$PWD/target}"; \
     artifact_root="${RUFIN_ARTIFACT_ROOT:-$PWD/.local/artifacts}"; \
+    missing_gstreamer=(); \
+    if command -v gst-inspect-1.0 >/dev/null 2>&1; then \
+        if ! gst-inspect-1.0 --exists playbin3 >/dev/null 2>&1 \
+            && ! gst-inspect-1.0 --exists playbin >/dev/null 2>&1; then \
+            missing_gstreamer+=("playbin3 or playbin"); \
+        fi; \
+        audio_sink=autoaudiosink; \
+        if [[ "$(uname -s)" == Darwin ]]; then audio_sink=osxaudiosink; fi; \
+        for element in audioconvert audioresample "$audio_sink" equalizer-nbands scaletempo souphttpsrc; do \
+            if ! gst-inspect-1.0 --exists "$element" >/dev/null 2>&1; then \
+                missing_gstreamer+=("$element"); \
+            fi; \
+        done; \
+    else \
+        missing_gstreamer+=(gst-inspect-1.0); \
+    fi; \
+    if (( ${#missing_gstreamer[@]} > 0 )); then \
+        printf -v missing_gstreamer_list '%s, ' "${missing_gstreamer[@]}"; \
+        missing_gstreamer_list="${missing_gstreamer_list%, }"; \
+        echo "Warning: You are missing one or more basic GStreamer dependencies: $missing_gstreamer_list." >&2; \
+        printf 'Continue with the build? [Y/n] ' >&2; \
+        if ! IFS= read -r reply; then \
+            reply=n; \
+        fi; \
+        case "$reply" in \
+            ""|y|Y|yes|YES|Yes) ;; \
+            *) echo "Build cancelled." >&2; exit 1 ;; \
+        esac; \
+    fi; \
     executable=rufin; \
     if [[ "$(rustc -vV | sed -n 's/^host: //p')" == *-windows-* ]]; then \
         executable=rufin.exe; \

@@ -18,7 +18,7 @@ use super::media::{self, MediaRead, ScannedTrack};
 use crate::source::{BatchEmitter, SourceReadProgress, SourceReadStage};
 use crate::{SourceError, SourceResult};
 
-const LOCAL_LIBRARY_PARSER_VERSION: u32 = 7;
+const LOCAL_LIBRARY_PARSER_VERSION: u32 = 8;
 const LOCAL_ACCESS_PARSER_VERSION: u32 = 6;
 const LOCAL_CUE_MAX_BYTES: usize = 1024 * 1024;
 const LOCAL_BATCH_SIZE: usize = 1024;
