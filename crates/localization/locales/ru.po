@@ -7,7 +7,7 @@ msgstr ""
 "Project-Id-Version: Rufin 0.6.0\n"
 "Report-Msgid-Bugs-To: https://github.com/screwys/Rufin/issues\n"
 "POT-Creation-Date: YEAR-MO-DA HO:MI+ZONE\n"
-"PO-Revision-Date: 2026-08-16 17:14+0000\n"
+"PO-Revision-Date: 2026-08-17 17:59+0000\n"
 "Last-Translator: Александр Стельмах <aguhadug@gmail.com>\n"
 "Language-Team: Russian <https://hosted.weblate.org/projects/rufin/app/ru/>\n"
 "Language: ru\n"
@@ -712,10 +712,8 @@ msgstr "Перейти к альбому"
 msgid "Go to Artist"
 msgstr "Перейти к исполнителю"
 
-#, fuzzy
-#| msgid "Go to Album"
 msgid "Go to"
-msgstr "Перейти к альбому"
+msgstr "Перейти к"
 
 msgid "Green"
 msgstr "Зелёный"
@@ -782,10 +780,8 @@ msgstr "Установлено"
 msgid "Instrumental"
 msgstr "Инструментальная"
 
-#, fuzzy
-#| msgid "Duration"
 msgid "Integrations"
-msgstr "Продолжительность"
+msgstr "Интеграции"
 
 msgid "JACK"
 msgstr "JACK"

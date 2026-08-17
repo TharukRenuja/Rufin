@@ -7,7 +7,7 @@ msgstr ""
 "Project-Id-Version: Rufin\n"
 "Report-Msgid-Bugs-To: https://github.com/screwys/Rufin/issues\n"
 "POT-Creation-Date: YEAR-MO-DA HO:MI+ZONE\n"
-"PO-Revision-Date: 2026-08-16 17:14+0000\n"
+"PO-Revision-Date: 2026-08-17 17:59+0000\n"
 "Last-Translator: Sebastian <sevachka@users.noreply.hosted.weblate.org>\n"
 "Language-Team: German <https://hosted.weblate.org/projects/rufin/app/de/>\n"
 "Language: de\n"
@@ -705,10 +705,8 @@ msgstr "Zum Album gehen"
 msgid "Go to Artist"
 msgstr "Zum Künstler springen"
 
-#, fuzzy
-#| msgid "Go to Album"
 msgid "Go to"
-msgstr "Zum Album gehen"
+msgstr "Gehe zu"
 
 msgid "Green"
 msgstr "Grün"
@@ -774,10 +772,8 @@ msgstr "Installiert"
 msgid "Instrumental"
 msgstr "Instrumental"
 
-#, fuzzy
-#| msgid "Duration"
 msgid "Integrations"
-msgstr "Dauer"
+msgstr "Integrationen"
 
 msgid "JACK"
 msgstr "JACK"

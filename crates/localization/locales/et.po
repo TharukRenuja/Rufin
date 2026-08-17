@@ -7,8 +7,8 @@ msgstr ""
 "Project-Id-Version: Rufin 0.3.13\n"
 "Report-Msgid-Bugs-To: https://github.com/screwys/Rufin/issues\n"
 "POT-Creation-Date: YEAR-MO-DA HO:MI+ZONE\n"
-"PO-Revision-Date: 2026-08-15 18:23+0000\n"
-"Last-Translator: Jakub Cabal <info@jakubcabal.cz>\n"
+"PO-Revision-Date: 2026-08-17 17:59+0000\n"
+"Last-Translator: Priit Jõerüüt <jrthwlate@users.noreply.hosted.weblate.org>\n"
 "Language-Team: Estonian <https://hosted.weblate.org/projects/rufin/app/et/>\n"
 "Language: et\n"
 "MIME-Version: 1.0\n"
@@ -699,10 +699,8 @@ msgstr "Vaata albumit"
 msgid "Go to Artist"
 msgstr "Suundu esitaja juurde"
 
-#, fuzzy
-#| msgid "Go to Album"
 msgid "Go to"
-msgstr "Vaata albumit"
+msgstr "Mine asukohta"
 
 msgid "Green"
 msgstr "Roheline"
@@ -769,10 +767,8 @@ msgstr "Paigaldatud"
 msgid "Instrumental"
 msgstr "Instrumentaallugu"
 
-#, fuzzy
-#| msgid "Transitions"
 msgid "Integrations"
-msgstr "Üleminekud"
+msgstr "Lõimingud"
 
 msgid "JACK"
 msgstr "JACK"
@@ -875,10 +871,8 @@ msgstr "Kohalike failide vastendus"
 msgid "Local library"
 msgstr "Kohalik meediakogu"
 
-#, fuzzy
-#| msgid "Local music folder"
 msgid "Local music folder is unavailable"
-msgstr "Kohalik muusikakaust"
+msgstr "Kohalik muusikakaust pole saadaval"
 
 msgid "Local music folder"
 msgstr "Kohalik muusikakaust"
@@ -886,10 +880,8 @@ msgstr "Kohalik muusikakaust"
 msgid "Local"
 msgstr "Kohalik andmekogu"
 
-#, fuzzy
-#| msgid "Local Folders"
 msgid "Locate Folder"
-msgstr "Kohalikud kaustad"
+msgstr "Tuvasta kausta asukoht"
 
 msgid "Lock metadata"
 msgstr "Lukusta metateave"
@@ -1262,15 +1254,11 @@ msgstr "Esita"
 msgid "Play/Pause"
 msgstr "Esita/Peata esitus"
 
-#, fuzzy
-#| msgid "Lyrics settings"
 msgid "Playback settings"
-msgstr "Laulusõnade seadistused"
+msgstr "Taasesituse seadistused"
 
-#, fuzzy
-#| msgid "Playback"
 msgid "Playback speed"
-msgstr "Taasesitus"
+msgstr "Taasesituse kiirus"
 
 msgid "Playback"
 msgstr "Taasesitus"
@@ -1695,10 +1683,8 @@ msgstr "Näita külgriba"
 msgid "Show tray icon"
 msgstr "Näita süsteemisalve ikooni"
 
-#, fuzzy
-#| msgid "Visualizer"
 msgid "Show visualizer"
-msgstr "Visualiseerija"
+msgstr "Näita visualiseerijat"
 
 msgid "Show/hide lyrics"
 msgstr "Kuva/peida laulusõnad"
@@ -1997,10 +1983,8 @@ msgstr "pole"
 msgid "is"
 msgstr "on"
 
-#, fuzzy
-#| msgid "128 kbps"
 msgid "kbps"
-msgstr "128 kbps"
+msgstr "kbps"
 
 msgid "macOS"
 msgstr "macOS"
