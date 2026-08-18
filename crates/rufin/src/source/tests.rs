@@ -2337,6 +2337,8 @@ fn attach_test_playback(
         runtime.handle().clone(),
         playback_events,
         owner.acceptance_sender(),
+        artwork::Artwork::new(directory.join("artwork"), runtime.handle().clone())
+            .expect("artwork service"),
         waveform,
         lyrics,
         Arc::new(desktop_integration::Discord::new()),

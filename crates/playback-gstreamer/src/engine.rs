@@ -2164,13 +2164,7 @@ impl GstEngine {
                 self.push_position(clock_millis(position));
             }
         } else {
-            if let Some(pending) = self.pending_seek.as_mut() {
-                pending.resume_after_seek = false;
-            }
             debug!(target_millis, "deferred startup seek started");
-            if resume_after_seek {
-                self.resume_after_startup_seek();
-            }
         }
         true
     }
@@ -3438,6 +3432,50 @@ mod tests {
             "unexpected first-buffer gain: baseline={baseline}, perceptual={perceptual}, ratio={ratio}"
         );
         assert_eq!(muted, 0.0);
+    }
+
+    #[test]
+    fn startup_seek_stays_silent_until_position_confirmation() {
+        ensure_gstreamer_initialized().expect("initialize GStreamer");
+        let directory = tempfile::tempdir().expect("playback fixture directory");
+        let path = directory.path().join("startup-seek.wav");
+        write_long_silent_wave(&path);
+        let uri = gst::glib::filename_to_uri(&path, None).expect("playback fixture URI");
+        let events = Arc::new(Mutex::new(EventMailbox::default()));
+        let mut engine = GstEngine::new(events);
+        lock_recover(&engine.shared).settings = BackendAudioSettings {
+            audio_output: Some("fakesink".to_string()),
+            ..BackendAudioSettings::default()
+        };
+
+        engine
+            .play_prepared(
+                PreparedRun {
+                    run: RunId::new(1),
+                    stream: ResolvedStream::new(uri.as_str()).into(),
+                },
+                None,
+                5_000,
+            )
+            .expect("start playback with a saved position");
+        assert!(
+            engine
+                .primary
+                .wait_for_state(gst::State::Paused, gst::ClockTime::from_seconds(10))
+        );
+
+        assert!(engine.retry_pending_seek());
+        assert_eq!(engine.state, BackendState::Buffering);
+        assert!(
+            engine
+                .pending_seek
+                .as_ref()
+                .is_some_and(|pending| pending.resume_after_seek)
+        );
+
+        engine.push_position(5_000);
+        assert_eq!(engine.state, BackendState::Playing);
+        engine.shutdown();
     }
 
     #[test]

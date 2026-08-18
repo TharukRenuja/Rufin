@@ -9,9 +9,9 @@ use thiserror::Error;
 use crate::{
     BackendEvent, BackendFailure, Batch, ClockSample, LoadedPlayRequest, MaterializationId,
     MaterializationReservation, Placement, PlaybackBackend, PlaybackCheckpointRevision,
-    PlaybackNotice, PlaybackProjection, PlaybackSession, PlaybackSettings, PreparedStream,
-    QueuePage, QueuePageQuery, RunId, Sequence, SequenceError, SessionCommand, SessionEffect,
-    SessionUpdate, SourceSessionEpoch,
+    PlaybackNotice, PlaybackOutput as SelectedPlaybackOutput, PlaybackProjection, PlaybackSession,
+    PlaybackSettings, PreparedStream, QueuePage, QueuePageQuery, RunId, Sequence, SequenceError,
+    SessionCommand, SessionEffect, SessionUpdate, SourceSessionEpoch,
 };
 
 const BACKEND_POLL_INTERVAL: Duration = Duration::from_millis(33);
@@ -165,6 +165,11 @@ enum RuntimeCommand {
     Projection {
         reply: Reply<PlaybackProjection>,
     },
+    ReplaceBackend {
+        output: SelectedPlaybackOutput,
+        backend: Box<dyn PlaybackBackend>,
+        reply: Reply<()>,
+    },
     Retire {
         reply: Reply<()>,
     },
@@ -197,6 +202,7 @@ impl Playback {
         settings: PlaybackSettings,
         auto_dj_enabled: bool,
         auto_dj_refill_threshold: usize,
+        playback_output: SelectedPlaybackOutput,
         backend: Box<dyn PlaybackBackend>,
         clock: Clock,
         consume: impl FnMut(PlaybackUpdate) + Send + 'static,
@@ -208,6 +214,7 @@ impl Playback {
             settings,
             auto_dj_enabled,
             auto_dj_refill_threshold,
+            playback_output,
             backend,
         );
         let initial_projection = runtime.initial_projection();
@@ -383,6 +390,18 @@ impl Playback {
 
     pub fn projection(&self) -> PlaybackResult<PlaybackProjection> {
         self.request(|reply| RuntimeCommand::Projection { reply })
+    }
+
+    pub fn replace_backend(
+        &self,
+        output: SelectedPlaybackOutput,
+        backend: Box<dyn PlaybackBackend>,
+    ) -> PlaybackResult<()> {
+        self.request(|reply| RuntimeCommand::ReplaceBackend {
+            output,
+            backend,
+            reply,
+        })
     }
 
     /// Ends the logical session and lets Playback finish shutting down its backend.
@@ -603,6 +622,17 @@ fn apply_runtime_command(
         RuntimeCommand::Projection { reply } => {
             let _ = reply.send(Ok(runtime.initial_projection()));
         }
+        RuntimeCommand::ReplaceBackend {
+            output,
+            backend,
+            reply,
+        } => {
+            reply_update(
+                runtime.replace_backend(output, backend, &sample),
+                outputs,
+                reply,
+            );
+        }
         RuntimeCommand::Retire { reply } => {
             let mut value = runtime
                 .retire(&sample)
@@ -703,6 +733,7 @@ impl PlaybackRuntime {
         settings: PlaybackSettings,
         auto_dj_enabled: bool,
         auto_dj_refill_threshold: usize,
+        playback_output: SelectedPlaybackOutput,
         backend: Box<dyn PlaybackBackend>,
     ) -> Self {
         Self {
@@ -711,6 +742,7 @@ impl PlaybackRuntime {
                 source_session_epoch,
                 play_id_prefix,
                 settings,
+                playback_output,
                 auto_dj_enabled,
                 auto_dj_refill_threshold,
             ),
@@ -886,6 +918,31 @@ impl PlaybackRuntime {
         Ok(self.session.view().transport.current)
     }
 
+    fn replace_backend(
+        &mut self,
+        output: SelectedPlaybackOutput,
+        backend: Box<dyn PlaybackBackend>,
+        sample: &ClockSample,
+    ) -> PlaybackResult<PlaybackUpdate> {
+        let mut previous = std::mem::replace(&mut self.backend, backend);
+        let mut errors = Vec::new();
+        if let Some(run) = self.session.current_run()
+            && let Err(error) = previous.send(crate::BackendCommand::Stop { run })
+        {
+            errors.push(error.to_string());
+        }
+        previous.drain_events();
+        if let Err(error) = previous.shutdown() {
+            errors.push(error.to_string());
+        }
+        let session_update = self.session.replace_output(output);
+        let mut update = self.finish(session_update, sample)?;
+        update
+            .effects
+            .extend(errors.into_iter().map(SessionEffect::NonfatalError));
+        Ok(update)
+    }
+
     fn retire(&mut self, sample: &ClockSample) -> PlaybackResult<PlaybackUpdate> {
         let session_update = self.session.shutdown(sample);
         self.finish(session_update, sample)
@@ -984,6 +1041,8 @@ impl PlaybackRuntime {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::atomic::{AtomicBool, Ordering};
+
     use library::{AlbumId, TrackId};
 
     use super::*;
@@ -1006,6 +1065,31 @@ mod tests {
         shutdown_started: SyncSender<()>,
         shutdown_release: Receiver<()>,
         shutdown_finished: SyncSender<()>,
+    }
+
+    #[derive(Default)]
+    struct BackendProbe {
+        commands: Arc<Mutex<Vec<BackendCommand>>>,
+        shutdown: Arc<AtomicBool>,
+    }
+
+    impl PlaybackBackend for BackendProbe {
+        fn send(&mut self, command: BackendCommand) -> Result<(), BackendError> {
+            self.commands
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .push(command);
+            Ok(())
+        }
+
+        fn drain_events(&mut self) -> Vec<BackendEvent> {
+            Vec::new()
+        }
+
+        fn shutdown(&mut self) -> Result<(), BackendError> {
+            self.shutdown.store(true, Ordering::Release);
+            Ok(())
+        }
     }
 
     impl PlaybackBackend for BlockingShutdownBackend {
@@ -1044,6 +1128,7 @@ mod tests {
             PlaybackSettings::default(),
             false,
             2,
+            SelectedPlaybackOutput::Local,
             Box::new(BlockingShutdownBackend {
                 shutdown_started,
                 shutdown_release: release,
@@ -1111,6 +1196,7 @@ mod tests {
             PlaybackSettings::default(),
             false,
             2,
+            SelectedPlaybackOutput::Local,
             Box::<AcceptingBackend>::default(),
         );
 
@@ -1130,6 +1216,106 @@ mod tests {
             .command(SessionCommand::Next, &sample(2))
             .expect("next");
         assert!(next.current_media_changed);
+    }
+
+    #[test]
+    fn replacing_backend_keeps_the_current_run_queue_and_position() {
+        let source_id = SourceId::fake(1);
+        let mut sequence = Sequence::new(source_id);
+        sequence
+            .apply_batch(
+                crate::Batch::new(vec![
+                    crate::BatchItem::new(track(1), crate::Provenance::Manual),
+                    crate::BatchItem::new(track(2), crate::Provenance::Manual),
+                ]),
+                Placement::Replace { anchor_index: 0 },
+            )
+            .expect("seed queue");
+        let old = BackendProbe::default();
+        let old_commands = Arc::clone(&old.commands);
+        let old_shutdown = Arc::clone(&old.shutdown);
+        let mut runtime = PlaybackRuntime::new(
+            sequence,
+            SourceSessionEpoch::new(1),
+            "test",
+            PlaybackSettings::default(),
+            false,
+            2,
+            SelectedPlaybackOutput::Local,
+            Box::new(old),
+        );
+        runtime
+            .command(SessionCommand::Play, &sample(0))
+            .expect("begin run");
+        let run = runtime.session.current_run().expect("current run");
+        runtime
+            .resolve_stream(
+                run,
+                Ok(PreparedStream::from(library::ResolvedStream::new(
+                    "file:///track.flac",
+                ))),
+                &sample(1),
+            )
+            .expect("resolve stream");
+        let started = runtime
+            .session
+            .handle_backend(BackendEvent::Started { run }, &sample(2));
+        runtime.finish(started, &sample(2)).expect("accept start");
+        let position = runtime.session.handle_backend(
+            BackendEvent::Position {
+                run,
+                millis: 42_000,
+            },
+            &sample(3),
+        );
+        runtime
+            .finish(position, &sample(3))
+            .expect("accept position");
+
+        let new = BackendProbe::default();
+        let new_commands = Arc::clone(&new.commands);
+        let remote = crate::RemoteOutput {
+            id: "upnp:living-room".to_string(),
+            name: "Living Room".to_string(),
+            protocol: crate::RemoteOutputProtocol::Upnp,
+        };
+        let update = runtime
+            .replace_backend(
+                SelectedPlaybackOutput::Remote(remote.clone()),
+                Box::new(new),
+                &sample(4),
+            )
+            .expect("replace backend");
+
+        assert!(old_shutdown.load(Ordering::Acquire));
+        assert!(old_commands
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .iter()
+            .any(|command| matches!(command, BackendCommand::Stop { run: stopped } if *stopped == run)));
+        let commands = new_commands
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        assert!(commands.iter().any(|command| matches!(
+            command,
+            BackendCommand::Start {
+                run: started,
+                start_position_millis: 42_000,
+                ..
+            } if *started == run
+        )));
+        assert!(
+            !commands
+                .iter()
+                .any(|command| matches!(command, BackendCommand::ConfigureAudio(_)))
+        );
+        let projection = update.projection.expect("output projection");
+        assert_eq!(projection.view.queue.total, 2);
+        assert_eq!(projection.view.transport.current.unwrap().id.run, Some(run));
+        assert_eq!(
+            projection.view.controls.playback_output,
+            SelectedPlaybackOutput::Remote(remote)
+        );
     }
 
     #[test]
@@ -1265,6 +1451,7 @@ mod tests {
             PlaybackSettings::default(),
             false,
             2,
+            SelectedPlaybackOutput::Local,
             Box::<AcceptingBackend>::default(),
         )
     }

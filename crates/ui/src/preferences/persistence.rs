@@ -156,6 +156,16 @@ impl Shell {
         self.reconcile_lyrics_settings_ui();
     }
 
+    pub(crate) fn set_cast_proxy_enabled(self: &Rc<Self>, enabled: bool) {
+        self.update_app_settings("cast proxy setting", |settings| {
+            if settings.cast_proxy_enabled == enabled {
+                return false;
+            }
+            settings.cast_proxy_enabled = enabled;
+            true
+        });
+    }
+
     pub(super) fn set_notifications_enabled(self: &Rc<Self>, enabled: bool) {
         if self
             .update_app_settings("notification setting", |settings| {

@@ -1,5 +1,7 @@
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
+use std::sync::mpsc::TryRecvError;
+use std::thread;
 use std::time::Duration;
 
 use crate::format_duration;
@@ -8,15 +10,18 @@ use crate::routes::route::Route;
 use adw::prelude::*;
 use artwork::ArtworkBinding;
 use gtk::glib;
-use playback::{CurrentMediaId, PlaybackView, RepeatMode, TransportStatus};
+use playback::{
+    CurrentMediaId, PlaybackOutput, PlaybackView, RemoteOutput, RemoteOutputProtocol, RepeatMode,
+    TransportStatus,
+};
 
 use crate::favorites::{favorite_icon_button, set_favorite_button_active};
-use localization::{msgid, tr};
+use localization::{msgid, tr, tr_with};
 
 use super::icons::{
     VolumeIcon, auto_dj_icon_button, play_icon_button, queue_sidebar_button,
-    random_clover_icon_button, repeat_icon_button, set_repeat_button_icon, shuffle_icon_button,
-    skip_icon_button, volume_icon_button, volume_icon_state,
+    random_clover_icon_button, repeat_icon_button, set_repeat_button_icon, set_volume_icon,
+    shuffle_icon_button, skip_icon_button, volume_icon_button, volume_icon_state,
 };
 use super::playback_settings::present_playback_settings_popover;
 use super::progress::seekbar_target_seconds;
@@ -53,8 +58,6 @@ const BOTTOM_PLAYER_BUTTON_OFFSET_Y: f64 = 3.0;
 const BOTTOM_PLAYER_BUTTON_STEP: f64 = 38.0;
 const BOTTOM_PLAYER_WAVEFORM_HEIGHT: i32 = 32;
 const BOTTOM_PLAYER_ACTION_BUTTON_SIZE: i32 = 34;
-const BOTTOM_PLAYER_ACTION_ICON_SIZE: i32 = 20;
-const BOTTOM_PLAYER_VOLUME_ICON_SIZE: i32 = 22;
 const BOTTOM_PLAYER_TITLE_MENU_BUTTON_SIZE: i32 = 18;
 const BOTTOM_PLAYER_TITLE_MENU_GAP: i32 = 0;
 const BOTTOM_PLAYER_IDENTITY_HEIGHT: i32 = 58;
@@ -80,7 +83,7 @@ const BOTTOM_PLAYER_IDENTITY_COMPACT_MIN_WIDTH: i32 = BOTTOM_PLAYER_EDGE_PADDING
         + BOTTOM_PLAYER_NOW_PLAYING_SPACING
         + BOTTOM_PLAYER_IDENTITY_MIN_WIDTH)
         * 2;
-const BOTTOM_PLAYER_VOLUME_GROUP_MIN_WIDTH: i32 = BOTTOM_PLAYER_ACTION_BUTTON_SIZE * 2
+const BOTTOM_PLAYER_VOLUME_GROUP_MIN_WIDTH: i32 = BOTTOM_PLAYER_ACTION_BUTTON_SIZE * 3
     + BOTTOM_PLAYER_VOLUME_SPACING * 2
     + BOTTOM_PLAYER_VOLUME_SLOT_LAYOUT_WIDTH;
 const BOTTOM_PLAYER_ACTIONS_COMPACT_MIN_WIDTH: i32 = BOTTOM_PLAYER_EDGE_PADDING * 2
@@ -135,8 +138,7 @@ pub(crate) struct PlayerControls {
     repeat_button: gtk::Button,
     dj_button: gtk::Button,
     pub(super) queue_button: gtk::Button,
-    pub(super) queue_icon: gtk::DrawingArea,
-    pub(super) queue_icon_open: Rc<Cell<bool>>,
+    pub(super) queue_icon: gtk::Image,
     pub(crate) favorite_button: gtk::Button,
     rating: RatingControl,
     rating_available: Cell<bool>,
@@ -150,10 +152,12 @@ pub(crate) struct PlayerControls {
     duration: gtk::Label,
     actions: gtk::Overlay,
     pub(crate) mute_button: gtk::Button,
-    mute_icon: gtk::DrawingArea,
+    mute_icon: gtk::Image,
     mute_icon_state: Rc<Cell<VolumeIcon>>,
     volume: gtk::Scale,
     pub(crate) settings_button: gtk::Button,
+    pub(crate) output_button: gtk::Button,
+    output_icon: gtk::Image,
 }
 
 struct NowPlayingControls {
@@ -188,15 +192,16 @@ struct TransportControls {
 struct PlayerActionControls {
     root: gtk::Overlay,
     queue_button: gtk::Button,
-    queue_icon: gtk::DrawingArea,
-    queue_icon_open: Rc<Cell<bool>>,
+    queue_icon: gtk::Image,
     favorite_button: gtk::Button,
     rating: RatingControl,
     mute_button: gtk::Button,
-    mute_icon: gtk::DrawingArea,
+    mute_icon: gtk::Image,
     mute_icon_state: Rc<Cell<VolumeIcon>>,
     volume: gtk::Scale,
     settings_button: gtk::Button,
+    output_button: gtk::Button,
+    output_icon: gtk::Image,
 }
 
 #[derive(Clone)]
@@ -712,9 +717,18 @@ impl Shell {
         let volume_icon = volume_icon_state(muted, volume);
         if controls.mute_icon_state.get() != volume_icon {
             controls.mute_icon_state.set(volume_icon);
-            controls.mute_icon.queue_draw();
+            set_volume_icon(&controls.mute_icon, volume_icon);
         }
         controls.volume.set_value(volume);
+        let output = player
+            .as_ref()
+            .map(|player| &player.controls.playback_output)
+            .cloned()
+            .unwrap_or_default();
+        set_output_icon_active(&controls.output_icon, !output.is_local());
+        controls
+            .output_button
+            .set_tooltip_text(Some(&playback_output_label(&output)));
         self.playback.updating_controls.set(false);
     }
 
@@ -812,7 +826,6 @@ pub(crate) fn build_bottom_player() -> PlayerControls {
         root: actions,
         queue_button,
         queue_icon,
-        queue_icon_open,
         favorite_button,
         rating,
         mute_button,
@@ -820,6 +833,8 @@ pub(crate) fn build_bottom_player() -> PlayerControls {
         mute_icon_state,
         volume,
         settings_button,
+        output_button,
+        output_icon,
     } = build_player_action_controls();
 
     let left_slot = bottom_player_allocated_slot(&now_playing_wall, 1, 1);
@@ -891,7 +906,6 @@ pub(crate) fn build_bottom_player() -> PlayerControls {
         dj_button,
         queue_button,
         queue_icon,
-        queue_icon_open,
         favorite_button,
         rating,
         rating_available: Cell::new(false),
@@ -909,6 +923,8 @@ pub(crate) fn build_bottom_player() -> PlayerControls {
         mute_icon_state,
         volume,
         settings_button,
+        output_button,
+        output_icon,
     }
 }
 
@@ -1147,14 +1163,11 @@ fn build_player_action_controls() -> PlayerActionControls {
     let rating = RatingControl::new(None);
     rating
         .widget()
-        .set_content_width(BOTTOM_PLAYER_RATING_WIDTH);
-    rating
-        .widget()
-        .set_content_height(BOTTOM_PLAYER_RATING_HEIGHT);
+        .set_size_request(BOTTOM_PLAYER_RATING_WIDTH, BOTTOM_PLAYER_RATING_HEIGHT);
     rating.widget().set_halign(gtk::Align::End);
     rating.widget().set_valign(gtk::Align::Start);
     rating.widget().set_margin_top(5);
-    rating.widget().set_margin_end(10);
+    rating.widget().set_margin_end(15);
     root.add_overlay(rating.widget());
     root.set_measure_overlay(rating.widget(), false);
 
@@ -1162,11 +1175,18 @@ fn build_player_action_controls() -> PlayerActionControls {
     buttons.set_halign(gtk::Align::End);
     buttons.set_valign(gtk::Align::Center);
     buttons.set_margin_top(BOTTOM_PLAYER_ACTION_ROW_OFFSET_Y * 2);
-    let (queue_button, queue_icon, queue_icon_open) = queue_sidebar_button("Hide sidebar");
-    queue_icon.set_content_width(BOTTOM_PLAYER_ACTION_ICON_SIZE);
-    queue_icon.set_content_height(BOTTOM_PLAYER_ACTION_ICON_SIZE);
-    configure_player_action_button(&queue_button);
-    buttons.append(&queue_button);
+    let output_button = icon_button_without_tooltip(
+        "video-display-bundled-symbolic",
+        msgid("Choose playback output"),
+    );
+    output_button.add_css_class("player-output-button");
+    configure_player_action_button(&output_button);
+    let output_icon = output_button
+        .child()
+        .and_then(|child| child.downcast::<gtk::Image>().ok())
+        .expect("an icon button contains an image");
+    output_icon.add_css_class("player-output-icon");
+    buttons.append(&output_button);
     let settings_button =
         icon_button_without_tooltip("preferences-system-bundled-symbolic", "Playback settings");
     settings_button.add_css_class("player-settings-button");
@@ -1177,14 +1197,12 @@ fn build_player_action_controls() -> PlayerActionControls {
     volume_group.set_valign(gtk::Align::Center);
     let favorite_button = favorite_icon_button("Favorite");
     favorite_button.add_css_class("player-favorite-button");
-    set_button_image_pixel_size(&favorite_button, BOTTOM_PLAYER_ACTION_ICON_SIZE);
     configure_player_action_button(&favorite_button);
     volume_group.append(&favorite_button);
+    let (queue_button, queue_icon) = queue_sidebar_button("Hide sidebar");
+    configure_player_action_button(&queue_button);
+    volume_group.append(&queue_button);
     let (mute_button, mute_icon, mute_icon_state) = volume_icon_button("Mute");
-    mute_icon.set_content_width(BOTTOM_PLAYER_VOLUME_ICON_SIZE);
-    mute_icon.set_content_height(BOTTOM_PLAYER_VOLUME_ICON_SIZE);
-    mute_icon.set_halign(gtk::Align::End);
-    mute_icon.set_margin_end(2);
     mute_button.add_css_class("player-mute-button");
     configure_player_action_button(&mute_button);
     volume_group.append(&mute_button);
@@ -1206,7 +1224,6 @@ fn build_player_action_controls() -> PlayerActionControls {
         root,
         queue_button,
         queue_icon,
-        queue_icon_open,
         favorite_button,
         rating,
         mute_button,
@@ -1214,6 +1231,8 @@ fn build_player_action_controls() -> PlayerActionControls {
         mute_icon_state,
         volume,
         settings_button,
+        output_button,
+        output_icon,
     }
 }
 
@@ -1236,15 +1255,6 @@ fn configure_play_button(button: &gtk::Button) {
 
 fn configure_player_action_button(button: &gtk::Button) {
     button.set_valign(gtk::Align::Center);
-}
-
-fn set_button_image_pixel_size(button: &gtk::Button, size: i32) {
-    if let Some(image) = button
-        .child()
-        .and_then(|child| child.downcast::<gtk::Image>().ok())
-    {
-        image.set_pixel_size(size);
-    }
 }
 
 fn bottom_player_action_count(actions: BottomPlayerActions) -> i32 {
@@ -1375,6 +1385,287 @@ fn repeat_label(repeat_mode: RepeatMode) -> String {
         RepeatMode::One => tr("Repeat one"),
         RepeatMode::All => tr("Repeat all"),
     }
+}
+
+fn playback_output_label(output: &PlaybackOutput) -> String {
+    match output {
+        PlaybackOutput::Local => tr("This device"),
+        PlaybackOutput::Remote(output) => output.name.clone(),
+    }
+}
+
+fn set_output_icon_active(icon: &gtk::Image, active: bool) {
+    if active {
+        icon.add_css_class("active-output");
+    } else {
+        icon.remove_css_class("active-output");
+    }
+}
+
+fn same_remote_output(left: &RemoteOutput, right: &RemoteOutput) -> bool {
+    left.protocol == right.protocol && left.id == right.id
+}
+
+fn remember_remote_output(shell: &Shell, remote: &RemoteOutput) {
+    let mut cached = shell.playback.remote_output_options.borrow_mut();
+    if let Some(existing) = cached
+        .iter_mut()
+        .find(|existing| same_remote_output(existing, remote))
+    {
+        *existing = remote.clone();
+    } else {
+        cached.push(remote.clone());
+    }
+}
+
+fn replace_discovered_remote_outputs(
+    cached: &mut Vec<RemoteOutput>,
+    mut discovered: Vec<RemoteOutput>,
+    selected: &PlaybackOutput,
+) {
+    if let PlaybackOutput::Remote(selected) = selected
+        && !discovered
+            .iter()
+            .any(|output| same_remote_output(output, selected))
+    {
+        discovered.push(selected.clone());
+    }
+    *cached = discovered;
+}
+
+fn present_output_popover(anchor: &gtk::Button, shell: &Rc<Shell>) {
+    let selected = shell.products.playback.transport.playback_output();
+    let popover = gtk::Popover::new();
+    popover.add_css_class("playback-output-popover");
+    popover.set_autohide(true);
+    popover.set_position(gtk::PositionType::Top);
+    popover.set_parent(anchor);
+
+    let content = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    content.set_margin_top(2);
+    content.set_margin_bottom(2);
+    content.set_margin_start(2);
+    content.set_margin_end(2);
+    content.set_width_request(300);
+
+    let outputs = adw::PreferencesGroup::new();
+    outputs.set_title(&tr("Casting"));
+    let searching = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+    searching.set_margin_start(8);
+    let spinner = gtk::Spinner::new();
+    spinner.start();
+    searching.append(&spinner);
+    let searching_label = gtk::Label::new(Some(&tr("Searching for devices...")));
+    searching_label.add_css_class("caption");
+    searching_label.add_css_class("dim-label");
+    searching.append(&searching_label);
+    outputs.set_header_suffix(Some(&searching));
+    add_output_row(&outputs, PlaybackOutput::Local, &selected, &popover, shell);
+    content.append(&outputs);
+
+    #[cfg(target_os = "macos")]
+    add_airplay_row(&outputs, &popover, shell);
+
+    let mut shown = shell.playback.remote_output_options.borrow().clone();
+    if let PlaybackOutput::Remote(selected) = &selected
+        && !shown
+            .iter()
+            .any(|output| same_remote_output(output, selected))
+    {
+        shown.push(selected.clone());
+    }
+    let mut remote_rows = Vec::new();
+    for output in &shown {
+        let row = add_output_row(
+            &outputs,
+            PlaybackOutput::Remote(output.clone()),
+            &selected,
+            &popover,
+            shell,
+        );
+        remote_rows.push((output.clone(), row));
+    }
+    let shown = Rc::new(RefCell::new(shown));
+    let remote_rows = Rc::new(RefCell::new(remote_rows));
+
+    let (sender, receiver) = std::sync::mpsc::channel();
+    let transport = shell.products.playback.transport.clone();
+    thread::spawn(move || {
+        let _ = sender.send(transport.discover_remote_outputs());
+    });
+    let outputs_for_discovery = outputs.clone();
+    let selected_for_discovery = selected.clone();
+    let popover_for_discovery = popover.clone();
+    let shell_for_discovery = Rc::clone(shell);
+    let content_for_discovery = content.clone();
+    let shown_for_discovery = Rc::clone(&shown);
+    let rows_for_discovery = Rc::clone(&remote_rows);
+    gtk::glib::timeout_add_local(Duration::from_millis(50), move || {
+        if !popover_for_discovery.is_visible() {
+            return glib::ControlFlow::Break;
+        }
+        match receiver.try_recv() {
+            Ok(Ok(discovered)) => {
+                spinner.stop();
+                spinner.set_visible(false);
+                if discovered.is_empty() {
+                    searching_label.set_text(&tr("No network devices found"));
+                } else {
+                    searching.set_visible(false);
+                }
+                let mut shown = shown_for_discovery.borrow_mut();
+                replace_discovered_remote_outputs(&mut shown, discovered, &selected_for_discovery);
+                let mut rows = rows_for_discovery.borrow_mut();
+                for (_, row) in rows.drain(..) {
+                    outputs_for_discovery.remove(&row);
+                }
+                for output in shown.iter() {
+                    let row = add_output_row(
+                        &outputs_for_discovery,
+                        PlaybackOutput::Remote(output.clone()),
+                        &selected_for_discovery,
+                        &popover_for_discovery,
+                        &shell_for_discovery,
+                    );
+                    rows.push((output.clone(), row));
+                }
+                *shell_for_discovery
+                    .playback
+                    .remote_output_options
+                    .borrow_mut() = shown.clone();
+                glib::ControlFlow::Break
+            }
+            Ok(Err(error)) => {
+                spinner.stop();
+                searching.set_visible(false);
+                let label = gtk::Label::new(Some(&error));
+                label.add_css_class("error");
+                label.set_wrap(true);
+                label.set_halign(gtk::Align::Start);
+                content_for_discovery.append(&label);
+                glib::ControlFlow::Break
+            }
+            Err(TryRecvError::Empty) => glib::ControlFlow::Continue,
+            Err(TryRecvError::Disconnected) => {
+                spinner.stop();
+                spinner.set_visible(false);
+                if shown_for_discovery.borrow().is_empty() {
+                    searching_label.set_text(&tr("No network devices found"));
+                } else {
+                    searching.set_visible(false);
+                }
+                glib::ControlFlow::Break
+            }
+        }
+    });
+
+    popover.set_child(Some(&content));
+    popover.connect_closed(|popover| popover.unparent());
+    popover.popup();
+}
+
+fn add_output_row(
+    group: &adw::PreferencesGroup,
+    output: PlaybackOutput,
+    selected: &PlaybackOutput,
+    popover: &gtk::Popover,
+    shell: &Rc<Shell>,
+) -> adw::ActionRow {
+    let title = match &output {
+        PlaybackOutput::Local => glib::markup_escape_text(&playback_output_label(&output)),
+        PlaybackOutput::Remote(remote) => {
+            let name = glib::markup_escape_text(&remote.name);
+            let protocol = glib::markup_escape_text(&match remote.protocol {
+                RemoteOutputProtocol::Upnp => tr("UPnP"),
+                RemoteOutputProtocol::GoogleCast => tr("Google Cast"),
+            });
+            format!("{name}  <span size=\"small\" alpha=\"55%\">{protocol}</span>").into()
+        }
+    };
+    let row = adw::ActionRow::builder()
+        .title(title)
+        .use_markup(true)
+        .activatable(true)
+        .build();
+    row.add_css_class("playback-output-row");
+    if &output == selected {
+        row.add_css_class("selected-output");
+        row.add_suffix(&gtk::Image::from_icon_name(
+            "object-select-bundled-symbolic",
+        ));
+    }
+    let row_output = output.clone();
+    let row_popover = popover.clone();
+    let row_shell = Rc::clone(shell);
+    row.connect_activated(move |_| {
+        select_output_async(&row_shell, &row_popover, row_output.clone());
+    });
+    group.add(&row);
+    row
+}
+
+fn select_output_async(shell: &Rc<Shell>, popover: &gtk::Popover, output: PlaybackOutput) {
+    let (sender, receiver) = std::sync::mpsc::channel();
+    let transport = shell.products.playback.transport.clone();
+    let selected = output.clone();
+    thread::spawn(move || {
+        let _ = sender.send(transport.select_playback_output(selected));
+    });
+    let shell = Rc::clone(shell);
+    let popover = popover.clone();
+    gtk::glib::timeout_add_local(Duration::from_millis(50), move || {
+        match receiver.try_recv() {
+            Ok(Ok(())) => {
+                if let PlaybackOutput::Remote(remote) = &output {
+                    remember_remote_output(&shell, remote);
+                }
+                set_output_icon_active(
+                    &shell.player_view.player_controls.output_icon,
+                    !output.is_local(),
+                );
+                shell
+                    .player_view
+                    .player_controls
+                    .output_button
+                    .set_tooltip_text(Some(&playback_output_label(&output)));
+                shell.show_feedback_toast(match &output {
+                    PlaybackOutput::Local => tr("Playing on this device"),
+                    PlaybackOutput::Remote(output) => {
+                        tr_with("Playing on {device}", &[("device", output.name.as_str())])
+                    }
+                });
+                popover.popdown();
+                glib::ControlFlow::Break
+            }
+            Ok(Err(error)) => {
+                shell.show_feedback_toast(error);
+                glib::ControlFlow::Break
+            }
+            Err(TryRecvError::Empty) => glib::ControlFlow::Continue,
+            Err(TryRecvError::Disconnected) => glib::ControlFlow::Break,
+        }
+    });
+}
+
+#[cfg(target_os = "macos")]
+fn add_airplay_row(group: &adw::PreferencesGroup, popover: &gtk::Popover, shell: &Rc<Shell>) {
+    let row = adw::ActionRow::builder()
+        .title(tr("AirPlay and Sound Settings..."))
+        .subtitle(tr("Uses the macOS system output"))
+        .activatable(true)
+        .build();
+    row.add_prefix(&gtk::Image::from_icon_name("audio-speakers-symbolic"));
+    let shell = Rc::clone(shell);
+    let popover = popover.clone();
+    row.connect_activated(move |_| {
+        shell.update_playback_settings(|settings| settings.audio_output = None);
+        select_output_async(&shell, &popover, PlaybackOutput::Local);
+        let _ = gtk::gio::AppInfo::launch_default_for_uri(
+            "x-apple.systempreferences:com.apple.Sound-Settings.extension",
+            None::<&gtk::gio::AppLaunchContext>,
+        );
+    });
+    group.add(&row);
 }
 
 fn preview_player_seek(shell: &Rc<Shell>, seconds: u32) {
@@ -1609,6 +1900,12 @@ pub(crate) fn connect_player_controls(shell: &Rc<Shell>) {
         .connect_clicked(move |button| {
             present_playback_settings_popover(button, &settings_shell);
         });
+    let output_shell = Rc::clone(shell);
+    shell
+        .player_view
+        .player_controls
+        .output_button
+        .connect_clicked(move |button| present_output_popover(button, &output_shell));
     let seek_shell = Rc::clone(shell);
     shell
         .player_view
@@ -1683,8 +1980,22 @@ impl Shell {
         } else {
             1.0
         };
-        self.settings.current.borrow_mut().playback.volume = volume;
         self.products.playback.transport.set_volume(volume);
+        let local = self
+            .selected_playback()
+            .as_deref()
+            .map(|player| player.controls.playback_output.is_local())
+            .unwrap_or_else(|| {
+                self.products
+                    .playback
+                    .transport
+                    .playback_output()
+                    .is_local()
+            });
+        if !local {
+            return;
+        }
+        self.settings.current.borrow_mut().playback.volume = volume;
         if let Some(source) = self.playback.volume_persist_source.borrow_mut().take() {
             source.remove();
         }
@@ -1697,8 +2008,21 @@ impl Shell {
     }
 
     pub(crate) fn apply_user_muted(&self, muted: bool) {
-        self.settings.current.borrow_mut().playback.muted = muted;
         self.products.playback.transport.set_muted(muted);
+        let local = self
+            .selected_playback()
+            .as_deref()
+            .map(|player| player.controls.playback_output.is_local())
+            .unwrap_or_else(|| {
+                self.products
+                    .playback
+                    .transport
+                    .playback_output()
+                    .is_local()
+            });
+        if local {
+            self.settings.current.borrow_mut().playback.muted = muted;
+        }
     }
 }
 
@@ -1850,6 +2174,32 @@ impl Shell {
 
 #[cfg(test)]
 mod tests {
+    use playback::{PlaybackOutput, RemoteOutput, RemoteOutputProtocol};
+
+    fn remote_output(id: &str) -> RemoteOutput {
+        RemoteOutput {
+            id: id.to_string(),
+            name: id.to_string(),
+            protocol: RemoteOutputProtocol::Upnp,
+        }
+    }
+
+    #[test]
+    fn discovery_replaces_stale_devices_but_keeps_the_selected_output() {
+        let kodi = remote_output("kodi");
+        let mut cached = vec![kodi.clone()];
+
+        super::replace_discovered_remote_outputs(&mut cached, Vec::new(), &PlaybackOutput::Local);
+        assert!(cached.is_empty());
+
+        super::replace_discovered_remote_outputs(
+            &mut cached,
+            Vec::new(),
+            &PlaybackOutput::Remote(kodi.clone()),
+        );
+        assert_eq!(cached, vec![kodi]);
+    }
+
     #[test]
     fn bottom_player_actions_never_outgrow_their_equal_side() {
         for player_width in super::BOTTOM_PLAYER_TINY_WIDTH..=4096 {
@@ -1927,13 +2277,21 @@ mod tests {
     }
 
     #[test]
-    fn player_volume_zero_uses_muted_icon() {
+    fn player_volume_uses_the_matching_symbolic_icon() {
         assert_eq!(
             super::volume_icon_state(false, 0.0),
             super::VolumeIcon::Muted
         );
         assert_eq!(
             super::volume_icon_state(false, 0.01),
+            super::VolumeIcon::Low
+        );
+        assert_eq!(
+            super::volume_icon_state(false, 0.5),
+            super::VolumeIcon::Medium
+        );
+        assert_eq!(
+            super::volume_icon_state(false, 0.9),
             super::VolumeIcon::High
         );
         assert_eq!(

@@ -75,8 +75,8 @@ const NAV_ROUTE_ICONS: [(&str, &str, &str); 13] = [
     ),
     (
         NAV_ROUTE_FAVORITES_CLASS,
-        "rufin-route-favorites-symbolic",
-        "rufin-route-favorites-symbolic",
+        "heart-outline-bundled-symbolic",
+        "heart-filled-bundled-symbolic",
     ),
     (
         NAV_ROUTE_HISTORY_CLASS,
@@ -1426,7 +1426,7 @@ fn nav_item(item: SidebarRouteItem) -> NavItem {
             route: Route::Search,
         },
         SidebarRouteItem::Favorites => NavItem {
-            icon_name: "rufin-route-favorites-symbolic",
+            icon_name: "heart-outline-bundled-symbolic",
             label: msgid("Favorites"),
             route: Route::Favorites,
         },

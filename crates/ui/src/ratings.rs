@@ -1,9 +1,7 @@
 use std::cell::Cell;
-use std::f64::consts::PI;
 use std::rc::Rc;
 
 use adw::prelude::*;
-use gtk::cairo;
 use library::{FavoriteItemId, MetadataItemId};
 use localization::{msgid, tr};
 
@@ -12,62 +10,66 @@ const STAR_HEIGHT: i32 = 20;
 
 #[derive(Clone)]
 pub(crate) struct RatingControl {
-    area: gtk::DrawingArea,
+    root: gtk::Box,
+    stars: Rc<[gtk::Image; 5]>,
     value: Rc<Cell<u8>>,
     preview: Rc<Cell<Option<u8>>>,
 }
 
 impl RatingControl {
     pub(crate) fn new(rating: Option<u8>) -> Self {
-        let area = gtk::DrawingArea::new();
-        area.set_content_width(STAR_WIDTH);
-        area.set_content_height(STAR_HEIGHT);
-        area.add_css_class("rating-stars");
-        area.set_cursor_from_name(Some("pointer"));
-        area.set_tooltip_text(Some(&tr(msgid("Rating"))));
+        let root = gtk::Box::new(gtk::Orientation::Horizontal, 1);
+        root.set_homogeneous(true);
+        root.set_size_request(STAR_WIDTH, STAR_HEIGHT);
+        root.add_css_class("rating-stars");
+        root.set_cursor_from_name(Some("pointer"));
+        root.set_tooltip_text(Some(&tr(msgid("Rating"))));
 
         let value = Rc::new(Cell::new(rating.unwrap_or(0)));
         let preview = Rc::new(Cell::new(None));
-        let drawn_value = Rc::clone(&value);
-        let drawn_preview = Rc::clone(&preview);
-        area.set_draw_func(move |area, context, width, height| {
-            draw_stars(
-                area,
-                context,
-                width,
-                height,
-                drawn_preview.get().unwrap_or(drawn_value.get()),
-            );
-        });
+        let stars = Rc::new(std::array::from_fn(|_| {
+            let star = gtk::Image::new();
+            star.add_css_class("rating-star");
+            star.set_hexpand(true);
+            star.set_halign(gtk::Align::Center);
+            root.append(&star);
+            star
+        }));
+        set_rating_icons(&stars, value.get());
 
         let hovered = Rc::clone(&preview);
+        let hovered_stars = Rc::clone(&stars);
         let motion = gtk::EventControllerMotion::new();
         motion.connect_motion(move |controller, x, _| {
-            hovered.set(Some(rating_at(x, widget_width(controller.widget()))));
-            controller.widget().map(|widget| widget.queue_draw());
+            let rating = rating_at(x, widget_width(controller.widget()));
+            hovered.set(Some(rating));
+            set_rating_icons(&hovered_stars, rating);
         });
         let left = Rc::clone(&preview);
-        motion.connect_leave(move |controller| {
+        let left_value = Rc::clone(&value);
+        let left_stars = Rc::clone(&stars);
+        motion.connect_leave(move |_| {
             left.set(None);
-            controller.widget().map(|widget| widget.queue_draw());
+            set_rating_icons(&left_stars, left_value.get());
         });
-        area.add_controller(motion);
+        root.add_controller(motion);
 
         Self {
-            area,
+            root,
+            stars,
             value,
             preview,
         }
     }
 
-    pub(crate) fn widget(&self) -> &gtk::DrawingArea {
-        &self.area
+    pub(crate) fn widget(&self) -> &gtk::Box {
+        &self.root
     }
 
     pub(crate) fn set_rating(&self, rating: Option<u8>) {
         self.value.set(rating.unwrap_or(0));
         if self.preview.get().is_none() {
-            self.area.queue_draw();
+            set_rating_icons(&self.stars, self.value.get());
         }
     }
 
@@ -76,35 +78,45 @@ impl RatingControl {
         let drag = gtk::GestureDrag::new();
         let began_start = Rc::clone(&start);
         let began_preview = Rc::clone(&self.preview);
+        let began_stars = Rc::clone(&self.stars);
         drag.connect_drag_begin(move |gesture, x, _| {
             began_start.set(x);
-            preview_at(gesture.widget(), &began_preview, x);
+            preview_at(gesture.widget(), &began_preview, &began_stars, x);
         });
         let updated_start = Rc::clone(&start);
         let updated_preview = Rc::clone(&self.preview);
+        let updated_stars = Rc::clone(&self.stars);
         drag.connect_drag_update(move |gesture, offset, _| {
             preview_at(
                 gesture.widget(),
                 &updated_preview,
+                &updated_stars,
                 updated_start.get() + offset,
             );
         });
         let value = Rc::clone(&self.value);
         let preview = Rc::clone(&self.preview);
+        let committed_stars = Rc::clone(&self.stars);
         drag.connect_drag_end(move |gesture, offset, _| {
             let rating = rating_at(start.get() + offset, widget_width(gesture.widget()));
             value.set(rating);
             preview.set(Some(rating));
-            gesture.widget().map(|widget| widget.queue_draw());
+            set_rating_icons(&committed_stars, rating);
             commit(Some(rating));
         });
-        self.area.add_controller(drag);
+        self.root.add_controller(drag);
     }
 }
 
-fn preview_at(widget: Option<gtk::Widget>, preview: &Cell<Option<u8>>, x: f64) {
-    preview.set(Some(rating_at(x, widget_width(widget.clone()))));
-    widget.map(|widget| widget.queue_draw());
+fn preview_at(
+    widget: Option<gtk::Widget>,
+    preview: &Cell<Option<u8>>,
+    stars: &[gtk::Image; 5],
+    x: f64,
+) {
+    let rating = rating_at(x, widget_width(widget));
+    preview.set(Some(rating));
+    set_rating_icons(stars, rating);
 }
 
 fn widget_width(widget: Option<gtk::Widget>) -> i32 {
@@ -115,62 +127,20 @@ fn rating_at(x: f64, width: i32) -> u8 {
     ((x / f64::from(width.max(1)) * 10.0).ceil() as u8).clamp(1, 10)
 }
 
-fn draw_stars(
-    area: &gtk::DrawingArea,
-    context: &cairo::Context,
-    width: i32,
-    height: i32,
-    rating: u8,
-) {
-    let color = area.color();
-    let outline = area.parent().map(|parent| parent.color()).unwrap_or(color);
-    context.set_source_rgba(
-        f64::from(outline.red()),
-        f64::from(outline.green()),
-        f64::from(outline.blue()),
-        f64::from(outline.alpha()) * 0.45,
-    );
-    context.set_line_width(1.5);
-    star_paths(context, width, height);
-    let _ = context.stroke();
-
-    let _ = context.save();
-    context.rectangle(
-        0.0,
-        0.0,
-        f64::from(width) * f64::from(rating.min(10)) / 10.0,
-        f64::from(height),
-    );
-    context.clip();
-    context.set_source_rgba(
-        f64::from(color.red()),
-        f64::from(color.green()),
-        f64::from(color.blue()),
-        f64::from(color.alpha()),
-    );
-    star_paths(context, width, height);
-    let _ = context.fill();
-    let _ = context.restore();
-}
-
-fn star_paths(context: &cairo::Context, width: i32, height: i32) {
-    let cell = f64::from(width) / 5.0;
-    let outer = (cell.min(f64::from(height)) - 4.0) / 2.0;
-    for star in 0..5 {
-        let center_x = cell * (f64::from(star) + 0.5);
-        let center_y = f64::from(height) / 2.0;
-        for point in 0..10 {
-            let radius = if point % 2 == 0 { outer } else { outer * 0.45 };
-            let angle = -PI / 2.0 + f64::from(point) * PI / 5.0;
-            let x = center_x + radius * angle.cos();
-            let y = center_y + radius * angle.sin();
-            if point == 0 {
-                context.move_to(x, y);
-            } else {
-                context.line_to(x, y);
-            }
+fn set_rating_icons(stars: &[gtk::Image; 5], rating: u8) {
+    let rating = rating.min(10);
+    for (index, star) in stars.iter().enumerate() {
+        let value = rating.saturating_sub(index as u8 * 2);
+        if value == 0 {
+            star.remove_css_class("rated");
+        } else {
+            star.add_css_class("rated");
         }
-        context.close_path();
+        star.set_icon_name(Some(match value {
+            0 => "non-starred-bundled-symbolic",
+            1 => "semi-starred-bundled-symbolic",
+            _ => "starred-bundled-symbolic",
+        }));
     }
 }
 

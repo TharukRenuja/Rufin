@@ -7,11 +7,11 @@ use playback::RepeatMode;
 use localization::tr;
 
 const TRANSPORT_ICON_SIZE: i32 = 23;
-const QUEUE_ICON_SIZE: i32 = 20;
-const VOLUME_ICON_SIZE: i32 = 20;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum VolumeIcon {
+    Low,
+    Medium,
     High,
     Muted,
 }
@@ -19,9 +19,23 @@ pub(super) enum VolumeIcon {
 pub(super) fn volume_icon_state(muted: bool, volume: f64) -> VolumeIcon {
     if muted || volume <= 0.0 {
         VolumeIcon::Muted
+    } else if volume <= 1.0 / 3.0 {
+        VolumeIcon::Low
+    } else if volume <= 2.0 / 3.0 {
+        VolumeIcon::Medium
     } else {
         VolumeIcon::High
     }
+}
+
+pub(super) fn set_volume_icon(icon: &gtk::Image, state: VolumeIcon) {
+    let name = match state {
+        VolumeIcon::Low => "audio-volume-low-bundled-symbolic",
+        VolumeIcon::Medium => "audio-volume-medium-bundled-symbolic",
+        VolumeIcon::High => "audio-volume-high-bundled-symbolic",
+        VolumeIcon::Muted => "audio-volume-muted-bundled-symbolic",
+    };
+    icon.set_icon_name(Some(name));
 }
 
 pub(super) fn set_repeat_button_icon(button: &gtk::Button, repeat_mode: RepeatMode) {
@@ -202,49 +216,17 @@ fn repeat_icon_area(repeat_mode: RepeatMode) -> gtk::DrawingArea {
     icon
 }
 
-pub(super) fn volume_icon_button(
-    label: &str,
-) -> (gtk::Button, gtk::DrawingArea, Rc<Cell<VolumeIcon>>) {
+pub(super) fn volume_icon_button(label: &str) -> (gtk::Button, gtk::Image, Rc<Cell<VolumeIcon>>) {
     let state = Rc::new(Cell::new(VolumeIcon::High));
-    let icon = gtk::DrawingArea::new();
-    icon.set_content_width(VOLUME_ICON_SIZE);
-    icon.set_content_height(VOLUME_ICON_SIZE);
+    let icon = gtk::Image::from_icon_name("audio-volume-high-bundled-symbolic");
     icon.set_halign(gtk::Align::Center);
     icon.set_valign(gtk::Align::Center);
-    let icon_state = Rc::clone(&state);
-    icon.set_draw_func(move |area, context, width, height| {
-        set_icon_source(area, context);
-        context.set_line_width(1.8);
-        context.set_line_cap(gtk::cairo::LineCap::Round);
-        context.set_line_join(gtk::cairo::LineJoin::Round);
-
-        let width = f64::from(width);
-        let height = f64::from(height);
-        context.move_to(width * 0.16, height * 0.40);
-        context.line_to(width * 0.33, height * 0.40);
-        context.line_to(width * 0.53, height * 0.27);
-        context.line_to(width * 0.53, height * 0.73);
-        context.line_to(width * 0.33, height * 0.60);
-        context.line_to(width * 0.16, height * 0.60);
-        context.close_path();
-        let _ = context.stroke();
-
-        if icon_state.get() == VolumeIcon::Muted {
-            context.set_line_width(1.7);
-            context.move_to(width * 0.72, height * 0.40);
-            context.line_to(width * 0.90, height * 0.60);
-            context.move_to(width * 0.90, height * 0.40);
-            context.line_to(width * 0.72, height * 0.60);
-            let _ = context.stroke();
-        } else {
-            context.set_line_width(1.9);
-            context.arc(width * 0.53, height * 0.50, width * 0.19, -0.70, 0.70);
-            let _ = context.stroke();
-            context.arc(width * 0.53, height * 0.50, width * 0.34, -0.62, 0.62);
-            let _ = context.stroke();
-        }
-    });
-    let button = drawing_icon_button(label, icon.clone());
+    let button = gtk::Button::new();
+    button.add_css_class("icon-button");
+    button.add_css_class("flat");
+    button.add_css_class("circular");
+    button.set_tooltip_text(Some(&tr(label)));
+    button.set_child(Some(&icon));
     (button, icon, state)
 }
 
@@ -374,7 +356,8 @@ pub(super) fn random_clover_icon_button(label: &str) -> gtk::Button {
     drawing_icon_button(label, icon)
 }
 
-pub(super) fn queue_sidebar_button(label: &str) -> (gtk::Button, gtk::DrawingArea, Rc<Cell<bool>>) {
+pub(super) fn queue_sidebar_button(label: &str) -> (gtk::Button, gtk::Image) {
+    let icon = gtk::Image::from_icon_name("sidebar-collapse-right-bundled-symbolic");
     let button = gtk::Button::new();
     button.add_css_class("icon-button");
     button.add_css_class("flat");
@@ -382,58 +365,14 @@ pub(super) fn queue_sidebar_button(label: &str) -> (gtk::Button, gtk::DrawingAre
     let label = tr(label);
     button.set_tooltip_text(Some(&label));
     button.update_property(&[gtk::accessible::Property::Label(&label)]);
-
-    let open = Rc::new(Cell::new(true));
-    let icon = gtk::DrawingArea::new();
-    icon.set_content_width(QUEUE_ICON_SIZE);
-    icon.set_content_height(QUEUE_ICON_SIZE);
-    icon.set_halign(gtk::Align::Center);
-    icon.set_valign(gtk::Align::Center);
-
-    let icon_open = Rc::clone(&open);
-    icon.set_draw_func(move |area, context, width, height| {
-        let color = area.color();
-        let set_source = |alpha: f64| {
-            context.set_source_rgba(
-                f64::from(color.red()),
-                f64::from(color.green()),
-                f64::from(color.blue()),
-                f64::from(color.alpha()) * alpha,
-            );
-        };
-
-        let width = f64::from(width);
-        let height = f64::from(height);
-        let x = (width - 14.0) / 2.0;
-        let y = (height - 14.0) / 2.0;
-        let icon_width = 14.0;
-        let icon_height = 14.0;
-        let separator_x = x + icon_width - 4.5;
-        let center_y = y + icon_height / 2.0;
-
-        if icon_open.get() {
-            set_source(0.32);
-            context.rectangle(separator_x, y, icon_width - (separator_x - x), icon_height);
-            let _ = context.fill();
-        }
-
-        set_source(1.0);
-        context.set_line_width(1.4);
-        context.rectangle(x + 0.7, y + 0.7, icon_width - 1.4, icon_height - 1.4);
-        let _ = context.stroke();
-
-        context.move_to(separator_x, y + 1.2);
-        context.line_to(separator_x, y + icon_height - 1.2);
-        let _ = context.stroke();
-
-        if !icon_open.get() {
-            context.set_line_width(1.5);
-            context.move_to(separator_x + 2.6, center_y - 3.0);
-            context.line_to(separator_x + 1.0, center_y);
-            context.line_to(separator_x + 2.6, center_y + 3.0);
-            let _ = context.stroke();
-        }
-    });
     button.set_child(Some(&icon));
-    (button, icon, open)
+    (button, icon)
+}
+
+pub(super) fn set_queue_sidebar_icon(icon: &gtk::Image, visible: bool) {
+    icon.set_icon_name(Some(if visible {
+        "sidebar-collapse-right-bundled-symbolic"
+    } else {
+        "sidebar-expand-right-bundled-symbolic"
+    }));
 }

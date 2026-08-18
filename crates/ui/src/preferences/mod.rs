@@ -1084,6 +1084,19 @@ fn general_page(shell: &Rc<Shell>, dialog: &adw::Dialog) -> adw::PreferencesPage
     });
     privacy_group.add(&private_row);
 
+    let cast_proxy_row = adw::SwitchRow::builder()
+        .title(tr("Proxy casting through Rufin"))
+        .subtitle(tr(
+            "Route server media through this device instead of sharing provider URLs with the renderer",
+        ))
+        .active(settings.cast_proxy_enabled)
+        .build();
+    let cast_proxy_shell = Rc::clone(shell);
+    cast_proxy_row.connect_active_notify(move |row| {
+        cast_proxy_shell.set_cast_proxy_enabled(row.is_active());
+    });
+    privacy_group.add(&cast_proxy_row);
+
     let secret_storage_titles = [tr("Legacy"), tr("Secure storage")];
     let secret_storage_refs = secret_storage_titles
         .iter()

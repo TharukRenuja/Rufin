@@ -26,6 +26,12 @@ const PLAYBACK_SETTINGS_SCALE_WIDTH: i32 = 180;
 pub(crate) fn present_playback_settings_popover(anchor: &gtk::Button, shell: &Rc<Shell>) {
     let settings = shell.settings.current.borrow().clone();
     let playback = settings.playback;
+    let local_output = shell
+        .products
+        .playback
+        .transport
+        .playback_output()
+        .is_local();
 
     let popover = gtk::Popover::new();
     popover.add_css_class("playback-settings-popover");
@@ -41,6 +47,9 @@ pub(crate) fn present_playback_settings_popover(anchor: &gtk::Button, shell: &Rc
     content.set_width_request(PLAYBACK_SETTINGS_WIDTH);
 
     let settings_group = adw::PreferencesGroup::new();
+    if !local_output {
+        settings_group.set_description(Some(&tr("Audio processing is unavailable while casting")));
+    }
     let crossfade_row = crossfade_duration_row(
         shell,
         playback.crossfade_seconds,
@@ -60,18 +69,22 @@ pub(crate) fn present_playback_settings_popover(anchor: &gtk::Button, shell: &Rc
             transition_shell.update_playback_settings(|settings| settings.transition_mode = mode);
         },
     );
+    transition_row.set_sensitive(local_output);
     settings_group.add(&transition_row);
+    crossfade_row.set_sensitive(
+        local_output && playback.transition_mode == PlaybackTransitionMode::Crossfade,
+    );
     settings_group.add(&crossfade_row);
-    settings_group.add(&playback_rate_row(
-        shell,
-        playback.playback_rate,
-        PLAYBACK_SETTINGS_SCALE_WIDTH,
-    ));
+    let playback_rate =
+        playback_rate_row(shell, playback.playback_rate, PLAYBACK_SETTINGS_SCALE_WIDTH);
+    playback_rate.set_sensitive(local_output);
+    settings_group.add(&playback_rate);
 
     let output_row = adw::ActionRow::builder().title(tr("Audio output")).build();
     let output_dropdown = audio_output_dropdown(shell, PLAYBACK_SETTINGS_SCALE_WIDTH);
     output_row.add_suffix(&output_dropdown);
     output_row.set_activatable_widget(Some(&output_dropdown));
+    output_row.set_sensitive(local_output);
     settings_group.add(&output_row);
 
     let loudness_shell = Rc::clone(shell);
@@ -85,6 +98,7 @@ pub(crate) fn present_playback_settings_popover(anchor: &gtk::Button, shell: &Rc
                 .update_playback_settings(|settings| settings.loudness_normalization = mode);
         },
     );
+    loudness_row.set_sensitive(local_output);
     settings_group.add(&loudness_row);
     let volume_scale_shell = Rc::clone(shell);
     let volume_scale_row = selection_row(
@@ -98,6 +112,7 @@ pub(crate) fn present_playback_settings_popover(anchor: &gtk::Button, shell: &Rc
             });
         },
     );
+    volume_scale_row.set_sensitive(local_output);
     settings_group.add(&volume_scale_row);
 
     let lyrics = adw::SwitchRow::builder()
@@ -113,6 +128,7 @@ pub(crate) fn present_playback_settings_popover(anchor: &gtk::Button, shell: &Rc
         .title(tr("Show visualizer"))
         .active(settings.visualizer_panel_visible)
         .build();
+    visualizer.set_sensitive(local_output);
     let visualizer_shell = Rc::clone(shell);
     visualizer.connect_active_notify(move |row| {
         visualizer_shell.set_visualizer_panel_visible(row.is_active());
@@ -122,6 +138,8 @@ pub(crate) fn present_playback_settings_popover(anchor: &gtk::Button, shell: &Rc
 
     let scroller = gtk::ScrolledWindow::new();
     scroller.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
+    scroller.set_min_content_width(PLAYBACK_SETTINGS_WIDTH);
+    scroller.set_propagate_natural_width(true);
     scroller.set_propagate_natural_height(true);
     scroller.set_max_content_height(PLAYBACK_SETTINGS_MAX_HEIGHT);
     scroller.set_child(Some(&content));
