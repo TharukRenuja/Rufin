@@ -219,19 +219,29 @@ fn resolve_layout_for_profile(
     let mut right_sidebar_width = 0;
 
     if right_sidebar.is_visible() {
-        let left_separator_width = if left_sidebar == ResolvedLeftSidebarMode::Hidden {
-            0
-        } else {
-            LEFT_PANE_SEPARATOR_WIDTH
+        let fit_right = |left_sidebar: ResolvedLeftSidebarMode, left_sidebar_width: i32| {
+            let left_separator_width = if left_sidebar == ResolvedLeftSidebarMode::Hidden {
+                0
+            } else {
+                LEFT_PANE_SEPARATOR_WIDTH
+            };
+            let available = window_width
+                - left_sidebar_width
+                - left_separator_width
+                - MIN_USEFUL_MAIN_WIDTH
+                - RIGHT_PANE_SEPARATOR_WIDTH;
+            fitted_right_sidebar_width(available, settings.preferred_right_sidebar_width)
         };
-        let available = window_width
-            - left_sidebar_width
-            - left_separator_width
-            - MIN_USEFUL_MAIN_WIDTH
-            - RIGHT_PANE_SEPARATOR_WIDTH;
-        match fitted_right_sidebar_width(available, settings.preferred_right_sidebar_width) {
-            Some(width) => right_sidebar_width = width,
-            None => right_sidebar = RightSidebarMode::Hidden,
+        if let Some(width) = fit_right(left_sidebar, left_sidebar_width) {
+            right_sidebar_width = width;
+        } else if left_sidebar == ResolvedLeftSidebarMode::Full
+            && let Some(width) = fit_right(ResolvedLeftSidebarMode::Compact, COMPACT_RAIL_WIDTH)
+        {
+            left_sidebar = ResolvedLeftSidebarMode::Compact;
+            left_sidebar_width = COMPACT_RAIL_WIDTH;
+            right_sidebar_width = width;
+        } else {
+            right_sidebar = RightSidebarMode::Hidden;
         }
     }
 
@@ -968,7 +978,7 @@ mod tests {
     }
 
     #[test]
-    fn layout_shrinks_then_hides_right_sidebar_without_changing_preference() {
+    fn layout_compacts_left_before_hiding_requested_right_sidebar() {
         let mut settings = LayoutSettings {
             narrow_enabled: false,
             ..Default::default()
@@ -983,16 +993,28 @@ mod tests {
                 + 400
                 + RIGHT_PANE_SEPARATOR_WIDTH,
         );
-        let hidden = resolve_layout(
+        let compact = resolve_layout(
             &settings,
             settings.preferred_left_sidebar_width + MIN_USEFUL_MAIN_WIDTH + 249,
+        );
+        let hidden = resolve_layout(
+            &settings,
+            COMPACT_RAIL_WIDTH
+                + LEFT_PANE_SEPARATOR_WIDTH
+                + MIN_USEFUL_MAIN_WIDTH
+                + MIN_RIGHT_SIDEBAR_WIDTH
+                + RIGHT_PANE_SEPARATOR_WIDTH
+                - 1,
         );
 
         assert_eq!(fitted.left_sidebar, ResolvedLeftSidebarMode::Full);
         assert_eq!(fitted.right_sidebar, RightSidebarMode::Visible);
         assert_eq!(fitted.right_sidebar_width, 400);
         assert_eq!(fitted.main_width, MIN_USEFUL_MAIN_WIDTH);
+        assert_eq!(compact.left_sidebar, ResolvedLeftSidebarMode::Compact);
+        assert_eq!(compact.right_sidebar, RightSidebarMode::Visible);
         assert_eq!(hidden.right_sidebar, RightSidebarMode::Hidden);
+        assert_eq!(settings.default_profile.left_sidebar, LeftSidebarMode::Full);
         assert_eq!(settings.preferred_right_sidebar_width, 500);
     }
 
@@ -1133,7 +1155,9 @@ mod tests {
         };
         settings.default_profile.left_sidebar = LeftSidebarMode::Full;
         settings.default_profile.right_sidebar = RightSidebarMode::Visible;
-        assert!(!resolve_layout(&settings, 948).right_sidebar.is_visible());
+        let automatic = resolve_layout(&settings, 948);
+        assert_eq!(automatic.left_sidebar, ResolvedLeftSidebarMode::Compact);
+        assert_eq!(automatic.right_sidebar, RightSidebarMode::Visible);
 
         let compact = resolve_left_sidebar_drag_preview(
             &settings,
@@ -1151,9 +1175,9 @@ mod tests {
         assert_eq!(fitted.left_sidebar_width, 246);
         assert_eq!(fitted.right_sidebar_width, MIN_RIGHT_SIDEBAR_WIDTH);
         assert_eq!(fitted.main_width, MIN_USEFUL_MAIN_WIDTH);
-        assert_eq!(restored.left_sidebar, ResolvedLeftSidebarMode::Full);
-        assert_eq!(restored.left_sidebar_width, 400);
-        assert!(!restored.right_sidebar.is_visible());
+        assert_eq!(restored.left_sidebar, ResolvedLeftSidebarMode::Compact);
+        assert_eq!(restored.left_sidebar_width, COMPACT_RAIL_WIDTH);
+        assert_eq!(restored.right_sidebar, RightSidebarMode::Visible);
     }
 
     #[test]

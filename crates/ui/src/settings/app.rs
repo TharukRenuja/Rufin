@@ -33,6 +33,8 @@ pub struct Settings {
     #[serde(default = "default_language_preference")]
     pub language: String,
     pub private_mode: bool,
+    #[serde(default)]
+    pub cast_proxy_enabled: bool,
     pub notifications_enabled: bool,
     #[serde(default = "default_true")]
     pub control_notifications_enabled: bool,
@@ -108,6 +110,7 @@ impl Default for Settings {
             accent_preference: AccentPreference::System,
             language: default_language_preference(),
             private_mode: false,
+            cast_proxy_enabled: false,
             notifications_enabled: false,
             control_notifications_enabled: true,
             release_notifications_enabled: true,

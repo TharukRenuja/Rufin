@@ -756,6 +756,7 @@ pub(crate) struct PlaybackOwner {
     settings: SettingsFile,
     runtime: tokio::runtime::Handle,
     events: EventSender<PlaybackPublication>,
+    artwork: artwork::Artwork,
     waveform: Arc<WaveformOwner>,
     loudness: Arc<LoudnessAnalysisOwner>,
     lyrics: Arc<LyricsService>,
@@ -769,6 +770,13 @@ pub(crate) struct PlaybackOwner {
     play_id_prefix: String,
     next_instance: AtomicU64,
     start_backend: Box<dyn Fn() -> Result<Box<dyn PlaybackBackend>, String> + Send + Sync>,
+    cast: playback_cast::CastManager,
+    output: Mutex<OutputSelection>,
+}
+
+struct OutputSelection {
+    selected: playback::PlaybackOutput,
+    prepared: Option<Box<dyn PlaybackBackend>>,
 }
 
 impl PlaybackOwner {
@@ -778,6 +786,7 @@ impl PlaybackOwner {
         runtime: tokio::runtime::Handle,
         events: EventSender<PlaybackPublication>,
         acceptance: SourceAcceptanceSender,
+        artwork: artwork::Artwork,
         waveform: Arc<WaveformOwner>,
         lyrics: Arc<LyricsService>,
         discord: Arc<desktop_integration::Discord>,
@@ -795,12 +804,14 @@ impl PlaybackOwner {
         });
         let queue_intents = QueueIntentWorker::new(runtime.clone());
         let loudness = LoudnessAnalysisOwner::new(runtime.clone());
+        let cast_proxy_enabled = settings.load().ui.cast_proxy_enabled;
         let owner = Arc::new(Self {
             scrobbler,
             library,
             settings,
             runtime,
             events,
+            artwork,
             waveform,
             loudness,
             lyrics,
@@ -813,6 +824,11 @@ impl PlaybackOwner {
             play_id_prefix: random_identity(),
             next_instance: AtomicU64::new(1),
             start_backend: Box::new(start_backend),
+            cast: playback_cast::CastManager::new(cast_proxy_enabled),
+            output: Mutex::new(OutputSelection {
+                selected: playback::PlaybackOutput::Local,
+                prepared: None,
+            }),
         });
         owner.update_discord_settings();
         owner
@@ -852,6 +868,7 @@ impl PlaybackOwner {
         let output_session = session.clone();
         let activated = Arc::new(AtomicBool::new(false));
         let output_activated = Arc::clone(&activated);
+        let (playback_output, backend) = self.take_selected_backend()?;
         let (playback, projection) = Playback::start(
             sequence,
             source_session_epoch,
@@ -859,7 +876,8 @@ impl PlaybackOwner {
             stored.ui.playback,
             stored.ui.auto_dj_enabled,
             usize::from(stored.ui.auto_dj_refill_threshold),
-            (self.start_backend)()?,
+            playback_output,
+            backend,
             Arc::new(move || {
                 clock_owner
                     .upgrade()
@@ -954,6 +972,69 @@ impl PlaybackOwner {
         active
     }
 
+    fn take_selected_backend(
+        &self,
+    ) -> Result<(playback::PlaybackOutput, Box<dyn PlaybackBackend>), String> {
+        let (selected, prepared) = {
+            let mut output = self
+                .output
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            (output.selected.clone(), output.prepared.take())
+        };
+        let backend = match prepared {
+            Some(backend) => backend,
+            None => self.start_output_backend(&selected)?,
+        };
+        Ok((selected, backend))
+    }
+
+    fn start_output_backend(
+        &self,
+        output: &playback::PlaybackOutput,
+    ) -> Result<Box<dyn PlaybackBackend>, String> {
+        match output {
+            playback::PlaybackOutput::Local => (self.start_backend)(),
+            playback::PlaybackOutput::Remote(output) => self
+                .cast
+                .connect(output)
+                .map(|backend| Box::new(backend) as Box<dyn PlaybackBackend>),
+        }
+    }
+
+    fn select_output(&self, selected: playback::PlaybackOutput) -> Result<(), String> {
+        if self
+            .output
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .selected
+            == selected
+        {
+            return Ok(());
+        }
+        let backend = self.start_output_backend(&selected)?;
+        if let Some(active) = self.active() {
+            active
+                .playback
+                .replace_backend(selected.clone(), backend)
+                .map_err(string_error)?;
+            let mut output = self
+                .output
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            output.selected = selected;
+            output.prepared = None;
+        } else {
+            let mut output = self
+                .output
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            output.selected = selected;
+            output.prepared = Some(backend);
+        }
+        Ok(())
+    }
+
     pub(crate) fn refresh_accepted_tracks(
         &self,
         source_id: &SourceId,
@@ -1041,6 +1122,10 @@ impl PlaybackOwner {
         self.send(SessionCommand::UpdateSettings(settings));
         self.loudness
             .settings_changed(loudness_mode, self.active().map(|active| active.selected));
+    }
+
+    pub(crate) fn cast_proxy_setting_changed(&self, enabled: bool) {
+        self.cast.set_proxy_media(enabled);
     }
 
     pub(crate) fn auto_dj_threshold_changed(&self, enabled: bool, refill_threshold: u8) {
@@ -1227,11 +1312,24 @@ impl PlaybackOwner {
         let loaded = Arc::clone(&selected.library);
         let source = selected.source.clone();
         let track_id = request.track_id.clone();
-        let source_format = loaded
-            .track(&track_id)
-            .ok()
-            .flatten()
-            .and_then(|track| track.source_format.clone());
+        let track = loaded.track(&track_id).ok().flatten();
+        let source_format = track.as_ref().and_then(|track| track.source_format.clone());
+        let artwork_path = track.as_ref().and_then(|track| {
+            let stored = self.settings.load();
+            let binding = artwork::ArtworkBindings::new(&loaded)
+                .track(track)
+                .into_binding();
+            let external = artwork::ExternalPolicy::new(
+                stored.ui.external_metadata_enabled,
+                stored.ui.allows_external_metadata_lookup(),
+                stored.ui.lastfm_api_key,
+            );
+            [512, 256, 96].into_iter().find_map(|size| {
+                let request = artwork::ArtworkRequest::new(binding.clone(), size, size)
+                    .with_external(external.clone());
+                self.artwork.cache_only_file(&source_id, &request)
+            })
+        });
         debug!(
             %source_id,
             %track_id,
@@ -1242,6 +1340,7 @@ impl PlaybackOwner {
         );
         let runtime = self.runtime.clone();
         let playback = active.playback;
+        let is_transcoded_stream = request.quality.max_bitrate_kbps().is_some();
         runtime.spawn(async move {
             let loudness = loaded
                 .loudness_for_track(&track_id)
@@ -1252,10 +1351,23 @@ impl PlaybackOwner {
             let result = prepare_stream(Some(Arc::clone(&loaded)), source, request)
                 .await
                 .map(|stream| {
-                    prepare_for_source_format(
+                    let prepared = prepare_for_source_format(
                         PreparedStream::new(stream, loudness),
                         source_format.as_deref(),
-                    )
+                    );
+                    match track {
+                        Some(track) => prepared
+                            .with_media(
+                                track,
+                                if is_transcoded_stream {
+                                    Some("audio/mpeg".to_string())
+                                } else {
+                                    source_format.as_deref().and_then(audio_mime)
+                                },
+                            )
+                            .with_artwork_path(artwork_path),
+                        None => prepared,
+                    }
                 });
             match &result {
                 Ok(stream) => debug!(
@@ -1522,6 +1634,20 @@ fn module_music_format(source_format: &str) -> bool {
     )
 }
 
+fn audio_mime(source_format: &str) -> Option<String> {
+    let mime = match source_format.trim().to_ascii_lowercase().as_str() {
+        "mp3" | "mp2" | "mpeg" => "audio/mpeg",
+        "flac" => "audio/flac",
+        "m4a" | "mp4" => "audio/mp4",
+        "aac" => "audio/aac",
+        "ogg" | "oga" | "opus" => "audio/ogg",
+        "wav" | "wave" => "audio/wav",
+        "webm" => "audio/webm",
+        _ => return None,
+    };
+    Some(mime.to_string())
+}
+
 fn prepare_for_source_format(
     prepared: PreparedStream,
     source_format: Option<&str>,
@@ -1730,7 +1856,32 @@ impl TransportCommandPort for PlaybackOwner {
         playback_gstreamer::available_audio_outputs()
     }
 
+    fn playback_output(&self) -> playback::PlaybackOutput {
+        self.output
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .selected
+            .clone()
+    }
+
+    fn discover_remote_outputs(&self) -> Result<Vec<playback::RemoteOutput>, String> {
+        self.cast.discover()
+    }
+
+    fn select_playback_output(&self, output: playback::PlaybackOutput) -> Result<(), String> {
+        self.select_output(output)
+    }
+
     fn shutdown(&self) {
+        if let Some(mut backend) = self
+            .output
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .prepared
+            .take()
+        {
+            let _ = backend.shutdown();
+        }
         if let Some(active) = self.take_active()
             && let Err(error) = active.playback.shutdown()
         {
@@ -1938,6 +2089,7 @@ mod persistence_tests {
             PlaybackSettings::default(),
             false,
             2,
+            playback::PlaybackOutput::Local,
             Box::<AcceptingBackend>::default(),
             Arc::new(|| ClockSample {
                 monotonic_millis: 0,
@@ -2332,6 +2484,7 @@ mod loaded_play_tests {
             PlaybackSettings::default(),
             false,
             2,
+            playback::PlaybackOutput::Local,
             Box::<AcceptingBackend>::default(),
             Arc::new(|| ClockSample {
                 monotonic_millis: 0,

@@ -1368,6 +1368,32 @@ popover.slider-value-popover label {
   margin-top: 2px;
 }
 
+.player-output-icon.active-output {
+  color: var(--accent-color);
+}
+
+.playback-output-row.selected-output {
+  background: color-mix(in srgb, var(--accent-bg-color) 14%, transparent);
+}
+
+.playback-output-row.selected-output:dir(ltr) {
+  box-shadow: inset 3px 0 var(--accent-color);
+}
+
+.playback-output-row.selected-output:dir(rtl) {
+  box-shadow: inset -3px 0 var(--accent-color);
+}
+
+.playback-output-row > box.header {
+  min-height: 36px;
+}
+
+.playback-output-row > box.header > box.title {
+  margin-top: 0;
+  margin-bottom: 0;
+}
+
+
 .player-play-button {
   background: color-mix(in srgb, var(--window-fg-color) 92%, transparent);
   color: var(--window-bg-color);
@@ -2237,5 +2263,9 @@ modelbutton.rufin-menu-selected:dir(rtl) {
   box-shadow: inset -2px 0 var(--accent-color);
 }
 .rating-stars {
+  color: var(--window-fg-color);
+}
+
+.rating-star.rated {
   color: var(--accent-color);
 }

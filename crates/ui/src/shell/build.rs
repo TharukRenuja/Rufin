@@ -145,6 +145,7 @@ pub fn build(
         audio_output_refresh_running: Cell::new(false),
         audio_output_refresh_generation: Cell::new(0),
         audio_output_refreshed_at: Cell::new(None),
+        remote_output_options: RefCell::new(Vec::new()),
     };
     let lyrics_state = LyricsState {
         panel_visible: Cell::new(settings.lyrics_panel_visible),

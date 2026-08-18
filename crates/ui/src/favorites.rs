@@ -7,8 +7,8 @@ use adw::prelude::*;
 use gtk::glib;
 use localization::tr;
 
-pub(crate) const FAVORITE_ADD_ICON: &str = "rufin-favorite-add-symbolic";
-pub(crate) const FAVORITE_REMOVE_ICON: &str = "rufin-favorite-remove-symbolic";
+pub(crate) const FAVORITE_ADD_ICON: &str = "heart-outline-bundled-symbolic";
+pub(crate) const FAVORITE_REMOVE_ICON: &str = "heart-filled-bundled-symbolic";
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub(crate) enum FavoriteControlKey {

@@ -28,6 +28,7 @@ getrandom.workspace = true
 glib.workspace = true
 md5.workspace = true
 playback.workspace = true
+playback-cast.workspace = true
 playback-gstreamer.workspace = true
 reqwest = { workspace = true, features = ["blocking", "json"] }
 scrobbling.workspace = true

@@ -228,11 +228,7 @@ impl Shell {
         } else {
             tr("Show sidebar")
         };
-        self.player_view
-            .player_controls
-            .queue_icon_open
-            .set(visible);
-        self.player_view.player_controls.queue_icon.queue_draw();
+        super::icons::set_queue_sidebar_icon(&self.player_view.player_controls.queue_icon, visible);
         self.player_view
             .player_controls
             .queue_button
