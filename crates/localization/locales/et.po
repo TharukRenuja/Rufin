@@ -7,7 +7,7 @@ msgstr ""
 "Project-Id-Version: Rufin 0.3.13\n"
 "Report-Msgid-Bugs-To: https://github.com/screwys/Rufin/issues\n"
 "POT-Creation-Date: YEAR-MO-DA HO:MI+ZONE\n"
-"PO-Revision-Date: 2026-08-17 17:59+0000\n"
+"PO-Revision-Date: 2026-08-19 19:55+0000\n"
 "Last-Translator: Priit Jõerüüt <jrthwlate@users.noreply.hosted.weblate.org>\n"
 "Language-Team: Estonian <https://hosted.weblate.org/projects/rufin/app/et/>\n"
 "Language: et\n"
@@ -1296,10 +1296,10 @@ msgid "Played"
 msgstr "Esitatud"
 
 msgid "Playing on this device"
-msgstr ""
+msgstr "Esitamisel selles seadmes"
 
 msgid "Playing on {device}"
-msgstr ""
+msgstr "Esitamisel seadmes: {device}"
 
 msgid "Playlist name"
 msgstr "Esitusloendi nimi"
@@ -1610,10 +1610,8 @@ msgstr "Otsin kohtvõrgust"
 msgid "Searching for Jellyfin servers on the local network..."
 msgstr "Otsin kohalikust võrgust Jellyfini servereid…"
 
-#, fuzzy
-#| msgid "Searching..."
 msgid "Searching for devices..."
-msgstr "Otsin…"
+msgstr "Otsin seadmeid…"
 
 msgid "Searching will start automatically"
 msgstr "Otsing algab automaatselt"
@@ -1841,7 +1839,7 @@ msgid "Theme"
 msgstr "Kujundus"
 
 msgid "This device"
-msgstr ""
+msgstr "See seade"
 
 msgid "This isn't available"
 msgstr "See pole saadaval"
@@ -1901,7 +1899,7 @@ msgid "Type to search"
 msgstr "Otsimiseks sisesta midagi"
 
 msgid "UPnP"
-msgstr ""
+msgstr "UPnP"
 
 msgid "Undo identified value"
 msgstr "Tühista kindlaksmääratud väärtus"
@@ -1946,7 +1944,7 @@ msgid "Username"
 msgstr "Kasutajanimi"
 
 msgid "Uses the macOS system output"
-msgstr ""
+msgstr "Kasutab MacOS-i süsteemset väljundit"
 
 msgid "Verify server certificate"
 msgstr "Kontrolli serveri sertifikaati"
