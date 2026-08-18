@@ -42,6 +42,11 @@ msgstr ""
 "käsitsi allalaaditud failid jäävad alles"
 
 msgid ""
+"Route server media through this device instead of sharing provider URLs with "
+"the renderer"
+msgstr ""
+
+msgid ""
 "Saved mapping. {direct} direct, {prefix} prefix, {metadata} metadata, "
 "{unmatched} unmatched of {total} track"
 msgid_plural ""
@@ -192,6 +197,9 @@ msgstr "Lisatud lemmikute hulka"
 msgid "Added to"
 msgstr "Lisatud asukohta"
 
+msgid "AirPlay and Sound Settings..."
+msgstr ""
+
 msgid "Album Artists"
 msgstr "Albumi esitajad"
 
@@ -267,6 +275,9 @@ msgstr "Esitamisel/peatamisel hajuta heli sujuvalt"
 msgid "Audio output"
 msgstr "Heliväljund"
 
+msgid "Audio processing is unavailable while casting"
+msgstr ""
+
 msgid "Audio"
 msgstr "Heli"
 
@@ -312,6 +323,11 @@ msgstr "Katkesta allalaadimine"
 msgid "Cancel"
 msgstr "Katkesta"
 
+#, fuzzy
+#| msgid "Rating"
+msgid "Casting"
+msgstr "Hinnang"
+
 msgid "Change Secret Storage"
 msgstr "Muuda turvalist andmeruumi"
 
@@ -339,6 +355,11 @@ msgid "Choose one or more folders to scan and play directly from this computer"
 msgstr ""
 "Vali üks või enam, kasuta, mille sisu sellest arvutist tahad skaneerida ja "
 "kuulata"
+
+#, fuzzy
+#| msgid "Show playback icon"
+msgid "Choose playback output"
+msgstr "Näita taasesituse ikooni"
 
 msgid "Choose"
 msgstr "Vali"
@@ -701,6 +722,9 @@ msgstr "Suundu esitaja juurde"
 
 msgid "Go to"
 msgstr "Mine asukohta"
+
+msgid "Google Cast"
+msgstr ""
 
 msgid "Green"
 msgstr "Roheline"
@@ -1075,6 +1099,11 @@ msgstr "Sobivaid lugusid pole"
 msgid "No music from this artist yet"
 msgstr "Sellelt esitajalt pole veel muusikat"
 
+#, fuzzy
+#| msgid "No lyrics found."
+msgid "No network devices found"
+msgstr "Laulusõnu ei leidu."
+
 msgid "No remote sources configured"
 msgstr "Ühtegi kaugallikat pole seadistatud"
 
@@ -1266,6 +1295,12 @@ msgstr "Taasesitus"
 msgid "Played"
 msgstr "Esitatud"
 
+msgid "Playing on this device"
+msgstr ""
+
+msgid "Playing on {device}"
+msgstr ""
+
 msgid "Playlist name"
 msgstr "Esitusloendi nimi"
 
@@ -1337,6 +1372,9 @@ msgstr "Privaatne režiim"
 
 msgid "Pronunciation"
 msgstr "Hääldus"
+
+msgid "Proxy casting through Rufin"
+msgstr ""
 
 msgid "PulseAudio"
 msgstr "PulseAudio"
@@ -1572,6 +1610,11 @@ msgstr "Otsin kohtvõrgust"
 msgid "Searching for Jellyfin servers on the local network..."
 msgstr "Otsin kohalikust võrgust Jellyfini servereid…"
 
+#, fuzzy
+#| msgid "Searching..."
+msgid "Searching for devices..."
+msgstr "Otsin…"
+
 msgid "Searching will start automatically"
 msgstr "Otsing algab automaatselt"
 
@@ -1797,6 +1840,9 @@ msgstr "Tekst"
 msgid "Theme"
 msgstr "Kujundus"
 
+msgid "This device"
+msgstr ""
+
 msgid "This isn't available"
 msgstr "See pole saadaval"
 
@@ -1854,6 +1900,9 @@ msgstr "Sisesta otsimiseks või uue esitusloendi loomiseks"
 msgid "Type to search"
 msgstr "Otsimiseks sisesta midagi"
 
+msgid "UPnP"
+msgstr ""
+
 msgid "Undo identified value"
 msgstr "Tühista kindlaksmääratud väärtus"
 
@@ -1895,6 +1944,9 @@ msgstr "Kasutaja"
 
 msgid "Username"
 msgstr "Kasutajanimi"
+
+msgid "Uses the macOS system output"
+msgstr ""
 
 msgid "Verify server certificate"
 msgstr "Kontrolli serveri sertifikaati"
@@ -2209,9 +2261,6 @@ msgstr[1] "{count} aastat tagasi"
 #~ msgid "No lyrics for the current track."
 #~ msgstr "Selle loo jaoks pole laulusõnu."
 
-#~ msgid "No lyrics found."
-#~ msgstr "Laulusõnu ei leidu."
-
 #~ msgid "No queue items match the search."
 #~ msgstr "Otsingule ei vasta ükski esitusjärjekorra kirje."
 
@@ -2259,9 +2308,6 @@ msgstr[1] "{count} aastat tagasi"
 #~ msgid "Server settings saved. Resyncing library..."
 #~ msgstr ""
 #~ "Serveri seadistused on salvestatud. Muusikakogu on uuesti sünkroonimisel…"
-
-#~ msgid "Show playback icon"
-#~ msgstr "Näita taasesituse ikooni"
 
 #~ msgid "Smart playlists will appear here after the default set is seeded."
 #~ msgstr ""

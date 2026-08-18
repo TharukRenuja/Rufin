@@ -42,6 +42,11 @@ msgstr ""
 "ručně stažené soubory zůstanou zachovány"
 
 msgid ""
+"Route server media through this device instead of sharing provider URLs with "
+"the renderer"
+msgstr ""
+
+msgid ""
 "Saved mapping. {direct} direct, {prefix} prefix, {metadata} metadata, "
 "{unmatched} unmatched of {total} track"
 msgid_plural ""
@@ -198,6 +203,9 @@ msgstr "Přidat do oblíbených"
 msgid "Added to"
 msgstr "Přidáno do"
 
+msgid "AirPlay and Sound Settings..."
+msgstr ""
+
 msgid "Album Artists"
 msgstr "Interpreti alba"
 
@@ -273,6 +281,9 @@ msgstr "Ztlumení zvuku při přehrávání/pozastavení"
 msgid "Audio output"
 msgstr "Zvukový výstup"
 
+msgid "Audio processing is unavailable while casting"
+msgstr ""
+
 msgid "Audio"
 msgstr "Zvuk"
 
@@ -318,6 +329,11 @@ msgstr "Zrušit stahování"
 msgid "Cancel"
 msgstr "Zrušit"
 
+#, fuzzy
+#| msgid "Rating"
+msgid "Casting"
+msgstr "Hodnocení"
+
 msgid "Change Secret Storage"
 msgstr "Změnit tajné úložiště"
 
@@ -346,6 +362,9 @@ msgid "Choose one or more folders to scan and play directly from this computer"
 msgstr ""
 "Vyberte jednu nebo více složek pro skenování a přehrávání přímo z tohoto "
 "počítače"
+
+msgid "Choose playback output"
+msgstr ""
 
 msgid "Choose"
 msgstr "Vyberte"
@@ -710,6 +729,9 @@ msgstr "Přejít na interpreta"
 #| msgid "Go to Album"
 msgid "Go to"
 msgstr "Přejít do alba"
+
+msgid "Google Cast"
+msgstr ""
 
 msgid "Green"
 msgstr "Zelená"
@@ -1090,6 +1112,11 @@ msgstr "Žádné odpovídající skladby"
 msgid "No music from this artist yet"
 msgstr "Tento interpret zatím nemá žádnou hudbu"
 
+#, fuzzy
+#| msgid "No Servers Found"
+msgid "No network devices found"
+msgstr "Nebyly nalezeny žádné servery"
+
 msgid "No remote sources configured"
 msgstr "Nebyly nakonfigurovány žádné vzdálené zdroje"
 
@@ -1286,6 +1313,12 @@ msgstr "Přehrávání"
 msgid "Played"
 msgstr "Přehráno"
 
+msgid "Playing on this device"
+msgstr ""
+
+msgid "Playing on {device}"
+msgstr ""
+
 msgid "Playlist name"
 msgstr "Název playlistu"
 
@@ -1359,6 +1392,9 @@ msgstr "Soukromý režim"
 
 msgid "Pronunciation"
 msgstr "Výslovnost"
+
+msgid "Proxy casting through Rufin"
+msgstr ""
 
 msgid "PulseAudio"
 msgstr "PulseAudio"
@@ -1594,6 +1630,11 @@ msgstr "Prohledávání místní sítě"
 msgid "Searching for Jellyfin servers on the local network..."
 msgstr "Vyhledávání serverů Jellyfin v místní síti..."
 
+#, fuzzy
+#| msgid "Searching..."
+msgid "Searching for devices..."
+msgstr "Hledání..."
+
 msgid "Searching will start automatically"
 msgstr "Vyhledávání se spustí automaticky"
 
@@ -1821,6 +1862,9 @@ msgstr "Text"
 msgid "Theme"
 msgstr "Téma"
 
+msgid "This device"
+msgstr ""
+
 msgid "This isn't available"
 msgstr "Toto není dostupné"
 
@@ -1878,6 +1922,9 @@ msgstr "Zadejte text pro vyhledání nebo vytvořte nový playlist"
 msgid "Type to search"
 msgstr "Zadejte text pro vyhledání"
 
+msgid "UPnP"
+msgstr ""
+
 msgid "Undo identified value"
 msgstr "Vrátit zpět určenou hodnotu"
 
@@ -1918,6 +1965,9 @@ msgstr "Uživatel"
 
 msgid "Username"
 msgstr "Uživatelské jméno"
+
+msgid "Uses the macOS system output"
+msgstr ""
 
 msgid "Verify server certificate"
 msgstr "Ověřit certifikát serveru"

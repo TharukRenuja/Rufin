@@ -43,6 +43,11 @@ msgstr ""
 "manuāli lejupielādētie faili paliks"
 
 msgid ""
+"Route server media through this device instead of sharing provider URLs with "
+"the renderer"
+msgstr ""
+
+msgid ""
 "Saved mapping. {direct} direct, {prefix} prefix, {metadata} metadata, "
 "{unmatched} unmatched of {total} track"
 msgid_plural ""
@@ -198,6 +203,9 @@ msgstr "Pievienots izlasei"
 msgid "Added to"
 msgstr "Pievienots"
 
+msgid "AirPlay and Sound Settings..."
+msgstr ""
+
 msgid "Album Artists"
 msgstr "Albumu izpildītāji"
 
@@ -273,6 +281,9 @@ msgstr "Skaņas pakāpeniska izdzišana atskaņošanā/pauzē"
 msgid "Audio output"
 msgstr "Skaņas izvade"
 
+msgid "Audio processing is unavailable while casting"
+msgstr ""
+
 msgid "Audio"
 msgstr "Skaņa"
 
@@ -318,6 +329,11 @@ msgstr "Atcelt lejupielādi"
 msgid "Cancel"
 msgstr "Atcelt"
 
+#, fuzzy
+#| msgid "Rating"
+msgid "Casting"
+msgstr "Vērtējums"
+
 msgid "Change Secret Storage"
 msgstr "Mainīt slepeno krātuvi"
 
@@ -346,6 +362,11 @@ msgid "Choose one or more folders to scan and play directly from this computer"
 msgstr ""
 "Izvēlieties vienu vai vairākas mapes, ko skenēt un atskaņot tieši no šī "
 "datora"
+
+#, fuzzy
+#| msgid "Show playback icon"
+msgid "Choose playback output"
+msgstr "Rādīt atskaņošanas ikonu"
 
 msgid "Choose"
 msgstr "Izvēlēties"
@@ -712,6 +733,9 @@ msgstr "Pāriet uz Izpildītāju"
 #| msgid "Go to Album"
 msgid "Go to"
 msgstr "Pāriet uz albumu"
+
+msgid "Google Cast"
+msgstr ""
 
 msgid "Green"
 msgstr "Zaļš"
@@ -1090,6 +1114,11 @@ msgstr "Nav atrasts neviens atbilstošs celiņš"
 msgid "No music from this artist yet"
 msgstr "Šim izpildītājam vēl nav pieejama neviena mūzika"
 
+#, fuzzy
+#| msgid "No lyrics found."
+msgid "No network devices found"
+msgstr "Teksti nav atrasti."
+
 msgid "No remote sources configured"
 msgstr "Nav konfigurētu attālu avotu"
 
@@ -1285,6 +1314,12 @@ msgstr "Atskaņošana"
 msgid "Played"
 msgstr "Atskaņots"
 
+msgid "Playing on this device"
+msgstr ""
+
+msgid "Playing on {device}"
+msgstr ""
+
 msgid "Playlist name"
 msgstr "Atskaņošanas saraksta nosaukums"
 
@@ -1356,6 +1391,9 @@ msgstr "Privātais režīms"
 
 msgid "Pronunciation"
 msgstr "Izruna"
+
+msgid "Proxy casting through Rufin"
+msgstr ""
 
 msgid "PulseAudio"
 msgstr "PulseAudio"
@@ -1591,6 +1629,11 @@ msgstr "Meklē lokālajā tīklā"
 msgid "Searching for Jellyfin servers on the local network..."
 msgstr "Tiek meklēti Jellyfin serveri lokālajā tīklā…"
 
+#, fuzzy
+#| msgid "Searching..."
+msgid "Searching for devices..."
+msgstr "Tiek veikta meklēšana..."
+
 msgid "Searching will start automatically"
 msgstr "Meklēšana tiks automātiski uzsākta"
 
@@ -1818,6 +1861,9 @@ msgstr "Teksts"
 msgid "Theme"
 msgstr "Tēma"
 
+msgid "This device"
+msgstr ""
+
 msgid "This isn't available"
 msgstr "Šis nav pieejams"
 
@@ -1875,6 +1921,9 @@ msgstr "Ierakstiet, lai meklētu vai izveidotu jaunu atskaņošanas sarakstu"
 msgid "Type to search"
 msgstr "Ierakstiet, lai meklētu"
 
+msgid "UPnP"
+msgstr ""
+
 msgid "Undo identified value"
 msgstr "Atcelt atzīmēto vērtību"
 
@@ -1915,6 +1964,9 @@ msgstr "Lietotājs"
 
 msgid "Username"
 msgstr "Lietotājvārds"
+
+msgid "Uses the macOS system output"
+msgstr ""
 
 msgid "Verify server certificate"
 msgstr "Pārbaudīt servera sertifikātu"
@@ -2242,9 +2294,6 @@ msgstr[2] "pirms {count} gadiem"
 #~ msgid "No lyrics for the current track."
 #~ msgstr "Nav tekstu pašreizējai dziesmai."
 
-#~ msgid "No lyrics found."
-#~ msgstr "Teksti nav atrasti."
-
 #~ msgid "No queue items match the search."
 #~ msgstr "Nav atrastas rindas vienības, kas atbilst meklēšanas kritērijiem."
 
@@ -2292,9 +2341,6 @@ msgstr[2] "pirms {count} gadiem"
 #~ msgid "Server settings saved. Resyncing library..."
 #~ msgstr ""
 #~ "Servera iestatījumi saglabāti. Bibliotēkas sinhronizācija tiek atsākta…"
-
-#~ msgid "Show playback icon"
-#~ msgstr "Rādīt atskaņošanas ikonu"
 
 #~ msgid "Smart playlists will appear here after the default set is seeded."
 #~ msgstr ""

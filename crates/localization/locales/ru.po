@@ -43,6 +43,11 @@ msgstr ""
 "загрузки останутся"
 
 msgid ""
+"Route server media through this device instead of sharing provider URLs with "
+"the renderer"
+msgstr ""
+
+msgid ""
 "Saved mapping. {direct} direct, {prefix} prefix, {metadata} metadata, "
 "{unmatched} unmatched of {total} track"
 msgid_plural ""
@@ -202,6 +207,9 @@ msgstr "Добавлено в избранное"
 msgid "Added to"
 msgstr "Добавлено в"
 
+msgid "AirPlay and Sound Settings..."
+msgstr ""
+
 msgid "Album Artists"
 msgstr "Авторы альбома"
 
@@ -277,6 +285,9 @@ msgstr "Плавное затухание звука при воспроизве
 msgid "Audio output"
 msgstr "Аудиовыход"
 
+msgid "Audio processing is unavailable while casting"
+msgstr ""
+
 msgid "Audio"
 msgstr "Аудио"
 
@@ -322,6 +333,11 @@ msgstr "Отмена загрузки"
 msgid "Cancel"
 msgstr "Отмена"
 
+#, fuzzy
+#| msgid "Rating"
+msgid "Casting"
+msgstr "Оценка"
+
 msgid "Change Secret Storage"
 msgstr "Изменить секретное хранилище"
 
@@ -350,6 +366,11 @@ msgid "Choose one or more folders to scan and play directly from this computer"
 msgstr ""
 "Выберите одну или несколько папок для сканирования и воспроизведения файлов "
 "непосредственно с этого компьютера"
+
+#, fuzzy
+#| msgid "Show playback icon"
+msgid "Choose playback output"
+msgstr "Показывать значок воспроизведения"
 
 msgid "Choose"
 msgstr "Выбрать"
@@ -714,6 +735,9 @@ msgstr "Перейти к исполнителю"
 
 msgid "Go to"
 msgstr "Перейти к"
+
+msgid "Google Cast"
+msgstr ""
 
 msgid "Green"
 msgstr "Зелёный"
@@ -1088,6 +1112,11 @@ msgstr "Нет соответствующих треков"
 msgid "No music from this artist yet"
 msgstr "Пока нет музыки от этого исполнителя"
 
+#, fuzzy
+#| msgid "No lyrics found."
+msgid "No network devices found"
+msgstr "Текст песни не найден."
+
 msgid "No remote sources configured"
 msgstr "Не настроено ни одного удаленного источника"
 
@@ -1279,6 +1308,12 @@ msgstr "Плеер"
 msgid "Played"
 msgstr "Воспроизведено"
 
+msgid "Playing on this device"
+msgstr ""
+
+msgid "Playing on {device}"
+msgstr ""
+
 msgid "Playlist name"
 msgstr "Название плейлиста"
 
@@ -1352,6 +1387,9 @@ msgstr "Приватный режим"
 
 msgid "Pronunciation"
 msgstr "Произношение"
+
+msgid "Proxy casting through Rufin"
+msgstr ""
 
 msgid "PulseAudio"
 msgstr "PulseAudio"
@@ -1587,6 +1625,11 @@ msgstr "Поиск в локальной сети"
 msgid "Searching for Jellyfin servers on the local network..."
 msgstr "Поиск серверов Jellyfin в локальной сети…"
 
+#, fuzzy
+#| msgid "Searching..."
+msgid "Searching for devices..."
+msgstr "Выполняется поиск..."
+
 msgid "Searching will start automatically"
 msgstr "Поиск начнётся автоматически"
 
@@ -1813,6 +1856,9 @@ msgstr "Текст"
 msgid "Theme"
 msgstr "Тема"
 
+msgid "This device"
+msgstr ""
+
 msgid "This isn't available"
 msgstr "Это недоступно"
 
@@ -1870,6 +1916,9 @@ msgstr "Введите текст для поиска или создания н
 msgid "Type to search"
 msgstr "Введите текст для поиска"
 
+msgid "UPnP"
+msgstr ""
+
 msgid "Undo identified value"
 msgstr "Отменить изменение значения"
 
@@ -1912,6 +1961,9 @@ msgstr "Пользователь"
 
 msgid "Username"
 msgstr "Имя пользователя"
+
+msgid "Uses the macOS system output"
+msgstr ""
 
 msgid "Verify server certificate"
 msgstr "Проверить сертификат сервера"
@@ -2345,9 +2397,6 @@ msgstr[2] "{count} лет назад"
 #~ msgid "No lyrics for the current track."
 #~ msgstr "Для текущего трека текст песни отсутствует."
 
-#~ msgid "No lyrics found."
-#~ msgstr "Текст песни не найден."
-
 #~ msgid "No queue items match the search"
 #~ msgstr "В очереди нет элементов, соответствующих запросу"
 
@@ -2460,9 +2509,6 @@ msgstr[2] "{count} лет назад"
 #~ msgstr ""
 #~ "Настройки сервера сохранены. Выполняется повторная синхронизация "
 #~ "библиотеки…"
-
-#~ msgid "Show playback icon"
-#~ msgstr "Показывать значок воспроизведения"
 
 #~ msgid "Smart playlists will appear here after the default set is seeded."
 #~ msgstr ""

@@ -48,6 +48,11 @@ msgstr ""
 "las descargas compartidas con otra regla o descarga manual."
 
 msgid ""
+"Route server media through this device instead of sharing provider URLs with "
+"the renderer"
+msgstr ""
+
+msgid ""
 "Saved mapping. {direct} direct, {prefix} prefix, {metadata} metadata, "
 "{unmatched} unmatched of {total} track"
 msgid_plural ""
@@ -189,6 +194,9 @@ msgstr ""
 msgid "Added to"
 msgstr ""
 
+msgid "AirPlay and Sound Settings..."
+msgstr ""
+
 msgid "Album Artists"
 msgstr ""
 
@@ -264,6 +272,9 @@ msgstr ""
 msgid "Audio output"
 msgstr ""
 
+msgid "Audio processing is unavailable while casting"
+msgstr ""
+
 msgid "Audio"
 msgstr ""
 
@@ -309,6 +320,9 @@ msgstr ""
 msgid "Cancel"
 msgstr ""
 
+msgid "Casting"
+msgstr ""
+
 msgid "Change Secret Storage"
 msgstr ""
 
@@ -333,6 +347,9 @@ msgid "Choose at least one local music folder"
 msgstr ""
 
 msgid "Choose one or more folders to scan and play directly from this computer"
+msgstr ""
+
+msgid "Choose playback output"
 msgstr ""
 
 msgid "Choose"
@@ -693,6 +710,9 @@ msgid "Go to Artist"
 msgstr ""
 
 msgid "Go to"
+msgstr ""
+
+msgid "Google Cast"
 msgstr ""
 
 msgid "Green"
@@ -1070,6 +1090,9 @@ msgstr ""
 msgid "No music from this artist yet"
 msgstr ""
 
+msgid "No network devices found"
+msgstr ""
+
 msgid "No remote sources configured"
 msgstr ""
 
@@ -1259,6 +1282,12 @@ msgstr ""
 msgid "Played"
 msgstr ""
 
+msgid "Playing on this device"
+msgstr ""
+
+msgid "Playing on {device}"
+msgstr ""
+
 msgid "Playlist name"
 msgstr ""
 
@@ -1329,6 +1358,9 @@ msgid "Private mode"
 msgstr ""
 
 msgid "Pronunciation"
+msgstr ""
+
+msgid "Proxy casting through Rufin"
 msgstr ""
 
 msgid "PulseAudio"
@@ -1565,6 +1597,9 @@ msgstr ""
 msgid "Searching for Jellyfin servers on the local network..."
 msgstr ""
 
+msgid "Searching for devices..."
+msgstr ""
+
 msgid "Searching will start automatically"
 msgstr ""
 
@@ -1790,6 +1825,9 @@ msgstr ""
 msgid "Theme"
 msgstr ""
 
+msgid "This device"
+msgstr ""
+
 msgid "This isn't available"
 msgstr ""
 
@@ -1847,6 +1885,9 @@ msgstr ""
 msgid "Type to search"
 msgstr ""
 
+msgid "UPnP"
+msgstr ""
+
 msgid "Undo identified value"
 msgstr ""
 
@@ -1884,6 +1925,9 @@ msgid "User"
 msgstr ""
 
 msgid "Username"
+msgstr ""
+
+msgid "Uses the macOS system output"
 msgstr ""
 
 msgid "Verify server certificate"

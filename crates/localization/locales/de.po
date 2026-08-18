@@ -42,6 +42,11 @@ msgstr ""
 "Freigegebene und manuelle Downloads bleiben erhalten."
 
 msgid ""
+"Route server media through this device instead of sharing provider URLs with "
+"the renderer"
+msgstr ""
+
+msgid ""
 "Saved mapping. {direct} direct, {prefix} prefix, {metadata} metadata, "
 "{unmatched} unmatched of {total} track"
 msgid_plural ""
@@ -195,6 +200,9 @@ msgstr "Zu Favoriten hinzugefügt"
 msgid "Added to"
 msgstr "Hinzugefügt zu"
 
+msgid "AirPlay and Sound Settings..."
+msgstr ""
+
 msgid "Album Artists"
 msgstr "Album-Künstler"
 
@@ -270,6 +278,9 @@ msgstr "Sanftes Ein-/Ausblenden bei Play/Pause"
 msgid "Audio output"
 msgstr "Audioausgabe"
 
+msgid "Audio processing is unavailable while casting"
+msgstr ""
+
 msgid "Audio"
 msgstr "Audio"
 
@@ -315,6 +326,11 @@ msgstr "Download abbrechen"
 msgid "Cancel"
 msgstr "Abbrechen"
 
+#, fuzzy
+#| msgid "Rating"
+msgid "Casting"
+msgstr "Bewertung"
+
 msgid "Change Secret Storage"
 msgstr "Anmeldedaten-Speicher ändern"
 
@@ -342,6 +358,11 @@ msgid "Choose one or more folders to scan and play directly from this computer"
 msgstr ""
 "Einen oder mehrere Ordner auswählen, um Musik direkt von diesem Computer "
 "einzulesen und abzuspielen"
+
+#, fuzzy
+#| msgid "Show playback icon"
+msgid "Choose playback output"
+msgstr "Wiedergabesymbol anzeigen"
 
 msgid "Choose"
 msgstr "Wähle"
@@ -707,6 +728,9 @@ msgstr "Zum Künstler springen"
 
 msgid "Go to"
 msgstr "Gehe zu"
+
+msgid "Google Cast"
+msgstr ""
 
 msgid "Green"
 msgstr "Grün"
@@ -1080,6 +1104,11 @@ msgstr "Keine passenden Titel"
 msgid "No music from this artist yet"
 msgstr "Noch keine Musik von diesem Künstler"
 
+#, fuzzy
+#| msgid "No lyrics found."
+msgid "No network devices found"
+msgstr "Keine Songtexte gefunden."
+
 msgid "No remote sources configured"
 msgstr "Keine externen Quellen konfiguriert"
 
@@ -1273,6 +1302,12 @@ msgstr "Wiedergabe"
 msgid "Played"
 msgstr "Abgespielt"
 
+msgid "Playing on this device"
+msgstr ""
+
+msgid "Playing on {device}"
+msgstr ""
+
 msgid "Playlist name"
 msgstr "Playlist-Name"
 
@@ -1345,6 +1380,9 @@ msgstr "Privater Modus"
 
 msgid "Pronunciation"
 msgstr "Aussprache"
+
+msgid "Proxy casting through Rufin"
+msgstr ""
 
 msgid "PulseAudio"
 msgstr "PulseAudio"
@@ -1580,6 +1618,11 @@ msgstr "Lokales Netzwerk durchsuchen"
 msgid "Searching for Jellyfin servers on the local network..."
 msgstr "Im lokalen Netzwerk wird nach Jellyfin-Servern gesucht..."
 
+#, fuzzy
+#| msgid "Searching..."
+msgid "Searching for devices..."
+msgstr "Suche..."
+
 msgid "Searching will start automatically"
 msgstr "Die Suche startet automatisch"
 
@@ -1805,6 +1848,9 @@ msgstr "Text"
 msgid "Theme"
 msgstr "Darstellung"
 
+msgid "This device"
+msgstr ""
+
 msgid "This isn't available"
 msgstr "Dies ist nicht verfügbar"
 
@@ -1862,6 +1908,9 @@ msgstr "Tippen, um zu suchen oder eine neue Playlist zu erstellen"
 msgid "Type to search"
 msgstr "Tippen zum Suchen"
 
+msgid "UPnP"
+msgstr ""
+
 msgid "Undo identified value"
 msgstr "Erkannten Wert rückgängig machen"
 
@@ -1902,6 +1951,9 @@ msgstr "Benutzer"
 
 msgid "Username"
 msgstr "Benutzername"
+
+msgid "Uses the macOS system output"
+msgstr ""
 
 msgid "Verify server certificate"
 msgstr "Serverzertifikat überprüfen"
@@ -2213,9 +2265,6 @@ msgstr[1] "vor {count} Jahren"
 #~ msgid "No lyrics for the current track."
 #~ msgstr "Keine Songtexte für den aktuellen Titel."
 
-#~ msgid "No lyrics found."
-#~ msgstr "Keine Songtexte gefunden."
-
 #~ msgid "No queue items match the search."
 #~ msgstr "Keine Einträge in der Warteschlange entsprechen der Suche."
 
@@ -2265,9 +2314,6 @@ msgstr[1] "vor {count} Jahren"
 #~ msgid "Server settings saved. Resyncing library..."
 #~ msgstr ""
 #~ "Server-Einstellungen gespeichert. Bibliothek wird neu synchronisiert..."
-
-#~ msgid "Show playback icon"
-#~ msgstr "Wiedergabesymbol anzeigen"
 
 #~ msgid "Smart playlists will appear here after the default set is seeded."
 #~ msgstr ""
