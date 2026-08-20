@@ -74,12 +74,6 @@ pub(crate) fn discover_upnp(timeout: Duration) -> Result<Vec<DiscoveredTarget>, 
         let Some(renderer) = media_renderer(&device) else {
             continue;
         };
-        if !renderer
-            .services_iter()
-            .any(|service| service_type_matches(service.service_type(), "AVTransport"))
-        {
-            continue;
-        }
         let Some(address) = device_address(&device) else {
             tracing::debug!(url = %device.url(), "UPnP renderer address could not be resolved");
             continue;
@@ -110,12 +104,6 @@ fn device_type_matches(device_type: &rupnp::ssdp::URN, name: &str) -> bool {
     device_type
         .to_string()
         .contains(&format!(":device:{name}:"))
-}
-
-fn service_type_matches(service_type: &rupnp::ssdp::URN, name: &str) -> bool {
-    service_type
-        .to_string()
-        .contains(&format!(":service:{name}:"))
 }
 
 fn discover_upnp_locations(timeout: Duration) -> Result<HashMap<String, String>, String> {
