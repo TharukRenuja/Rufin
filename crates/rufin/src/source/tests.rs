@@ -2264,7 +2264,7 @@ fn standardized_results_reuse_accepted_track_facts_without_a_source_mirror() {
         None,
     );
 
-    let search = reconcile_search_results(
+    let search = hydrate_search_tracks(
         &library,
         library::SearchResults {
             tracks: vec![reported.clone(), unknown.clone()],

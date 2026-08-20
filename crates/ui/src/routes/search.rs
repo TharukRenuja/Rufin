@@ -783,28 +783,15 @@ impl SearchRouteProjection {
         if self.shell.upgrade().is_none() {
             return;
         }
-        let request = library::SearchRequest::new(query);
-        let receiver = self.source.search(request.clone());
+        let receiver = self.source.search(library::SearchRequest::new(query));
         let library = Arc::clone(&self.library);
         let music_folder_id = self.music_folder_id.clone();
-        let fallback_library = Arc::clone(&library);
         let projection = Rc::downgrade(self);
         glib::spawn_future_local(async move {
-            let live_result = receiver
+            let result = receiver
                 .recv()
                 .await
                 .unwrap_or_else(|_| Err("the Search request stopped".to_string()));
-            let result = match live_result {
-                Ok(results) => Ok(results),
-                Err(live_error) => {
-                    let offline =
-                        gio::spawn_blocking(move || fallback_library.search(&request)).await;
-                    match offline {
-                        Ok(offline) => offline_search_result(live_error, offline),
-                        Err(_) => Err(live_error),
-                    }
-                }
-            };
             let result = match result {
                 Ok(results) => gio::spawn_blocking(move || {
                     prepare_search_results(&library, music_folder_id.as_ref(), results)
@@ -898,13 +885,6 @@ impl SearchRouteProjection {
     fn item_navigation(&self) -> MountedRouteItemNavigation {
         Rc::clone(&self.item_navigation)
     }
-}
-
-fn offline_search_result(
-    live_error: String,
-    offline: library::LibraryQueryResult<SearchResults>,
-) -> Result<SearchResults, String> {
-    offline.map_err(|_| live_error)
 }
 
 fn prepare_search_results(
@@ -1512,23 +1492,6 @@ mod tests {
         assert!(!prepared.tracks[1].library_backed);
         assert!(prepared.albums[1].summary.is_none());
         assert!(prepared.artists[1].summary.is_none());
-    }
-
-    #[test]
-    fn failed_live_search_uses_loaded_results_before_showing_an_error() {
-        let offline = SearchResults {
-            tracks: vec![crate::test_support::track(1, "Offline result")],
-            ..SearchResults::default()
-        };
-        let recovered = offline_search_result("offline".to_string(), Ok(offline)).unwrap();
-        assert_eq!(recovered.tracks[0].title, "Offline result");
-
-        let error = offline_search_result(
-            "live failure".to_string(),
-            Err(library::LibraryQueryError::Unavailable),
-        )
-        .unwrap_err();
-        assert_eq!(error, "live failure");
     }
 
     #[test]

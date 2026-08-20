@@ -203,7 +203,6 @@ impl Library {
             stored.imports,
             stored.favorites,
             stored.activity,
-            stored.unresolved_album_releases,
         )?;
         accepted.home = AcceptedHomeChange::Rebuild;
         accepted.download_coverage_changed = true;

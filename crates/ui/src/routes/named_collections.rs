@@ -86,7 +86,7 @@ impl NamedCollectionKind {
 }
 
 impl NamedCollectionItem {
-    fn name(&self) -> &str {
+    pub(crate) fn name(&self) -> &str {
         match self {
             Self::Genre(genre) => &genre.genre.name,
             Self::Mood(mood) => &mood.mood.name,
@@ -100,7 +100,7 @@ impl NamedCollectionItem {
         }
     }
 
-    fn artwork(&self) -> Vec<ArtworkBinding> {
+    pub(crate) fn artwork(&self) -> Vec<ArtworkBinding> {
         match self {
             Self::Genre(genre) => {
                 ArtworkBinding::genre_slots(&genre.genre, &genre.representative_albums)
@@ -152,14 +152,14 @@ impl NamedCollectionItem {
         }
     }
 
-    fn track_count(&self) -> u32 {
+    pub(crate) fn track_count(&self) -> u32 {
         match self {
             Self::Genre(genre) => genre.track_count,
             Self::Mood(mood) => mood.track_count,
         }
     }
 
-    fn duration_seconds(&self) -> u32 {
+    pub(crate) fn duration_seconds(&self) -> u32 {
         match self {
             Self::Genre(genre) => genre.duration_seconds,
             Self::Mood(mood) => mood.duration_seconds,

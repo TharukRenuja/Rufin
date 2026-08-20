@@ -5294,7 +5294,6 @@ fn album_release_results_follow_exact_identity_across_replacement_and_reopen() {
             first_lookup,
             library::AlbumReleaseResult::Found {
                 release_types: vec!["album".to_string()],
-                is_compilation: Some(false),
             },
         )
         .expect("accept found release")
@@ -5413,6 +5412,60 @@ fn album_release_results_follow_exact_identity_across_replacement_and_reopen() {
 }
 
 #[test]
+fn album_release_candidates_continue_after_the_first_bounded_store_page() {
+    let libraries = Libraries::memory().expect("open Library");
+    let source_id = SourceId::new("jellyfin:server:release-pages");
+    let template_track = track();
+    let albums = (0..501)
+        .map(|index| {
+            let mut album = album_for_track(&template_track, index);
+            album.id = library::AlbumId::new(format!("jellyfin:album:{index:04}"));
+            album.title = format!("Album {index:04}");
+            album.musicbrainz_release_group_id = Some(format!("release-group-{index:04}"));
+            album
+        })
+        .collect::<Vec<_>>();
+    let mut candidate = libraries
+        .begin_source_candidate(CandidateHeader {
+            source_id: source_id.clone(),
+            input_digest: digest(62),
+        })
+        .expect("begin release-page candidate");
+    candidate
+        .write(CandidateBatch::Albums(albums))
+        .expect("write release-page Albums");
+    let accepted = candidate
+        .finish(
+            CandidateFinish {
+                freshness: None,
+                home: HomeFacts::RufinDefined,
+                accepted_at: 1,
+            },
+            None,
+        )
+        .and_then(|prepared| prepared.accept())
+        .expect("accept release-page candidate");
+
+    let first = accepted
+        .library
+        .take_album_release_lookups(500)
+        .expect("read first release page");
+    assert_eq!(first.len(), 500);
+    for candidate in first {
+        accepted
+            .library
+            .accept_album_release_result(candidate, library::AlbumReleaseResult::Missing)
+            .expect("accept missing release result");
+    }
+    let second = accepted
+        .library
+        .take_album_release_lookups(500)
+        .expect("read second release page");
+
+    assert_eq!(second.len(), 1);
+}
+
+#[test]
 fn artist_routes_keep_relationship_roles_and_album_level_tracks() {
     let directory = tempfile::tempdir().expect("temporary Store directory");
     let library = Libraries::open(directory.path().join("library.db")).expect("open Library");
@@ -5490,21 +5543,20 @@ fn artist_routes_keep_relationship_roles_and_album_level_tracks() {
             .collect::<Vec<_>>(),
         std::slice::from_ref(&track_album_artist.id)
     );
-    for artist_id in [&track_album_artist.id, &album_only_artist.id] {
-        let tracks = accepted
-            .library
-            .artist_track_detail(artist_id, None)
-            .expect("read Artist")
-            .expect("linked Artist");
-        let releases = accepted
-            .library
-            .artist_discography(artist_id, None)
-            .expect("read Artist releases")
-            .expect("linked Artist releases");
-        assert_eq!(tracks.tracks.len(), 2);
-        assert_eq!(releases.albums.len(), 1);
-        assert!(releases.appears_on.is_empty());
-    }
+    let album_artist = accepted
+        .library
+        .artist_discography(&track_album_artist.id, None)
+        .expect("read Album Artist releases")
+        .expect("Album Artist releases");
+    assert_eq!(album_artist.albums.len(), 1);
+    assert!(album_artist.appears_on.is_empty());
+    let album_contributor = accepted
+        .library
+        .artist_discography(&album_only_artist.id, None)
+        .expect("read Album contributor releases")
+        .expect("Album contributor releases");
+    assert!(album_contributor.albums.is_empty());
+    assert_eq!(album_contributor.appears_on.len(), 1);
     let guest_tracks = accepted
         .library
         .artist_track_detail(&guest.id, None)
@@ -5552,8 +5604,8 @@ fn artist_routes_keep_relationship_roles_and_album_level_tracks() {
         .expect("read replacement Artist releases")
         .expect("replacement Artist releases");
     assert_eq!(replacement_tracks.tracks.len(), 2);
-    assert_eq!(replacement_releases.albums.len(), 1);
-    assert!(replacement_releases.appears_on.is_empty());
+    assert!(replacement_releases.albums.is_empty());
+    assert_eq!(replacement_releases.appears_on.len(), 1);
 }
 
 #[test]

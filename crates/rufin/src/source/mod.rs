@@ -356,11 +356,6 @@ enum SmartPlaylistOperation {
     },
 }
 
-struct ActiveAlbumRelease {
-    token: u64,
-    cancelled: Arc<AtomicBool>,
-}
-
 struct SelectedSlot {
     session: Arc<ActiveSource>,
     current: Arc<SelectedSourceState>,
@@ -395,7 +390,7 @@ struct OwnerState {
     jellyfin_feeds: BTreeMap<SourceId, ConfiguredJellyfinFeed>,
     local_access: Option<ActiveLocalAccess>,
     selected_revealed: bool,
-    active_album_release: Option<ActiveAlbumRelease>,
+    active_album_release: Option<Arc<AtomicBool>>,
     refresh: Option<Arc<RefreshRequest>>,
     freshness: FreshnessAdmission,
 }
@@ -783,7 +778,6 @@ impl SourceOwner {
         let Some(selected) = session.resolve() else {
             return;
         };
-        let token = self.shared.next_token.fetch_add(1, Ordering::AcqRel);
         let cancelled = Arc::new(AtomicBool::new(false));
         {
             let mut state = self
@@ -802,10 +796,7 @@ impl SourceOwner {
             {
                 return;
             }
-            state.active_album_release = Some(ActiveAlbumRelease {
-                token,
-                cancelled: Arc::clone(&cancelled),
-            });
+            state.active_album_release = Some(Arc::clone(&cancelled));
         }
         let settings = self.shared.settings.clone();
         let events = self.shared.outputs.events.clone();
@@ -813,6 +804,7 @@ impl SourceOwner {
         let source_session_epoch = selected.source_session_epoch;
         let selected = session.downgrade();
         let shared = Arc::clone(&self.shared);
+        let active = Arc::clone(&cancelled);
         drop(self.shared.runtime.spawn_blocking(move || {
             run_selected_album_release_lookup(
                 settings,
@@ -829,7 +821,7 @@ impl SourceOwner {
             if state
                 .active_album_release
                 .as_ref()
-                .is_some_and(|active| active.token == token)
+                .is_some_and(|current| Arc::ptr_eq(current, &active))
             {
                 state.active_album_release = None;
             }
@@ -843,7 +835,7 @@ impl SourceOwner {
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         if let Some(active) = state.active_album_release.take() {
-            active.cancelled.store(true, Ordering::Release);
+            active.store(true, Ordering::Release);
         }
         if reset_reveal {
             state.selected_revealed = false;
@@ -2526,7 +2518,7 @@ async fn route_search_result(
     provider: Option<sources::SourceResult<NativeSourceResult<library::SearchResults>>>,
 ) -> Result<library::SearchResults, String> {
     match live_source_result(provider)? {
-        Some(results) => reconcile_search_results(&loaded, results),
+        Some(results) => hydrate_search_tracks(&loaded, results),
         None => cached_search(loaded, request).await,
     }
 }
@@ -2604,20 +2596,10 @@ fn reconcile_folder_contents(
     Ok(contents)
 }
 
-fn reconcile_search_results(
+fn hydrate_search_tracks(
     loaded: &Library,
     mut results: library::SearchResults,
 ) -> Result<library::SearchResults, String> {
-    for artist in &mut results.artists {
-        if let Some(accepted) = loaded.artist(&artist.id).map_err(string_error)? {
-            *artist = (*accepted).clone();
-        }
-    }
-    for album in &mut results.albums {
-        if let Some(accepted) = loaded.album(&album.id).map_err(string_error)? {
-            *album = (*accepted).clone();
-        }
-    }
     for track in &mut results.tracks {
         *track = accepted_track_or(loaded, track.clone())?;
     }

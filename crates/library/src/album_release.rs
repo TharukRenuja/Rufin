@@ -25,18 +25,13 @@ impl AlbumReleaseIdentity {
 pub struct AlbumReleaseCandidate {
     pub source_id: SourceId,
     pub album_id: AlbumId,
-    pub title: String,
-    pub artist: String,
     pub identity: AlbumReleaseIdentity,
     pub(crate) library_id: i64,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum AlbumReleaseResult {
-    Found {
-        release_types: Vec<String>,
-        is_compilation: Option<bool>,
-    },
+    Found { release_types: Vec<String> },
     Missing,
 }
 
@@ -48,36 +43,11 @@ impl Library {
         if limit == 0 {
             return Ok(Vec::new());
         }
-        let source_id = self.source_id().clone();
-        let library_id = self.library_id();
-        let state = self.read_state()?;
-        let mut album_ids = state
-            .unresolved_album_releases
-            .iter()
-            .cloned()
-            .collect::<Vec<_>>();
-        album_ids.sort();
-        let mut candidates = Vec::new();
-        for album_id in album_ids.into_iter().take(limit.min(500)) {
-            let Some(album) = state.albums.get(&album_id) else {
-                continue;
-            };
-            if !album.release_types.is_empty() {
-                continue;
-            }
-            let Some(identity) = release_identity(album) else {
-                continue;
-            };
-            candidates.push(AlbumReleaseCandidate {
-                source_id: source_id.clone(),
-                album_id: album.id.clone(),
-                title: album.title.clone(),
-                artist: album.artist.clone(),
-                identity,
-                library_id,
-            });
-        }
-        Ok(candidates)
+        Ok(self.store.album_release_candidates(
+            self.source_id().clone(),
+            self.library_id(),
+            limit,
+        )?)
     }
 
     pub fn accept_album_release_result(
@@ -104,14 +74,10 @@ impl Library {
         if !accepted {
             return Ok(None);
         }
-        self.mark_album_release_resolved(&candidate.album_id)?;
-        let AlbumReleaseResult::Found {
-            release_types,
-            is_compilation,
-        } = result
-        else {
+        let AlbumReleaseResult::Found { release_types } = result else {
             return Ok(None);
         };
+        let is_compilation = Some(release_types.iter().any(|kind| kind == "compilation"));
         Ok(Some(self.replace_album_release(
             &candidate.album_id,
             release_types,
