@@ -119,6 +119,16 @@ impl RelayServer {
                 token.as_deref().expect("relay token")
             )
         };
+        tracing::debug!(
+            upstream_transport = transport_scheme(stream.uri()),
+            renderer_transport = transport_scheme(&uri),
+            relayed = !direct,
+            relay_address = %self.base_url,
+            %content_type,
+            content_length,
+            transcode,
+            "published cast media"
+        );
         Ok(PublishedResource {
             artwork_uri: stream.artwork_path.as_ref().map(|_| {
                 format!(
@@ -255,6 +265,13 @@ fn respond(request: Request, resources: &Mutex<HashMap<String, RelayResource>>) 
         .unwrap_or_else(|poisoned| poisoned.into_inner())
         .get(token)
         .cloned();
+    tracing::debug!(
+        method = ?request.method(),
+        artwork,
+        range = request.headers().iter().any(|header| header.field.equiv("Range")),
+        active = resource.is_some(),
+        "received cast relay request"
+    );
     let response = match resource {
         Some(resource) => resource_response(&request, resource, artwork),
         None => Ok(empty_response(StatusCode(404))),
@@ -438,6 +455,13 @@ fn remote_response(
         upstream = upstream.header(reqwest::header::RANGE, range);
     }
     let response = upstream.send().map_err(|error| error.to_string())?;
+    tracing::debug!(
+        method = ?method,
+        range = range.is_some(),
+        status = response.status().as_u16(),
+        content_length = response.content_length(),
+        "received cast relay upstream response"
+    );
     let status = StatusCode(response.status().as_u16());
     let length = response
         .headers()
@@ -633,6 +657,12 @@ fn content_type_from_uri(uri: &str) -> String {
         "application/octet-stream"
     }
     .to_string()
+}
+
+fn transport_scheme(uri: &str) -> &str {
+    uri.split_once(':')
+        .map(|(scheme, _)| scheme)
+        .unwrap_or("unknown")
 }
 
 fn directly_supported(content_type: &str) -> bool {
@@ -876,6 +906,7 @@ mod tests {
         proxy_media.store(true, Ordering::Release);
         let proxied = relay.publish(&stream).expect("proxied resource");
         assert_ne!(proxied.uri, stream.uri());
+        assert!(proxied.uri.starts_with("http://"));
         assert!(!proxied.uri.contains("api_key=secret"));
         relay.shutdown();
     }
