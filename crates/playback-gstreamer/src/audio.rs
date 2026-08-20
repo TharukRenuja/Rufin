@@ -22,6 +22,7 @@ const EQUALIZER_DUMMY_HIGH_FREQUENCY: f64 = 20_000.0;
 struct AudioGraphConfig {
     loudness_normalization: LoudnessNormalizationMode,
     audio_output: Option<String>,
+    preserve_pitch: bool,
 }
 
 impl AudioGraphConfig {
@@ -29,6 +30,7 @@ impl AudioGraphConfig {
         Self {
             loudness_normalization: settings.loudness_normalization,
             audio_output: settings.audio_output.clone(),
+            preserve_pitch: settings.preserve_pitch,
         }
     }
 }
@@ -73,8 +75,10 @@ impl AudioGraph {
             elements.push(rgvolume);
         }
 
-        let scaletempo = make_element("scaletempo", "rufin-playback-rate")?;
-        elements.push(scaletempo);
+        if settings.preserve_pitch {
+            let scaletempo = make_element("scaletempo", "rufin-playback-rate")?;
+            elements.push(scaletempo);
+        }
 
         let visualizer_pad = convert_out.static_pad("src");
         elements.push(convert_out.clone());
@@ -113,7 +117,9 @@ impl AudioGraph {
 
     pub(super) fn reconfigure(&mut self, settings: &BackendAudioSettings) -> Result<bool, String> {
         let config = AudioGraphConfig::new(settings);
-        if self.config.loudness_normalization != config.loudness_normalization {
+        if self.config.loudness_normalization != config.loudness_normalization
+            || self.config.preserve_pitch != config.preserve_pitch
+        {
             return Ok(false);
         }
         if self.config.audio_output != config.audio_output
@@ -779,6 +785,32 @@ mod tests {
 
         assert!(!rgvolume.property::<bool>("album-mode"));
         assert!(bin.by_name("rufin-replaygain-limiter").is_none());
+    }
+
+    #[test]
+    fn preserve_pitch_controls_the_scaletempo_stage() {
+        initialize_gstreamer();
+        let enabled = BackendAudioSettings {
+            audio_output: Some("fakesink".to_string()),
+            preserve_pitch: true,
+            ..BackendAudioSettings::default()
+        };
+        let mut graph = AudioGraph::new(&enabled).expect("pitch-preserving audio graph");
+        let bin = graph.root.downcast_ref::<gst::Bin>().expect("audio bin");
+        assert!(bin.by_name("rufin-playback-rate").is_some());
+
+        let disabled = BackendAudioSettings {
+            preserve_pitch: false,
+            ..enabled
+        };
+        assert!(
+            !graph
+                .reconfigure(&disabled)
+                .expect("pitch preservation configuration change")
+        );
+        let graph = AudioGraph::new(&disabled).expect("pitch-shifting audio graph");
+        let bin = graph.root.downcast_ref::<gst::Bin>().expect("audio bin");
+        assert!(bin.by_name("rufin-playback-rate").is_none());
     }
 
     #[test]

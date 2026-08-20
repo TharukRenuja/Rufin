@@ -79,6 +79,9 @@ pub(crate) fn present_playback_settings_popover(anchor: &gtk::Button, shell: &Rc
         playback_rate_row(shell, playback.playback_rate, PLAYBACK_SETTINGS_SCALE_WIDTH);
     playback_rate.set_sensitive(local_output);
     settings_group.add(&playback_rate);
+    let preserve_pitch = preserve_pitch_row(shell, playback.preserve_pitch);
+    preserve_pitch.set_sensitive(local_output);
+    settings_group.add(&preserve_pitch);
 
     let output_row = adw::ActionRow::builder().title(tr("Audio output")).build();
     let output_dropdown = audio_output_dropdown(shell, PLAYBACK_SETTINGS_SCALE_WIDTH);
@@ -227,6 +230,20 @@ pub(crate) fn playback_rate_row(
             commit_shell.update_playback_settings(|settings| settings.playback_rate = rate);
         });
         pending_rate_for_change.borrow_mut().replace(source);
+    });
+    row
+}
+
+pub(crate) fn preserve_pitch_row(shell: &Rc<Shell>, active: bool) -> adw::SwitchRow {
+    let row = adw::SwitchRow::builder()
+        .title(tr("Preserve pitch"))
+        .active(active)
+        .build();
+    let pitch_shell = Rc::clone(shell);
+    row.connect_active_notify(move |row| {
+        pitch_shell.update_playback_settings(|settings| {
+            settings.preserve_pitch = row.is_active();
+        });
     });
     row
 }

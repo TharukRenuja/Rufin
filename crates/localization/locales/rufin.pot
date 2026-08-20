@@ -1304,6 +1304,9 @@ msgstr ""
 msgid "Preparing library..."
 msgstr ""
 
+msgid "Preserve pitch"
+msgstr ""
+
 msgid "Preset"
 msgstr ""
 

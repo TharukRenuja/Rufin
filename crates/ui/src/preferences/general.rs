@@ -12,7 +12,7 @@ use crate::player::{
     audio_output_dropdown, build_equalizer_preset_row, connect_equalizer_scale_commit,
     crossfade_duration_row, equalizer_band_title, equalizer_default_preset_bands,
     equalizer_preset_bands, equalizer_preset_name_at, equalizer_preset_position,
-    equalizer_selected_preset, install_equalizer_scroll, playback_rate_row,
+    equalizer_selected_preset, install_equalizer_scroll, playback_rate_row, preserve_pitch_row,
 };
 use crate::runtime::{ScrobblingConnection, ScrobblingConnectionEvent};
 use crate::shell::Shell;
@@ -444,6 +444,9 @@ pub(crate) fn playback_page(shell: &Rc<Shell>) -> adw::PreferencesPage {
 
     let speed_row = playback_rate_row(shell, settings.playback_rate, 220);
     transition_group.add(&speed_row);
+
+    let pitch_row = preserve_pitch_row(shell, settings.preserve_pitch);
+    transition_group.add(&pitch_row);
 
     let skip_same_album_crossfade_row = adw::SwitchRow::builder()
         .title(tr("Skip same-album crossfade"))

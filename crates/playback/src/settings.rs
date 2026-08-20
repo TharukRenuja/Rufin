@@ -101,6 +101,7 @@ pub struct PlaybackSettings {
     pub audio_output: Option<String>,
     pub equalizer: EqualizerSettings,
     pub playback_rate: f64,
+    pub preserve_pitch: bool,
     pub volume: f64,
     pub volume_scale: VolumeScale,
     pub muted: bool,
@@ -128,6 +129,8 @@ struct SavedPlaybackSettings {
     equalizer: EqualizerSettings,
     #[serde(default = "default_playback_rate")]
     playback_rate: f64,
+    #[serde(default = "default_true")]
+    preserve_pitch: bool,
     #[serde(default = "default_volume")]
     volume: f64,
     #[serde(default)]
@@ -160,6 +163,7 @@ impl<'de> Deserialize<'de> for PlaybackSettings {
             audio_output: saved.audio_output,
             equalizer: saved.equalizer,
             playback_rate: saved.playback_rate,
+            preserve_pitch: saved.preserve_pitch,
             volume,
             volume_scale,
             muted: saved.muted,
@@ -179,6 +183,7 @@ impl Default for PlaybackSettings {
             audio_output: None,
             equalizer: EqualizerSettings::default(),
             playback_rate: DEFAULT_PLAYBACK_RATE,
+            preserve_pitch: true,
             volume: default_volume(),
             volume_scale: VolumeScale::Perceptual,
             muted: false,
@@ -323,6 +328,23 @@ mod tests {
             .expect("restore playback settings without a playback rate");
 
         assert_eq!(restored.playback_rate, DEFAULT_PLAYBACK_RATE);
+    }
+
+    #[test]
+    fn preserve_pitch_defaults_on_and_round_trips_off() {
+        let restored = serde_json::from_str::<PlaybackSettings>("{}")
+            .expect("restore playback settings without pitch preservation");
+        assert!(restored.preserve_pitch);
+
+        let settings = PlaybackSettings {
+            preserve_pitch: false,
+            ..PlaybackSettings::default()
+        };
+        let restored = serde_json::from_value::<PlaybackSettings>(
+            serde_json::to_value(settings).expect("serialize pitch preservation"),
+        )
+        .expect("restore pitch preservation");
+        assert!(!restored.preserve_pitch);
     }
 
     #[test]
