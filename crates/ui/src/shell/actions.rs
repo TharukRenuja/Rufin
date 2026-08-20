@@ -102,7 +102,11 @@ pub(crate) fn install_window_actions(shell: &Rc<Shell>) {
     });
     shell.chrome.window.add_action(&fullscreen);
 
-    add_window_action(shell, "play-pause", &["space"], {
+    #[cfg(target_os = "macos")]
+    let play_pause_accels = &[][..];
+    #[cfg(not(target_os = "macos"))]
+    let play_pause_accels = &["<Control>space"][..];
+    add_window_action(shell, "play-pause", play_pause_accels, {
         let transport = shell.products.playback.transport.clone();
         move || transport.play_pause()
     });
@@ -120,19 +124,20 @@ pub(crate) fn install_window_actions(shell: &Rc<Shell>) {
         }
     });
     shell.chrome.window.add_action(&navigate_sidebar);
-    for position in 1..=9 {
+    for position in 1..=10 {
         let target = (position as u32).to_variant();
         let action_name = gio::Action::print_detailed_name("win.navigate-sidebar", Some(&target));
+        let accelerator_position = position % 10;
         #[cfg(target_os = "macos")]
-        let accelerator = format!("<Meta>{position}");
+        let accelerator = format!("<Meta>{accelerator_position}");
         #[cfg(not(target_os = "macos"))]
-        let accelerator = format!("<Control>{position}");
+        let accelerator = format!("<Control>{accelerator_position}");
         shell
             .chrome
             .application
             .set_accels_for_action(&action_name, &[&accelerator]);
     }
-	#[cfg(target_os = "macos")]
+    #[cfg(target_os = "macos")]
     let previous_track_accels = &["<Meta>Left"][..];
     #[cfg(not(target_os = "macos"))]
     let previous_track_accels = &["<Control>b"][..];
@@ -140,7 +145,7 @@ pub(crate) fn install_window_actions(shell: &Rc<Shell>) {
         let transport = shell.products.playback.transport.clone();
         move || transport.previous()
     });
-	#[cfg(target_os = "macos")]
+    #[cfg(target_os = "macos")]
     let next_track_accels = &["<Meta>Right"][..];
     #[cfg(not(target_os = "macos"))]
     let next_track_accels = &["<Control>n"][..];
@@ -148,23 +153,23 @@ pub(crate) fn install_window_actions(shell: &Rc<Shell>) {
         let transport = shell.products.playback.transport.clone();
         move || transport.next()
     });
-	#[cfg(target_os = "macos")]
-    let seek_backward_accels = &["Left", "<Shift><Meta>Left"][..];
+    #[cfg(target_os = "macos")]
+    let seek_backward_accels = &["<Shift><Meta>Left"][..];
     #[cfg(not(target_os = "macos"))]
     let seek_backward_accels = &["<Control>Left"][..];
     add_window_action(shell, "seek-backward", seek_backward_accels, {
         let shell = Rc::clone(shell);
         move || seek_by(&shell, -KEY_SEEK_SECONDS)
     });
-	#[cfg(target_os = "macos")]
-    let seek_forward_accels = &["Right", "<Shift><Meta>Right"][..];
+    #[cfg(target_os = "macos")]
+    let seek_forward_accels = &["<Shift><Meta>Right"][..];
     #[cfg(not(target_os = "macos"))]
     let seek_forward_accels = &["<Control>Right"][..];
     add_window_action(shell, "seek-forward", seek_forward_accels, {
         let shell = Rc::clone(shell);
         move || seek_by(&shell, KEY_SEEK_SECONDS)
     });
-	#[cfg(target_os = "macos")]
+    #[cfg(target_os = "macos")]
     let shuffle_accels = &["<Meta>s"][..];
     #[cfg(not(target_os = "macos"))]
     let shuffle_accels = &["<Control>s"][..];
@@ -172,7 +177,7 @@ pub(crate) fn install_window_actions(shell: &Rc<Shell>) {
         let shell = Rc::clone(shell);
         move || toggle_shuffle_shortcut(&shell)
     });
-	#[cfg(target_os = "macos")]
+    #[cfg(target_os = "macos")]
     let repeat_accels = &["<Meta>r"][..];
     #[cfg(not(target_os = "macos"))]
     let repeat_accels = &["<Control>r"][..];
@@ -188,7 +193,7 @@ pub(crate) fn install_window_actions(shell: &Rc<Shell>) {
         let shell = Rc::clone(shell);
         move || shell.focus_current_route_search()
     });
-	#[cfg(target_os = "macos")]
+    #[cfg(target_os = "macos")]
     let favorite_accels = &["<Meta>l"][..];
     #[cfg(not(target_os = "macos"))]
     let favorite_accels = &["<Control>l"][..];
@@ -196,7 +201,7 @@ pub(crate) fn install_window_actions(shell: &Rc<Shell>) {
         let shell = Rc::clone(shell);
         move || shell.toggle_current_track_favorite()
     });
-	#[cfg(target_os = "macos")]
+    #[cfg(target_os = "macos")]
     let auto_dj_accels = &["<Alt>space"][..];
     #[cfg(not(target_os = "macos"))]
     let auto_dj_accels = &["<Control>d"][..];
@@ -204,26 +209,26 @@ pub(crate) fn install_window_actions(shell: &Rc<Shell>) {
         let shell = Rc::clone(shell);
         move || toggle_auto_dj_shortcut(&shell)
     });
-	#[cfg(target_os = "macos")]
-    let mute_accels = &["<Meta>m"][..];
+    #[cfg(target_os = "macos")]
+    let mute_accels = &["<Shift><Meta>Down"][..];
     #[cfg(not(target_os = "macos"))]
     let mute_accels = &["<Control>m"][..];
     add_window_action(shell, "mute", mute_accels, {
         let shell = Rc::clone(shell);
         move || toggle_mute_shortcut(&shell)
     });
-	#[cfg(target_os = "macos")]
+    #[cfg(target_os = "macos")]
     let volume_up_accels = &["<Meta>Up"][..];
     #[cfg(not(target_os = "macos"))]
-    let volume_up_accels = &["<Control>plus", "<Control>equal"][..];
+    let volume_up_accels = &["<Control>Up"][..];
     add_window_action(shell, "volume-up", volume_up_accels, {
         let shell = Rc::clone(shell);
         move || adjust_volume(&shell, KEY_VOLUME_STEP)
     });
-	#[cfg(target_os = "macos")]
+    #[cfg(target_os = "macos")]
     let volume_down_accels = &["<Meta>Down"][..];
     #[cfg(not(target_os = "macos"))]
-	let volume_down_accels = &["<Control>minus"][..];
+    let volume_down_accels = &["<Control>Down"][..];
     add_window_action(shell, "volume-down", volume_down_accels, {
         let shell = Rc::clone(shell);
         move || adjust_volume(&shell, -KEY_VOLUME_STEP)
@@ -382,7 +387,7 @@ fn macos_menu_model() -> gio::Menu {
     );
 
     let sidebar_routes = gio::Menu::new();
-    for position in 1..=9 {
+    for position in 1..=10 {
         let position_label = position.to_string();
         let label = tr_with(
             "Sidebar item {position}",
@@ -598,7 +603,7 @@ fn show_shortcuts_dialog(shell: &Shell) {
         ));
         section.add(adw::ShortcutsItem::new(
             &tr("Sidebar route by position"),
-            "<Meta>1...9",
+            "<Meta>1...9 <Meta>0",
         ));
     }
     #[cfg(not(target_os = "macos"))]
@@ -610,7 +615,7 @@ fn show_shortcuts_dialog(shell: &Shell) {
         ));
         section.add(adw::ShortcutsItem::new(
             &tr("Sidebar route by position"),
-            "<Control>1...9",
+            "<Control>1...9 <Control>0",
         ));
     }
     section.add(adw::ShortcutsItem::from_action(
@@ -656,6 +661,9 @@ fn show_shortcuts_dialog(shell: &Shell) {
     dialog.add(section);
 
     let section = adw::ShortcutsSection::new(Some(&tr("Playback")));
+    #[cfg(target_os = "macos")]
+    section.add(adw::ShortcutsItem::new(&tr("Play/Pause"), "space"));
+    #[cfg(not(target_os = "macos"))]
     section.add(adw::ShortcutsItem::new(
         &tr("Play/Pause"),
         "space <Control>space",
