@@ -4,8 +4,8 @@ use std::rc::Rc;
 
 use crate::runtime::source::{
     ConfiguredSources, CredentialInput, CredentialPreset, DiscoveryStatus, EditableSource,
-    OpenSubsonicKind, SourceHandle, SourceOperation, SourceSettingsChange, SourceSetup,
-    SourceSummary,
+    OpenSubsonicAuthentication, OpenSubsonicKind, SourceHandle, SourceOperation,
+    SourceSettingsChange, SourceSetup, SourceSummary,
 };
 use adw::prelude::*;
 
@@ -182,7 +182,9 @@ struct CredentialHostDraft {
 struct CredentialSetupFlow {
     presentation: &'static SourcePresentation,
     draft: Rc<RefCell<CredentialHostDraft>>,
-    submit: Rc<dyn Fn(&SourceHandle, CredentialInput)>,
+    authentication: Rc<Cell<OpenSubsonicAuthentication>>,
+    offer_api_key: bool,
+    submit: Rc<dyn Fn(&SourceHandle, CredentialInput, OpenSubsonicAuthentication)>,
 }
 
 struct JellyfinSetupFlow {
@@ -206,6 +208,8 @@ struct CredentialHost {
     username: adw::EntryRow,
     password: adw::PasswordEntryRow,
     cert_verify: adw::SwitchRow,
+    authentication: Option<Rc<Cell<OpenSubsonicAuthentication>>>,
+    api_key: Option<adw::SwitchRow>,
 }
 
 impl CredentialHost {
@@ -214,13 +218,20 @@ impl CredentialHost {
             source_name: trimmed_optional_text(&self.name),
             server_url: self.url.text().to_string(),
             username: self.username.text().to_string(),
-            password: self.password.text().to_string(),
+            secret: self.password.text().to_string(),
             trust_invalid_cert: !self.cert_verify.is_active(),
         }
     }
 
     fn ready(&self) -> bool {
-        remote_login_ready(&self.url, &self.username, &self.password)
+        remote_login_ready(
+            &self.url,
+            &self.username,
+            &self.password,
+            self.authentication.as_ref().is_none_or(|authentication| {
+                authentication.get() == OpenSubsonicAuthentication::Password
+            }),
+        )
     }
 }
 
@@ -545,12 +556,20 @@ fn subsonic_setup_flow_for(
         .reconnect_saved_source(presentation)
         .as_ref()
         .map(|saved| saved.credentials.clone());
+    let authentication = preset
+        .as_ref()
+        .and_then(|preset| preset.open_subsonic_authentication)
+        .unwrap_or(OpenSubsonicAuthentication::Password);
+    let offer_api_key = kind == OpenSubsonicKind::OpenSubsonic;
     Rc::new(CredentialSetupFlow {
         presentation,
         draft: Rc::new(RefCell::new(credential_draft(preset))),
-        submit: Rc::new(move |source, input| {
+        authentication: Rc::new(Cell::new(authentication)),
+        offer_api_key,
+        submit: Rc::new(move |source, input, authentication| {
             source.configure_source(SourceSetup::OpenSubsonic {
                 kind,
+                authentication,
                 credentials: input,
             });
         }),
@@ -587,8 +606,9 @@ fn jellyfin_settings_group(
         shell,
         saved.credentials.clone(),
         presentation.title,
+        None,
         Some(instant_mix),
-        move |source, credentials| {
+        move |source, credentials, _| {
             source.update_source(SourceSettingsChange::Jellyfin {
                 source_id: source_id.clone(),
                 credentials,
@@ -605,15 +625,23 @@ fn subsonic_settings_group_for(
     kind: OpenSubsonicKind,
 ) -> Result<gtk::Widget, String> {
     let source_id = saved.source.id.clone();
+    let authentication = (kind == OpenSubsonicKind::OpenSubsonic).then_some(
+        saved
+            .credentials
+            .open_subsonic_authentication
+            .unwrap_or(OpenSubsonicAuthentication::Password),
+    );
     Ok(credential_source_settings_group(
         shell,
         saved.credentials.clone(),
         presentation.title,
+        authentication,
         None,
-        move |source, input| {
+        move |source, input, authentication| {
             source.update_source(SourceSettingsChange::OpenSubsonic {
                 source_id: source_id.clone(),
                 kind,
+                authentication: authentication.unwrap_or(OpenSubsonicAuthentication::Password),
                 credentials: input,
             });
         },
@@ -639,11 +667,16 @@ fn subsonic_settings_group(
 impl SourceSetupFlow for CredentialSetupFlow {
     fn view(&self, shell: &Rc<Shell>, context: &SetupViewContext) -> gtk::Widget {
         let (scroller, content) = setup_scaffold(shell, context, self.presentation);
-        let host = credential_host(&self.draft, !context.is_first_run());
+        let host = credential_host(
+            &self.draft,
+            !context.is_first_run(),
+            self.offer_api_key.then(|| Rc::clone(&self.authentication)),
+        );
         content.append(&host.widget);
         let submit = Rc::clone(&self.submit);
+        let authentication = Rc::clone(&self.authentication);
         append_credential_connect(shell, context, &content, host, move |source, input| {
-            submit(source, input);
+            submit(source, input, authentication.get());
         });
         finish_setup_scaffold(shell, scroller, content, context.is_first_run())
     }
@@ -653,7 +686,7 @@ impl SourceSetupFlow for JellyfinSetupFlow {
     fn view(&self, shell: &Rc<Shell>, context: &SetupViewContext) -> gtk::Widget {
         shell.start_server_discovery_once();
         let (scroller, content) = setup_scaffold(shell, context, self.presentation);
-        let host = credential_host(&self.draft, !context.is_first_run());
+        let host = credential_host(&self.draft, !context.is_first_run(), None);
         content.append(&host.widget);
 
         let instant_mix = adw::SwitchRow::builder()
@@ -1086,7 +1119,11 @@ fn credential_draft(preset: Option<CredentialPreset>) -> CredentialHostDraft {
     )
 }
 
-fn credential_host(draft: &Rc<RefCell<CredentialHostDraft>>, compact: bool) -> CredentialHost {
+fn credential_host(
+    draft: &Rc<RefCell<CredentialHostDraft>>,
+    compact: bool,
+    authentication: Option<Rc<Cell<OpenSubsonicAuthentication>>>,
+) -> CredentialHost {
     let snapshot = draft.borrow().clone();
     let section = gtk::Box::new(gtk::Orientation::Vertical, 8);
     let name = adw::EntryRow::builder()
@@ -1128,7 +1165,13 @@ fn credential_host(draft: &Rc<RefCell<CredentialHostDraft>>, compact: bool) -> C
         .subtitle(tr("Turn off only for a server you control"))
         .active(snapshot.cert_verify)
         .build();
+    let api_key = authentication.as_ref().map(|authentication| {
+        open_subsonic_authentication_switch(Rc::clone(authentication), &username, &password)
+    });
     let rows = adw::PreferencesGroup::new();
+    if let Some(api_key) = api_key.as_ref() {
+        rows.add(api_key);
+    }
     rows.add(&username);
     rows.add(&password);
     rows.add(&cert_verify);
@@ -1142,7 +1185,50 @@ fn credential_host(draft: &Rc<RefCell<CredentialHostDraft>>, compact: bool) -> C
         username,
         password,
         cert_verify,
+        authentication,
+        api_key,
     }
+}
+
+pub(super) fn update_open_subsonic_authentication_fields(
+    authentication: OpenSubsonicAuthentication,
+    username: &adw::EntryRow,
+    secret: &adw::PasswordEntryRow,
+) {
+    let api_key = authentication == OpenSubsonicAuthentication::ApiKey;
+    username.set_visible(!api_key);
+    secret.set_title(&if api_key {
+        tr("API key")
+    } else {
+        tr("Password")
+    });
+}
+
+pub(super) fn open_subsonic_authentication_switch(
+    authentication: Rc<Cell<OpenSubsonicAuthentication>>,
+    username: &adw::EntryRow,
+    secret: &adw::PasswordEntryRow,
+) -> adw::SwitchRow {
+    update_open_subsonic_authentication_fields(authentication.get(), username, secret);
+    let api_key = adw::SwitchRow::builder()
+        .title(tr("Use API key"))
+        .subtitle(tr("Recommended when your server provides one"))
+        .active(authentication.get() == OpenSubsonicAuthentication::ApiKey)
+        .build();
+    let username = username.downgrade();
+    let secret = secret.downgrade();
+    api_key.connect_active_notify(move |row| {
+        let next = if row.is_active() {
+            OpenSubsonicAuthentication::ApiKey
+        } else {
+            OpenSubsonicAuthentication::Password
+        };
+        authentication.set(next);
+        if let (Some(username), Some(secret)) = (username.upgrade(), secret.upgrade()) {
+            update_open_subsonic_authentication_fields(next, &username, &secret);
+        }
+    });
+    api_key
 }
 
 fn bind_credential_draft(
@@ -1182,41 +1268,38 @@ fn append_credential_connect(
     connect_password_entry_row_activation(&host.password, &login);
     {
         let login = login.downgrade();
-        let username = host.username.downgrade();
-        let password = host.password.downgrade();
-        host.url.connect_text_notify(move |url| {
-            let (Some(login), Some(username), Some(password)) =
-                (login.upgrade(), username.upgrade(), password.upgrade())
-            else {
-                return;
-            };
-            login.set_sensitive(remote_login_ready(url, &username, &password));
+        let host = host.clone();
+        host.url.clone().connect_text_notify(move |_| {
+            if let Some(login) = login.upgrade() {
+                login.set_sensitive(host.ready());
+            }
         });
     }
     {
         let login = login.downgrade();
-        let url = host.url.downgrade();
-        let password = host.password.downgrade();
-        host.username.connect_text_notify(move |username| {
-            let (Some(login), Some(url), Some(password)) =
-                (login.upgrade(), url.upgrade(), password.upgrade())
-            else {
-                return;
-            };
-            login.set_sensitive(remote_login_ready(&url, username, &password));
+        let host = host.clone();
+        host.username.clone().connect_text_notify(move |_| {
+            if let Some(login) = login.upgrade() {
+                login.set_sensitive(host.ready());
+            }
         });
     }
     {
         let login = login.downgrade();
-        let url = host.url.downgrade();
-        let username = host.username.downgrade();
-        host.password.connect_text_notify(move |password| {
-            let (Some(login), Some(url), Some(username)) =
-                (login.upgrade(), url.upgrade(), username.upgrade())
-            else {
-                return;
-            };
-            login.set_sensitive(remote_login_ready(&url, &username, password));
+        let host = host.clone();
+        host.password.clone().connect_text_notify(move |_| {
+            if let Some(login) = login.upgrade() {
+                login.set_sensitive(host.ready());
+            }
+        });
+    }
+    if let Some(api_key) = host.api_key.as_ref() {
+        let login = login.downgrade();
+        let host = host.clone();
+        api_key.connect_active_notify(move |_| {
+            if let Some(login) = login.upgrade() {
+                login.set_sensitive(host.ready());
+            }
         });
     }
     let host_for_ready = host.clone();
@@ -1232,7 +1315,17 @@ fn append_credential_connect(
     let host_for_click = host.clone();
     login.connect_clicked(move |login| {
         if !host_for_click.ready() {
-            status_for_login.set_text(&tr("Enter a server address, username, and password"));
+            let message = if host_for_click
+                .authentication
+                .as_ref()
+                .is_some_and(|authentication| {
+                    authentication.get() == OpenSubsonicAuthentication::ApiKey
+                }) {
+                tr("Enter a server address and API key")
+            } else {
+                tr("Enter a server address, username, and password")
+            };
+            status_for_login.set_text(&message);
             status_for_login.set_visible(true);
             return;
         }
@@ -1487,6 +1580,7 @@ fn remote_login_ready(
     url: &adw::EntryRow,
     username: &adw::EntryRow,
     password: &adw::PasswordEntryRow,
+    username_required: bool,
 ) -> bool {
     let address = url.text();
     let address = address.trim().trim_end_matches('/');
@@ -1495,7 +1589,7 @@ fn remote_login_ready(
         .or_else(|| address.strip_prefix("https://"))
         .unwrap_or(address);
     !address_without_scheme.trim().is_empty()
-        && !username.text().trim().is_empty()
+        && (!username_required || !username.text().trim().is_empty())
         && !password.text().trim().is_empty()
 }
 

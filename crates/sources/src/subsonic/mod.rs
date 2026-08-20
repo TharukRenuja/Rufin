@@ -16,7 +16,7 @@ use library::{
 };
 use playback::{SourceReportFact, SourceReportPhase};
 use reqwest::{Client, Url};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use tracing::instrument;
@@ -46,6 +46,16 @@ struct SubsonicSourcePayload {
     trust_invalid_cert: bool,
     #[serde(default)]
     navidrome_library_version: u32,
+    #[serde(default)]
+    authentication: SubsonicAuthentication,
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SubsonicAuthentication {
+    #[default]
+    Password,
+    ApiKey,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -54,6 +64,7 @@ pub struct SubsonicSourceConfig {
     pub(crate) username: String,
     pub(crate) trust_invalid_cert: bool,
     pub(crate) navidrome_library_version: u32,
+    pub(crate) authentication: SubsonicAuthentication,
 }
 
 impl SubsonicSourceConfig {
@@ -81,6 +92,7 @@ impl SubsonicSourceConfig {
             username,
             trust_invalid_cert: payload.trust_invalid_cert,
             navidrome_library_version: payload.navidrome_library_version,
+            authentication: payload.authentication,
         })
     }
 
@@ -91,6 +103,7 @@ impl SubsonicSourceConfig {
             "username": self.username,
             "trust_invalid_cert": self.trust_invalid_cert,
             "navidrome_library_version": self.navidrome_library_version,
+            "authentication": self.authentication,
         })
     }
 
@@ -118,9 +131,10 @@ impl AuthenticatedSubsonic {
 
 pub(crate) async fn connect(
     flavor: SubsonicFlavor,
+    authentication: SubsonicAuthentication,
     credentials: CredentialHostInput,
 ) -> SourceResult<ConnectedSource> {
-    SubsonicSource::authenticate(flavor, credentials)
+    SubsonicSource::authenticate(flavor, authentication, credentials)
         .await
         .map(|authenticated| authenticated.connected(None))
 }
@@ -143,6 +157,7 @@ pub(crate) fn open(
 pub(crate) async fn edit(
     current: SourceConfiguration,
     current_credential: Option<String>,
+    authentication: SubsonicAuthentication,
     credentials: CredentialSettingsInput,
 ) -> SourceResult<SourceEditResult> {
     let flavor = SubsonicFlavor::from_source_id(&current.kind)?;
@@ -153,16 +168,18 @@ pub(crate) async fn edit(
         != crate::source::comparable_address(&saved.base_url);
     let username_changed = credentials.username.trim() != saved.username;
     let has_password = !credentials.password.is_empty();
+    let authentication_changed = authentication != saved.authentication;
 
-    if (address_changed || username_changed) && !has_password {
+    if (address_changed || username_changed || authentication_changed) && !has_password {
         return Err(SourceError::Other(
-            "Enter the server password to save address or username changes.".to_string(),
+            "Enter the server password or API key to save authentication changes.".to_string(),
         ));
     }
 
     if has_password {
         let authenticated = SubsonicSource::authenticate(
             flavor,
+            authentication,
             CredentialHostInput {
                 server_name: Some(name),
                 server_url: credentials.base_url,
@@ -193,6 +210,7 @@ pub(crate) async fn edit(
             username: saved.username,
             trust_invalid_cert: credentials.trust_invalid_cert,
             navidrome_library_version: saved.navidrome_library_version,
+            authentication: saved.authentication,
         }
         .into_payload(),
     );
@@ -206,6 +224,24 @@ pub(crate) async fn edit(
     Ok(SourceEditResult::Connected(Box::new(
         ConnectedSource::subsonic(configuration, source, None),
     )))
+}
+
+async fn require_api_key_authentication(client: &Client, base_url: &Url) -> SourceResult<()> {
+    let url = unauthenticated_url(base_url, "getOpenSubsonicExtensions")?;
+    let response = subsonic_json::<OpenSubsonicExtensionsBody>(client.get(url)).await?;
+    let supported = response
+        .body
+        .open_subsonic_extensions
+        .iter()
+        .any(|extension| {
+            extension.name == "apiKeyAuthentication" && extension.versions.contains(&1)
+        });
+    if !supported {
+        return Err(SourceError::Auth(
+            "The server does not advertise OpenSubsonic API key authentication.".to_string(),
+        ));
+    }
+    Ok(())
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -272,6 +308,11 @@ impl SubsonicSource {
                 "Saved Navidrome access needs the server password.".to_string(),
             ));
         }
+        if credential.authentication() != config.authentication {
+            return Err(SourceError::InvalidConfig(
+                "Saved OpenSubsonic authentication does not match its credential.".to_string(),
+            ));
+        }
         Ok(Self {
             client,
             base_url,
@@ -288,6 +329,7 @@ impl SubsonicSource {
     #[instrument(skip(credentials), fields(base_url = %credentials.server_url, username = %credentials.username, source_kind = flavor.source_id(), trust_invalid_cert = credentials.trust_invalid_cert))]
     async fn authenticate(
         flavor: SubsonicFlavor,
+        authentication: SubsonicAuthentication,
         credentials: CredentialHostInput,
     ) -> SourceResult<AuthenticatedSubsonic> {
         let CredentialHostInput {
@@ -299,15 +341,46 @@ impl SubsonicSource {
         } = credentials;
         let base_url = normalize_base_url(&server_url)?;
         let client = build_client(trust_invalid_cert)?;
-        let credential = if flavor == SubsonicFlavor::Navidrome {
-            SubsonicCredential::from_navidrome_password(&password)
-        } else {
-            SubsonicCredential::from_password(&password)
+        let credential = match (flavor, authentication) {
+            (SubsonicFlavor::Navidrome, SubsonicAuthentication::Password) => {
+                SubsonicCredential::from_navidrome_password(&password)
+            }
+            (SubsonicFlavor::Navidrome, SubsonicAuthentication::ApiKey) => {
+                return Err(SourceError::InvalidRequest(
+                    "Navidrome requires password authentication",
+                ));
+            }
+            (SubsonicFlavor::Subsonic, SubsonicAuthentication::Password) => {
+                SubsonicCredential::from_password(&password)
+            }
+            (SubsonicFlavor::Subsonic, SubsonicAuthentication::ApiKey) => {
+                SubsonicCredential::from_api_key(&password)?
+            }
         };
+        let canonical_username = match authentication {
+            SubsonicAuthentication::Password => username,
+            SubsonicAuthentication::ApiKey => {
+                require_api_key_authentication(&client, &base_url).await?;
+                let mut token_url = endpoint(&base_url, "tokenInfo")?;
+                token_url
+                    .query_pairs_mut()
+                    .extend_pairs(credential.common_query("", &[]));
+                let response = subsonic_json::<TokenInfoBody>(client.get(token_url)).await?;
+                response.body.token_info.username
+            }
+        };
+        if canonical_username.trim().is_empty() {
+            return Err(SourceError::Auth(
+                "OpenSubsonic returned an empty canonical username".to_string(),
+            ));
+        }
         let mut auth_url = endpoint(&base_url, "getUser")?;
         auth_url
             .query_pairs_mut()
-            .extend_pairs(credential.common_query(&username, &[("username", &username)]));
+            .extend_pairs(credential.common_query(
+                &canonical_username,
+                &[("username", canonical_username.as_str())],
+            ));
         let response = subsonic_json::<AuthenticateBody>(client.get(auth_url)).await?;
         let body = response.body;
         if body.user.username.trim().is_empty() {
@@ -338,6 +411,7 @@ impl SubsonicSource {
                 } else {
                     0
                 },
+                authentication,
             }
             .into_payload(),
         );

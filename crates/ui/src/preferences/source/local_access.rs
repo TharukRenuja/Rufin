@@ -1,10 +1,10 @@
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
 use crate::runtime::source::{
-    CredentialInput, CredentialPreset, LocalAccessStatus, SelectedSourceHandle, SourceHandle,
-    SourceLocalAccess, SourceSummary,
+    CredentialInput, CredentialPreset, LocalAccessStatus, OpenSubsonicAuthentication,
+    SelectedSourceHandle, SourceHandle, SourceLocalAccess, SourceSummary,
 };
 use ::library::{
     LocalAccessMapping, MetadataItemId, SourceId, project_local_access_path,
@@ -19,7 +19,10 @@ use super::field_layout::{
     compact_field_row_group, install_compact_field_row_responsiveness,
     install_compact_field_row_responsiveness_at, style_compact_field_row,
 };
-use super::login::{connect_folder_button, source_kind_title, source_settings_group};
+use super::login::{
+    connect_folder_button, open_subsonic_authentication_switch, source_kind_title,
+    source_settings_group,
+};
 use crate::layout::large_popup_content_width;
 use crate::player::state::current_playback_track;
 use crate::shell::Shell;
@@ -693,8 +696,9 @@ pub(crate) fn credential_source_settings_group(
     shell: &Rc<Shell>,
     preset: CredentialPreset,
     source_title: &'static str,
+    authentication: Option<OpenSubsonicAuthentication>,
     extra: Option<adw::SwitchRow>,
-    submit: impl Fn(&SourceHandle, CredentialInput) + 'static,
+    submit: impl Fn(&SourceHandle, CredentialInput, Option<OpenSubsonicAuthentication>) + 'static,
 ) -> gtk::Widget {
     let section = gtk::Box::new(gtk::Orientation::Vertical, 8);
 
@@ -715,12 +719,18 @@ pub(crate) fn credential_source_settings_group(
         .text(&preset.username)
         .build();
     style_compact_field_row(&username);
-    rows_group.add(&username);
 
     let password = adw::PasswordEntryRow::builder()
         .title(tr("Password"))
         .build();
     style_compact_field_row(&password);
+    let authentication = authentication.map(|authentication| Rc::new(Cell::new(authentication)));
+    if let Some(authentication) = authentication.as_ref() {
+        let api_key =
+            open_subsonic_authentication_switch(Rc::clone(authentication), &username, &password);
+        rows_group.add(&api_key);
+    }
+    rows_group.add(&username);
     rows_group.add(&password);
 
     let cert_verify = adw::SwitchRow::builder()
@@ -740,15 +750,19 @@ pub(crate) fn credential_source_settings_group(
 
     let source = shell.products.source.clone();
     save.connect_activated(move |_| {
+        let authentication = authentication
+            .as_ref()
+            .map(|authentication| authentication.get());
         submit(
             &source,
             CredentialInput {
                 source_name: Some(name.text().trim().to_string()),
                 server_url: address.text().trim().to_string(),
                 username: username.text().trim().to_string(),
-                password: password.text().to_string(),
+                secret: password.text().to_string(),
                 trust_invalid_cert: !cert_verify.is_active(),
             },
+            authentication,
         );
     });
 

@@ -722,7 +722,9 @@ mod tests {
     use wiremock::matchers::{header, method, path, query_param};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
-    use super::super::{SubsonicCredential, SubsonicFlavor, SubsonicSourceConfig};
+    use super::super::{
+        SubsonicAuthentication, SubsonicCredential, SubsonicFlavor, SubsonicSourceConfig,
+    };
     use super::*;
 
     #[test]
@@ -830,6 +832,7 @@ mod tests {
                 username: "listener".to_string(),
                 trust_invalid_cert: false,
                 navidrome_library_version: super::super::NAVIDROME_LIBRARY_VERSION,
+                authentication: SubsonicAuthentication::Password,
             },
             credential,
         )

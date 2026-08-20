@@ -62,12 +62,19 @@ pub enum OpenSubsonicKind {
     OpenSubsonic,
 }
 
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum OpenSubsonicAuthentication {
+    #[default]
+    Password,
+    ApiKey,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CredentialInput {
     pub source_name: Option<String>,
     pub server_url: String,
     pub username: String,
-    pub password: String,
+    pub secret: String,
     pub trust_invalid_cert: bool,
 }
 
@@ -79,6 +86,7 @@ pub enum SourceSetup {
     },
     OpenSubsonic {
         kind: OpenSubsonicKind,
+        authentication: OpenSubsonicAuthentication,
         credentials: CredentialInput,
     },
     Local {
@@ -92,6 +100,7 @@ pub struct CredentialPreset {
     pub server_url: String,
     pub username: String,
     pub trust_invalid_cert: bool,
+    pub open_subsonic_authentication: Option<OpenSubsonicAuthentication>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -111,6 +120,7 @@ pub enum SourceSettingsChange {
     OpenSubsonic {
         source_id: SourceId,
         kind: OpenSubsonicKind,
+        authentication: OpenSubsonicAuthentication,
         credentials: CredentialInput,
     },
 }
