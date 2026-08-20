@@ -20,7 +20,8 @@ use relay::RelayServer;
 use upnp::UpnpController;
 
 const DISCOVERY_TIMEOUT: Duration = Duration::from_secs(2);
-const STATUS_INTERVAL: Duration = Duration::from_millis(500);
+const GOOGLE_CAST_STATUS_INTERVAL: Duration = Duration::from_millis(500);
+const UPNP_STATUS_INTERVAL: Duration = Duration::from_secs(1);
 
 pub struct CastManager {
     targets: Mutex<HashMap<String, DiscoveredTarget>>,
@@ -191,6 +192,13 @@ enum Controller {
 }
 
 impl Controller {
+    fn poll_interval(&self) -> Duration {
+        match self {
+            Self::Upnp(_) => UPNP_STATUS_INTERVAL,
+            Self::GoogleCast(_) => GOOGLE_CAST_STATUS_INTERVAL,
+        }
+    }
+
     fn initial_events(&self) -> Vec<BackendEvent> {
         match self {
             Self::Upnp(controller) => controller.initial_events(),
@@ -250,7 +258,7 @@ fn run_controller(
             Ok(WorkerCommand::Shutdown) | Err(RecvTimeoutError::Disconnected) => break,
             Err(RecvTimeoutError::Timeout) => {}
         }
-        if last_poll.elapsed() >= STATUS_INTERVAL {
+        if last_poll.elapsed() >= controller.poll_interval() {
             match controller.poll(&relay) {
                 Ok(update) => publish(&events, update),
                 Err(error) => publish_error(&events, active_run, error),

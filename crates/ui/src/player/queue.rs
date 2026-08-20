@@ -22,7 +22,7 @@ use crate::interactions::{
     ADD_TO_PLAYLIST_ICON, ContextMenuSurface, GO_TO_ICON, RADIO_ICON, go_to_context_submenu,
     radio_context_submenu,
 };
-use crate::layout::width_allocation_owner;
+use crate::layout::allocation_owner;
 use crate::preferences::dialogs::metadata::present_metadata_dialog;
 use crate::routes::collection_context::install_download_actions;
 use crate::routes::collections::PlaybackTarget;
@@ -1450,7 +1450,7 @@ fn fullscreen_queue_column_owner(
     let initial = fullscreen_queue_column_widths(1);
     columns.apply(initial);
     let last = Cell::new(initial);
-    width_allocation_owner(root, move |width| {
+    allocation_owner(root, move |width, _| {
         let widths = fullscreen_queue_column_widths(width.max(1));
         if last.replace(widths) != widths {
             columns.apply(widths);

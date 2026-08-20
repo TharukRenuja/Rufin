@@ -1,3 +1,5 @@
+use std::time::Instant;
+
 use playback::{BackendCommand, BackendEvent, BackendState, PreparedNext, PreparedStream, RunId};
 use rupnp::ssdp::URN;
 use rupnp::{Device, Service};
@@ -80,6 +82,7 @@ pub(crate) struct UpnpController {
     started: bool,
     renderer_owned: bool,
     seekable: bool,
+    observation_unavailable: bool,
 }
 
 impl UpnpController {
@@ -105,6 +108,7 @@ impl UpnpController {
             started: false,
             renderer_owned: false,
             seekable: false,
+            observation_unavailable: false,
         })
     }
 
@@ -216,17 +220,27 @@ impl UpnpController {
         let Some(run) = self.current_run() else {
             return Ok(Vec::new());
         };
-        let transport = self.action(
+        let transport = match self.action(
             AV_TRANSPORT,
             "GetTransportInfo",
             "<InstanceID>0</InstanceID>",
-        )?;
+        ) {
+            Ok(transport) => transport,
+            Err(error) => return Ok(self.observation_failed(error)),
+        };
         let transport_state = transport.get("CurrentTransportState").map(String::as_str);
-        let position = self.action(
+        let position = match self.action(
             AV_TRANSPORT,
             "GetPositionInfo",
             "<InstanceID>0</InstanceID>",
-        )?;
+        ) {
+            Ok(position) => position,
+            Err(error) => return Ok(self.observation_failed(error)),
+        };
+        if self.observation_unavailable {
+            self.observation_unavailable = false;
+            tracing::debug!("UPnP renderer status is available again");
+        }
         let track_uri = position
             .get("TrackURI")
             .map(String::as_str)
@@ -328,6 +342,17 @@ impl UpnpController {
         self.pending_start_position_millis = None;
         self.started = false;
         self.renderer_owned = false;
+        self.observation_unavailable = false;
+    }
+
+    fn observation_failed(&mut self, error: String) -> Vec<BackendEvent> {
+        if self.observation_unavailable {
+            tracing::debug!(%error, "UPnP renderer status remains unavailable");
+        } else {
+            self.observation_unavailable = true;
+            tracing::warn!(%error, "UPnP renderer status is temporarily unavailable");
+        }
+        Vec::new()
     }
 
     fn start(
@@ -715,9 +740,20 @@ impl UpnpController {
         payload: &str,
     ) -> Result<std::collections::HashMap<String, String>, String> {
         let service = self.service(&service_type)?;
-        self.runtime
+        let started = Instant::now();
+        let result = self
+            .runtime
             .block_on(service.action(self.device.url(), action, payload))
-            .map_err(|error| error.to_string())
+            .map_err(|error| format!("UPnP {action} failed: {error}"));
+        let elapsed = started.elapsed();
+        if result.is_err() || elapsed.as_millis() >= 250 {
+            tracing::debug!(
+                action,
+                elapsed_ms = elapsed.as_millis(),
+                "completed UPnP action"
+            );
+        }
+        result
     }
 
     fn service(&self, service_type: &URN) -> Result<&Service, String> {
@@ -1158,6 +1194,106 @@ mod tests {
         );
         renderer.join().expect("renderer thread");
         relay.shutdown();
+    }
+
+    #[test]
+    fn transient_status_failure_does_not_fail_upnp_playback() {
+        let server = Server::http("127.0.0.1:0").expect("fake renderer");
+        let address = server.server_addr().to_ip().expect("renderer address");
+        let renderer = thread::spawn(move || {
+            let mut current_uri = String::new();
+            for index in 0..7 {
+                let mut request = server.recv().expect("renderer request");
+                if index == 0 {
+                    let description = format!(
+                        r#"<root xmlns="urn:schemas-upnp-org:device-1-0"><device><deviceType>urn:schemas-upnp-org:device:MediaRenderer:1</deviceType><friendlyName>Test Renderer</friendlyName><serviceList><service><serviceType>urn:schemas-upnp-org:service:AVTransport:1</serviceType><serviceId>urn:upnp-org:serviceId:AVTransport</serviceId><SCPDURL>/transport.xml</SCPDURL><controlURL>/transport</controlURL><eventSubURL>/events</eventSubURL></service></serviceList></device></root>"#
+                    );
+                    request
+                        .respond(Response::from_string(description))
+                        .expect("device description response");
+                    continue;
+                }
+                let action = request
+                    .headers()
+                    .iter()
+                    .find(|header| header.field.equiv("SOAPAction"))
+                    .map(|header| header.value.as_str().to_string())
+                    .expect("SOAP action");
+                let mut body = String::new();
+                request
+                    .as_reader()
+                    .read_to_string(&mut body)
+                    .expect("SOAP body");
+                if action.contains("SetAVTransportURI") {
+                    current_uri = xml_element(&body, "CurrentURI").unwrap_or_default();
+                }
+                if index == 4 {
+                    request
+                        .respond(Response::from_string("renderer busy").with_status_code(500))
+                        .expect("temporary failure response");
+                    continue;
+                }
+                let values = if action.contains("GetTransportInfo") {
+                    "<CurrentTransportState>PLAYING</CurrentTransportState>".to_string()
+                } else if action.contains("GetCurrentTransportActions") {
+                    "<Actions>Play,Pause,Stop,Seek</Actions>".to_string()
+                } else if action.contains("GetPositionInfo") {
+                    format!(
+                        "<TrackDuration>00:04:19</TrackDuration><TrackURI>{current_uri}</TrackURI><RelTime>00:00:12</RelTime>"
+                    )
+                } else {
+                    String::new()
+                };
+                request
+                    .respond(Response::from_string(format!(
+                        r#"<s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/"><s:Body><u:Response xmlns:u="urn:schemas-upnp-org:service:AVTransport:1">{values}</u:Response></s:Body></s:Envelope>"#,
+                    )))
+                    .expect("SOAP response");
+            }
+        });
+
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("runtime");
+        let device = runtime
+            .block_on(Device::from_url(
+                format!("http://{address}/device.xml")
+                    .parse()
+                    .expect("device URL"),
+            ))
+            .expect("device description");
+        let directory = tempfile::tempdir().expect("track directory");
+        let path = directory.path().join("track.mp3");
+        File::create(&path)
+            .expect("create track")
+            .write_all(b"track")
+            .expect("write track");
+        let stream = PreparedStream::from(library::ResolvedStream::new(
+            Url::from_file_path(path).expect("track URL").to_string(),
+        ))
+        .with_media(test_track(), Some("audio/mpeg".to_string()));
+        let relay = RelayServer::start(address, Arc::new(AtomicBool::new(false))).expect("relay");
+        let mut controller = UpnpController::new(device).expect("controller");
+        controller
+            .start(RunId::new(1), stream, None, 0, &relay)
+            .expect("start playback");
+
+        let unavailable = controller.poll(&relay).expect("temporary status failure");
+        assert!(unavailable.is_empty());
+        let recovered = controller.poll(&relay).expect("status recovery");
+        assert!(recovered.iter().any(|event| matches!(
+            event,
+            BackendEvent::Position { run, millis: 12_000 } if *run == RunId::new(1)
+        )));
+        assert!(recovered.iter().any(|event| matches!(
+            event,
+            BackendEvent::State {
+                run,
+                state: BackendState::Playing,
+            } if *run == RunId::new(1)
+        )));
+        renderer.join().expect("renderer thread");
     }
 
     #[test]
