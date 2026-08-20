@@ -116,7 +116,6 @@ pub(crate) struct StoreCandidatePreparation {
 
 pub(crate) struct StoredSourceUpdate {
     pub replacement: ItemReplacement,
-    pub unresolved_album_releases: Vec<AlbumId>,
     pub playlists: Vec<PlaylistSnapshot>,
     pub removed_playlists: Vec<PlaylistId>,
 }
@@ -128,7 +127,6 @@ pub(crate) struct StoredLocalComponent {
     pub imports: Vec<LocalImport>,
     pub favorites: Vec<FavoriteItemId>,
     pub activity: Vec<TrackActivity>,
-    pub unresolved_album_releases: Vec<AlbumId>,
 }
 
 type StoreJob = Box<dyn FnOnce(&mut Worker) + Send>;
@@ -548,6 +546,15 @@ impl StoreLane {
         result: AlbumReleaseResult,
     ) -> StoreResult<bool> {
         self.execute(move |worker| worker.accept_album_release(&candidate, &result))
+    }
+
+    pub(crate) fn album_release_candidates(
+        &self,
+        source_id: SourceId,
+        library_id: i64,
+        limit: usize,
+    ) -> StoreResult<Vec<AlbumReleaseCandidate>> {
+        self.execute(move |worker| worker.album_release_candidates(&source_id, library_id, limit))
     }
 
     pub(crate) fn queue_scrobbles(&self, scrobbles: Vec<NewScrobble>) -> StoreResult<usize> {
@@ -1081,8 +1088,7 @@ impl Worker {
         }
         let transaction = self.connection.transaction()?;
         let item_changed = !replacement.is_empty();
-        let (unresolved_album_releases, _) =
-            write_item_replacement(&transaction, source_id, library_id, &mut replacement, None)?;
+        write_item_replacement(&transaction, source_id, library_id, &mut replacement, None)?;
         let mut changed_removed_playlists = Vec::new();
         for playlist_id in removed_playlists {
             if source_playlist_exists(&transaction, library_id, &playlist_id)? {
@@ -1110,7 +1116,6 @@ impl Worker {
         transaction.commit()?;
         Ok(StoredSourceUpdate {
             replacement,
-            unresolved_album_releases,
             playlists: changed_playlists,
             removed_playlists: changed_removed_playlists,
         })
@@ -1170,7 +1175,7 @@ impl Worker {
         for file in &files {
             write_local_file(&transaction, library_id, file)?;
         }
-        let (unresolved_album_releases, imports) = write_item_replacement(
+        let imports = write_item_replacement(
             &transaction,
             source_id,
             library_id,
@@ -1197,7 +1202,6 @@ impl Worker {
             imports,
             favorites,
             activity,
-            unresolved_album_releases,
         })
     }
 
@@ -2326,6 +2330,64 @@ impl Worker {
         Ok(())
     }
 
+    fn album_release_candidates(
+        &self,
+        source_id: &SourceId,
+        library_id: i64,
+        limit: usize,
+    ) -> StoreResult<Vec<AlbumReleaseCandidate>> {
+        if self.current_library_id(source_id)? != Some(library_id) || limit == 0 {
+            return Ok(Vec::new());
+        }
+        let limit = i64::try_from(limit.min(500)).map_err(|_| StoreError::IntegerRange)?;
+        let mut statement = self.connection.prepare(
+            "SELECT album.album_id,
+                    album.musicbrainz_release_group_id,
+                    album.musicbrainz_release_id
+             FROM albums AS album
+             LEFT JOIN album_release_info AS release
+               ON release.source_id = ?1 AND release.album_id = album.album_id
+             WHERE album.library_id = ?2
+               AND json_array_length(album.release_types_json) = 0
+               AND (
+                   NULLIF(album.musicbrainz_release_group_id, '') IS NOT NULL
+                   OR NULLIF(album.musicbrainz_release_id, '') IS NOT NULL
+               )
+               AND (
+                   release.exact_identity_key IS NULL
+                   OR release.exact_identity_key <> CASE
+                       WHEN NULLIF(album.musicbrainz_release_group_id, '') IS NOT NULL
+                       THEN 'release-group:' || album.musicbrainz_release_group_id
+                       ELSE 'release:' || album.musicbrainz_release_id
+                   END
+               )
+             ORDER BY album.album_id
+             LIMIT ?3",
+        )?;
+        statement
+            .query_map(params![source_id.as_str(), library_id, limit], |row| {
+                let release_group_id = row.get::<_, Option<String>>(1)?;
+                let release_id = row.get::<_, Option<String>>(2)?;
+                let identity = release_group_id
+                    .filter(|id| !id.is_empty())
+                    .map(crate::AlbumReleaseIdentity::ReleaseGroup)
+                    .or_else(|| {
+                        release_id
+                            .filter(|id| !id.is_empty())
+                            .map(crate::AlbumReleaseIdentity::Release)
+                    })
+                    .expect("Album release candidate query requires one exact identity");
+                Ok(AlbumReleaseCandidate {
+                    source_id: source_id.clone(),
+                    album_id: AlbumId::new(row.get::<_, String>(0)?),
+                    identity,
+                    library_id,
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(Into::into)
+    }
+
     fn accept_album_release(
         &mut self,
         candidate: &AlbumReleaseCandidate,
@@ -2367,13 +2429,12 @@ impl Worker {
             return Ok(false);
         }
         let (lookup_state, release_types, is_compilation) = match result {
-            AlbumReleaseResult::Found {
-                release_types,
-                is_compilation,
-            } => (
+            AlbumReleaseResult::Found { release_types } => (
                 "found",
                 Some(serde_json::to_string(release_types)?),
-                *is_compilation,
+                Some(i64::from(
+                    release_types.iter().any(|kind| kind == "compilation"),
+                )),
             ),
             AlbumReleaseResult::Missing => ("missing", None, None),
         };
@@ -2394,7 +2455,7 @@ impl Worker {
                 expected_key,
                 lookup_state,
                 release_types,
-                is_compilation.map(i64::from),
+                is_compilation,
             ],
         )?;
         Ok(true)
@@ -3228,7 +3289,7 @@ fn write_item_replacement(
     library_id: i64,
     replacement: &mut ItemReplacement,
     local_observed_at: Option<i64>,
-) -> StoreResult<(Vec<AlbumId>, Vec<LocalImport>)> {
+) -> StoreResult<Vec<LocalImport>> {
     apply_user_ratings_to_replacement(transaction, source_id, replacement)?;
     if local_observed_at.is_some() {
         for album in &mut replacement.albums {
@@ -3315,11 +3376,8 @@ fn write_item_replacement(
         write_genre(transaction, library_id, genre)?;
     }
 
-    let mut unresolved_album_releases = Vec::new();
     for album in &mut replacement.albums {
-        if apply_exact_album_release_info(transaction, source_id, album)? {
-            unresolved_album_releases.push(album.id.clone());
-        }
+        apply_exact_album_release_info(transaction, source_id, album)?;
     }
     let mut imports = Vec::new();
     if let Some(observed_at) = local_observed_at {
@@ -3341,7 +3399,7 @@ fn write_item_replacement(
             });
         }
     }
-    Ok((unresolved_album_releases, imports))
+    Ok(imports)
 }
 
 fn persist_favorite(
@@ -3907,8 +3965,7 @@ fn complete_loaded_input(
     input.local_favorites = load_local_favorites(connection, source_id)?;
     apply_pending_favorites(connection, source_id, &mut input)?;
     apply_user_ratings(connection, source_id, &mut input)?;
-    input.unresolved_album_releases =
-        apply_album_release_info(connection, source_id, &mut input.albums)?;
+    apply_album_release_info(connection, source_id, &mut input.albums)?;
     input.activity = load_track_activity(connection, source_id)?;
     input.recent_plays = load_recent_plays(connection, source_id)?;
     input.loudness = load_loudness(connection, source_id)?;
@@ -4692,7 +4749,7 @@ fn apply_album_release_info(
     connection: &Connection,
     source_id: &SourceId,
     albums: &mut [Album],
-) -> StoreResult<Vec<AlbumId>> {
+) -> StoreResult<()> {
     let mut statement = connection.prepare(
         "SELECT
             album_id, exact_identity_key, lookup_state,
@@ -4712,7 +4769,6 @@ fn apply_album_release_info(
             ))
         })?
         .collect::<Result<HashMap<_, _>, _>>()?;
-    let mut unresolved = Vec::new();
     for album in albums {
         if !album.release_types.is_empty() {
             continue;
@@ -4724,11 +4780,9 @@ fn apply_album_release_info(
         let Some((stored_identity, state, release_types, is_compilation)) =
             rows.get(album.id.as_str())
         else {
-            unresolved.push(album.id.clone());
             continue;
         };
         if stored_identity != &identity_key {
-            unresolved.push(album.id.clone());
             continue;
         }
         if state == "missing" {
@@ -4741,16 +4795,15 @@ fn apply_album_release_info(
             album.is_compilation = is_compilation.map(|value| value != 0);
             continue;
         }
-        unresolved.push(album.id.clone());
     }
-    Ok(unresolved)
+    Ok(())
 }
 
 fn apply_exact_album_release_info(
     connection: &Connection,
     source_id: &SourceId,
     album: &mut Album,
-) -> StoreResult<bool> {
+) -> StoreResult<()> {
     let current_identity =
         crate::album_release::release_identity(album).map(|identity| identity.stored_key());
     let stored = connection
@@ -4772,7 +4825,7 @@ fn apply_exact_album_release_info(
         )
         .optional()?;
     let Some((stored_identity, state, release_types, is_compilation)) = stored else {
-        return Ok(album.release_types.is_empty() && current_identity.is_some());
+        return Ok(());
     };
     if current_identity.as_deref() != Some(stored_identity.as_str()) {
         connection.execute(
@@ -4780,17 +4833,17 @@ fn apply_exact_album_release_info(
              WHERE source_id = ?1 AND album_id = ?2",
             params![source_id.as_str(), album.id.as_str()],
         )?;
-        return Ok(album.release_types.is_empty() && current_identity.is_some());
+        return Ok(());
     }
     if !album.release_types.is_empty() {
-        return Ok(false);
+        return Ok(());
     }
     match (state.as_str(), release_types) {
-        ("missing", None) => Ok(false),
+        ("missing", None) => Ok(()),
         ("found", Some(release_types)) => {
             album.release_types = serde_json::from_str(&release_types)?;
             album.is_compilation = is_compilation.map(|value| value != 0);
-            Ok(false)
+            Ok(())
         }
         _ => Err(StoreError::InvalidValue {
             kind: "Album release lookup",

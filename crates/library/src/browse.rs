@@ -2088,7 +2088,6 @@ fn distinct_album_artist_ids(album: &Album) -> impl Iterator<Item = &ArtistId> {
         .relations
         .album_artists
         .iter()
-        .chain(album.relations.artists.iter())
         .map(|credit| &credit.id)
 }
 

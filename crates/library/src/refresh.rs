@@ -201,7 +201,6 @@ impl Library {
         )?;
         let mut accepted = self.replace_source_update(
             stored.replacement,
-            stored.unresolved_album_releases,
             stored.playlists,
             stored.removed_playlists,
         )?;

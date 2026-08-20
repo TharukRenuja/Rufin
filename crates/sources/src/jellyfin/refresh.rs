@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::future::Future;
 
 use library::{ArtistId, CandidateBatch, GenreId, HomeFacts, Library, SourceHomeSectionKind};
@@ -61,25 +61,32 @@ impl JellyfinSource {
 
         check_cancelled(cancelled)?;
         progress(stage(SourceReadStage::Artists, 0, None));
-        let mut artist_ids = HashSet::new();
+        let mut artist_items = Vec::new();
         for path in ["Artists", "Artists/AlbumArtists"] {
-            emit_pages(
-                emitter,
-                |offset, limit| self.people_page(path, offset, limit),
-                |items| {
-                    let artists = items
-                        .into_iter()
-                        .map(artist_from_item)
-                        .filter(|artist| artist_ids.insert(artist.id.clone()))
-                        .collect();
-                    CandidateBatch::Artists(artists)
-                },
-                progress,
-                SourceReadStage::Artists,
-                cancelled,
-            )
-            .await?;
+            let mut pages = PageState::default();
+            loop {
+                check_cancelled(cancelled)?;
+                let page = self
+                    .people_page(path, pages.offset(), COLLECTION_PAGE_SIZE)
+                    .await?;
+                let count = page.items.len();
+                let finished = pages.advance(count, page.total_record_count)?;
+                artist_items.extend(page.items);
+                progress(stage(
+                    SourceReadStage::Artists,
+                    pages.offset(),
+                    pages.total(),
+                ));
+                if finished {
+                    break;
+                }
+            }
         }
+        emitter
+            .emit_async(CandidateBatch::Artists(normalize_artist_items(
+                artist_items,
+            )))
+            .await?;
 
         check_cancelled(cancelled)?;
         progress(stage(SourceReadStage::Genres, 0, None));
@@ -255,7 +262,6 @@ impl JellyfinSource {
         let available = self.items_by_ids(&upserts).await?;
         let mut albums = BTreeMap::new();
         let mut tracks = BTreeMap::new();
-        let mut artists = BTreeMap::new();
         let mut playlists = BTreeMap::new();
         let mut removed_tracks = BTreeSet::new();
         let mut removed_playlists = BTreeSet::new();
@@ -292,10 +298,6 @@ impl JellyfinSource {
                 CurrentItemKind::Album if new_or_only(&known, AcceptedKind::Album) => {
                     let album = album_from_item(item.clone());
                     albums.insert(album.id.clone(), album);
-                }
-                CurrentItemKind::Artist if known.as_slice() == [AcceptedKind::Artist] => {
-                    let artist = artist_from_item(item.clone());
-                    artists.insert(artist.id.clone(), artist);
                 }
                 CurrentItemKind::Playlist if new_or_only(&known, AcceptedKind::Playlist) => {
                     let playlist = playlist_from_item(item.clone());
@@ -334,7 +336,6 @@ impl JellyfinSource {
 
         if albums.is_empty()
             && tracks.is_empty()
-            && artists.is_empty()
             && playlists.is_empty()
             && removed_tracks.is_empty()
             && removed_playlists.is_empty()
@@ -345,7 +346,7 @@ impl JellyfinSource {
             library::SourceLibraryUpdate {
                 albums: albums.into_values().collect(),
                 tracks: tracks.into_values().collect(),
-                artists: artists.into_values().collect(),
+                artists: Vec::new(),
                 removed_tracks: removed_tracks.into_iter().collect(),
                 playlists: playlists.into_values().collect(),
                 removed_playlists: removed_playlists.into_iter().collect(),

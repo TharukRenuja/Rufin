@@ -37,7 +37,7 @@ impl JellyfinSource {
             self.search_items("Audio", TRACK_FIELDS, request.query(), request.limit()),
         )?;
         Ok(library::SearchResults {
-            artists: artists.items.into_iter().map(artist_from_item).collect(),
+            artists: normalize_artist_items(artists.items),
             albums: albums.items.into_iter().map(album_from_item).collect(),
             tracks: tracks
                 .items
@@ -76,7 +76,7 @@ impl JellyfinSource {
             .append_pair("Limit", &limit.clamp(1, 100).to_string())
             .append_pair(
                 "Fields",
-                "UserData,ItemCounts,ChildCount,AlbumCount,SongCount,ImageTags,ProviderIds",
+                "ParentId,UserData,ItemCounts,ChildCount,AlbumCount,SongCount,ImageTags,ProviderIds",
             );
         self.get_json::<ItemQueryResult>(url).await
     }
@@ -858,7 +858,7 @@ impl JellyfinSource {
             .append_pair("Limit", &limit.to_string())
             .append_pair(
                 "Fields",
-                "UserData,ItemCounts,ChildCount,AlbumCount,SongCount,ImageTags,ProviderIds",
+                "ParentId,UserData,ItemCounts,ChildCount,AlbumCount,SongCount,ImageTags,ProviderIds",
             );
 
         self.get_json::<ItemQueryResult>(url).await

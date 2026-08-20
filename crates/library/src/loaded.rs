@@ -59,7 +59,6 @@ pub(crate) struct LibraryInput {
     pub(crate) recent_plays: Vec<RecentPlay>,
     pub(crate) local_imports: Vec<LocalImport>,
     pub(crate) local_favorites: Vec<FavoriteItemId>,
-    pub(crate) unresolved_album_releases: Vec<AlbumId>,
     pub(crate) loudness: Vec<crate::LoudnessMeasurementWrite>,
 }
 
@@ -126,7 +125,6 @@ impl LibraryInput {
             recent_plays: Vec::new(),
             local_imports: Vec::new(),
             local_favorites: Vec::new(),
-            unresolved_album_releases: Vec::new(),
             loudness: Vec::new(),
         }
     }
@@ -448,7 +446,6 @@ pub(crate) struct LoadedState {
     pub(crate) activity: HashMap<TrackId, TrackActivity>,
     pub(crate) recent_plays: Vec<RecentPlay>,
     pub(crate) local_imports: HashMap<TrackSlot, i64>,
-    pub(crate) unresolved_album_releases: HashSet<AlbumId>,
     pub(crate) track_loudness: HashMap<TrackId, StoredLoudnessMeasurement>,
     pub(crate) album_loudness: HashMap<AlbumId, StoredLoudnessMeasurement>,
 }
@@ -591,7 +588,6 @@ impl Library {
             activity,
             recent_plays: input.recent_plays,
             local_imports: HashMap::new(),
-            unresolved_album_releases: input.unresolved_album_releases.into_iter().collect(),
             track_loudness: HashMap::new(),
             album_loudness: HashMap::new(),
         };
@@ -1201,7 +1197,7 @@ impl Library {
                 replacement.artists.push(artist);
             }
         }
-        let change = apply_item_replacement(&mut state, replacement, Vec::new())?;
+        let change = apply_item_replacement(&mut state, replacement)?;
         if matches!(item, FavoriteItemId::Track(_)) {
             crate::download_coverage::rebuild_smart_playlist_download_coverage(&mut state);
         }
@@ -1359,11 +1355,6 @@ impl Library {
         })
     }
 
-    pub(crate) fn mark_album_release_resolved(&self, id: &AlbumId) -> LibraryQueryResult<()> {
-        self.write()?.unresolved_album_releases.remove(id);
-        Ok(())
-    }
-
     pub(crate) fn replace_playlist(
         &self,
         snapshot: PlaylistSnapshot,
@@ -1389,7 +1380,6 @@ impl Library {
     pub(crate) fn replace_source_update(
         &self,
         replacement: ItemReplacement,
-        unresolved_album_releases: Vec<AlbumId>,
         playlists: Vec<PlaylistSnapshot>,
         removed_playlists: Vec<PlaylistId>,
     ) -> LibraryQueryResult<AcceptedLibraryChange> {
@@ -1403,8 +1393,7 @@ impl Library {
             explicit_playlists.insert(snapshot.playlist.id.clone());
             replace_playlist_in_state(&mut state, snapshot);
         }
-        let mut accepted =
-            apply_item_replacement(&mut state, replacement, unresolved_album_releases)?;
+        let mut accepted = apply_item_replacement(&mut state, replacement)?;
         accepted.playlists.extend(sorted_set(explicit_playlists));
         crate::download_coverage::rebuild_download_coverage(&mut state);
         Ok(accepted)
@@ -1474,7 +1463,6 @@ impl Library {
         imports: Vec<LocalImport>,
         favorites: Vec<FavoriteItemId>,
         activity: Vec<TrackActivity>,
-        unresolved_album_releases: Vec<AlbumId>,
     ) -> LibraryQueryResult<AcceptedLibraryChange> {
         let mut state = self.write()?;
         apply_track_activity_to_replacement(&mut replacement.tracks, activity);
@@ -1499,8 +1487,7 @@ impl Library {
             add_local_file_relations(&mut state, &file);
             state.local_files.insert(path, file);
         }
-        let mut accepted =
-            apply_item_replacement(&mut state, replacement, unresolved_album_releases)?;
+        let mut accepted = apply_item_replacement(&mut state, replacement)?;
         for import in imports {
             if let Some(slot) = state.tracks.slot(&import.track_id) {
                 state.local_imports.insert(slot, import.first_seen_at);
@@ -1677,7 +1664,6 @@ fn replace_track_favorite(
 fn apply_item_replacement(
     state: &mut LoadedState,
     replacement: ItemReplacement,
-    unresolved_album_releases: Vec<AlbumId>,
 ) -> LibraryQueryResult<AcceptedLibraryChange> {
     let ItemReplacement {
         albums,
@@ -1806,11 +1792,6 @@ fn apply_item_replacement(
         state.tracks.remove(track_id);
         state.activity.remove(track_id);
     }
-    let touched_album_ids = albums
-        .iter()
-        .map(|album| album.id.clone())
-        .chain(removed_albums.iter().cloned())
-        .collect::<HashSet<_>>();
     for album_id in removed_albums {
         if let Some(album) = state.albums.get_mut(&album_id) {
             album.source_provided = false;
@@ -1930,13 +1911,6 @@ fn apply_item_replacement(
         &state.activity,
     );
     refresh_loudness_validity(state, &changed_track_ids, &affected_albums);
-    for album_id in touched_album_ids {
-        state.unresolved_album_releases.remove(&album_id);
-    }
-    state
-        .unresolved_album_releases
-        .extend(unresolved_album_releases);
-
     Ok(AcceptedLibraryChange {
         tracks: accepted_track_replacements(state, published_track_ids),
         albums: sorted_set(published_albums),
@@ -4059,7 +4033,6 @@ mod tests {
                     removed_tracks: vec![track_id.clone()],
                     ..ItemReplacement::default()
                 },
-                Vec::new(),
                 Vec::new(),
                 Vec::new(),
             )

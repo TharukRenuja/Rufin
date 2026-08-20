@@ -145,22 +145,26 @@ impl SourceConfiguration {
     /// Credentials and presentation settings do not participate, so Rufin can
     /// validate an existing cache even when live source access is unavailable.
     pub fn input_identity(&self) -> SourceResult<SourceInputIdentity> {
-        self.input_identity_with_navidrome_library_version(None)
+        self.input_identity_with_reader_versions(None, true)
     }
 
     /// Classify an accepted cache against this source's current fact reader.
     ///
-    /// The only compatible mismatch is the released generic Navidrome reader
-    /// being upgraded to Navidrome's native library reader. Rufin may show
-    /// those already-observed facts while it performs an authoritative refresh.
+    /// Known reader upgrades may show their already-observed facts while an
+    /// authoritative refresh rebuilds the affected source representation.
     pub fn cache_match(&self, cached: &SourceInputIdentity) -> SourceResult<SourceCacheMatch> {
         if cached == &self.input_identity()? {
             return Ok(SourceCacheMatch::Exact);
         }
+        if self.kind == crate::jellyfin::JELLYFIN_SOURCE_ID
+            && cached == &self.input_identity_with_reader_versions(None, false)?
+        {
+            return Ok(SourceCacheMatch::ReaderUpgrade);
+        }
         if self.kind == "navidrome" {
             let config = crate::subsonic::SubsonicSourceConfig::from_configuration(self)?;
             if config.navidrome_library_version > 0
-                && cached == &self.input_identity_with_navidrome_library_version(Some(0))?
+                && cached == &self.input_identity_with_reader_versions(Some(0), true)?
             {
                 return Ok(SourceCacheMatch::ReaderUpgrade);
             }
@@ -168,9 +172,10 @@ impl SourceConfiguration {
         Ok(SourceCacheMatch::Incompatible)
     }
 
-    fn input_identity_with_navidrome_library_version(
+    fn input_identity_with_reader_versions(
         &self,
         navidrome_library_version: Option<u32>,
+        jellyfin_artist_reader_v2: bool,
     ) -> SourceResult<SourceInputIdentity> {
         let mut digest = blake3::Hasher::new();
         digest.update(b"rufin-source-input");
@@ -188,6 +193,12 @@ impl SourceConfiguration {
             crate::jellyfin::JELLYFIN_SOURCE_ID => {
                 let config = crate::jellyfin::JellyfinSourceConfig::from_configuration(self)?;
                 digest_part(&mut digest, config.user_id.as_bytes());
+                if jellyfin_artist_reader_v2 {
+                    // Jellyfin MusicArtist changed from raw dual-access rows to one
+                    // name-aggregate representation. Released caches remain usable
+                    // while a live reader upgrade rebuilds their source facts.
+                    digest_part(&mut digest, b"jellyfin-artist-reader-v2");
+                }
             }
             "navidrome" | "subsonic" => {
                 let config = crate::subsonic::SubsonicSourceConfig::from_configuration(self)?;
@@ -434,6 +445,36 @@ mod tests {
         let error = JellyfinSourceConfig::from_configuration(&stored)
             .expect_err("unsupported payload version");
         assert!(matches!(error, SourceError::InvalidConfig(_)));
+    }
+
+    #[test]
+    fn released_jellyfin_artist_cache_is_a_reader_upgrade_not_incompatible() {
+        let stored = migrated_source(
+            "jellyfin",
+            JellyfinSourceConfig {
+                base_url: "https://music.example".to_string(),
+                server_id: Some("server-one".to_string()),
+                user_id: "account-id".to_string(),
+                username: "listener".to_string(),
+                trust_invalid_cert: false,
+                use_instant_mix: false,
+            }
+            .into_payload(),
+        );
+        let released = stored
+            .input_identity_with_reader_versions(None, false)
+            .expect("released Jellyfin input identity");
+
+        assert_ne!(
+            stored.input_identity().expect("current Jellyfin identity"),
+            released
+        );
+        assert_eq!(
+            stored
+                .cache_match(&released)
+                .expect("classify released cache"),
+            SourceCacheMatch::ReaderUpgrade
+        );
     }
 
     #[test]

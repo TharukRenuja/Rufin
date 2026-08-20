@@ -25,10 +25,10 @@ use crate::routes::named_collections::{NamedCollectionKind, load_named_collectio
 use crate::routes::route::Route;
 use crate::routes::route_layout::{primary_route_scroll_adjustment, route_boundary};
 use crate::routes::{
-    load_album_detail, load_albums, load_artist_discography, load_artist_overview,
-    load_artist_tracks, load_artists, load_favorite_tracks, load_genre_detail, load_history_tracks,
-    load_mood_detail, load_playlist_detail, load_playlists, load_smart_playlist_detail,
-    load_smart_playlists, load_tracks, prepare_playlist_entry_positions,
+    NamedDetailId, load_album_detail, load_albums, load_artist_discography, load_artist_overview,
+    load_artist_tracks, load_artists, load_favorite_tracks, load_history_tracks, load_named_detail,
+    load_playlist_detail, load_playlists, load_smart_playlist_detail, load_smart_playlists,
+    load_tracks, prepare_playlist_entry_positions,
 };
 use crate::runtime::SelectedLibraryUpdate;
 use crate::{LibraryListKey, LibraryListSettings};
@@ -1051,53 +1051,39 @@ impl Shell {
                 );
             }
             Route::GenreDetail(genre_id) => {
-                let settings = self
-                    .settings
-                    .current
-                    .borrow()
-                    .library_list(LibraryListKey::GenreTracks);
+                let id = NamedDetailId::Genre(genre_id);
+                let settings = self.settings.current.borrow().library_list(id.key());
                 let loaded = Arc::clone(&selected.library);
                 let music_folder_id = selected.music_folder_id.clone();
                 self.queue_route_projection(
                     &selected,
                     route,
-                    vec![(LibraryListKey::GenreTracks, settings.clone())],
+                    vec![(id.key(), settings.clone())],
                     render_started,
                     move || {
-                        let detail = load_genre_detail(
-                            &loaded,
-                            &genre_id,
-                            music_folder_id.as_ref(),
-                            &settings,
-                        )?;
+                        let detail =
+                            load_named_detail(&loaded, &id, music_folder_id.as_ref(), &settings)?;
                         Ok(prepared_route_build(move |shell| {
-                            shell.genre_detail_view(genre_id, detail, loaded, music_folder_id)
+                            shell.named_detail_view(id, detail, loaded, music_folder_id)
                         }))
                     },
                 );
             }
             Route::MoodDetail(mood_id) => {
-                let settings = self
-                    .settings
-                    .current
-                    .borrow()
-                    .library_list(LibraryListKey::MoodTracks);
+                let id = NamedDetailId::Mood(mood_id);
+                let settings = self.settings.current.borrow().library_list(id.key());
                 let loaded = Arc::clone(&selected.library);
                 let music_folder_id = selected.music_folder_id.clone();
                 self.queue_route_projection(
                     &selected,
                     route,
-                    vec![(LibraryListKey::MoodTracks, settings.clone())],
+                    vec![(id.key(), settings.clone())],
                     render_started,
                     move || {
-                        let detail = load_mood_detail(
-                            &loaded,
-                            &mood_id,
-                            music_folder_id.as_ref(),
-                            &settings,
-                        )?;
+                        let detail =
+                            load_named_detail(&loaded, &id, music_folder_id.as_ref(), &settings)?;
                         Ok(prepared_route_build(move |shell| {
-                            shell.mood_detail_view(mood_id, detail, loaded, music_folder_id)
+                            shell.named_detail_view(id, detail, loaded, music_folder_id)
                         }))
                     },
                 );

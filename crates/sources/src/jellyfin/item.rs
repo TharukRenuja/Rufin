@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::Path;
 
 use library::{
@@ -34,6 +34,7 @@ pub(super) struct JellyfinItem {
     #[serde(rename = "Type")]
     pub(super) item_type: Option<String>,
     pub(super) collection_type: Option<String>,
+    parent_id: Option<String>,
     album_artist: Option<String>,
     album_artists: Option<Vec<NameIdPair>>,
     artists: Option<Vec<String>>,
@@ -262,6 +263,108 @@ pub(super) fn artist_from_item(item: JellyfinItem) -> Artist {
         image_ref: primary_image_ref("artist", &item.id, &item.image_tags),
         local_artwork: None,
     }
+}
+
+struct ArtistInput {
+    artist: Artist,
+    name_key: Option<String>,
+    name_accessed: bool,
+}
+
+/// Collapses Jellyfin's folder-backed and name-accessed representations before
+/// they cross the source boundary. Jellyfin defines MusicArtist as a
+/// dual-access, name-grouped item; Track and Album relations use the
+/// parentless name aggregate while a folder-backed twin may carry richer
+/// metadata.
+pub(super) fn normalize_artist_items(items: Vec<JellyfinItem>) -> Vec<Artist> {
+    let mut by_id = BTreeMap::<String, ArtistInput>::new();
+    for item in items {
+        let name_key = item
+            .name
+            .as_deref()
+            .map(str::trim)
+            .filter(|name| !name.is_empty())
+            .map(str::to_lowercase);
+        let name_accessed = item
+            .parent_id
+            .as_deref()
+            .is_none_or(|parent| parent.trim().is_empty());
+        let artist = artist_from_item(item);
+        by_id
+            .entry(artist.id.as_str().to_string())
+            .or_insert(ArtistInput {
+                artist,
+                name_key,
+                name_accessed,
+            });
+    }
+
+    let mut named = BTreeMap::<String, Vec<ArtistInput>>::new();
+    let mut independent = Vec::new();
+    for input in by_id.into_values() {
+        match input.name_key.as_ref() {
+            Some(key) => named.entry(key.clone()).or_default().push(input),
+            None => independent.push(input.artist),
+        }
+    }
+
+    for mut group in named.into_values() {
+        let aggregates = group
+            .iter()
+            .enumerate()
+            .filter_map(|(index, input)| input.name_accessed.then_some(index))
+            .collect::<Vec<_>>();
+        if aggregates.len() != 1 {
+            independent.extend(group.into_iter().map(|input| input.artist));
+            continue;
+        }
+        let mut canonical = group.swap_remove(aggregates[0]).artist;
+        merge_artist_group(&mut canonical, group.iter().map(|input| &input.artist));
+        independent.push(canonical);
+    }
+    independent.sort_by(|left, right| left.id.cmp(&right.id));
+    independent
+}
+
+fn merge_artist_group<'a>(canonical: &mut Artist, aliases: impl Iterator<Item = &'a Artist>) {
+    let aliases = aliases.collect::<Vec<_>>();
+    canonical.favorite |= aliases.iter().any(|artist| artist.favorite);
+    canonical.last_played = aliases
+        .iter()
+        .filter_map(|artist| artist.last_played.as_ref())
+        .chain(canonical.last_played.as_ref())
+        .max()
+        .cloned();
+    canonical.play_count = aliases
+        .iter()
+        .filter_map(|artist| artist.play_count)
+        .chain(canonical.play_count)
+        .max();
+    if canonical.user_rating.is_none() {
+        canonical.user_rating = unique(aliases.iter().filter_map(|artist| artist.user_rating));
+    }
+    if canonical.musicbrainz_artist_id.is_none() {
+        canonical.musicbrainz_artist_id = unique(
+            aliases
+                .iter()
+                .filter_map(|artist| artist.musicbrainz_artist_id.clone()),
+        );
+    }
+    if canonical.image_ref.is_none() {
+        canonical.image_ref = unique(aliases.iter().filter_map(|artist| artist.image_ref.clone()));
+    }
+}
+
+fn unique<T: Eq + Clone>(values: impl Iterator<Item = T>) -> Option<T> {
+    let mut unique = None;
+    for value in values {
+        match unique.as_ref() {
+            None => unique = Some(value),
+            Some(current) if current == &value => {}
+            Some(_) => return None,
+        }
+    }
+    unique
 }
 
 pub(super) fn genre_from_item(item: JellyfinItem) -> Genre {
