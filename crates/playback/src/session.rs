@@ -5,10 +5,10 @@ use library::{SourceId, StreamRequest, Track, TrackId};
 
 use crate::{
     BackendCommand, BackendEvent, BackendState, Batch, BatchItem, CheckpointChange, ListeningFact,
-    ListeningOutcome, ListeningTrack, NextTransition, OccurrenceId, Placement, PlaybackSettings,
-    PlaybackTransitionMode, PreparedNext, PreparedStream, Provenance, RepeatMode, RunEndReason,
-    RunId, Sequence, SequenceEntry, SequenceError, external_scrobble_threshold_millis,
-    manual_end_is_skip, qualified_play_threshold_millis,
+    ListeningOutcome, ListeningTrack, NextTransition, OccurrenceId, Placement, PlaybackOutput,
+    PlaybackSettings, PlaybackTransitionMode, PreparedNext, PreparedStream, Provenance, RepeatMode,
+    RunEndReason, RunId, Sequence, SequenceEntry, SequenceError,
+    external_scrobble_threshold_millis, manual_end_is_skip, qualified_play_threshold_millis,
 };
 
 const AUTO_DJ_HISTORY_LIMIT: usize = 10;
@@ -117,6 +117,7 @@ pub enum SessionEffect {
     PersistOutputState {
         volume: f64,
         muted: bool,
+        audio_output: Option<String>,
     },
     FlushPersistence {
         source_id: SourceId,
@@ -151,7 +152,6 @@ pub enum SessionCommand {
     Play,
     Pause,
     Stop,
-    Retire,
     Next,
     Previous,
     Seek(u64),
@@ -233,6 +233,7 @@ struct RunContext {
     last_progress_bucket: Option<u64>,
     desired_playing: bool,
     resolved_stream: Option<PreparedStream>,
+    backend_loaded: bool,
     seekable: bool,
 }
 
@@ -255,7 +256,8 @@ impl RunContext {
             last_progress_bucket: None,
             desired_playing: true,
             resolved_stream: None,
-            seekable: false,
+            backend_loaded: false,
+            seekable: true,
         }
     }
 
@@ -305,6 +307,9 @@ pub(crate) struct PlaybackSession {
     pending_replacement: Option<MaterializationId>,
     pending_additive: HashMap<MaterializationId, Placement>,
     settings: PlaybackSettings,
+    playback_output: PlaybackOutput,
+    output_volume: f64,
+    output_muted: bool,
     auto_dj_enabled: bool,
     auto_dj_refill_threshold: usize,
     auto_dj_in_flight: Option<AutoDjKey>,
@@ -319,10 +324,13 @@ impl PlaybackSession {
         source_session_epoch: SourceSessionEpoch,
         play_id_prefix: impl Into<Arc<str>>,
         mut settings: PlaybackSettings,
+        playback_output: PlaybackOutput,
         auto_dj_enabled: bool,
         auto_dj_refill_threshold: usize,
     ) -> Self {
         settings.sanitize();
+        let output_volume = settings.volume;
+        let output_muted = settings.muted;
         Self {
             sequence,
             source_session_epoch,
@@ -334,6 +342,9 @@ impl PlaybackSession {
             pending_replacement: None,
             pending_additive: HashMap::new(),
             settings,
+            playback_output,
+            output_volume,
+            output_muted,
             auto_dj_enabled,
             auto_dj_refill_threshold: auto_dj_refill_threshold.max(1),
             auto_dj_in_flight: None,
@@ -345,6 +356,18 @@ impl PlaybackSession {
 
     pub fn sequence(&self) -> &Sequence {
         &self.sequence
+    }
+
+    pub fn playback_output(&self) -> &PlaybackOutput {
+        &self.playback_output
+    }
+
+    pub fn output_volume(&self) -> f64 {
+        self.output_volume
+    }
+
+    pub fn output_muted(&self) -> bool {
+        self.output_muted
     }
 
     pub const fn source_session_epoch(&self) -> SourceSessionEpoch {
@@ -413,6 +436,49 @@ impl PlaybackSession {
 
     pub fn settings(&self) -> &PlaybackSettings {
         &self.settings
+    }
+
+    pub(crate) fn replace_output(&mut self, output: PlaybackOutput) -> SessionUpdate {
+        self.playback_output = output;
+        self.last_error = None;
+        if self.playback_output.is_local() {
+            self.output_volume = self.settings.volume;
+            self.output_muted = self.settings.muted;
+        }
+        let Some(current) = self.current_run.as_mut() else {
+            return SessionUpdate::changed();
+        };
+        let Some(stream) = current.resolved_stream.clone() else {
+            return SessionUpdate::changed();
+        };
+        let run = current.id;
+        let desired_playing = current.desired_playing;
+        current.backend_loaded = false;
+        if !desired_playing {
+            current.status = TransportStatus::Paused;
+            return SessionUpdate::changed();
+        }
+        current.status = TransportStatus::Buffering;
+        current.backend_loaded = true;
+        let next = self.prepared_next(run);
+        let mut effects = Vec::new();
+        if self.playback_output.is_local() {
+            effects.push(SessionEffect::Backend(BackendCommand::ConfigureAudio(
+                self.settings.clone().into(),
+            )));
+        }
+        effects.push(SessionEffect::Backend(BackendCommand::Start {
+            run,
+            current: stream,
+            next,
+            start_position_millis: self.sequence.progress_millis(),
+            playback_rate: self.settings.playback_rate,
+        }));
+        SessionUpdate {
+            effects,
+            view_changed: true,
+            ..SessionUpdate::default()
+        }
     }
 
     pub fn auto_dj_enabled(&self) -> bool {
@@ -528,17 +594,22 @@ impl PlaybackSession {
             SessionCommand::Play => Ok(self.set_playing(true)),
             SessionCommand::Pause => Ok(self.set_playing(false)),
             SessionCommand::Stop => Ok(self.stop(sample)),
-            SessionCommand::Retire => Ok(self.shutdown(sample)),
             SessionCommand::Next => Ok(self.next(sample)),
             SessionCommand::Previous => Ok(self.previous(sample)),
             SessionCommand::Seek(position_millis) => Ok(self.seek(position_millis)),
             SessionCommand::SetVolume(volume) => Ok(self.set_volume(volume)),
             SessionCommand::SetMuted(muted) => Ok(self.set_muted(muted)),
             SessionCommand::PersistOutputState => Ok(SessionUpdate {
-                effects: vec![SessionEffect::PersistOutputState {
-                    volume: self.settings.volume,
-                    muted: self.settings.muted,
-                }],
+                effects: self
+                    .playback_output
+                    .is_local()
+                    .then(|| SessionEffect::PersistOutputState {
+                        volume: self.settings.volume,
+                        muted: self.settings.muted,
+                        audio_output: self.settings.audio_output.clone(),
+                    })
+                    .into_iter()
+                    .collect(),
                 ..SessionUpdate::default()
             }),
             SessionCommand::SetRepeat(repeat) => Ok(self.set_repeat(repeat)),
@@ -675,16 +746,32 @@ impl PlaybackSession {
                 muted,
                 output,
             } => {
-                if self.settings.volume == volume
-                    && self.settings.muted == muted
-                    && self.settings.audio_output == output
-                {
+                let local = self.playback_output.is_local();
+                let audio_output_changed = local && self.settings.audio_output != output;
+                let unchanged = self.output_volume == volume
+                    && self.output_muted == muted
+                    && !audio_output_changed;
+                if unchanged {
                     return SessionUpdate::default();
                 }
-                self.settings.volume = volume;
-                self.settings.muted = muted;
-                self.settings.audio_output = output;
-                SessionUpdate::changed()
+                self.output_volume = volume;
+                self.output_muted = muted;
+                if local {
+                    self.settings.volume = volume;
+                    self.settings.muted = muted;
+                    self.settings.audio_output = output.clone();
+                }
+                SessionUpdate {
+                    effects: audio_output_changed
+                        .then(|| SessionEffect::PersistOutputState {
+                            volume,
+                            muted,
+                            audio_output: output,
+                        })
+                        .into_iter()
+                        .collect(),
+                    ..SessionUpdate::changed()
+                }
             }
             BackendEvent::Visualizer { run, levels } => {
                 if self
@@ -701,20 +788,27 @@ impl PlaybackSession {
                 }
             }
             BackendEvent::Error { run, error } => {
-                if !self
+                let Some(current) = self
                     .current_run
-                    .as_ref()
-                    .is_some_and(|current| current.id == run)
-                {
+                    .as_mut()
+                    .filter(|current| current.id == run)
+                else {
                     return SessionUpdate::default();
-                }
-                let mut update = SessionUpdate::changed();
-                self.finish_current(RunEndReason::Failed, sample, &mut update.effects);
+                };
+                current.advance_clock(sample.monotonic_millis);
+                current.status = TransportStatus::Failed;
+                current.backend_loaded = false;
                 self.last_error = Some(error.message().to_string());
-                update
-                    .effects
-                    .push(SessionEffect::FatalError(error.message().to_string()));
-                update
+                self.buffering_percent = None;
+                SessionUpdate {
+                    effects: vec![
+                        SessionEffect::FatalError(error.message().to_string()),
+                        SessionEffect::FlushPersistence {
+                            source_id: self.sequence.source_id().clone(),
+                        },
+                    ],
+                    ..SessionUpdate::changed()
+                }
             }
         }
     }
@@ -735,7 +829,6 @@ impl PlaybackSession {
         }
         self.auto_dj_in_flight = None;
         if !self.auto_dj_enabled
-            || self.sequence.repeat_mode() == RepeatMode::One
             || self.sequence.source_id() != source_id
             || self.sequence.occurrence(seed_occurrence).is_none()
             || self.sequence.remaining_after_selected() >= self.auto_dj_refill_threshold
@@ -1060,33 +1153,28 @@ impl PlaybackSession {
                     BackendCommand::Pause { run: run.id }
                 } else {
                     run.desired_playing = true;
-                    if let Some(stream) = run.resolved_stream.take() {
+                    if !run.backend_loaded
+                        && let Some(stream) = run.resolved_stream.clone()
+                    {
                         run.status = TransportStatus::Buffering;
-                        let next = self.next_plan.as_ref().and_then(|plan| {
-                            if plan.current_run != run.id {
-                                return None;
-                            }
-                            let NextResolution::Ready(stream) = &plan.resolution else {
-                                return None;
-                            };
-                            Some(PreparedNext::new(
-                                plan.next_run,
-                                stream.clone(),
-                                plan.transition,
-                            ))
-                        });
+                        run.backend_loaded = true;
+                        let run_id = run.id;
+                        let next = self.prepared_next(run_id);
+                        let mut effects = Vec::new();
+                        if self.playback_output.is_local() {
+                            effects.push(SessionEffect::Backend(BackendCommand::ConfigureAudio(
+                                self.settings.clone().into(),
+                            )));
+                        }
+                        effects.push(SessionEffect::Backend(BackendCommand::Start {
+                            run: run_id,
+                            current: stream,
+                            next,
+                            start_position_millis: self.sequence.progress_millis(),
+                            playback_rate: self.settings.playback_rate,
+                        }));
                         return SessionUpdate {
-                            effects: vec![
-                                SessionEffect::Backend(BackendCommand::ConfigureAudio(
-                                    self.settings.clone().into(),
-                                )),
-                                SessionEffect::Backend(BackendCommand::Start {
-                                    run: run.id,
-                                    current: stream,
-                                    next,
-                                    start_position_millis: self.sequence.progress_millis(),
-                                }),
-                            ],
+                            effects,
                             view_changed: true,
                             queue_page_changed: false,
                             checkpoint_change: None,
@@ -1263,15 +1351,20 @@ impl PlaybackSession {
         } else {
             1.0
         };
-        if self.settings.volume == volume {
+        if self.output_volume == volume && !self.output_muted {
             return SessionUpdate::default();
         }
-        self.settings.volume = volume;
+        self.output_volume = volume;
+        self.output_muted = false;
+        if self.playback_output.is_local() {
+            self.settings.volume = volume;
+            self.settings.muted = false;
+        }
         SessionUpdate {
             effects: vec![SessionEffect::Backend(BackendCommand::SetOutputVolume {
                 volume,
                 volume_scale: self.settings.volume_scale,
-                muted: self.settings.muted,
+                muted: false,
             })],
             view_changed: true,
             queue_page_changed: false,
@@ -1280,22 +1373,27 @@ impl PlaybackSession {
     }
 
     fn set_muted(&mut self, muted: bool) -> SessionUpdate {
-        if self.settings.muted == muted {
+        if self.output_muted == muted {
             return SessionUpdate::default();
         }
-        self.settings.muted = muted;
+        self.output_muted = muted;
+        if self.playback_output.is_local() {
+            self.settings.muted = muted;
+        }
+        let mut effects = vec![SessionEffect::Backend(BackendCommand::SetOutputVolume {
+            volume: self.output_volume,
+            volume_scale: self.settings.volume_scale,
+            muted,
+        })];
+        if self.playback_output.is_local() {
+            effects.push(SessionEffect::PersistOutputState {
+                volume: self.settings.volume,
+                muted,
+                audio_output: self.settings.audio_output.clone(),
+            });
+        }
         SessionUpdate {
-            effects: vec![
-                SessionEffect::Backend(BackendCommand::SetOutputVolume {
-                    volume: self.settings.volume,
-                    volume_scale: self.settings.volume_scale,
-                    muted,
-                }),
-                SessionEffect::PersistOutputState {
-                    volume: self.settings.volume,
-                    muted,
-                },
-            ],
+            effects,
             view_changed: true,
             queue_page_changed: false,
             checkpoint_change: None,
@@ -1350,6 +1448,8 @@ impl PlaybackSession {
             return SessionUpdate::default();
         }
         let stream_changed = settings.stream_quality != self.settings.stream_quality;
+        let playback_rate_changed = settings.playback_rate != self.settings.playback_rate;
+        let playback_rate = settings.playback_rate;
         let output_changed = settings.volume != self.settings.volume
             || settings.volume_scale != self.settings.volume_scale
             || settings.muted != self.settings.muted;
@@ -1357,16 +1457,21 @@ impl PlaybackSession {
             != self.settings.loudness_normalization
             || settings.audio_output != self.settings.audio_output
             || settings.equalizer != self.settings.equalizer
+            || settings.preserve_pitch != self.settings.preserve_pitch
             || settings.audio_fade_on_status_change != self.settings.audio_fade_on_status_change;
         self.settings = settings.clone();
         let mut update = SessionUpdate::changed();
-        if audio_configuration_changed {
+        if self.playback_output.is_local() {
+            self.output_volume = settings.volume;
+            self.output_muted = settings.muted;
+        }
+        if self.playback_output.is_local() && audio_configuration_changed {
             update
                 .effects
                 .push(SessionEffect::Backend(BackendCommand::ConfigureAudio(
                     settings.into(),
                 )));
-        } else if output_changed {
+        } else if self.playback_output.is_local() && output_changed {
             update
                 .effects
                 .push(SessionEffect::Backend(BackendCommand::SetOutputVolume {
@@ -1374,6 +1479,13 @@ impl PlaybackSession {
                     volume_scale: settings.volume_scale,
                     muted: settings.muted,
                 }));
+        }
+        if self.playback_output.is_local() && playback_rate_changed {
+            update
+                .effects
+                .push(SessionEffect::Backend(BackendCommand::SetPlaybackRate(
+                    playback_rate,
+                )));
         }
         if stream_changed {
             self.replan_next(true, &mut update.effects);
@@ -1423,8 +1535,33 @@ impl PlaybackSession {
             return SessionUpdate::changed();
         }
         current.status = TransportStatus::Buffering;
-        let next = self.next_plan.as_ref().and_then(|plan| {
-            if plan.current_run != run {
+        current.resolved_stream = Some(stream.clone());
+        current.backend_loaded = true;
+        let next = self.prepared_next(run);
+        let mut effects = Vec::new();
+        if self.playback_output.is_local() {
+            effects.push(SessionEffect::Backend(BackendCommand::ConfigureAudio(
+                self.settings.clone().into(),
+            )));
+        }
+        effects.push(SessionEffect::Backend(BackendCommand::Start {
+            run,
+            current: stream,
+            next,
+            start_position_millis: self.sequence.progress_millis(),
+            playback_rate: self.settings.playback_rate,
+        }));
+        SessionUpdate {
+            effects,
+            view_changed: true,
+            queue_page_changed: false,
+            checkpoint_change: None,
+        }
+    }
+
+    fn prepared_next(&self, current_run: RunId) -> Option<PreparedNext> {
+        self.next_plan.as_ref().and_then(|plan| {
+            if plan.current_run != current_run {
                 return None;
             }
             let NextResolution::Ready(stream) = &plan.resolution else {
@@ -1435,33 +1572,18 @@ impl PlaybackSession {
                 stream.clone(),
                 plan.transition,
             ))
-        });
-        SessionUpdate {
-            effects: vec![
-                SessionEffect::Backend(BackendCommand::ConfigureAudio(
-                    self.settings.clone().into(),
-                )),
-                SessionEffect::Backend(BackendCommand::Start {
-                    run,
-                    current: stream,
-                    next,
-                    start_position_millis: self.sequence.progress_millis(),
-                }),
-            ],
-            view_changed: true,
-            queue_page_changed: false,
-            checkpoint_change: None,
-        }
+        })
     }
 
     fn accept_started(&mut self, run: RunId, sample: &ClockSample) -> SessionUpdate {
         let Some(current) = self
             .current_run
-            .as_ref()
+            .as_mut()
             .filter(|current| current.id == run)
         else {
             return SessionUpdate::default();
         };
+        current.backend_loaded = true;
         if current.started_at_unix_seconds.is_some() {
             return SessionUpdate::default();
         }
@@ -1633,12 +1755,22 @@ impl PlaybackSession {
         let Some(occurrence) = self.next_plan.as_ref().map(|plan| plan.occurrence.clone()) else {
             return SessionUpdate::default();
         };
+        let transitioned_stream = self.next_plan.as_ref().and_then(|plan| {
+            let NextResolution::Ready(stream) = &plan.resolution else {
+                return None;
+            };
+            Some(stream.clone())
+        });
         let mut update = SessionUpdate::changed();
         self.finish_current(RunEndReason::Completed, sample, &mut update.effects);
         if !self.sequence.activate(&occurrence) {
             return update;
         }
         self.install_reserved_run(new_run, occurrence, desired_playing, &mut update.effects);
+        if let Some(current) = self.current_run.as_mut() {
+            current.resolved_stream = transitioned_stream;
+            current.backend_loaded = true;
+        }
         self.mark_started(sample, &mut update.effects);
         if !desired_playing {
             update
@@ -1672,12 +1804,15 @@ impl PlaybackSession {
             NextResolution::Ready(stream) if desired_playing => {
                 if let Some(current) = self.current_run.as_mut() {
                     current.status = TransportStatus::Buffering;
+                    current.resolved_stream = Some(stream.clone());
+                    current.backend_loaded = true;
                 }
                 effects.push(SessionEffect::Backend(BackendCommand::Start {
                     run: plan.next_run,
                     current: stream,
                     next: None,
                     start_position_millis: 0,
+                    playback_rate: self.settings.playback_rate,
                 }));
             }
             NextResolution::Ready(stream) => {
@@ -2066,7 +2201,6 @@ impl PlaybackSession {
 
     fn maybe_request_auto_dj(&mut self, effects: &mut Vec<SessionEffect>) {
         if !self.auto_dj_enabled
-            || self.sequence.repeat_mode() == RepeatMode::One
             || self.sequence.remaining_after_selected() >= self.auto_dj_refill_threshold
             || self.auto_dj_in_flight.is_some()
         {
@@ -2177,6 +2311,164 @@ mod tests {
         assert!(!update.effects.iter().any(|effect| matches!(
             effect,
             SessionEffect::Backend(BackendCommand::ConfigureAudio(_))
+        )));
+    }
+
+    #[test]
+    fn remote_volume_does_not_replace_the_saved_local_output_state() {
+        let mut session = session(&[1]);
+        let local_volume = session.settings().volume;
+        session.replace_output(PlaybackOutput::Remote(crate::RemoteOutput {
+            id: "upnp:living-room".to_string(),
+            name: "Living Room".to_string(),
+            protocol: crate::RemoteOutputProtocol::Upnp,
+        }));
+
+        session
+            .handle_command(SessionCommand::SetVolume(0.25), &sample(0))
+            .expect("set remote volume");
+        let persisted = session
+            .handle_command(SessionCommand::PersistOutputState, &sample(1))
+            .expect("persist output state");
+
+        assert_eq!(session.settings().volume, local_volume);
+        assert_eq!(session.view().controls.volume, 0.25);
+        assert!(
+            !persisted
+                .effects
+                .iter()
+                .any(|effect| matches!(effect, SessionEffect::PersistOutputState { .. }))
+        );
+
+        session.replace_output(PlaybackOutput::Local);
+        assert_eq!(session.view().controls.volume, local_volume);
+    }
+
+    #[test]
+    fn mute_hides_and_restores_volume_while_an_explicit_level_unmutes() {
+        let mut session = session(&[1]);
+        let retained = session.output_volume();
+
+        session
+            .handle_command(SessionCommand::SetMuted(true), &sample(0))
+            .expect("mute");
+        assert!(session.view().controls.muted);
+        assert_eq!(session.view().controls.volume, 0.0);
+
+        session
+            .handle_command(SessionCommand::SetMuted(false), &sample(1))
+            .expect("unmute");
+        assert!(!session.view().controls.muted);
+        assert_eq!(session.view().controls.volume, retained);
+
+        session
+            .handle_command(SessionCommand::SetMuted(true), &sample(2))
+            .expect("mute again");
+        let update = session
+            .handle_command(SessionCommand::SetVolume(0.25), &sample(3))
+            .expect("choose volume while muted");
+
+        assert!(!session.view().controls.muted);
+        assert_eq!(session.view().controls.volume, 0.25);
+        assert!(update.effects.iter().any(|effect| matches!(
+            effect,
+            SessionEffect::Backend(BackendCommand::SetOutputVolume {
+                volume,
+                muted: false,
+                ..
+            }) if *volume == 0.25
+        )));
+    }
+
+    #[test]
+    fn applied_audio_output_replaces_and_persists_the_requested_output() {
+        let mut session = session(&[1]);
+        let mut settings = session.settings().clone();
+        settings.audio_output = Some("gst-device:unavailable".to_string());
+        session
+            .handle_command(SessionCommand::UpdateSettings(settings), &sample(0))
+            .expect("request audio output");
+
+        let update = session.handle_backend(
+            BackendEvent::AudioApplied {
+                volume: session.settings().volume,
+                muted: session.settings().muted,
+                output: None,
+            },
+            &sample(1),
+        );
+
+        assert_eq!(session.settings().audio_output, None);
+        assert!(update.effects.iter().any(|effect| matches!(
+            effect,
+            SessionEffect::PersistOutputState {
+                audio_output: None,
+                ..
+            }
+        )));
+    }
+
+    #[test]
+    fn playback_rate_change_uses_the_rate_path() {
+        let mut session = session(&[1]);
+        let mut settings = session.settings().clone();
+        settings.playback_rate = 1.5;
+
+        let update = session
+            .handle_command(SessionCommand::UpdateSettings(settings), &sample(0))
+            .expect("change playback rate");
+
+        assert!(update.effects.iter().any(|effect| matches!(
+            effect,
+            SessionEffect::Backend(BackendCommand::SetPlaybackRate(rate))
+                if (*rate - 1.5).abs() < f64::EPSILON
+        )));
+        assert!(!update.effects.iter().any(|effect| matches!(
+            effect,
+            SessionEffect::Backend(BackendCommand::ConfigureAudio(_))
+        )));
+    }
+
+    #[test]
+    fn preserve_pitch_change_uses_the_audio_configuration_path() {
+        let mut session = session(&[1]);
+        let mut settings = session.settings().clone();
+        settings.preserve_pitch = false;
+
+        let update = session
+            .handle_command(SessionCommand::UpdateSettings(settings), &sample(0))
+            .expect("disable pitch preservation");
+
+        assert!(update.effects.iter().any(|effect| matches!(
+            effect,
+            SessionEffect::Backend(BackendCommand::ConfigureAudio(settings))
+                if !settings.preserve_pitch
+        )));
+        assert!(!update.effects.iter().any(|effect| matches!(
+            effect,
+            SessionEffect::Backend(BackendCommand::SetPlaybackRate(_))
+        )));
+    }
+
+    #[test]
+    fn new_pipeline_starts_with_the_saved_playback_rate() {
+        let mut session = session(&[1]);
+        let mut settings = session.settings().clone();
+        settings.playback_rate = 1.5;
+        session
+            .handle_command(SessionCommand::UpdateSettings(settings), &sample(0))
+            .expect("save playback rate");
+        session
+            .handle_command(SessionCommand::Play, &sample(1))
+            .expect("start resolving");
+        let run = session.current_run().expect("current run");
+
+        let resolved = session.stream_resolved(run, ResolvedStream::new("file:///track.flac"));
+
+        assert!(resolved.effects.iter().any(|effect| matches!(
+            effect,
+            SessionEffect::Backend(BackendCommand::Start { playback_rate, .. })
+                if (*playback_rate - 1.5).abs() < f64::EPSILON
         )));
     }
 
@@ -2308,6 +2600,57 @@ mod tests {
                 )));
             }
         }
+    }
+
+    #[test]
+    fn backend_failure_keeps_the_current_stream_restartable_on_another_output() {
+        let mut session = session(&[1, 2]);
+        session
+            .handle_command(SessionCommand::PlayPause, &sample(0))
+            .expect("start current track");
+        let run = session.current_run().expect("current run");
+        session.stream_resolved(run, ResolvedStream::new("file:///track.flac"));
+        session.handle_backend(BackendEvent::Started { run }, &sample(1));
+        session.handle_backend(
+            BackendEvent::Position {
+                run,
+                millis: 42_000,
+            },
+            &sample(2),
+        );
+
+        let failed = session.handle_backend(
+            BackendEvent::Error {
+                run,
+                error: crate::BackendFailure::new("output rejected the track"),
+            },
+            &sample(3),
+        );
+
+        assert_eq!(session.current_run(), Some(run));
+        assert_eq!(session.view().transport.state, TransportStatus::Failed);
+        assert_eq!(session.view().transport.position_millis, 42_000);
+        assert!(!failed.effects.iter().any(|effect| matches!(
+            effect,
+            SessionEffect::Listening(ListeningFact::Ended { .. })
+                | SessionEffect::CurrentMediaChanged
+        )));
+
+        let restarted = session.replace_output(PlaybackOutput::Remote(crate::RemoteOutput {
+            id: "upnp:living-room".to_string(),
+            name: "Living Room".to_string(),
+            protocol: crate::RemoteOutputProtocol::Upnp,
+        }));
+
+        assert!(session.last_error().is_none());
+        assert!(restarted.effects.iter().any(|effect| matches!(
+            effect,
+            SessionEffect::Backend(BackendCommand::Start {
+                run: restarted,
+                start_position_millis: 42_000,
+                ..
+            }) if *restarted == run
+        )));
     }
 
     #[test]
@@ -2489,6 +2832,7 @@ mod tests {
             SourceSessionEpoch::new(1),
             "test",
             PlaybackSettings::default(),
+            PlaybackOutput::Local,
             false,
             2,
         );
@@ -2695,7 +3039,7 @@ mod tests {
     }
 
     #[test]
-    fn only_a_seekable_current_run_emits_a_position_discontinuity() {
+    fn new_run_stays_seekable_until_the_backend_reports_otherwise() {
         let mut session = session(&[1, 2]);
         assert!(session.view().transport.can_seek);
         let inactive = session
@@ -2712,6 +3056,15 @@ mod tests {
             .handle_command(SessionCommand::PlayPause, &sample(0))
             .expect("start");
         let run = session.current_run().expect("current run");
+        assert!(session.view().transport.can_seek);
+
+        session.handle_backend(
+            BackendEvent::Seekable {
+                run,
+                seekable: false,
+            },
+            &sample(0),
+        );
         let rejected = session
             .handle_command(SessionCommand::Seek(42_000), &sample(0))
             .expect("unseekable current run");
@@ -3245,7 +3598,7 @@ mod tests {
     }
 
     #[test]
-    fn stopped_seek_is_persisted_and_retirement_keeps_the_live_playhead() {
+    fn stopped_seek_is_persisted_and_shutdown_keeps_the_live_playhead() {
         let mut session = session(&[1]);
         let pending = session.reserve_materialization(Placement::End);
         let stopped_seek = session
@@ -3273,9 +3626,7 @@ mod tests {
             &sample(1_000),
         );
 
-        let shutdown = session
-            .handle_command(SessionCommand::Retire, &sample(1_000))
-            .expect("retire session");
+        let shutdown = session.shutdown(&sample(1_000));
         assert_eq!(session.sequence().progress_millis(), 37_000);
         assert!(
             shutdown
@@ -3394,6 +3745,7 @@ mod tests {
             SourceSessionEpoch::new(1),
             "test",
             PlaybackSettings::default(),
+            PlaybackOutput::Local,
             false,
             2,
         )
@@ -3431,6 +3783,7 @@ mod tests {
             SourceSessionEpoch::new(1),
             "test",
             PlaybackSettings::default(),
+            PlaybackOutput::Local,
             false,
             2,
         )

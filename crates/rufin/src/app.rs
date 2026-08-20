@@ -122,6 +122,7 @@ pub(crate) fn runtime_inputs(
         runtime.clone(),
         playback_events,
         source.acceptance_sender(),
+        artwork.clone(),
         Arc::clone(&waveform),
         Arc::clone(&lyrics),
         Arc::clone(&discord),
@@ -159,6 +160,9 @@ pub(crate) fn runtime_inputs(
         }
         if previous.ui.playback != current.ui.playback {
             settings_playback.playback_settings_changed(current.ui.playback.clone());
+        }
+        if previous.ui.cast_proxy_enabled != current.ui.cast_proxy_enabled {
+            settings_playback.cast_proxy_setting_changed(current.ui.cast_proxy_enabled);
         }
         if previous.ui.auto_dj_refill_threshold != current.ui.auto_dj_refill_threshold {
             settings_playback.auto_dj_threshold_changed(

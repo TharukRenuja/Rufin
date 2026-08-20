@@ -16,7 +16,6 @@ use crate::favorites::{
 use crate::interactions::install_context_menu_openers;
 use crate::localization::localized_column;
 use crate::shell::Shell;
-use crate::shell::cover::presentation::stable_seed;
 use crate::shell::cover::{ArtworkTile, THUMB_COVER_SIZE};
 use crate::{LibraryField, LibraryListKey};
 
@@ -86,7 +85,7 @@ pub(crate) fn playlist_column(shell: &Rc<Shell>, field: LibraryField) -> gtk::Co
         LibraryField::RowIndex => row_index_column(),
         LibraryField::Image => {
             let settings_shell = Rc::clone(shell);
-            artwork_column::<PlaylistSummary, _, _>(
+            artwork_column::<PlaylistSummary, _>(
                 shell,
                 "Image",
                 column_width(LibraryField::Image),
@@ -102,7 +101,6 @@ pub(crate) fn playlist_column(shell: &Rc<Shell>, field: LibraryField) -> gtk::Co
                         prefer_server_cover,
                     )
                 },
-                |playlist| stable_seed(playlist.playlist.id.as_str()),
             )
         }
         LibraryField::Title | LibraryField::TitleMerged => {
@@ -203,7 +201,7 @@ pub(crate) fn smart_playlist_column(
 ) -> gtk::ColumnViewColumn {
     match field {
         LibraryField::RowIndex => row_index_column(),
-        LibraryField::Image => artwork_column::<SmartPlaylistSummary, _, _>(
+        LibraryField::Image => artwork_column::<SmartPlaylistSummary, _>(
             shell,
             "Image",
             column_width(LibraryField::Image),
@@ -213,7 +211,6 @@ pub(crate) fn smart_playlist_column(
                     &playlist.representative_albums,
                 )
             },
-            |playlist| stable_seed(playlist.smart_playlist.id.as_str()),
         ),
         LibraryField::Title | LibraryField::TitleMerged => {
             smart_playlist_title_column(shell, "Title", 220, |playlist| {
@@ -333,7 +330,6 @@ pub(crate) fn track_column_for_key(
                 artwork: ArtworkBinding::track,
                 title: |track: &Track| track.title.clone(),
                 subtitle: |track: &Track| track.artist.clone(),
-                seed: |track: &Track| stable_seed(track.id.as_str()),
                 subtitle_links: |track: &Track| Some(track_artist_links(track)),
                 context_menu: true,
             },
@@ -663,7 +659,7 @@ pub(crate) fn track_row_index_cell(text: &str) -> gtk::Overlay {
     label.set_single_line_mode(true);
     cell.set_child(Some(&label));
 
-    let playing = gtk::Image::from_icon_name("media-playback-start-symbolic");
+    let playing = gtk::Image::from_icon_name("media-playback-start-bundled-symbolic");
     playing.add_css_class("track-row-index-playing");
     playing.set_pixel_size(14);
     playing.set_halign(gtk::Align::Center);
@@ -671,7 +667,7 @@ pub(crate) fn track_row_index_cell(text: &str) -> gtk::Overlay {
     playing.set_margin_start(2);
     cell.add_overlay(&playing);
 
-    let paused = gtk::Image::from_icon_name("media-playback-pause-symbolic");
+    let paused = gtk::Image::from_icon_name("media-playback-pause-bundled-symbolic");
     paused.add_css_class("track-row-index-paused");
     paused.set_pixel_size(14);
     paused.set_halign(gtk::Align::Center);
@@ -736,7 +732,7 @@ pub(crate) fn album_image_column(
             return;
         };
         let current_album = Rc::new(RefCell::new(None::<AlbumSummary>));
-        let cover = ArtworkTile::new(48, 0);
+        let cover = ArtworkTile::new(48);
         let widget = cover.widget();
         install_dynamic_album_context_menu(
             &widget,
@@ -769,7 +765,6 @@ pub(crate) fn album_image_column(
         bind_shell.bind_artwork_tile(
             &cell.cover,
             ArtworkBinding::album(&album.album),
-            album.album.color_seed,
             48,
             THUMB_COVER_SIZE,
         );
@@ -919,7 +914,7 @@ pub(crate) fn album_merged_column(
         let row = gtk::Box::new(gtk::Orientation::Horizontal, 10);
         row.set_valign(gtk::Align::Center);
 
-        let cover = ArtworkTile::new(48, 0);
+        let cover = ArtworkTile::new(48);
         row.append(&cover.widget());
 
         let labels = gtk::Box::new(gtk::Orientation::Vertical, 2);
@@ -990,7 +985,6 @@ pub(crate) fn album_merged_column(
         bind_shell.bind_artwork_tile(
             &cell.cover,
             ArtworkBinding::album(&album.album),
-            album.album.color_seed,
             48,
             THUMB_COVER_SIZE,
         );
@@ -1074,30 +1068,27 @@ fn install_artist_list_item_context_menu(
     );
 }
 
-pub(crate) fn artwork_column<T, F, S>(
+pub(crate) fn artwork_column<T, F>(
     shell: &Rc<Shell>,
     title: &str,
     width: i32,
     candidates: F,
-    seed: S,
 ) -> gtk::ColumnViewColumn
 where
     T: Clone + 'static,
     F: Fn(&T) -> ArtworkBinding + 'static,
-    S: Fn(&T) -> u32 + 'static,
 {
     let factory = gtk::SignalListItemFactory::new();
     let cells = FactoryCells::<LibraryArtworkCell>::new();
     let shell = Rc::clone(shell);
     let candidates = Rc::new(candidates);
-    let seed = Rc::new(seed);
 
     let setup_cells = cells.clone();
     factory.connect_setup(move |_, item| {
         let Some(item) = item.downcast_ref::<gtk::ListItem>() else {
             return;
         };
-        let cover = ArtworkTile::new(48, 0);
+        let cover = ArtworkTile::new(48);
         item.set_child(Some(&cover.widget()));
         setup_cells.insert(item, LibraryArtworkCell { cover });
     });
@@ -1118,13 +1109,7 @@ where
         let Some(cell) = bind_cells.get(item) else {
             return;
         };
-        bind_shell.bind_artwork_tile(
-            &cell.cover,
-            candidates(&data),
-            seed(&data),
-            48,
-            THUMB_COVER_SIZE,
-        );
+        bind_shell.bind_artwork_tile(&cell.cover, candidates(&data), 48, THUMB_COVER_SIZE);
     });
     let unbind_shell = Rc::clone(&shell);
     let unbind_cells = cells.clone();
@@ -1156,7 +1141,7 @@ pub(crate) fn artist_image_column(shell: &Rc<Shell>) -> gtk::ColumnViewColumn {
         let Some(item) = item.downcast_ref::<gtk::ListItem>() else {
             return;
         };
-        let cover = ArtworkTile::new(48, 0);
+        let cover = ArtworkTile::new(48);
         let widget = cover.widget();
         install_artist_list_item_context_menu(&widget, &setup_shell, item);
         item.set_child(Some(&widget));
@@ -1178,7 +1163,6 @@ pub(crate) fn artist_image_column(shell: &Rc<Shell>) -> gtk::ColumnViewColumn {
         bind_shell.bind_artwork_tile(
             &cell.cover,
             ArtworkBinding::artist(&artist.artwork),
-            stable_seed(artist.artist.id.as_str()),
             48,
             THUMB_COVER_SIZE,
         );
@@ -1346,7 +1330,7 @@ pub(crate) fn track_image_column(
             return;
         };
         let current_track = Rc::new(RefCell::new(None::<Track>));
-        let cover = ArtworkTile::new(48, 0);
+        let cover = ArtworkTile::new(48);
         let widget = cover.widget();
         install_track_cell_context_menu(&widget, &setup_shell, Rc::clone(&current_track));
         item.set_child(Some(&widget));
@@ -1374,13 +1358,7 @@ pub(crate) fn track_image_column(
         let Some(cell) = bind_cells.get(item) else {
             return;
         };
-        bind_shell.bind_artwork_tile(
-            &cell.cover,
-            artwork,
-            stable_seed(track.id.as_str()),
-            48,
-            THUMB_COVER_SIZE,
-        );
+        bind_shell.bind_artwork_tile(&cell.cover, artwork, 48, THUMB_COVER_SIZE);
         *cell.current_track.borrow_mut() = Some(track);
     });
 
@@ -1534,23 +1512,21 @@ where
     column
 }
 
-pub(crate) struct TrackMergedColumnValues<ItemTrack, Artwork, Title, Subtitle, Seed, SubtitleLinks>
-{
+pub(crate) struct TrackMergedColumnValues<ItemTrack, Artwork, Title, Subtitle, SubtitleLinks> {
     pub(crate) track: ItemTrack,
     pub(crate) artwork: Artwork,
     pub(crate) title: Title,
     pub(crate) subtitle: Subtitle,
-    pub(crate) seed: Seed,
     pub(crate) subtitle_links: SubtitleLinks,
     pub(crate) context_menu: bool,
 }
 
-pub(crate) fn track_merged_column<T, ItemTrack, Artwork, Title, Subtitle, Seed, SubtitleLinks>(
+pub(crate) fn track_merged_column<T, ItemTrack, Artwork, Title, Subtitle, SubtitleLinks>(
     shell: &Rc<Shell>,
     title: &'static str,
     width: i32,
     playing: TrackRowPlayingIndicator,
-    values: TrackMergedColumnValues<ItemTrack, Artwork, Title, Subtitle, Seed, SubtitleLinks>,
+    values: TrackMergedColumnValues<ItemTrack, Artwork, Title, Subtitle, SubtitleLinks>,
 ) -> gtk::ColumnViewColumn
 where
     T: Clone + 'static,
@@ -1558,7 +1534,6 @@ where
     Artwork: Fn(&T) -> ArtworkBinding + 'static,
     Title: Fn(&T) -> String + 'static,
     Subtitle: Fn(&T) -> String + 'static,
-    Seed: Fn(&T) -> u32 + 'static,
     SubtitleLinks: Fn(&T) -> Option<DetailLinks> + 'static,
 {
     let factory = gtk::SignalListItemFactory::new();
@@ -1569,7 +1544,6 @@ where
         artwork: artwork_value,
         title: title_value,
         subtitle: subtitle_value,
-        seed,
         subtitle_links,
         context_menu,
     } = values;
@@ -1577,7 +1551,6 @@ where
     let item_track = Rc::new(item_track);
     let artwork_value = Rc::new(artwork_value);
     let subtitle_value = Rc::new(subtitle_value);
-    let seed = Rc::new(seed);
     let subtitle_links = Rc::new(subtitle_links);
 
     let setup_shell = Rc::clone(&shell);
@@ -1590,7 +1563,7 @@ where
         let row = gtk::Box::new(gtk::Orientation::Horizontal, 10);
         row.set_valign(gtk::Align::Center);
 
-        let cover = ArtworkTile::new(48, 0);
+        let cover = ArtworkTile::new(48);
         row.append(&cover.widget());
 
         let labels = gtk::Box::new(gtk::Orientation::Vertical, 2);
@@ -1660,7 +1633,7 @@ where
         let Some(cell) = bind_cells.get(item) else {
             return;
         };
-        bind_shell.bind_artwork_tile(&cell.cover, artwork, seed(&value), 48, THUMB_COVER_SIZE);
+        bind_shell.bind_artwork_tile(&cell.cover, artwork, 48, THUMB_COVER_SIZE);
         cell.title.set_text(&title_value(&value));
         let subtitle = subtitle_value(&value);
         let subtitle_links = subtitle_links(&value);

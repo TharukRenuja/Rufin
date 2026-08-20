@@ -33,6 +33,8 @@ pub struct Settings {
     #[serde(default = "default_language_preference")]
     pub language: String,
     pub private_mode: bool,
+    #[serde(default)]
+    pub cast_proxy_enabled: bool,
     pub notifications_enabled: bool,
     #[serde(default = "default_true")]
     pub control_notifications_enabled: bool,
@@ -60,8 +62,8 @@ pub struct Settings {
     pub seekbar_waveform_enabled: bool,
     #[serde(default)]
     pub tray_enabled: bool,
-    #[serde(default)]
-    pub exit_to_tray: bool,
+    #[serde(default, alias = "exit_to_tray")]
+    pub keep_running_after_close: bool,
     #[serde(default)]
     pub start_minimized: bool,
     #[serde(default = "default_true")]
@@ -88,6 +90,8 @@ pub struct Settings {
     pub window_height: Option<i32>,
     #[serde(default = "default_lyrics_panel_visible")]
     pub lyrics_panel_visible: bool,
+    #[serde(default)]
+    pub visualizer_panel_visible: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub queue_lyrics_height: Option<i32>,
     #[serde(default)]
@@ -106,6 +110,7 @@ impl Default for Settings {
             accent_preference: AccentPreference::System,
             language: default_language_preference(),
             private_mode: false,
+            cast_proxy_enabled: false,
             notifications_enabled: false,
             control_notifications_enabled: true,
             release_notifications_enabled: true,
@@ -120,7 +125,7 @@ impl Default for Settings {
             downloads: Vec::new(),
             seekbar_waveform_enabled: false,
             tray_enabled: false,
-            exit_to_tray: false,
+            keep_running_after_close: false,
             start_minimized: false,
             type_to_search_enabled: true,
             rich_presence: RichPresenceSettings::default(),
@@ -134,6 +139,7 @@ impl Default for Settings {
             window_width: None,
             window_height: None,
             lyrics_panel_visible: true,
+            visualizer_panel_visible: false,
             queue_lyrics_height: None,
             library_lists: default_library_list_settings(),
             folder_view: FolderViewSettings::default(),
@@ -172,8 +178,10 @@ impl Settings {
         self.layout.sanitize();
         self.sidebar.sanitize();
         self.context_menu.sanitize();
+        if self.keep_running_after_close {
+            self.tray_enabled = true;
+        }
         if !self.tray_enabled {
-            self.exit_to_tray = false;
             self.start_minimized = false;
         }
         if let Some((width, height)) = sanitized_window_size(self.window_width, self.window_height)

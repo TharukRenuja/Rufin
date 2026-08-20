@@ -27,6 +27,9 @@ serde.workspace = true
 tracing.workspace = true
 tokio = { workspace = true, features = ["rt-multi-thread"] }
 
+[target.'cfg(target_os = "linux")'.dependencies]
+ashpd.workspace = true
+
 [dev-dependencies]
 proptest = "1.6.0"
 serde_json.workspace = true

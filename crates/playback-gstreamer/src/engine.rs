@@ -1,4 +1,4 @@
-use super::audio::{SharedLoudnessTags, apply_shared_loudness, audio_outputs_share_current_target};
+use super::audio::{SharedLoudnessTags, apply_shared_loudness, audio_output_is_available};
 use super::pipeline::{AboutToFinishAction, PlayerPipeline, SourceClock};
 #[cfg(test)]
 use super::waveform::visualizer_pipeline_is_live;
@@ -366,9 +366,34 @@ impl PendingSeek {
         }
     }
 }
+
+#[derive(Clone, Copy, Debug)]
+struct RepeatedSeekGuard {
+    target_millis: u64,
+    quiet_until: Instant,
+}
+
+impl RepeatedSeekGuard {
+    fn new(target_millis: u64, now: Instant) -> Self {
+        Self {
+            target_millis,
+            quiet_until: now + SEEK_SETTLE_WINDOW,
+        }
+    }
+
+    fn suppresses(&mut self, target_millis: u64, now: Instant) -> bool {
+        if self.target_millis != target_millis || now >= self.quiet_until {
+            return false;
+        }
+        self.quiet_until = now + SEEK_SETTLE_WINDOW;
+        true
+    }
+}
+
 #[derive(Debug)]
 pub(super) struct SharedBackendState {
     pub(super) settings: BackendAudioSettings,
+    pub(super) playback_rate: f64,
     pub(super) current: Option<PreparedRun>,
     pub(super) next: Option<PreparedNext>,
     pub(super) gapless_pending: Option<PreparedNext>,
@@ -391,6 +416,7 @@ impl SharedBackendState {
             active: Slot::Primary,
             crossfade: None,
             visualizer_enabled: false,
+            playback_rate: DEFAULT_PLAYBACK_RATE,
             pipeline_ids: [None, None],
             settings,
         }
@@ -470,6 +496,7 @@ pub(super) struct GstEngine {
     pub(super) last_position_tick: Instant,
     pub(super) state: BackendState,
     pub(super) pending_seek: Option<PendingSeek>,
+    repeated_seek_guard: Option<RepeatedSeekGuard>,
     pub(super) status_fade: Option<StatusFade>,
     pub(super) restore_output_on_playing: bool,
     pub(super) play_command_started_at: Option<Instant>,
@@ -494,6 +521,7 @@ impl GstEngine {
             last_position_tick: Instant::now(),
             state: BackendState::Stopped,
             pending_seek: None,
+            repeated_seek_guard: None,
             status_fade: None,
             restore_output_on_playing: false,
             play_command_started_at: None,
@@ -518,6 +546,7 @@ impl GstEngine {
         settings: &BackendAudioSettings,
         volume: f64,
         muted: bool,
+        playback_rate: f64,
         startup_state: gst::State,
     ) -> Result<PipelineId, String> {
         let id = self.next_pipeline_id();
@@ -529,6 +558,7 @@ impl GstEngine {
             settings,
             volume,
             muted,
+            playback_rate,
             startup_state,
         );
         if result.is_err() {
@@ -604,20 +634,19 @@ impl GstEngine {
             let should_prepare = match next.transition {
                 NextTransition::Crossfade { .. } => true,
                 NextTransition::Gapless => {
-                    next.stream.window().is_some()
-                        && (!adjacent_window_can_reuse_pipeline(&shared.settings)
-                            || !streams_are_adjacent_windows(&current.stream, &next.stream))
+                    gapless_uses_separate_pipeline(&shared.settings, current, next)
                 }
             };
             should_prepare.then(|| {
                 (
                     inactive_slot(shared.active),
                     shared.settings.clone(),
+                    shared.playback_rate,
                     shared.settings.muted,
                 )
             })
         })();
-        let Some((slot, settings, muted)) = context else {
+        let Some((slot, settings, playback_rate, muted)) = context else {
             self.clear_incoming();
             return;
         };
@@ -625,7 +654,15 @@ impl GstEngine {
         self.clear_incoming();
         self.stop_pipeline(slot);
         let item = PreparedRun::from_next(next);
-        let id = match self.start_pipeline(slot, &item, &settings, 0.0, muted, gst::State::Paused) {
+        let id = match self.start_pipeline(
+            slot,
+            &item,
+            &settings,
+            0.0,
+            muted,
+            playback_rate,
+            gst::State::Paused,
+        ) {
             Ok(id) => id,
             Err(error) => {
                 self.report_next_preparation_failure(next.run, error);
@@ -672,6 +709,7 @@ impl GstEngine {
     }
 
     fn handle_incoming_async_done(&mut self, slot: Slot, id: PipelineId) {
+        let needs_initial_rate_seek = self.pipeline_for_slot(slot).needs_initial_rate_seek();
         let Some(incoming) = self
             .incoming
             .as_mut()
@@ -680,7 +718,9 @@ impl GstEngine {
             return;
         };
         match incoming.phase {
-            IncomingPhase::Prerolling if incoming.item.stream.end_millis().is_some() => {
+            IncomingPhase::Prerolling
+                if incoming.item.stream.end_millis().is_some() || needs_initial_rate_seek =>
+            {
                 incoming.phase = IncomingPhase::Seeking;
                 if let Err(error) = self.pipeline_for_slot(slot).seek_millis(0) {
                     self.fail_incoming(slot, id, error);
@@ -1096,23 +1136,40 @@ impl GstEngine {
                 current,
                 next,
                 start_position_millis,
-            } => self.play_prepared(
-                PreparedRun {
-                    run,
-                    stream: current,
-                },
-                next,
-                start_position_millis,
-            ),
+                playback_rate,
+            } => {
+                lock_recover(&self.shared).playback_rate = sanitize_playback_rate(playback_rate);
+                self.play_prepared(
+                    PreparedRun {
+                        run,
+                        stream: current,
+                    },
+                    next,
+                    start_position_millis,
+                )
+            }
             BackendCommand::PrepareNext { current_run, next } => {
                 if self.run_is_current(current_run) {
                     self.prepare_next(next);
                 }
                 Ok(())
             }
-            BackendCommand::ConfigureAudio(settings) => {
-                let previous_output = self.settings().audio_output;
+            BackendCommand::ConfigureAudio(mut settings) => {
+                let previous_settings = self.settings();
+                if let Some(selected) = settings.audio_output.as_deref()
+                    && !audio_output_is_available(selected)
+                {
+                    settings.audio_output =
+                        if settings.audio_output != previous_settings.audio_output {
+                            previous_settings.audio_output.clone()
+                        } else {
+                            None
+                        };
+                }
+                let previous_output = previous_settings.audio_output;
                 let output_changed = previous_output != settings.audio_output;
+                let preserve_pitch_changed =
+                    previous_settings.preserve_pitch != settings.preserve_pitch;
                 if self.desired_playing {
                     self.cancel_status_fade();
                 } else {
@@ -1128,17 +1185,13 @@ impl GstEngine {
                             self.push_state(BackendState::Paused);
                         }
                     }
-                    let retargeted = if output_changed
-                        && audio_outputs_share_current_target(
-                            previous_output.as_deref(),
-                            settings.audio_output.as_deref(),
-                        ) {
+                    let retargeted = if output_changed && !audio_output_change_requires_restart() {
                         self.active_pipeline_mut()
                             .try_reconfigure_audio(&settings)?
                     } else {
                         false
                     };
-                    let restart = if output_changed && !retargeted {
+                    let restart = if preserve_pitch_changed || (output_changed && !retargeted) {
                         let current = lock_recover(&self.shared).current.clone();
                         current.map(|current| {
                             let position_millis = self
@@ -1232,6 +1285,7 @@ impl GstEngine {
                 );
                 Ok(())
             }
+            BackendCommand::SetPlaybackRate(rate) => self.set_playback_rate(rate),
             BackendCommand::SetVisualizerEnabled(enabled) => self.set_visualizer_enabled(enabled),
             BackendCommand::Play { run } => {
                 if self.run_is_current(run) {
@@ -1258,6 +1312,7 @@ impl GstEngine {
                 self.desired_playing = false;
                 let _ = self.cancel_status_fade();
                 self.pending_seek = None;
+                self.repeated_seek_guard = None;
                 self.ended_run = None;
                 self.incoming = None;
                 self.pending_handoff = None;
@@ -1327,11 +1382,13 @@ impl GstEngine {
         self.play_command_started_at = Some(command_started_at);
         let _ = self.cancel_status_fade();
         self.pending_seek = None;
+        self.repeated_seek_guard = None;
         self.ended_run = None;
         self.clear_incoming();
         self.pending_handoff = None;
         self.restore_output_on_playing = false;
         let settings = self.settings();
+        let playback_rate = self.playback_rate();
         self.stop_pipeline(Slot::Primary);
         self.stop_pipeline(Slot::Secondary);
         self.secondary.set_visualizer_tap(None);
@@ -1361,7 +1418,9 @@ impl GstEngine {
         }
         self.push_state(BackendState::Buffering);
         let pipeline_started_at = Instant::now();
-        let needs_preroll_seek = start_millis > 0 || item.stream.end_millis().is_some();
+        let needs_preroll_seek = start_millis > 0
+            || item.stream.end_millis().is_some()
+            || playback_rate != DEFAULT_PLAYBACK_RATE;
         let startup_state = if needs_preroll_seek {
             gst::State::Paused
         } else {
@@ -1373,6 +1432,7 @@ impl GstEngine {
             &settings,
             output_gain,
             muted,
+            playback_rate,
             startup_state,
         )?;
         self.restore_output_on_playing = true;
@@ -1533,10 +1593,22 @@ impl GstEngine {
             self.push_logical_position(0);
             return Ok(());
         }
+        let now = Instant::now();
+        let physical_target = self.active_pipeline().physical_seek_target(millis);
+        if self
+            .repeated_seek_guard
+            .as_mut()
+            .is_some_and(|guard| guard.suppresses(physical_target, now))
+        {
+            debug!(
+                target_millis = millis,
+                "ignored repeated seek until same-target input settles"
+            );
+            return Ok(());
+        }
         if logical_state == BackendState::Paused {
             self.active_pipeline().set_state(gst::State::Paused)?;
         }
-        let physical_target = self.active_pipeline().physical_seek_target(millis);
         if let Err(error) = self.active_pipeline().seek_millis(millis) {
             warn!(
                 %error,
@@ -1548,6 +1620,7 @@ impl GstEngine {
             }
             return Ok(());
         }
+        self.repeated_seek_guard = Some(RepeatedSeekGuard::new(physical_target, Instant::now()));
         self.pending_seek = Some(PendingSeek::interactive(
             physical_target,
             logical_state,
@@ -1606,27 +1679,40 @@ impl GstEngine {
         position_millis: u64,
         target_state: gst::State,
     ) -> Result<(u64, bool), String> {
-        let (settings, volume, muted, visualizer_enabled, slot) = self.session_context();
+        self.repeated_seek_guard = None;
+        let (settings, volume, muted, playback_rate, visualizer_enabled, slot) =
+            self.session_context();
         let start_millis = SourceClock::from_stream(&item.stream).physical_seek(position_millis);
-        let needs_preroll_seek = start_millis > 0 || item.stream.end_millis().is_some();
+        let needs_preroll_seek = start_millis > 0
+            || item.stream.end_millis().is_some()
+            || playback_rate != DEFAULT_PLAYBACK_RATE;
         let startup_state = if needs_preroll_seek {
             gst::State::Paused
         } else {
             target_state
         };
         self.stop_pipeline(slot);
-        self.start_pipeline(slot, &item, &settings, volume, muted, startup_state)?;
+        self.start_pipeline(
+            slot,
+            &item,
+            &settings,
+            volume,
+            muted,
+            playback_rate,
+            startup_state,
+        )?;
         let tap = self.visualizer_tap(slot, visualizer_enabled);
         self.pipeline_for_slot_mut(slot).set_visualizer_tap(tap);
         Ok((start_millis, needs_preroll_seek))
     }
 
-    fn session_context(&self) -> (BackendAudioSettings, f64, bool, bool, Slot) {
+    fn session_context(&self) -> (BackendAudioSettings, f64, bool, f64, bool, Slot) {
         let shared = lock_recover(&self.shared);
         (
             shared.settings.clone(),
             shared.settings.output_gain(),
             shared.settings.muted,
+            shared.playback_rate,
             shared.visualizer_enabled,
             shared.active,
         )
@@ -2087,13 +2173,7 @@ impl GstEngine {
                 self.push_position(clock_millis(position));
             }
         } else {
-            if let Some(pending) = self.pending_seek.as_mut() {
-                pending.resume_after_seek = false;
-            }
             debug!(target_millis, "deferred startup seek started");
-            if resume_after_seek {
-                self.resume_after_startup_seek();
-            }
         }
         true
     }
@@ -2540,6 +2620,8 @@ impl GstEngine {
         let Some((next, crossfade_ms)) = request else {
             return;
         };
+        let crossfade_start_remaining =
+            crossfade_start_remaining_millis(crossfade_ms, self.playback_rate());
         let Some(position) = self.active_pipeline().position() else {
             return;
         };
@@ -2555,8 +2637,8 @@ impl GstEngine {
             .logical_remaining(position_ms, duration_ms);
         if logical_duration == 0
             || logical_position >= logical_duration
-            || remaining > crossfade_ms
-            || logical_duration <= crossfade_ms + 1_000
+            || remaining > crossfade_start_remaining
+            || logical_duration <= crossfade_start_remaining.saturating_add(1_000)
         {
             return;
         }
@@ -2638,6 +2720,58 @@ impl GstEngine {
 
     fn settings(&self) -> BackendAudioSettings {
         lock_recover(&self.shared).settings.clone()
+    }
+
+    fn playback_rate(&self) -> f64 {
+        lock_recover(&self.shared).playback_rate
+    }
+
+    fn set_playback_rate(&mut self, rate: f64) -> Result<(), String> {
+        let rate = sanitize_playback_rate(rate);
+        let (active, crossfading) = {
+            let mut shared = lock_recover(&self.shared);
+            shared.playback_rate = rate;
+            (shared.active, shared.crossfade.is_some())
+        };
+        let handoff_in_progress = self.pending_handoff.is_some();
+        let reprepare = self
+            .incoming
+            .as_ref()
+            .filter(|incoming| incoming.phase == IncomingPhase::Seeking)
+            .map(|incoming| incoming.item.clone());
+        if reprepare.is_some() {
+            self.clear_incoming();
+        }
+
+        for slot in [Slot::Primary, Slot::Secondary] {
+            let incoming_phase = self
+                .incoming
+                .as_ref()
+                .filter(|incoming| incoming.slot == slot)
+                .map(|incoming| incoming.phase);
+            let seek_current_position = slot == active
+                || crossfading
+                || handoff_in_progress
+                || matches!(
+                    incoming_phase,
+                    Some(IncomingPhase::Seeking | IncomingPhase::Ready)
+                );
+            let seek_started = self
+                .pipeline_for_slot_mut(slot)
+                .set_playback_rate(rate, seek_current_position)?;
+            if seek_started
+                && let Some(incoming) = self
+                    .incoming
+                    .as_mut()
+                    .filter(|incoming| incoming.slot == slot)
+            {
+                incoming.phase = IncomingPhase::Seeking;
+            }
+        }
+        if let Some(next) = reprepare {
+            self.prepare_incoming(&next);
+        }
+        Ok(())
     }
 
     fn output_gain_state(&self) -> (f64, bool) {
@@ -2820,6 +2954,16 @@ impl GstEngine {
         self.stop_pipeline(Slot::Secondary);
     }
 }
+
+#[cfg(target_os = "linux")]
+fn audio_output_change_requires_restart() -> bool {
+    std::env::var_os("FLATPAK_ID").is_some()
+}
+
+#[cfg(not(target_os = "linux"))]
+fn audio_output_change_requires_restart() -> bool {
+    false
+}
 #[instrument(skip(receiver, events))]
 fn run_gstreamer_thread(
     receiver: Receiver<BackendCommand>,
@@ -2967,12 +3111,13 @@ pub(super) fn clear_prepared_next_state(shared: &mut SharedBackendState) -> Prep
 }
 
 fn gapless_preload_should_run(shared: &SharedBackendState, next: &PreparedNext) -> bool {
+    let Some(current) = shared.current.as_ref() else {
+        return false;
+    };
     next.transition == NextTransition::Gapless
         && next.stream.allows_preloading
-        && shared
-            .current
-            .as_ref()
-            .is_some_and(|current| current.stream.allows_preloading)
+        && current.stream.allows_preloading
+        && !gapless_uses_separate_pipeline(&shared.settings, current, next)
 }
 
 pub(super) fn gapless_preload_source_is_supported(uri: &str) -> bool {
@@ -2985,6 +3130,17 @@ fn inactive_slot(slot: Slot) -> Slot {
     }
 }
 
+fn gapless_uses_separate_pipeline(
+    settings: &BackendAudioSettings,
+    current: &PreparedRun,
+    next: &PreparedNext,
+) -> bool {
+    current.stream.stream == next.stream.stream
+        || (next.stream.window().is_some()
+            && (!adjacent_window_can_reuse_pipeline(settings)
+                || !streams_are_adjacent_windows(&current.stream, &next.stream)))
+}
+
 fn streams_are_adjacent_windows(current: &ResolvedStream, next: &ResolvedStream) -> bool {
     current
         .end_millis()
@@ -2994,6 +3150,13 @@ fn streams_are_adjacent_windows(current: &ResolvedStream, next: &ResolvedStream)
 fn adjacent_window_can_reuse_pipeline(settings: &BackendAudioSettings) -> bool {
     settings.loudness_normalization == LoudnessNormalizationMode::Off
 }
+
+fn crossfade_start_remaining_millis(crossfade_millis: u64, playback_rate: f64) -> u64 {
+    ((crossfade_millis as f64) * sanitize_playback_rate(playback_rate))
+        .round()
+        .clamp(0.0, u64::MAX as f64) as u64
+}
+
 pub(super) fn push_event(events: &Arc<Mutex<EventMailbox>>, event: BackendEvent) {
     lock_recover(events).push(event);
 }
@@ -3043,6 +3206,15 @@ mod tests {
     use super::*;
 
     const ACTIVE_PIPELINE: PipelineId = PipelineId(7);
+
+    #[test]
+    fn crossfade_trigger_tracks_playback_rate() {
+        assert_eq!(crossfade_start_remaining_millis(5_000, 0.5), 2_500);
+        assert_eq!(crossfade_start_remaining_millis(5_000, 1.0), 5_000);
+        assert_eq!(crossfade_start_remaining_millis(5_000, 1.5), 7_500);
+        assert_eq!(crossfade_start_remaining_millis(5_000, 2.0), 10_000);
+    }
+
     const INCOMING_PIPELINE: PipelineId = PipelineId(8);
 
     struct HandoffFixture {
@@ -3178,6 +3350,44 @@ mod tests {
     }
 
     #[test]
+    fn repeated_stream_uses_the_separate_gapless_pipeline() {
+        let pipeline = PipelineId(5);
+        let current_run = RunId::new(10);
+        let repeated = PreparedStream::from(ResolvedStream::new("file:///music/repeated.flac"));
+        let next = PreparedNext::new(RunId::new(11), repeated.clone(), NextTransition::Gapless);
+        let mut shared = SharedBackendState::new();
+        shared.active = Slot::Primary;
+        shared.current = Some(PreparedRun {
+            run: current_run,
+            stream: repeated,
+        });
+        shared.next = Some(next.clone());
+        shared.set_pipeline_id(Slot::Primary, Some(pipeline));
+
+        assert!(gapless_uses_separate_pipeline(
+            &shared.settings,
+            shared.current.as_ref().expect("current stream"),
+            &next,
+        ));
+        let distinct = PreparedNext::new(
+            RunId::new(12),
+            ResolvedStream::new("file:///music/distinct.flac"),
+            NextTransition::Gapless,
+        );
+        assert!(!gapless_uses_separate_pipeline(
+            &shared.settings,
+            shared.current.as_ref().expect("current stream"),
+            &distinct,
+        ));
+        assert_eq!(
+            about_to_finish_action_for_pipeline(&mut shared, Slot::Primary, pipeline, 1),
+            AboutToFinishAction::Ignore
+        );
+        assert_eq!(shared.next, Some(next));
+        assert!(shared.gapless_pending.is_none());
+    }
+
+    #[test]
     fn fresh_playback_applies_effective_gain_before_processing_state_changes() {
         ensure_gstreamer_initialized().expect("initialize GStreamer");
         let directory = tempfile::tempdir().expect("playback fixture directory");
@@ -3244,19 +3454,58 @@ mod tests {
     }
 
     #[test]
-    fn device_change_restores_playback_from_a_physically_paused_output() {
+    fn startup_seek_stays_silent_until_position_confirmation() {
         ensure_gstreamer_initialized().expect("initialize GStreamer");
         let directory = tempfile::tempdir().expect("playback fixture directory");
-        let path = directory.path().join("audio-device-change.wav");
+        let path = directory.path().join("startup-seek.wav");
         write_long_silent_wave(&path);
         let uri = gst::glib::filename_to_uri(&path, None).expect("playback fixture URI");
         let events = Arc::new(Mutex::new(EventMailbox::default()));
-        let mut engine = GstEngine::new(Arc::clone(&events));
-        let settings = BackendAudioSettings {
+        let mut engine = GstEngine::new(events);
+        lock_recover(&engine.shared).settings = BackendAudioSettings {
             audio_output: Some("fakesink".to_string()),
             ..BackendAudioSettings::default()
         };
-        lock_recover(&engine.shared).settings = settings.clone();
+
+        engine
+            .play_prepared(
+                PreparedRun {
+                    run: RunId::new(1),
+                    stream: ResolvedStream::new(uri.as_str()).into(),
+                },
+                None,
+                5_000,
+            )
+            .expect("start playback with a saved position");
+        assert!(engine.primary.has_or_targets_state(gst::State::Paused));
+        assert_eq!(engine.state, BackendState::Buffering);
+        assert!(
+            engine
+                .pending_seek
+                .as_ref()
+                .is_some_and(|pending| pending.resume_after_seek)
+        );
+        engine.handle_state_changed(BackendState::Playing);
+        assert_eq!(engine.state, BackendState::Buffering);
+
+        engine.push_position(5_000);
+        assert_eq!(engine.state, BackendState::Playing);
+        engine.shutdown();
+    }
+
+    #[test]
+    fn visualizer_emits_levels_for_the_current_playing_pipeline() {
+        ensure_gstreamer_initialized().expect("initialize GStreamer");
+        let directory = tempfile::tempdir().expect("playback fixture directory");
+        let path = directory.path().join("current-visualizer.wav");
+        write_long_silent_wave(&path);
+        let uri = gst::glib::filename_to_uri(&path, None).expect("playback fixture URI");
+        let events = Arc::new(Mutex::new(EventMailbox::default()));
+        let mut engine = GstEngine::new(events);
+        lock_recover(&engine.shared).settings = BackendAudioSettings {
+            audio_output: Some("appsink".to_string()),
+            ..BackendAudioSettings::default()
+        };
 
         engine
             .play_prepared(
@@ -3267,51 +3516,236 @@ mod tests {
                 None,
                 0,
             )
-            .expect("start playback");
+            .expect("start current playback");
         assert!(
             engine
                 .primary
-                .wait_for_state(gst::State::Playing, gst::ClockTime::from_seconds(2))
+                .wait_for_state(gst::State::Playing, gst::ClockTime::from_seconds(10))
         );
         engine
-            .primary
-            .set_state(gst::State::Paused)
-            .expect("simulate inactive output pause");
-        assert!(
-            engine
+            .set_visualizer_enabled(true)
+            .expect("enable visualizer");
+
+        let deadline = Instant::now() + Duration::from_secs(2);
+        let levels = loop {
+            let _ = engine
                 .primary
-                .wait_for_state(gst::State::Paused, gst::ClockTime::from_seconds(2))
-        );
-        engine
-            .primary
-            .seek_millis(100)
-            .expect("position the physically paused output");
-        assert!(engine.desired_playing);
+                .try_pull_output_sample(gst::ClockTime::from_mseconds(50));
+            if let Some(levels) =
+                lock_recover(&engine.events)
+                    .drain()
+                    .into_iter()
+                    .find_map(|event| match event {
+                        BackendEvent::Visualizer { levels, .. } if !levels.is_empty() => {
+                            Some(levels)
+                        }
+                        _ => None,
+                    })
+            {
+                break levels;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "current playback did not emit visualizer levels"
+            );
+            std::thread::yield_now();
+        };
+
+        assert!(!levels.is_empty());
+        engine.shutdown();
+    }
+
+    #[test]
+    fn repeated_seek_guard_stays_active_until_input_quiets() {
+        let started_at = Instant::now();
+        let mut guard = RepeatedSeekGuard::new(1_000, started_at);
+        let first_deadline = guard.quiet_until;
+
+        assert!(guard.suppresses(1_000, started_at + Duration::from_millis(118)));
+        assert!(guard.quiet_until > first_deadline);
+        assert!(guard.suppresses(1_000, first_deadline));
+        assert!(!guard.suppresses(1_500, first_deadline));
+        assert!(!guard.suppresses(1_000, guard.quiet_until));
+    }
+
+    #[test]
+    fn device_change_restores_playback_from_a_physically_paused_output() {
+        ensure_gstreamer_initialized().expect("initialize GStreamer");
+        let directory = tempfile::tempdir().expect("playback fixture directory");
+        let path = directory.path().join("audio-device-change.wav");
+        write_long_silent_wave(&path);
+        let uri = gst::glib::filename_to_uri(&path, None).expect("playback fixture URI");
+        let events = Arc::new(Mutex::new(EventMailbox::default()));
+        let mut engine = GstEngine::new(Arc::clone(&events));
+        let current = PreparedRun {
+            run: RunId::new(1),
+            stream: ResolvedStream::new(uri.as_str()).into(),
+        };
+        let settings = BackendAudioSettings {
+            audio_output: Some("fakesink".to_string()),
+            ..BackendAudioSettings::default()
+        };
+        let pipeline_id = engine
+            .start_pipeline(
+                Slot::Primary,
+                &current,
+                &settings,
+                settings.volume,
+                settings.muted,
+                DEFAULT_PLAYBACK_RATE,
+                gst::State::Paused,
+            )
+            .expect("start paused output");
+        {
+            let mut shared = lock_recover(&engine.shared);
+            shared.settings = settings.clone();
+            shared.current = Some(current);
+            shared.set_pipeline_id(Slot::Primary, Some(pipeline_id));
+        }
+        engine.desired_playing = true;
+        engine.state = BackendState::Playing;
 
         let mut changed = settings;
         changed.audio_output = Some("appsink".to_string());
         engine.handle_command(BackendCommand::ConfigureAudio(changed));
 
         let applied = lock_recover(&events).drain();
-        let resume_deadline = Instant::now() + Duration::from_secs(2);
-        let resumed = loop {
-            engine.poll_bus();
-            if engine
-                .primary
-                .wait_for_state(gst::State::Playing, gst::ClockTime::ZERO)
-            {
-                break true;
-            }
-            if Instant::now() >= resume_deadline {
-                break false;
-            }
-            std::thread::yield_now();
-        };
+        assert!(engine.desired_playing);
+        assert_eq!(
+            engine.primary.audio_output_factory().as_deref(),
+            Some("appsink")
+        );
+        engine.handle_state_changed(BackendState::Playing);
+
         let resumed_events = lock_recover(&events).drain();
         assert!(
-            resumed,
+            resumed_events.iter().any(|event| matches!(
+                event,
+                BackendEvent::State {
+                    run,
+                    state: BackendState::Playing,
+                } if *run == RunId::new(1)
+            )),
             "audio configuration events: {applied:?}; resume events: {resumed_events:?}"
         );
+        engine.shutdown();
+    }
+
+    #[test]
+    fn unavailable_device_selection_keeps_the_working_output() {
+        ensure_gstreamer_initialized().expect("initialize GStreamer");
+        let directory = tempfile::tempdir().expect("playback fixture directory");
+        let path = directory.path().join("unavailable-audio-device.wav");
+        write_long_silent_wave(&path);
+        let uri = gst::glib::filename_to_uri(&path, None).expect("playback fixture URI");
+        let events = Arc::new(Mutex::new(EventMailbox::default()));
+        let mut engine = GstEngine::new(Arc::clone(&events));
+        let current = PreparedRun {
+            run: RunId::new(1),
+            stream: ResolvedStream::new(uri.as_str()).into(),
+        };
+        let settings = BackendAudioSettings {
+            audio_output: Some("fakesink".to_string()),
+            ..BackendAudioSettings::default()
+        };
+        let pipeline_id = engine
+            .start_pipeline(
+                Slot::Primary,
+                &current,
+                &settings,
+                settings.volume,
+                settings.muted,
+                DEFAULT_PLAYBACK_RATE,
+                gst::State::Paused,
+            )
+            .expect("start paused output");
+        {
+            let mut shared = lock_recover(&engine.shared);
+            shared.settings = settings.clone();
+            shared.current = Some(current);
+            shared.set_pipeline_id(Slot::Primary, Some(pipeline_id));
+        }
+        engine.desired_playing = true;
+        engine.state = BackendState::Playing;
+
+        let mut changed = settings;
+        changed.audio_output = Some("gst-device:unavailable".to_string());
+        engine.handle_command(BackendCommand::ConfigureAudio(changed));
+
+        assert!(engine.desired_playing);
+        assert_eq!(
+            lock_recover(&engine.shared)
+                .settings
+                .audio_output
+                .as_deref(),
+            Some("fakesink")
+        );
+        assert_eq!(
+            engine.primary.audio_output_factory().as_deref(),
+            Some("fakesink")
+        );
+        let applied = lock_recover(&events).drain();
+        assert!(applied.iter().any(|event| matches!(
+            event,
+            BackendEvent::AudioApplied {
+                output: Some(output),
+                ..
+            } if output == "fakesink"
+        )));
+        assert!(
+            applied
+                .iter()
+                .all(|event| !matches!(event, BackendEvent::Error { .. }))
+        );
+        engine.shutdown();
+    }
+
+    #[test]
+    fn preserve_pitch_change_restarts_the_current_pipeline() {
+        ensure_gstreamer_initialized().expect("initialize GStreamer");
+        let directory = tempfile::tempdir().expect("playback fixture directory");
+        let path = directory.path().join("preserve-pitch-change.wav");
+        write_long_silent_wave(&path);
+        let uri = gst::glib::filename_to_uri(&path, None).expect("playback fixture URI");
+        let events = Arc::new(Mutex::new(EventMailbox::default()));
+        let mut engine = GstEngine::new(events);
+        let current = PreparedRun {
+            run: RunId::new(1),
+            stream: ResolvedStream::new(uri.as_str()).into(),
+        };
+        let settings = BackendAudioSettings {
+            audio_output: Some("fakesink".to_string()),
+            preserve_pitch: true,
+            ..BackendAudioSettings::default()
+        };
+        let pipeline_id = engine
+            .start_pipeline(
+                Slot::Primary,
+                &current,
+                &settings,
+                settings.volume,
+                settings.muted,
+                DEFAULT_PLAYBACK_RATE,
+                gst::State::Paused,
+            )
+            .expect("start paused output");
+        {
+            let mut shared = lock_recover(&engine.shared);
+            shared.settings = settings.clone();
+            shared.current = Some(current);
+            shared.set_pipeline_id(Slot::Primary, Some(pipeline_id));
+        }
+        engine.state = BackendState::Paused;
+
+        let mut changed = settings;
+        changed.preserve_pitch = false;
+        engine.handle_command(BackendCommand::ConfigureAudio(changed));
+
+        let shared = lock_recover(&engine.shared);
+        assert!(!shared.settings.preserve_pitch);
+        assert_ne!(shared.pipeline_id(Slot::Primary), Some(pipeline_id));
+        assert!(shared.pipeline_id(Slot::Primary).is_some());
+        drop(shared);
         engine.shutdown();
     }
 
@@ -3335,17 +3769,16 @@ mod tests {
                 0,
             )
             .expect("start sample capture playback");
-        let deadline = Instant::now() + Duration::from_secs(2);
-        let sample = loop {
-            if let Some(sample) = engine
+        assert!(
+            engine
                 .primary
-                .try_pull_output_sample(gst::ClockTime::from_mseconds(20))
-            {
-                break sample;
-            }
-            assert!(Instant::now() < deadline, "first output sample");
-            std::thread::yield_now();
-        };
+                .wait_for_state(gst::State::Playing, gst::ClockTime::from_seconds(10)),
+            "sample capture playback state"
+        );
+        let sample = engine
+            .primary
+            .try_pull_output_sample(gst::ClockTime::ZERO)
+            .expect("first output sample");
         let buffer = sample.buffer().expect("sample buffer");
         let map = buffer.map_readable().expect("map output samples");
         let samples = map.as_slice();
@@ -3843,6 +4276,7 @@ mod tests {
                 &settings,
                 settings.volume,
                 settings.muted,
+                DEFAULT_PLAYBACK_RATE,
                 gst::State::Paused,
             )
             .expect("start inert GStreamer session");

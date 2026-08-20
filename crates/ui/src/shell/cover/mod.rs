@@ -80,7 +80,6 @@ pub(super) struct LiveArtworkBinding {
     tile: ArtworkTileWeak,
     source_id: Option<::library::SourceId>,
     artwork: ArtworkBinding,
-    seed: u32,
     render_size: i32,
     fetch_size: u32,
     defer_during_route_scroll: bool,
@@ -219,7 +218,6 @@ impl Shell {
         self: &Rc<Self>,
         tile: &ArtworkTile,
         artwork: ArtworkBinding,
-        seed: u32,
         render_size: i32,
         fetch_size: u32,
     ) {
@@ -229,7 +227,6 @@ impl Shell {
                 tile: tile.downgrade(),
                 source_id: None,
                 artwork,
-                seed,
                 render_size,
                 fetch_size,
                 defer_during_route_scroll: true,
@@ -243,7 +240,6 @@ impl Shell {
         tile: &ArtworkTile,
         source_id: &::library::SourceId,
         artwork: ArtworkBinding,
-        seed: u32,
         render_size: i32,
         fetch_size: u32,
     ) {
@@ -253,7 +249,6 @@ impl Shell {
                 tile: tile.downgrade(),
                 source_id: Some(source_id.clone()),
                 artwork,
-                seed,
                 render_size,
                 fetch_size,
                 defer_during_route_scroll: false,
@@ -265,7 +260,7 @@ impl Shell {
     fn bind_live_artwork_tile(self: &Rc<Self>, tile: &ArtworkTile, binding: LiveArtworkBinding) {
         if binding.artwork.is_empty() {
             self.cancel_artwork_tile_request(tile);
-            tile.bind_missing(binding.seed);
+            tile.bind_missing();
             self.artwork
                 .route_interaction
                 .deferred
@@ -277,7 +272,7 @@ impl Shell {
 
         if !artwork_work_allowed(binding.defer_during_route_scroll, tile.area.is_mapped()) {
             self.cancel_artwork_tile_request(tile);
-            tile.bind_pending(binding.seed);
+            tile.bind_pending();
             self.artwork
                 .route_interaction
                 .deferred
@@ -289,7 +284,6 @@ impl Shell {
 
         let source_id = binding.source_id.clone();
         let artwork = binding.artwork.clone();
-        let seed = binding.seed;
         let render_size = binding.render_size;
         let fetch_size_cap = binding.fetch_size;
         let refresh_desktop_on_ready = binding.refresh_desktop_on_ready;
@@ -301,7 +295,7 @@ impl Shell {
         let external = artwork_external_policy(&self.settings.current.borrow());
         let Some(source) = self.artwork_source(source_id.as_ref()) else {
             self.cancel_artwork_tile_request(tile);
-            tile.bind_pending(seed);
+            tile.bind_pending();
             self.remember_artwork_binding(tile, binding);
             return;
         };
@@ -324,7 +318,6 @@ impl Shell {
             .remove(&tile.identity());
         self.remember_artwork_binding(tile, binding);
         let outcome = tile.bind_selected_cover(
-            seed,
             prepared.identity.visual.clone(),
             prepared.identity.request.clone(),
         );
@@ -443,7 +436,7 @@ impl Shell {
         preview: Option<gtk::gdk::Texture>,
     ) {
         self.cancel_artwork_tile_request(tile);
-        let generation = tile.bind_pending(binding.seed);
+        let generation = tile.bind_pending();
         if let Some(texture) = preview {
             tile.set_texture_if_current(generation, texture);
         }

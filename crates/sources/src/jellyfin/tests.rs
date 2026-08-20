@@ -3,8 +3,8 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use library::{
-    AlbumArtworkFacts, MetadataChange, MetadataEdit, MetadataField, MetadataItem, MetadataItemId,
-    MetadataValues, PlaylistId, RadioSeed, StreamQuality, StreamRequest, TrackId,
+    AlbumArtworkFacts, FavoriteItemId, MetadataChange, MetadataEdit, MetadataField, MetadataItem,
+    MetadataItemId, MetadataValues, PlaylistId, RadioSeed, StreamQuality, StreamRequest, TrackId,
 };
 use wiremock::matchers::{body_json, header_regex, method, path, query_param};
 use wiremock::{Mock, MockServer, ResponseTemplate};
@@ -90,12 +90,47 @@ fn provider(server: &MockServer, token: &str) -> JellyfinSource {
     .expect("open Jellyfin provider")
 }
 
+#[tokio::test]
+async fn rating_uses_jellyfins_ten_point_value() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/UserItems/track-one/UserData"))
+        .and(query_param("userId", "user-one"))
+        .and(body_json(serde_json::json!({ "Rating": 7 })))
+        .respond_with(ResponseTemplate::new(204))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    provider(&server, "secret-token")
+        .set_rating(
+            FavoriteItemId::Track(TrackId::new("jellyfin:track:track-one")),
+            Some(7),
+        )
+        .await
+        .expect("set Jellyfin rating");
+}
+
+#[test]
+fn fractional_jellyfin_rating_decodes_to_the_nearest_half_star() {
+    let track = track_from_item(
+        serde_json::from_value::<JellyfinItem>(serde_json::json!({
+            "Id": "track-one",
+            "Name": "First",
+            "Type": "Audio",
+            "UserData": { "Rating": 7.4 }
+        }))
+        .expect("Jellyfin Track with fractional rating"),
+    );
+
+    assert_eq!(track.user_rating, Some(7));
+}
+
 fn accepted_library(batches: Vec<library::CandidateBatch>) -> Arc<library::Library> {
     let libraries = library::Libraries::memory().expect("open in-memory Library");
     let mut candidate = libraries
         .begin_source_candidate(library::CandidateHeader {
             source_id: SourceId::new("jellyfin:server:test:user:user-one"),
-            input_version: 1,
             input_digest: [1; 32],
         })
         .expect("begin Jellyfin candidate");
@@ -1058,6 +1093,74 @@ async fn search_uses_jellyfin_native_artist_album_and_track_queries() {
 }
 
 #[tokio::test]
+async fn search_normalizes_jellyfin_dual_access_artists_before_returning_results() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/Artists"))
+        .and(query_param("SearchTerm", "example"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(query(serde_json::json!([
+                {
+                    "Id": "artist-folder",
+                    "ParentId": "music-library",
+                    "Name": "Example Artist",
+                    "Type": "MusicArtist",
+                    "ImageTags": { "Primary": "artist-cover" },
+                    "ProviderIds": { "MusicBrainzArtist": "artist-mbid" }
+                },
+                {
+                    "Id": "artist-aggregate",
+                    "Name": "Example Artist",
+                    "Type": "MusicArtist"
+                }
+            ]))),
+        )
+        .expect(1)
+        .mount(&server)
+        .await;
+    for item_type in ["MusicAlbum", "Audio"] {
+        Mock::given(method("GET"))
+            .and(path("/Items"))
+            .and(query_param("IncludeItemTypes", item_type))
+            .respond_with(ResponseTemplate::new(200).set_body_json(query(serde_json::json!([]))))
+            .expect(1)
+            .mount(&server)
+            .await;
+    }
+    let source = provider(&server, "secret-token");
+
+    let results = source
+        .search(&library::SearchRequest::new("example"))
+        .await
+        .expect("search Jellyfin");
+    let requests = server
+        .received_requests()
+        .await
+        .expect("record Jellyfin Search requests");
+    let artist_fields = requests
+        .iter()
+        .find(|request| request.url.path() == "/Artists")
+        .and_then(|request| {
+            request
+                .url
+                .query_pairs()
+                .find_map(|(key, value)| (key == "Fields").then(|| value.into_owned()))
+        })
+        .expect("Jellyfin Artist fields");
+
+    assert!(artist_fields.split(',').any(|field| field == "ParentId"));
+    assert_eq!(results.artists.len(), 1);
+    assert_eq!(
+        results.artists[0].id.as_str(),
+        "jellyfin:artist:artist-aggregate"
+    );
+    assert_eq!(
+        results.artists[0].musicbrainz_artist_id.as_deref(),
+        Some("artist-mbid")
+    );
+}
+
+#[tokio::test]
 async fn home_refresh_reads_exactly_one_requested_jellyfin_section() {
     let server = MockServer::start().await;
     let cases = [
@@ -1360,6 +1463,173 @@ fn sparse_tracks_keep_the_relationships_the_server_did_provide() {
 }
 
 #[test]
+fn dual_access_artists_use_the_name_aggregate_identity_and_keep_unique_metadata() {
+    let aggregate = serde_json::from_value::<JellyfinItem>(serde_json::json!({
+        "Id": "artist-aggregate",
+        "Name": "Example Artist",
+        "Type": "MusicArtist",
+        "UserData": { "PlayCount": 4 }
+    }))
+    .expect("Jellyfin aggregate Artist");
+    let folder = serde_json::from_value::<JellyfinItem>(serde_json::json!({
+        "Id": "artist-folder",
+        "ParentId": "music-library",
+        "Name": "Example Artist",
+        "Type": "MusicArtist",
+        "ImageTags": { "Primary": "artist-cover" },
+        "ProviderIds": { "MusicBrainzArtist": "artist-mbid" },
+        "UserData": { "IsFavorite": true, "PlayCount": 4 }
+    }))
+    .expect("Jellyfin folder Artist");
+
+    let artists = normalize_artist_items(vec![folder, aggregate]);
+
+    assert_eq!(artists.len(), 1);
+    assert_eq!(artists[0].id.as_str(), "jellyfin:artist:artist-aggregate");
+    assert_eq!(artists[0].name, "Example Artist");
+    assert!(artists[0].favorite);
+    assert_eq!(artists[0].play_count, Some(4));
+    assert_eq!(
+        artists[0].musicbrainz_artist_id.as_deref(),
+        Some("artist-mbid")
+    );
+    assert_eq!(
+        artists[0]
+            .image_ref
+            .as_ref()
+            .map(|image| (image.item_id.as_str(), image.tag.as_deref())),
+        Some(("jellyfin:artist:artist-folder", Some("artist-cover")))
+    );
+}
+
+#[test]
+fn dual_access_normalization_does_not_guess_between_multiple_name_aggregates() {
+    let items = [
+        ("artist-one", None),
+        ("artist-two", None),
+        ("artist-folder", Some("music-library")),
+    ]
+    .into_iter()
+    .map(|(id, parent_id)| {
+        serde_json::from_value::<JellyfinItem>(serde_json::json!({
+            "Id": id,
+            "ParentId": parent_id,
+            "Name": "Shared Name",
+            "Type": "MusicArtist"
+        }))
+        .expect("Jellyfin Artist")
+    })
+    .collect();
+
+    let artists = normalize_artist_items(items);
+
+    assert_eq!(artists.len(), 3);
+}
+
+#[test]
+fn normalized_dual_access_artist_reopens_with_its_cached_library_content() {
+    let directory = tempfile::tempdir().expect("temporary Jellyfin Store");
+    let path = directory.path().join("library.db");
+    let source_id = SourceId::new("jellyfin:server:offline:user:listener");
+    let libraries = library::Libraries::open(&path).expect("open Library");
+    let artists = normalize_artist_items(vec![
+        serde_json::from_value::<JellyfinItem>(serde_json::json!({
+            "Id": "artist-folder",
+            "ParentId": "music-library",
+            "Name": "Example Artist",
+            "Type": "MusicArtist",
+            "ProviderIds": { "MusicBrainzArtist": "artist-mbid" }
+        }))
+        .expect("Jellyfin folder Artist"),
+        serde_json::from_value::<JellyfinItem>(serde_json::json!({
+            "Id": "artist-aggregate",
+            "Name": "Example Artist",
+            "Type": "MusicArtist"
+        }))
+        .expect("Jellyfin aggregate Artist"),
+    ]);
+    let album = album_from_item(
+        serde_json::from_value::<JellyfinItem>(serde_json::json!({
+            "Id": "album-one",
+            "Name": "Example Album",
+            "Type": "MusicAlbum",
+            "AlbumArtists": [{ "Id": "artist-aggregate", "Name": "Example Artist" }]
+        }))
+        .expect("Jellyfin Album"),
+    );
+    let track = track_from_item(
+        serde_json::from_value::<JellyfinItem>(serde_json::json!({
+            "Id": "track-one",
+            "Name": "Example Track",
+            "Type": "Audio",
+            "AlbumId": "album-one",
+            "Album": "Example Album",
+            "ArtistItems": [{ "Id": "artist-aggregate", "Name": "Example Artist" }],
+            "AlbumArtists": [{ "Id": "artist-aggregate", "Name": "Example Artist" }]
+        }))
+        .expect("Jellyfin Track"),
+    );
+    let artist_id = artists[0].id.clone();
+    let mut candidate = libraries
+        .begin_source_candidate(library::CandidateHeader {
+            source_id: source_id.clone(),
+            input_digest: [7; 32],
+        })
+        .expect("begin Jellyfin candidate");
+    candidate
+        .write(library::CandidateBatch::Artists(artists))
+        .expect("write Artists");
+    candidate
+        .write(library::CandidateBatch::Albums(vec![album]))
+        .expect("write Albums");
+    candidate
+        .write(library::CandidateBatch::Tracks(vec![track]))
+        .expect("write Tracks");
+    let accepted = candidate
+        .finish(
+            library::CandidateFinish {
+                freshness: None,
+                home: library::HomeFacts::Source {
+                    sections: Vec::new(),
+                },
+                accepted_at: 1,
+            },
+            None,
+        )
+        .and_then(library::PreparedSourceCandidate::accept)
+        .expect("accept Jellyfin candidate");
+    assert_eq!(
+        accepted
+            .library
+            .artist_overview(&artist_id, None)
+            .expect("read Artist overview")
+            .expect("Artist overview")
+            .summary
+            .track_count,
+        1
+    );
+    drop(accepted);
+    drop(libraries);
+
+    let reopened = library::Libraries::open(&path)
+        .expect("reopen Library")
+        .load_source(&source_id)
+        .expect("load Jellyfin source")
+        .expect("cached Jellyfin Library");
+    let overview = reopened
+        .artist_overview(&artist_id, None)
+        .expect("read reopened Artist overview")
+        .expect("reopened Artist overview");
+
+    assert_eq!(overview.summary.track_count, 1);
+    assert_eq!(overview.albums.len(), 1);
+    assert_eq!(
+        overview.summary.artist.musicbrainz_artist_id.as_deref(),
+        Some("artist-mbid")
+    );
+}
+
+#[test]
 fn jellyfin_musicbrainz_track_is_the_release_track_identity() {
     let item = serde_json::from_value::<JellyfinItem>(serde_json::json!({
         "Id": "track-one",
@@ -1509,6 +1779,46 @@ async fn exact_track_change_also_acquires_its_referenced_album() {
     assert_eq!(update.tracks.len(), 1);
     assert_eq!(update.albums.len(), 1);
     assert_eq!(update.tracks[0].album_id, Some(update.albums[0].id.clone()));
+}
+
+#[tokio::test]
+async fn artist_changes_use_the_full_dual_access_normalization_path() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/Items"))
+        .and(query_param("Ids", "artist-one"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(query(serde_json::json!([{
+                "Id": "artist-one",
+                "Name": "Example Artist",
+                "Type": "MusicArtist"
+            }]))),
+        )
+        .expect(1)
+        .mount(&server)
+        .await;
+    let source = provider(&server, "secret-token");
+    let library = accepted_library(vec![library::CandidateBatch::Artists(vec![
+        artist_from_item(
+            serde_json::from_value::<JellyfinItem>(serde_json::json!({
+                "Id": "artist-one",
+                "Name": "Example Artist",
+                "Type": "MusicArtist"
+            }))
+            .expect("Jellyfin Artist"),
+        ),
+    ])]);
+
+    let change = source
+        .prepare_change(
+            &library,
+            BTreeSet::from(["artist-one".to_string()]),
+            BTreeSet::new(),
+        )
+        .await
+        .expect("prepare Jellyfin Artist change");
+
+    assert!(matches!(change, PreparedSourceChange::Full));
 }
 
 #[tokio::test]

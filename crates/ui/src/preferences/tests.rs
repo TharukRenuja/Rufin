@@ -4,10 +4,11 @@ use super::{
         theme_preference_index,
     },
     layout::{reorder_home_blocks, visibility_position_subtitle},
-    reorder_sidebar_item_settings, sidebar_route_item_subtitle,
+    quality_accessible_title, quality_button_title, reorder_sidebar_item_settings,
+    sidebar_route_item_subtitle,
 };
 use crate::{AccentPreference, SidebarRouteItem, SidebarRouteItemSettings, ThemePreference};
-use library::HomeBlockKind;
+use library::{HomeBlockKind, StreamQuality};
 use localization::tr;
 
 #[test]
@@ -32,6 +33,18 @@ fn accent_preference_selector_round_trips_every_choice() {
             preference
         );
     }
+}
+
+#[test]
+fn quality_buttons_show_the_bitrate_without_repeating_the_unit() {
+    let quality = StreamQuality::MaxBitrateKbps(320);
+
+    assert_eq!(quality_button_title(quality), "320");
+    assert_eq!(quality_accessible_title(quality), tr("320 kbps"));
+    assert_eq!(
+        quality_button_title(StreamQuality::Original),
+        tr("Original")
+    );
 }
 
 #[test]

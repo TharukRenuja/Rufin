@@ -34,7 +34,6 @@ fn assert_large_library(track_count: usize) {
     let mut candidate = library
         .begin_source_candidate(CandidateHeader {
             source_id,
-            input_version: 1,
             input_digest: [track_count as u8; 32],
         })
         .expect("begin source candidate");

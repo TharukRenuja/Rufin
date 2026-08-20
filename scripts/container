@@ -73,6 +73,33 @@ make_private_nix_writable() {
     fi
 }
 
+unmount_project_build_state() {
+    local build_root target
+
+    if ! command -v findmnt >/dev/null 2>&1; then
+        return
+    fi
+    build_root="${repo_root}/.local/build/"
+    while target="$(
+        findmnt --noheadings --raw --output TARGET \
+            | while IFS= read -r candidate; do
+                if [[ "${candidate}" == "${build_root}"* ]]; then
+                    printf '%s\n' "${candidate}"
+                    break
+                fi
+            done
+    )" && [[ -n "${target}" ]]; do
+        if command -v fusermount3 >/dev/null 2>&1; then
+            fusermount3 -u "${target}"
+        elif command -v fusermount >/dev/null 2>&1; then
+            fusermount -u "${target}"
+        else
+            echo "A build mount remains at ${target}, but fusermount is unavailable." >&2
+            exit 1
+        fi
+    done
+}
+
 clean_project_state() {
     if [[ -z "${repo_root}" || "${repo_root}" == "/" \
         || -z "${shared_root}" || "${shared_root}" == "/" \
@@ -81,13 +108,16 @@ clean_project_state() {
         exit 1
     fi
 
-    make_private_nix_writable
-    rm -rf -- \
-        "${repo_root:?}/target" \
-        "${repo_root}/.local/build" \
-        "${state_dir:?}/nix" \
-        "${state_dir}/target" \
-        "${state_dir}/xdg-runtime"
+    if [[ -d "${repo_root}/target" ]]; then
+        CARGO_TARGET_DIR="${repo_root}/target" \
+            cargo clean --quiet --manifest-path "${repo_root}/Cargo.toml"
+    fi
+    if [[ -d "${state_dir}/target" ]]; then
+        CARGO_TARGET_DIR="${state_dir}/target" \
+            cargo clean --quiet --manifest-path "${repo_root}/Cargo.toml"
+    fi
+    unmount_project_build_state
+    rm -rf -- "${repo_root}/.local/build"
 }
 
 prepare_docker_identity() {
@@ -371,7 +401,7 @@ case "${action}" in
             exit 1
         fi
         clean_project_state
-        echo "Project build state and private container caches removed."
+        echo "Project build state removed."
         ;;
     run)
         [[ $# -ge 3 ]] || run_usage

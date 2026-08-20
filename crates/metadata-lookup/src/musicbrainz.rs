@@ -335,7 +335,6 @@ fn json_ids(value: &Value, collection_pointer: &str) -> Vec<String> {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct AlbumReleaseMetadata {
     pub release_types: Vec<String>,
-    pub is_compilation: Option<bool>,
 }
 
 fn fetch_album_release_metadata(
@@ -468,11 +467,7 @@ fn release_metadata_from_group(group: &Value) -> Option<AlbumReleaseMetadata> {
     if release_types.is_empty() {
         return None;
     }
-    let is_compilation = Some(release_types.iter().any(|kind| kind == "compilation"));
-    Some(AlbumReleaseMetadata {
-        release_types,
-        is_compilation,
-    })
+    Some(AlbumReleaseMetadata { release_types })
 }
 
 fn normalize_release_types(types: impl IntoIterator<Item = impl AsRef<str>>) -> Vec<String> {
@@ -532,7 +527,6 @@ mod tests {
                     "compilation".to_string(),
                     "live".to_string(),
                 ],
-                is_compilation: Some(true),
             })
         );
     }
@@ -548,7 +542,6 @@ mod tests {
             release_metadata_from_group(&value),
             Some(AlbumReleaseMetadata {
                 release_types: vec!["single".to_string()],
-                is_compilation: Some(false),
             })
         );
     }

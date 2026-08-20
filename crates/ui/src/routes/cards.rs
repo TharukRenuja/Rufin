@@ -16,14 +16,15 @@ use crate::favorites::{
     album_favorite_key, favorite_button_is_active, favorite_icon_button,
     set_favorite_button_active, track_favorite_key,
 };
-use crate::interactions::install_context_menu_openers;
+use crate::interactions::{
+    CONTEXT_MENU_HOVER_HELD_CLASS, CONTEXT_MENU_HOVER_OWNER_CLASS, install_context_menu_openers,
+};
 use crate::shell::Shell;
 use crate::shell::actions::{
     ActionButtonVariant, COVER_PRIMARY_ACTION_SIZE, COVER_SIDE_ACTION_SIZE, MORE_ICON, PLAY_ICON,
     PLAY_LATER_ICON, PLAY_NEXT_ICON, configure_action_button, icon_button,
     icon_button_without_tooltip,
 };
-use crate::shell::cover::presentation::stable_seed;
 use crate::shell::cover::{ArtworkTile, cover_fetch_size_for_display};
 
 const COVER_CORNER_HORIZONTAL_INSET: i32 = 4;
@@ -80,11 +81,10 @@ pub(crate) fn album_cover_overlay(
     album_button.add_css_class("flat");
     constrain_cover_widget(&album_button, size);
     clip_cover(&album_button);
-    let tile = ArtworkTile::new_sized(size, size, album_value.color_seed);
+    let tile = ArtworkTile::new_sized(size, size);
     shell.bind_artwork_tile(
         &tile,
         ArtworkBinding::album_artwork(&album.artwork),
-        album_value.color_seed,
         home_showcase_render_size(),
         home_showcase_fetch_size(),
     );
@@ -174,12 +174,10 @@ pub(crate) fn track_cover_overlay(
     cover_button.add_css_class("flat");
     constrain_cover_widget(&cover_button, size);
     clip_cover(&cover_button);
-    let seed = stable_seed(track.id.as_str());
-    let tile = ArtworkTile::new_sized(size, size, seed);
+    let tile = ArtworkTile::new_sized(size, size);
     shell.bind_artwork_tile(
         &tile,
         ArtworkBinding::track(&track),
-        seed,
         home_showcase_render_size(),
         home_showcase_fetch_size(),
     );
@@ -619,7 +617,7 @@ impl CoverHoverControls {
         menu
     }
 
-    pub(super) fn add_to_overlay(&self, overlay: &gtk::Overlay) {
+    pub(crate) fn add_to_overlay(&self, overlay: &gtk::Overlay) {
         overlay.add_overlay(&self.shade);
         overlay.add_overlay(&self.transport);
         if let Some(menu) = self.menu.as_ref() {
@@ -630,7 +628,8 @@ impl CoverHoverControls {
         }
     }
 
-    pub(super) fn connect_hover(&self, overlay: &gtk::Overlay) {
+    pub(crate) fn connect_hover(&self, overlay: &gtk::Overlay) {
+        overlay.add_css_class(CONTEXT_MENU_HOVER_OWNER_CLASS);
         let motion = gtk::EventControllerMotion::new();
         let shade_for_enter = self.shade.clone();
         let transport_for_enter = self.transport.clone();
@@ -650,7 +649,11 @@ impl CoverHoverControls {
         let transport_for_leave = self.transport.clone();
         let favorite_for_leave = self.favorite.clone();
         let menu_for_leave = self.menu.clone();
+        let overlay_for_leave = overlay.clone();
         motion.connect_leave(move |_| {
+            if overlay_for_leave.has_css_class(CONTEXT_MENU_HOVER_HELD_CLASS) {
+                return;
+            }
             shade_for_leave.set_visible(false);
             transport_for_leave.set_visible(false);
             if let Some(favorite) = favorite_for_leave.as_ref() {
@@ -658,6 +661,25 @@ impl CoverHoverControls {
             }
             if let Some(menu) = menu_for_leave.as_ref() {
                 menu.set_visible(false);
+            }
+        });
+        let motion_for_hold = motion.clone();
+        let shade_for_hold = self.shade.clone();
+        let transport_for_hold = self.transport.clone();
+        let favorite_for_hold = self.favorite.clone();
+        let menu_for_hold = self.menu.clone();
+        overlay.connect_css_classes_notify(move |overlay| {
+            if overlay.has_css_class(CONTEXT_MENU_HOVER_HELD_CLASS) {
+                return;
+            }
+            let visible = motion_for_hold.contains_pointer();
+            shade_for_hold.set_visible(visible);
+            transport_for_hold.set_visible(visible);
+            if let Some(favorite) = favorite_for_hold.as_ref() {
+                favorite.set_visible(visible);
+            }
+            if let Some(menu) = menu_for_hold.as_ref() {
+                menu.set_visible(visible);
             }
         });
         overlay.add_controller(motion);
@@ -746,6 +768,17 @@ pub(super) fn cover_play_hover_controls(size: i32, play_label: &str) -> CoverHov
         favorite: None,
         menu: None,
     }
+}
+
+pub(crate) fn cover_play_only_hover_controls(
+    size: i32,
+    play_label: &str,
+) -> (CoverHoverControls, gtk::Button) {
+    let controls = cover_play_hover_controls(size, play_label);
+    controls.play_next.set_visible(false);
+    controls.play_last.set_visible(false);
+    let play = controls.play.clone();
+    (controls, play)
 }
 
 pub(super) fn elastic_cover_context_point(widget: &impl IsA<gtk::Widget>) -> Option<(f64, f64)> {

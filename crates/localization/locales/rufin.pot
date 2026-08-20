@@ -35,6 +35,11 @@ msgid ""
 "stay"
 msgstr ""
 
+msgid ""
+"Route server media through this device instead of sharing provider URLs with "
+"the renderer"
+msgstr ""
+
 #, rust-format
 msgid ""
 "Saved mapping. {direct} direct, {prefix} prefix, {metadata} metadata, "
@@ -106,9 +111,6 @@ msgid "320 kbps"
 msgstr ""
 
 msgid "5 Latest Albums"
-msgstr ""
-
-msgid "ALSA"
 msgstr ""
 
 msgid "API key"
@@ -240,6 +242,9 @@ msgstr ""
 msgid "Audio output"
 msgstr ""
 
+msgid "Audio processing is unavailable while casting"
+msgstr ""
+
 msgid "Audio"
 msgstr ""
 
@@ -285,6 +290,9 @@ msgstr ""
 msgid "Cancel"
 msgstr ""
 
+msgid "Casting"
+msgstr ""
+
 msgid "Change Secret Storage"
 msgstr ""
 
@@ -310,6 +318,9 @@ msgid "Choose at least one local music folder"
 msgstr ""
 
 msgid "Choose one or more folders to scan and play directly from this computer"
+msgstr ""
+
+msgid "Choose playback output"
 msgstr ""
 
 msgid "Choose"
@@ -377,6 +388,13 @@ msgid "Connected"
 msgstr ""
 
 msgid "Connecting to music server..."
+msgstr ""
+
+#, rust-format
+msgid "Connecting to {device}..."
+msgstr ""
+
+msgid "Connection failed"
 msgstr ""
 
 msgid "Connection"
@@ -470,9 +488,6 @@ msgstr ""
 msgid "Diagnostic log"
 msgstr ""
 
-msgid "DirectSound"
-msgstr ""
-
 msgid "Disable private mode"
 msgstr ""
 
@@ -545,6 +560,9 @@ msgstr ""
 msgid "Enter API credentials first"
 msgstr ""
 
+msgid "Enter a server address and API key"
+msgstr ""
+
 msgid "Enter a server address, username, and password"
 msgstr ""
 
@@ -555,9 +573,6 @@ msgid "Equalizer"
 msgstr ""
 
 msgid "Everything, including new tracks"
-msgstr ""
-
-msgid "Exit to tray"
 msgstr ""
 
 msgid "Expand sidebar"
@@ -671,6 +686,12 @@ msgstr ""
 msgid "Go to Artist"
 msgstr ""
 
+msgid "Go to"
+msgstr ""
+
+msgid "Google Cast"
+msgstr ""
+
 msgid "Green"
 msgstr ""
 
@@ -684,9 +705,6 @@ msgid "Help"
 msgstr ""
 
 msgid "Hidden"
-msgstr ""
-
-msgid "Hide lyrics"
 msgstr ""
 
 msgid "Hide sidebar"
@@ -737,7 +755,7 @@ msgstr ""
 msgid "Instrumental"
 msgstr ""
 
-msgid "JACK"
+msgid "Integrations"
 msgstr ""
 
 msgid "Jellyfin"
@@ -747,6 +765,9 @@ msgid "Jellyfin, Navidrome, or OpenSubsonic"
 msgstr ""
 
 msgid "Karaoke mode"
+msgstr ""
+
+msgid "Keep Rufin running after closing the window"
 msgstr ""
 
 msgid "Keep album transitions gapless when possible"
@@ -836,10 +857,16 @@ msgstr ""
 msgid "Local library"
 msgstr ""
 
+msgid "Local music folder is unavailable"
+msgstr ""
+
 msgid "Local music folder"
 msgstr ""
 
 msgid "Local"
+msgstr ""
+
+msgid "Locate Folder"
 msgstr ""
 
 msgid "Lock metadata"
@@ -1034,6 +1061,9 @@ msgstr ""
 msgid "No music from this artist yet"
 msgstr ""
 
+msgid "No network devices found"
+msgstr ""
+
 msgid "No remote sources configured"
 msgstr ""
 
@@ -1160,9 +1190,6 @@ msgstr ""
 msgid "Pins"
 msgstr ""
 
-msgid "PipeWire"
-msgstr ""
-
 msgid "Plain lyrics"
 msgstr ""
 
@@ -1211,10 +1238,20 @@ msgstr ""
 msgid "Play/Pause"
 msgstr ""
 
+msgid "Playback speed"
+msgstr ""
+
 msgid "Playback"
 msgstr ""
 
 msgid "Played"
+msgstr ""
+
+msgid "Playing on this device"
+msgstr ""
+
+#, rust-format
+msgid "Playing on {device}"
 msgstr ""
 
 msgid "Playlist name"
@@ -1259,6 +1296,9 @@ msgstr ""
 msgid "Preparing library..."
 msgstr ""
 
+msgid "Preserve pitch"
+msgstr ""
+
 msgid "Preset"
 msgstr ""
 
@@ -1289,7 +1329,7 @@ msgstr ""
 msgid "Pronunciation"
 msgstr ""
 
-msgid "PulseAudio"
+msgid "Proxy casting through Rufin"
 msgstr ""
 
 msgid "Purple"
@@ -1323,6 +1363,9 @@ msgid "Recently played"
 msgstr ""
 
 msgid "Recently released"
+msgstr ""
+
+msgid "Recommended when your server provides one"
 msgstr ""
 
 msgid "Reconnect"
@@ -1460,9 +1503,6 @@ msgstr ""
 msgid "Rufin data folder"
 msgstr ""
 
-msgid "Rufin is running in the tray"
-msgstr ""
-
 msgid "Rule actions"
 msgstr ""
 
@@ -1499,9 +1539,6 @@ msgstr ""
 msgid "Saving..."
 msgstr ""
 
-msgid "Scrobbling"
-msgstr ""
-
 msgid "Search Again"
 msgstr ""
 
@@ -1526,13 +1563,13 @@ msgstr ""
 msgid "Searching for Jellyfin servers on the local network..."
 msgstr ""
 
+msgid "Searching for devices..."
+msgstr ""
+
 msgid "Searching will start automatically"
 msgstr ""
 
 msgid "Searching..."
-msgstr ""
-
-msgid "Seconds"
 msgstr ""
 
 msgid "Secret storage"
@@ -1563,9 +1600,6 @@ msgid "Select Music Folder"
 msgstr ""
 
 msgid "Select Source"
-msgstr ""
-
-msgid "Selected device"
 msgstr ""
 
 msgid "Selection"
@@ -1617,9 +1651,6 @@ msgstr ""
 msgid "Shared secret"
 msgstr ""
 
-msgid "Show Lyrics Panel"
-msgstr ""
-
 msgid "Show Rufin"
 msgstr ""
 
@@ -1642,6 +1673,9 @@ msgid "Show sidebar"
 msgstr ""
 
 msgid "Show tray icon"
+msgstr ""
+
+msgid "Show visualizer"
 msgstr ""
 
 msgid "Show/hide lyrics"
@@ -1756,6 +1790,9 @@ msgstr ""
 msgid "Theme"
 msgstr ""
 
+msgid "This device"
+msgstr ""
+
 msgid "This isn't available"
 msgstr ""
 
@@ -1813,6 +1850,9 @@ msgstr ""
 msgid "Type to search"
 msgstr ""
 
+msgid "UPnP"
+msgstr ""
+
 msgid "Undo identified value"
 msgstr ""
 
@@ -1823,6 +1863,9 @@ msgid "Unmuted"
 msgstr ""
 
 msgid "Update"
+msgstr ""
+
+msgid "Use API key"
 msgstr ""
 
 msgid "Use Jellyfin Instant Mix for recommendations"
@@ -1874,9 +1917,6 @@ msgid "Volume Up"
 msgstr ""
 
 msgid "Volume scale"
-msgstr ""
-
-msgid "WASAPI"
 msgstr ""
 
 msgid "Waiting for connection"
@@ -1939,7 +1979,7 @@ msgstr ""
 msgid "is"
 msgstr ""
 
-msgid "macOS"
+msgid "kbps"
 msgstr ""
 
 msgid "range"

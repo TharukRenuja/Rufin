@@ -116,7 +116,6 @@ pub(crate) struct StoreCandidatePreparation {
 
 pub(crate) struct StoredSourceUpdate {
     pub replacement: ItemReplacement,
-    pub unresolved_album_releases: Vec<AlbumId>,
     pub playlists: Vec<PlaylistSnapshot>,
     pub removed_playlists: Vec<PlaylistId>,
 }
@@ -128,7 +127,6 @@ pub(crate) struct StoredLocalComponent {
     pub imports: Vec<LocalImport>,
     pub favorites: Vec<FavoriteItemId>,
     pub activity: Vec<TrackActivity>,
-    pub unresolved_album_releases: Vec<AlbumId>,
 }
 
 type StoreJob = Box<dyn FnOnce(&mut Worker) + Send>;
@@ -350,6 +348,15 @@ impl StoreLane {
         })
     }
 
+    pub(crate) fn set_rating(
+        &self,
+        source_id: SourceId,
+        item_id: FavoriteItemId,
+        rating: Option<u8>,
+    ) -> StoreResult<()> {
+        self.execute(move |worker| worker.set_rating(&source_id, &item_id, rating))
+    }
+
     pub(crate) fn queue_remote_favorite(
         &self,
         source_id: SourceId,
@@ -541,6 +548,15 @@ impl StoreLane {
         self.execute(move |worker| worker.accept_album_release(&candidate, &result))
     }
 
+    pub(crate) fn album_release_candidates(
+        &self,
+        source_id: SourceId,
+        library_id: i64,
+        limit: usize,
+    ) -> StoreResult<Vec<AlbumReleaseCandidate>> {
+        self.execute(move |worker| worker.album_release_candidates(&source_id, library_id, limit))
+    }
+
     pub(crate) fn queue_scrobbles(&self, scrobbles: Vec<NewScrobble>) -> StoreResult<usize> {
         self.execute(move |worker| worker.queue_scrobbles(&scrobbles))
     }
@@ -676,12 +692,6 @@ impl Worker {
     }
 
     fn begin_candidate(&mut self, header: CandidateHeader) -> StoreResult<i64> {
-        if header.input_version == 0 {
-            return Err(StoreError::InvalidValue {
-                kind: "candidate input version",
-                value: "0".to_string(),
-            });
-        }
         let unfinished = self
             .connection
             .query_row(
@@ -699,12 +709,8 @@ impl Worker {
         self.connection.execute(
             "INSERT INTO source_libraries(
                 source_id, input_version, input_digest
-             ) VALUES (?1, ?2, ?3)",
-            params![
-                header.source_id.as_str(),
-                i64::from(header.input_version),
-                header.input_digest.as_slice()
-            ],
+             ) VALUES (?1, 1, ?2)",
+            params![header.source_id.as_str(), header.input_digest.as_slice()],
         )?;
         Ok(self.connection.last_insert_rowid())
     }
@@ -769,11 +775,10 @@ impl Worker {
             home,
             accepted_at,
         } = finish;
-        let (candidate_input_version, candidate_input_digest) = self.connection.query_row(
-            "SELECT input_version, input_digest
-             FROM source_libraries WHERE library_id = ?1",
+        let candidate_input_digest = self.connection.query_row(
+            "SELECT input_digest FROM source_libraries WHERE library_id = ?1",
             [library_id],
-            |row| Ok((row.get::<_, i64>(0)?, row.get::<_, Vec<u8>>(1)?)),
+            |row| row.get::<_, Vec<u8>>(0),
         )?;
         if freshness
             .as_ref()
@@ -786,8 +791,7 @@ impl Worker {
             .connection
             .query_row(
                 "SELECT
-                    library_id, input_version, input_digest,
-                    content_digest, home_digest
+                    library_id, input_digest, content_digest, home_digest
                  FROM source_libraries
                  WHERE source_id = ?1 AND accepted_at IS NOT NULL
                  ORDER BY library_id DESC
@@ -796,18 +800,15 @@ impl Worker {
                 |row| {
                     Ok((
                         row.get::<_, i64>(0)?,
-                        row.get::<_, i64>(1)?,
-                        row.get::<_, Vec<u8>>(2)?,
+                        row.get::<_, Vec<u8>>(1)?,
+                        row.get::<_, Option<Vec<u8>>>(2)?,
                         row.get::<_, Option<Vec<u8>>>(3)?,
-                        row.get::<_, Option<Vec<u8>>>(4)?,
                     ))
                 },
             )
             .optional()?;
         let content_digest = candidate_content_digest(&self.connection, library_id)?;
-        if let Some((current_id, current_input_version, current_input_digest, current_digest, _)) =
-            current.as_mut()
-            && *current_input_version == candidate_input_version
+        if let Some((current_id, current_input_digest, current_digest, _)) = current.as_mut()
             && *current_input_digest == candidate_input_digest
             && current_digest.is_none()
         {
@@ -819,14 +820,7 @@ impl Worker {
         }
 
         let current_library_id = current.as_ref().map(|(library_id, ..)| *library_id);
-        if let Some((
-            _,
-            current_input_version,
-            current_input_digest,
-            current_digest,
-            current_home_digest,
-        )) = current
-            && current_input_version == candidate_input_version
+        if let Some((_, current_input_digest, current_digest, current_home_digest)) = current
             && current_input_digest == candidate_input_digest
             && current_digest.as_deref() == Some(content_digest.as_slice())
         {
@@ -854,7 +848,6 @@ impl Worker {
         let input = self.load_candidate_library(
             library_id,
             &source_id,
-            candidate_input_version,
             candidate_input_digest,
             freshness.clone(),
             home.clone(),
@@ -1019,6 +1012,7 @@ impl Worker {
         )?;
         for table in [
             "local_favorites",
+            "user_ratings",
             "pending_favorites",
             "loudness_measurements",
             "smart_playlists",
@@ -1094,8 +1088,7 @@ impl Worker {
         }
         let transaction = self.connection.transaction()?;
         let item_changed = !replacement.is_empty();
-        let (unresolved_album_releases, _) =
-            write_item_replacement(&transaction, source_id, library_id, &mut replacement, None)?;
+        write_item_replacement(&transaction, source_id, library_id, &mut replacement, None)?;
         let mut changed_removed_playlists = Vec::new();
         for playlist_id in removed_playlists {
             if source_playlist_exists(&transaction, library_id, &playlist_id)? {
@@ -1123,7 +1116,6 @@ impl Worker {
         transaction.commit()?;
         Ok(StoredSourceUpdate {
             replacement,
-            unresolved_album_releases,
             playlists: changed_playlists,
             removed_playlists: changed_removed_playlists,
         })
@@ -1183,7 +1175,7 @@ impl Worker {
         for file in &files {
             write_local_file(&transaction, library_id, file)?;
         }
-        let (unresolved_album_releases, imports) = write_item_replacement(
+        let imports = write_item_replacement(
             &transaction,
             source_id,
             library_id,
@@ -1210,45 +1202,31 @@ impl Worker {
             imports,
             favorites,
             activity,
-            unresolved_album_releases,
         })
     }
 
     fn load_library(&self, library_id: i64) -> StoreResult<LibraryInput> {
-        let (
-            source_id,
-            input_version,
-            input_digest,
-            freshness_version,
-            freshness_marker,
-            home_json,
-        ) = self
+        let (source_id, input_digest, freshness_version, freshness_marker, home_json) = self
             .connection
             .query_row(
                 "SELECT
-                    source_id, input_version, input_digest,
-                    freshness_version, freshness_marker, home_json
+                    source_id, input_digest, freshness_version, freshness_marker, home_json
                  FROM source_libraries
                  WHERE library_id = ?1 AND accepted_at IS NOT NULL",
                 [library_id],
                 |row| {
                     Ok((
                         row.get::<_, String>(0)?,
-                        row.get::<_, i64>(1)?,
-                        row.get::<_, Vec<u8>>(2)?,
-                        row.get::<_, Option<i64>>(3)?,
-                        row.get::<_, Option<Vec<u8>>>(4)?,
-                        row.get::<_, Option<String>>(5)?,
+                        row.get::<_, Vec<u8>>(1)?,
+                        row.get::<_, Option<i64>>(2)?,
+                        row.get::<_, Option<Vec<u8>>>(3)?,
+                        row.get::<_, Option<String>>(4)?,
                     ))
                 },
             )
             .optional()?
             .ok_or(StoreError::CandidateMissing(library_id))?;
         let source_id = SourceId::new(source_id);
-        let input_version = u32::try_from(input_version).map_err(|_| StoreError::InvalidValue {
-            kind: "source input version",
-            value: input_version.to_string(),
-        })?;
         let input_digest =
             <[u8; 32]>::try_from(input_digest).map_err(|value| StoreError::InvalidValue {
                 kind: "source input digest",
@@ -1270,13 +1248,7 @@ impl Worker {
                 });
             }
         };
-        let mut input = LibraryInput::new(
-            source_id.clone(),
-            library_id,
-            input_version,
-            input_digest,
-            freshness,
-        );
+        let mut input = LibraryInput::new(source_id.clone(), library_id, input_digest, freshness);
         input.albums = load_albums(&self.connection, library_id)?;
         input.tracks = load_tracks(&self.connection, library_id)?;
         input.artists = load_artists(&self.connection, library_id)?;
@@ -1299,30 +1271,19 @@ impl Worker {
         &self,
         library_id: i64,
         source_id: &SourceId,
-        input_version: i64,
         input_digest: Vec<u8>,
         freshness: Option<ProviderFreshness>,
         home: HomeFacts,
         accepted_at: i64,
     ) -> StoreResult<LibraryInput> {
         self.require_unaccepted(library_id)?;
-        let input_version = u32::try_from(input_version).map_err(|_| StoreError::InvalidValue {
-            kind: "source input version",
-            value: input_version.to_string(),
-        })?;
         let input_digest =
             <[u8; 32]>::try_from(input_digest).map_err(|value| StoreError::InvalidValue {
                 kind: "source input digest",
                 value: format!("{} bytes", value.len()),
             })?;
         let rufin_defined_home = home.is_rufin_defined();
-        let mut input = LibraryInput::new(
-            source_id.clone(),
-            library_id,
-            input_version,
-            input_digest,
-            freshness,
-        );
+        let mut input = LibraryInput::new(source_id.clone(), library_id, input_digest, freshness);
         input.albums = load_albums(&self.connection, library_id)?;
         input.tracks = load_tracks(&self.connection, library_id)?;
         input.artists = load_artists(&self.connection, library_id)?;
@@ -1416,6 +1377,34 @@ impl Worker {
             invalidate_content_digest(&transaction, library_id)?;
         }
         transaction.commit()?;
+        Ok(())
+    }
+
+    fn set_rating(
+        &mut self,
+        source_id: &SourceId,
+        item_id: &FavoriteItemId,
+        rating: Option<u8>,
+    ) -> StoreResult<()> {
+        let rating = rating.unwrap_or(0);
+        if rating > 10 {
+            return Err(StoreError::InvalidValue {
+                kind: "rating",
+                value: rating.to_string(),
+            });
+        }
+        self.connection.execute(
+            "INSERT INTO user_ratings(source_id, item_kind, item_id, rating)
+             VALUES (?1, ?2, ?3, ?4)
+             ON CONFLICT(source_id, item_kind, item_id)
+             DO UPDATE SET rating = excluded.rating",
+            params![
+                source_id.as_str(),
+                item_id.kind().as_str(),
+                item_id.as_str(),
+                i64::from(rating)
+            ],
+        )?;
         Ok(())
     }
 
@@ -2172,8 +2161,7 @@ impl Worker {
             .connection
             .query_row(
                 "SELECT
-                    origin, input_version, input_digest,
-                    payload, cached_at
+                    origin, input_digest, payload, cached_at
                  FROM lyrics_cache
                  WHERE source_id = ?1
                    AND track_id = ?2
@@ -2190,31 +2178,25 @@ impl Worker {
                 |row| {
                     Ok((
                         row.get::<_, String>(0)?,
-                        row.get::<_, i64>(1)?,
-                        row.get::<_, Vec<u8>>(2)?,
-                        row.get::<_, String>(3)?,
-                        row.get::<_, i64>(4)?,
+                        row.get::<_, Vec<u8>>(1)?,
+                        row.get::<_, String>(2)?,
+                        row.get::<_, i64>(3)?,
                     ))
                 },
             )
             .optional()?;
-        let Some((origin, input_version, input_digest, payload, cached_at)) = stored else {
+        let Some((origin, input_digest, payload, cached_at)) = stored else {
             return Ok(None);
         };
         let decoded = (|| {
             let digest = <[u8; 32]>::try_from(input_digest).ok()?;
-            if u32::try_from(input_version).ok()? != expected_input.version
-                || digest != expected_input.digest
-            {
+            if digest != expected_input.digest {
                 return None;
             }
             Some(crate::CachedLyrics {
                 key: key.clone(),
                 authority: LyricsCacheAuthority::from_stored(&origin)?,
-                input: LyricsCacheInput {
-                    version: u32::try_from(input_version).ok()?,
-                    digest,
-                },
+                input: LyricsCacheInput { digest },
                 payload,
                 cached_at,
             })
@@ -2234,11 +2216,10 @@ impl Worker {
                 source_id, track_id, role, language, script, origin,
                 input_version, input_digest, payload,
                 cached_at
-             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, 1, ?7, ?8, ?9)
              ON CONFLICT(source_id, track_id, role, language, script)
              DO UPDATE SET
                 origin = excluded.origin,
-                input_version = excluded.input_version,
                 input_digest = excluded.input_digest,
                 payload = excluded.payload,
                 cached_at = excluded.cached_at",
@@ -2249,7 +2230,6 @@ impl Worker {
                 write.key.language,
                 write.key.script,
                 write.authority.as_str(),
-                i64::from(write.input.version),
                 write.input.digest.as_slice(),
                 write.payload,
                 write.cached_at,
@@ -2350,6 +2330,64 @@ impl Worker {
         Ok(())
     }
 
+    fn album_release_candidates(
+        &self,
+        source_id: &SourceId,
+        library_id: i64,
+        limit: usize,
+    ) -> StoreResult<Vec<AlbumReleaseCandidate>> {
+        if self.current_library_id(source_id)? != Some(library_id) || limit == 0 {
+            return Ok(Vec::new());
+        }
+        let limit = i64::try_from(limit.min(500)).map_err(|_| StoreError::IntegerRange)?;
+        let mut statement = self.connection.prepare(
+            "SELECT album.album_id,
+                    album.musicbrainz_release_group_id,
+                    album.musicbrainz_release_id
+             FROM albums AS album
+             LEFT JOIN album_release_info AS release
+               ON release.source_id = ?1 AND release.album_id = album.album_id
+             WHERE album.library_id = ?2
+               AND json_array_length(album.release_types_json) = 0
+               AND (
+                   NULLIF(album.musicbrainz_release_group_id, '') IS NOT NULL
+                   OR NULLIF(album.musicbrainz_release_id, '') IS NOT NULL
+               )
+               AND (
+                   release.exact_identity_key IS NULL
+                   OR release.exact_identity_key <> CASE
+                       WHEN NULLIF(album.musicbrainz_release_group_id, '') IS NOT NULL
+                       THEN 'release-group:' || album.musicbrainz_release_group_id
+                       ELSE 'release:' || album.musicbrainz_release_id
+                   END
+               )
+             ORDER BY album.album_id
+             LIMIT ?3",
+        )?;
+        statement
+            .query_map(params![source_id.as_str(), library_id, limit], |row| {
+                let release_group_id = row.get::<_, Option<String>>(1)?;
+                let release_id = row.get::<_, Option<String>>(2)?;
+                let identity = release_group_id
+                    .filter(|id| !id.is_empty())
+                    .map(crate::AlbumReleaseIdentity::ReleaseGroup)
+                    .or_else(|| {
+                        release_id
+                            .filter(|id| !id.is_empty())
+                            .map(crate::AlbumReleaseIdentity::Release)
+                    })
+                    .expect("Album release candidate query requires one exact identity");
+                Ok(AlbumReleaseCandidate {
+                    source_id: source_id.clone(),
+                    album_id: AlbumId::new(row.get::<_, String>(0)?),
+                    identity,
+                    library_id,
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(Into::into)
+    }
+
     fn accept_album_release(
         &mut self,
         candidate: &AlbumReleaseCandidate,
@@ -2391,13 +2429,12 @@ impl Worker {
             return Ok(false);
         }
         let (lookup_state, release_types, is_compilation) = match result {
-            AlbumReleaseResult::Found {
-                release_types,
-                is_compilation,
-            } => (
+            AlbumReleaseResult::Found { release_types } => (
                 "found",
                 Some(serde_json::to_string(release_types)?),
-                *is_compilation,
+                Some(i64::from(
+                    release_types.iter().any(|kind| kind == "compilation"),
+                )),
             ),
             AlbumReleaseResult::Missing => ("missing", None, None),
         };
@@ -2418,7 +2455,7 @@ impl Worker {
                 expected_key,
                 lookup_state,
                 release_types,
-                is_compilation.map(i64::from),
+                is_compilation,
             ],
         )?;
         Ok(true)
@@ -3252,7 +3289,8 @@ fn write_item_replacement(
     library_id: i64,
     replacement: &mut ItemReplacement,
     local_observed_at: Option<i64>,
-) -> StoreResult<(Vec<AlbumId>, Vec<LocalImport>)> {
+) -> StoreResult<Vec<LocalImport>> {
+    apply_user_ratings_to_replacement(transaction, source_id, replacement)?;
     if local_observed_at.is_some() {
         for album in &mut replacement.albums {
             album.favorite = false;
@@ -3338,11 +3376,8 @@ fn write_item_replacement(
         write_genre(transaction, library_id, genre)?;
     }
 
-    let mut unresolved_album_releases = Vec::new();
     for album in &mut replacement.albums {
-        if apply_exact_album_release_info(transaction, source_id, album)? {
-            unresolved_album_releases.push(album.id.clone());
-        }
+        apply_exact_album_release_info(transaction, source_id, album)?;
     }
     let mut imports = Vec::new();
     if let Some(observed_at) = local_observed_at {
@@ -3364,7 +3399,7 @@ fn write_item_replacement(
             });
         }
     }
-    Ok((unresolved_album_releases, imports))
+    Ok(imports)
 }
 
 fn persist_favorite(
@@ -3929,8 +3964,8 @@ fn complete_loaded_input(
     input.smart_playlists = load_smart_playlists(connection, source_id)?;
     input.local_favorites = load_local_favorites(connection, source_id)?;
     apply_pending_favorites(connection, source_id, &mut input)?;
-    input.unresolved_album_releases =
-        apply_album_release_info(connection, source_id, &mut input.albums)?;
+    apply_user_ratings(connection, source_id, &mut input)?;
+    apply_album_release_info(connection, source_id, &mut input.albums)?;
     input.activity = load_track_activity(connection, source_id)?;
     input.recent_plays = load_recent_plays(connection, source_id)?;
     input.loudness = load_loudness(connection, source_id)?;
@@ -3939,6 +3974,94 @@ fn complete_loaded_input(
     }
     input.home = Some(home);
     Ok(input)
+}
+
+fn apply_user_ratings(
+    connection: &Connection,
+    source_id: &SourceId,
+    input: &mut LibraryInput,
+) -> StoreResult<()> {
+    let ratings = load_user_ratings(connection, source_id)?;
+    apply_ratings_to_items(
+        &ratings,
+        &mut input.albums,
+        &mut input.tracks,
+        &mut input.artists,
+    );
+    Ok(())
+}
+
+fn apply_ratings_to_items(
+    ratings: &HashMap<(String, String), Option<u8>>,
+    albums: &mut [Album],
+    tracks: &mut [Track],
+    artists: &mut [Artist],
+) {
+    for album in albums {
+        apply_rating(&ratings, "album", album.id.as_str(), &mut album.user_rating);
+    }
+    for track in tracks {
+        let id = track.id.as_str().to_string();
+        if let Some(rating) = ratings.get(&("track".to_string(), id)) {
+            track.make_mut().user_rating = *rating;
+        }
+    }
+    for artist in artists {
+        apply_rating(
+            &ratings,
+            "artist",
+            artist.id.as_str(),
+            &mut artist.user_rating,
+        );
+    }
+}
+
+fn apply_user_ratings_to_replacement(
+    connection: &Connection,
+    source_id: &SourceId,
+    replacement: &mut ItemReplacement,
+) -> StoreResult<()> {
+    let ratings = load_user_ratings(connection, source_id)?;
+    apply_ratings_to_items(
+        &ratings,
+        &mut replacement.albums,
+        &mut replacement.tracks,
+        &mut replacement.artists,
+    );
+    Ok(())
+}
+
+fn load_user_ratings(
+    connection: &Connection,
+    source_id: &SourceId,
+) -> StoreResult<HashMap<(String, String), Option<u8>>> {
+    let mut statement = connection
+        .prepare("SELECT item_kind, item_id, rating FROM user_ratings WHERE source_id = ?1")?;
+    statement
+        .query_map([source_id.as_str()], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, i64>(2)?,
+            ))
+        })?
+        .map(|row| {
+            let (kind, id, rating) = row?;
+            let rating = u8::try_from(rating).map_err(|_| StoreError::IntegerRange)?;
+            Ok(((kind, id), (rating > 0).then_some(rating)))
+        })
+        .collect()
+}
+
+fn apply_rating(
+    ratings: &HashMap<(String, String), Option<u8>>,
+    kind: &str,
+    id: &str,
+    rating: &mut Option<u8>,
+) {
+    if let Some(value) = ratings.get(&(kind.to_string(), id.to_string())) {
+        *rating = *value;
+    }
 }
 
 fn load_loudness(
@@ -4626,7 +4749,7 @@ fn apply_album_release_info(
     connection: &Connection,
     source_id: &SourceId,
     albums: &mut [Album],
-) -> StoreResult<Vec<AlbumId>> {
+) -> StoreResult<()> {
     let mut statement = connection.prepare(
         "SELECT
             album_id, exact_identity_key, lookup_state,
@@ -4646,7 +4769,6 @@ fn apply_album_release_info(
             ))
         })?
         .collect::<Result<HashMap<_, _>, _>>()?;
-    let mut unresolved = Vec::new();
     for album in albums {
         if !album.release_types.is_empty() {
             continue;
@@ -4658,11 +4780,9 @@ fn apply_album_release_info(
         let Some((stored_identity, state, release_types, is_compilation)) =
             rows.get(album.id.as_str())
         else {
-            unresolved.push(album.id.clone());
             continue;
         };
         if stored_identity != &identity_key {
-            unresolved.push(album.id.clone());
             continue;
         }
         if state == "missing" {
@@ -4675,16 +4795,15 @@ fn apply_album_release_info(
             album.is_compilation = is_compilation.map(|value| value != 0);
             continue;
         }
-        unresolved.push(album.id.clone());
     }
-    Ok(unresolved)
+    Ok(())
 }
 
 fn apply_exact_album_release_info(
     connection: &Connection,
     source_id: &SourceId,
     album: &mut Album,
-) -> StoreResult<bool> {
+) -> StoreResult<()> {
     let current_identity =
         crate::album_release::release_identity(album).map(|identity| identity.stored_key());
     let stored = connection
@@ -4706,7 +4825,7 @@ fn apply_exact_album_release_info(
         )
         .optional()?;
     let Some((stored_identity, state, release_types, is_compilation)) = stored else {
-        return Ok(album.release_types.is_empty() && current_identity.is_some());
+        return Ok(());
     };
     if current_identity.as_deref() != Some(stored_identity.as_str()) {
         connection.execute(
@@ -4714,17 +4833,17 @@ fn apply_exact_album_release_info(
              WHERE source_id = ?1 AND album_id = ?2",
             params![source_id.as_str(), album.id.as_str()],
         )?;
-        return Ok(album.release_types.is_empty() && current_identity.is_some());
+        return Ok(());
     }
     if !album.release_types.is_empty() {
-        return Ok(false);
+        return Ok(());
     }
     match (state.as_str(), release_types) {
-        ("missing", None) => Ok(false),
+        ("missing", None) => Ok(()),
         ("found", Some(release_types)) => {
             album.release_types = serde_json::from_str(&release_types)?;
             album.is_compilation = is_compilation.map(|value| value != 0);
-            Ok(false)
+            Ok(())
         }
         _ => Err(StoreError::InvalidValue {
             kind: "Album release lookup",

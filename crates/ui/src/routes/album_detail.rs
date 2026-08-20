@@ -16,7 +16,6 @@ use crate::favorites::{
     set_favorite_button_active, track_favorite_key,
 };
 use crate::shell::Shell;
-use crate::shell::cover::presentation::stable_seed;
 use crate::shell::cover::{LARGE_COVER_SIZE, THUMB_COVER_SIZE};
 use crate::shell::layout::route_content_width;
 use crate::{LibraryField, LibraryLayout, LibraryListKey, LibraryListSettings};
@@ -1094,7 +1093,6 @@ pub(crate) fn album_detail_cover_tile(
     cards::clip_cover(&cover_button);
     cover_button.set_child(Some(&shell.cover_tile_for_candidates(
         ArtworkBinding::album_artwork(&album.artwork),
-        album.album.color_seed,
         cover_size,
         LARGE_COVER_SIZE,
     )));
@@ -1196,7 +1194,7 @@ pub(crate) fn album_detail_track_header_cell(field: LibraryField, width: i32) ->
         let row = gtk::Box::new(gtk::Orientation::Horizontal, 0);
         row.set_width_request(width);
         row.set_halign(gtk::Align::Fill);
-        let image = gtk::Image::from_icon_name("preferences-system-time-symbolic");
+        let image = gtk::Image::from_icon_name("preferences-system-time-bundled-symbolic");
         let label = tr("Duration");
         image.add_css_class("muted");
         image.set_halign(gtk::Align::Start);
@@ -1343,12 +1341,8 @@ pub(crate) fn album_detail_track_cell(
             album_detail_fixed_cell(width, button.upcast())
         }
         LibraryField::Image => {
-            let cover = shell.cover_tile_for_candidates(
-                ArtworkBinding::track(track),
-                stable_seed(track.id.as_str()),
-                48,
-                THUMB_COVER_SIZE,
-            );
+            let cover =
+                shell.cover_tile_for_candidates(ArtworkBinding::track(track), 48, THUMB_COVER_SIZE);
             cover.set_halign(gtk::Align::Center);
             album_detail_fixed_cell(width, cover)
         }

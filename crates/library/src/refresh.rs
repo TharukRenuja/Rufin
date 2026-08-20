@@ -25,7 +25,6 @@ pub struct ProviderFreshness {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CandidateHeader {
     pub source_id: SourceId,
-    pub input_version: u32,
     pub input_digest: [u8; 32],
 }
 
@@ -202,7 +201,6 @@ impl Library {
         )?;
         let mut accepted = self.replace_source_update(
             stored.replacement,
-            stored.unresolved_album_releases,
             stored.playlists,
             stored.removed_playlists,
         )?;

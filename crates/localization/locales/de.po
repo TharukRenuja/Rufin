@@ -7,7 +7,7 @@ msgstr ""
 "Project-Id-Version: Rufin\n"
 "Report-Msgid-Bugs-To: https://github.com/screwys/Rufin/issues\n"
 "POT-Creation-Date: YEAR-MO-DA HO:MI+ZONE\n"
-"PO-Revision-Date: 2026-08-10 14:51+0000\n"
+"PO-Revision-Date: 2026-08-17 17:59+0000\n"
 "Last-Translator: Sebastian <sevachka@users.noreply.hosted.weblate.org>\n"
 "Language-Team: German <https://hosted.weblate.org/projects/rufin/app/de/>\n"
 "Language: de\n"
@@ -29,7 +29,7 @@ msgid ""
 "to review the logs before sharing them"
 msgstr ""
 "In den Protokollen wurden Geheimnisse und absolute Ordnerpfade unkenntlich "
-"gemacht. Trotzdem solltest du die Protokolle vor dem Teilen überprüfen."
+"gemacht. Trotzdem solltest du die Protokolle vor dem Teilen überprüfen"
 
 msgid "No results ¯\\_(°╭╮°)_/¯"
 msgstr "Keine Ergebnisse ¯\\(°╭╮°)/¯"
@@ -40,6 +40,11 @@ msgid ""
 msgstr ""
 "Nur Downloads, die durch diese Regel erstellt wurden, werden gelöscht. "
 "Freigegebene und manuelle Downloads bleiben erhalten."
+
+msgid ""
+"Route server media through this device instead of sharing provider URLs with "
+"the renderer"
+msgstr ""
 
 msgid ""
 "Saved mapping. {direct} direct, {prefix} prefix, {metadata} metadata, "
@@ -137,9 +142,6 @@ msgstr "320 kbps"
 
 msgid "5 Latest Albums"
 msgstr "5 neueste Alben"
-
-msgid "ALSA"
-msgstr "ALSA"
 
 msgid "API key"
 msgstr "API Schlüssel"
@@ -270,6 +272,9 @@ msgstr "Sanftes Ein-/Ausblenden bei Play/Pause"
 msgid "Audio output"
 msgstr "Audioausgabe"
 
+msgid "Audio processing is unavailable while casting"
+msgstr ""
+
 msgid "Audio"
 msgstr "Audio"
 
@@ -315,6 +320,11 @@ msgstr "Download abbrechen"
 msgid "Cancel"
 msgstr "Abbrechen"
 
+#, fuzzy
+#| msgid "Rating"
+msgid "Casting"
+msgstr "Bewertung"
+
 msgid "Change Secret Storage"
 msgstr "Anmeldedaten-Speicher ändern"
 
@@ -342,6 +352,11 @@ msgid "Choose one or more folders to scan and play directly from this computer"
 msgstr ""
 "Einen oder mehrere Ordner auswählen, um Musik direkt von diesem Computer "
 "einzulesen und abzuspielen"
+
+#, fuzzy
+#| msgid "Show playback icon"
+msgid "Choose playback output"
+msgstr "Wiedergabesymbol anzeigen"
 
 msgid "Choose"
 msgstr "Wähle"
@@ -409,6 +424,16 @@ msgstr "Verbunden"
 msgid "Connecting to music server..."
 msgstr "Mit Musikserver verbinden..."
 
+#, fuzzy
+#| msgid "Connecting to music server..."
+msgid "Connecting to {device}..."
+msgstr "Mit Musikserver verbinden..."
+
+#, fuzzy
+#| msgid "Connection"
+msgid "Connection failed"
+msgstr "Verbindung"
+
 msgid "Connection"
 msgstr "Verbindung"
 
@@ -422,7 +447,7 @@ msgid "Control notifications"
 msgstr "Benachrichtigungen verwalten"
 
 msgid "Copy"
-msgstr ""
+msgstr "Kopie"
 
 msgid "Could not save diagnostic log"
 msgstr "Diagnoseprotokoll konnte nicht gespeichert werden"
@@ -454,10 +479,8 @@ msgstr "Benutzerdefiniert"
 msgid "Customize display"
 msgstr "Ansicht anpassen"
 
-#, fuzzy
-#| msgid "Custom"
 msgid "Cut"
-msgstr "Benutzerdefiniert"
+msgstr "Ausschneiden"
 
 msgid "Dance"
 msgstr "Dance"
@@ -500,9 +523,6 @@ msgstr "Diagnoseprotokoll gespeichert"
 
 msgid "Diagnostic log"
 msgstr "Diagnoseprotokoll"
-
-msgid "DirectSound"
-msgstr "DirectSound"
 
 msgid "Disable private mode"
 msgstr "Privaten Modus deaktivieren"
@@ -576,6 +596,11 @@ msgstr "Privaten Modus aktivieren"
 msgid "Enter API credentials first"
 msgstr "Geben Sie zuerst die API-Zugangsdaten ein"
 
+#, fuzzy
+#| msgid "Enter a server address, username, and password"
+msgid "Enter a server address and API key"
+msgstr "Serveradresse, Benutzername und Passwort eingeben"
+
 msgid "Enter a server address, username, and password"
 msgstr "Serveradresse, Benutzername und Passwort eingeben"
 
@@ -587,9 +612,6 @@ msgstr "Equalizer"
 
 msgid "Everything, including new tracks"
 msgstr "Alles, einschließlich neuer Titel"
-
-msgid "Exit to tray"
-msgstr "In den Infobereich minimieren"
 
 msgid "Expand sidebar"
 msgstr "Seitenleiste ausklappen"
@@ -707,6 +729,12 @@ msgstr "Zum Album gehen"
 msgid "Go to Artist"
 msgstr "Zum Künstler springen"
 
+msgid "Go to"
+msgstr "Gehe zu"
+
+msgid "Google Cast"
+msgstr ""
+
 msgid "Green"
 msgstr "Grün"
 
@@ -721,9 +749,6 @@ msgstr "Hilfe"
 
 msgid "Hidden"
 msgstr "Versteckt"
-
-msgid "Hide lyrics"
-msgstr "Songtexte ausblenden"
 
 msgid "Hide sidebar"
 msgstr "Seitenleiste ausblenden"
@@ -774,8 +799,8 @@ msgstr "Installiert"
 msgid "Instrumental"
 msgstr "Instrumental"
 
-msgid "JACK"
-msgstr "JACK"
+msgid "Integrations"
+msgstr "Integrationen"
 
 msgid "Jellyfin"
 msgstr "Jellyfin"
@@ -785,6 +810,9 @@ msgstr "Jellyfin, Navidrome oder OpenSubsonic"
 
 msgid "Karaoke mode"
 msgstr "Karaoke-Modus"
+
+msgid "Keep Rufin running after closing the window"
+msgstr ""
 
 msgid "Keep album transitions gapless when possible"
 msgstr "Album-Übergänge nach Möglichkeit lückenlos halten"
@@ -875,11 +903,17 @@ msgstr "Zuordnung lokaler Dateien"
 msgid "Local library"
 msgstr "Lokale Mediathek"
 
+msgid "Local music folder is unavailable"
+msgstr "Lokaler Musikordner ist nicht verfügbar"
+
 msgid "Local music folder"
 msgstr "Lokaler Musikordner"
 
 msgid "Local"
 msgstr "Lokal"
+
+msgid "Locate Folder"
+msgstr "Ordner auswählen"
 
 msgid "Lock metadata"
 msgstr "Metadaten sperren"
@@ -1073,6 +1107,11 @@ msgstr "Keine passenden Titel"
 msgid "No music from this artist yet"
 msgstr "Noch keine Musik von diesem Künstler"
 
+#, fuzzy
+#| msgid "No lyrics found."
+msgid "No network devices found"
+msgstr "Keine Songtexte gefunden."
+
 msgid "No remote sources configured"
 msgstr "Keine externen Quellen konfiguriert"
 
@@ -1184,7 +1223,7 @@ msgid "Password"
 msgstr "Passwort"
 
 msgid "Paste"
-msgstr ""
+msgstr "Einfügen"
 
 msgid "Pause"
 msgstr "Pause"
@@ -1202,9 +1241,6 @@ msgstr "Pink"
 
 msgid "Pins"
 msgstr "Angeheftete Elemente"
-
-msgid "PipeWire"
-msgstr "PipeWire"
 
 msgid "Plain lyrics"
 msgstr "Einfache Songtexte"
@@ -1254,11 +1290,20 @@ msgstr "Abspielen"
 msgid "Play/Pause"
 msgstr "Wiedergabe/Pause"
 
+msgid "Playback speed"
+msgstr "Wiedergabegeschwindigkeit"
+
 msgid "Playback"
 msgstr "Wiedergabe"
 
 msgid "Played"
 msgstr "Abgespielt"
+
+msgid "Playing on this device"
+msgstr ""
+
+msgid "Playing on {device}"
+msgstr ""
 
 msgid "Playlist name"
 msgstr "Playlist-Name"
@@ -1302,6 +1347,11 @@ msgstr "Einstellungen"
 msgid "Preparing library..."
 msgstr "Bibliothek wird vorbereitet..."
 
+#, fuzzy
+#| msgid "Prefer server lyrics"
+msgid "Preserve pitch"
+msgstr "Server-Songtexte bevorzugen"
+
 msgid "Preset"
 msgstr "Voreinstellung"
 
@@ -1333,8 +1383,8 @@ msgstr "Privater Modus"
 msgid "Pronunciation"
 msgstr "Aussprache"
 
-msgid "PulseAudio"
-msgstr "PulseAudio"
+msgid "Proxy casting through Rufin"
+msgstr ""
 
 msgid "Purple"
 msgstr "Lila"
@@ -1369,6 +1419,9 @@ msgstr "Zuletzt gespielt"
 msgid "Recently released"
 msgstr "Zuletzt veröffentlicht"
 
+msgid "Recommended when your server provides one"
+msgstr ""
+
 msgid "Reconnect"
 msgstr "Erneut verbinden"
 
@@ -1376,7 +1429,7 @@ msgid "Red"
 msgstr "Rot"
 
 msgid "Redo"
-msgstr ""
+msgstr "Wiederholen"
 
 msgid "Refresh section"
 msgstr "Bereich aktualisieren"
@@ -1504,9 +1557,6 @@ msgstr "Reihen"
 msgid "Rufin data folder"
 msgstr "Rufin-Datenordner"
 
-msgid "Rufin is running in the tray"
-msgstr "Rufin läuft im Infobereich/Systemtray"
-
 msgid "Rule actions"
 msgstr "Regelaktionen"
 
@@ -1543,9 +1593,6 @@ msgstr "Gespeichert, mit den Übereinstimmungen der Vorschau synchronisieren"
 msgid "Saving..."
 msgstr "Wird gespeichert …"
 
-msgid "Scrobbling"
-msgstr "Scrobbling"
-
 msgid "Search Again"
 msgstr "Erneut suchen"
 
@@ -1570,14 +1617,16 @@ msgstr "Lokales Netzwerk durchsuchen"
 msgid "Searching for Jellyfin servers on the local network..."
 msgstr "Im lokalen Netzwerk wird nach Jellyfin-Servern gesucht..."
 
+#, fuzzy
+#| msgid "Searching..."
+msgid "Searching for devices..."
+msgstr "Suche..."
+
 msgid "Searching will start automatically"
 msgstr "Die Suche startet automatisch"
 
 msgid "Searching..."
 msgstr "Suche..."
-
-msgid "Seconds"
-msgstr "Sekunden"
 
 msgid "Secret storage"
 msgstr "Anmeldedaten-Speicher"
@@ -1597,10 +1646,8 @@ msgstr "Spulen"
 msgid "Seekbar"
 msgstr "Wiedergabeleiste"
 
-#, fuzzy
-#| msgid "Selection"
 msgid "Select All"
-msgstr "Auswahl"
+msgstr "Alle auswählen"
 
 msgid "Select Download Folder"
 msgstr "Download-Ordner auswählen"
@@ -1610,9 +1657,6 @@ msgstr "Musikordner auswählen"
 
 msgid "Select Source"
 msgstr "Quelle auswählen"
-
-msgid "Selected device"
-msgstr "Ausgewähltes Gerät"
 
 msgid "Selection"
 msgstr "Auswahl"
@@ -1662,9 +1706,6 @@ msgstr "Discord-Aktivitätstyp auf „Hört gerade“ festlegen"
 msgid "Shared secret"
 msgstr "Shared Secret"
 
-msgid "Show Lyrics Panel"
-msgstr "Songtext-Bereich anzeigen"
-
 msgid "Show Rufin"
 msgstr "Rufin anzeigen"
 
@@ -1689,6 +1730,9 @@ msgstr "Seitenleiste einblenden"
 msgid "Show tray icon"
 msgstr "Symbol im Infobereich anzeigen"
 
+msgid "Show visualizer"
+msgstr "Visualizer anzeigen"
+
 msgid "Show/hide lyrics"
 msgstr "Songtexte anzeigen/ausblenden"
 
@@ -1710,10 +1754,8 @@ msgstr "Zufallswiedergabe"
 msgid "Sidebar Items"
 msgstr "Seitenleisten-Einträge"
 
-#, fuzzy
-#| msgid "Sidebar route by position"
 msgid "Sidebar item {position}"
-msgstr "Seitenleistenroute nach Position"
+msgstr "Seitenleistenelement {position}"
 
 msgid "Sidebar route by position"
 msgstr "Seitenleistenroute nach Position"
@@ -1802,6 +1844,9 @@ msgstr "Text"
 msgid "Theme"
 msgstr "Darstellung"
 
+msgid "This device"
+msgstr ""
+
 msgid "This isn't available"
 msgstr "Dies ist nicht verfügbar"
 
@@ -1859,17 +1904,25 @@ msgstr "Tippen, um zu suchen oder eine neue Playlist zu erstellen"
 msgid "Type to search"
 msgstr "Tippen zum Suchen"
 
+msgid "UPnP"
+msgstr ""
+
 msgid "Undo identified value"
 msgstr "Erkannten Wert rückgängig machen"
 
 msgid "Undo"
-msgstr ""
+msgstr "Rückgängig machen"
 
 msgid "Unmuted"
 msgstr "Stummschaltung aufgehoben"
 
 msgid "Update"
 msgstr "Update"
+
+#, fuzzy
+#| msgid "API key"
+msgid "Use API key"
+msgstr "API Schlüssel"
 
 msgid "Use Jellyfin Instant Mix for recommendations"
 msgstr "Jellyfin Instant-Mix für Empfehlungen verwenden"
@@ -1923,9 +1976,6 @@ msgstr "Lautstärke erhöhen"
 
 msgid "Volume scale"
 msgstr "Lautstärkeskala"
-
-msgid "WASAPI"
-msgstr "WASAPI"
 
 msgid "Waiting for connection"
 msgstr "Warten auf Verbindung"
@@ -1987,8 +2037,8 @@ msgstr "ist nicht"
 msgid "is"
 msgstr "ist"
 
-msgid "macOS"
-msgstr "macOS"
+msgid "kbps"
+msgstr "kbps"
 
 msgid "range"
 msgstr "Bereich"
@@ -2041,6 +2091,51 @@ msgid "{count} year ago"
 msgid_plural "{count} years ago"
 msgstr[0] "vor {count} Jahr"
 msgstr[1] "vor {count} Jahren"
+
+#~ msgid "ALSA"
+#~ msgstr "ALSA"
+
+#~ msgid "DirectSound"
+#~ msgstr "DirectSound"
+
+#~ msgid "Exit to tray"
+#~ msgstr "In den Infobereich minimieren"
+
+#~ msgid "JACK"
+#~ msgstr "JACK"
+
+#~ msgid "PipeWire"
+#~ msgstr "PipeWire"
+
+#~ msgid "Playback settings"
+#~ msgstr "Wiedergabeeinstellungen"
+
+#~ msgid "PulseAudio"
+#~ msgstr "PulseAudio"
+
+#~ msgid "Rufin is running in the tray"
+#~ msgstr "Rufin läuft im Infobereich/Systemtray"
+
+#~ msgid "Selected device"
+#~ msgstr "Ausgewähltes Gerät"
+
+#~ msgid "WASAPI"
+#~ msgstr "WASAPI"
+
+#~ msgid "macOS"
+#~ msgstr "macOS"
+
+#~ msgid "Scrobbling"
+#~ msgstr "Scrobbling"
+
+#~ msgid "Hide lyrics"
+#~ msgstr "Songtexte ausblenden"
+
+#~ msgid "Seconds"
+#~ msgstr "Sekunden"
+
+#~ msgid "Show Lyrics Panel"
+#~ msgstr "Songtext-Bereich anzeigen"
 
 #~ msgid "ReplayGain"
 #~ msgstr "ReplayGain"
@@ -2195,9 +2290,6 @@ msgstr[1] "vor {count} Jahren"
 #~ msgid "No lyrics for the current track."
 #~ msgstr "Keine Songtexte für den aktuellen Titel."
 
-#~ msgid "No lyrics found."
-#~ msgstr "Keine Songtexte gefunden."
-
 #~ msgid "No queue items match the search."
 #~ msgstr "Keine Einträge in der Warteschlange entsprechen der Suche."
 
@@ -2247,9 +2339,6 @@ msgstr[1] "vor {count} Jahren"
 #~ msgid "Server settings saved. Resyncing library..."
 #~ msgstr ""
 #~ "Server-Einstellungen gespeichert. Bibliothek wird neu synchronisiert..."
-
-#~ msgid "Show playback icon"
-#~ msgstr "Wiedergabesymbol anzeigen"
 
 #~ msgid "Smart playlists will appear here after the default set is seeded."
 #~ msgstr ""

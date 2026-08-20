@@ -1,10 +1,10 @@
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
 use crate::runtime::source::{
-    CredentialInput, CredentialPreset, LocalAccessStatus, SelectedSourceHandle, SourceHandle,
-    SourceLocalAccess, SourceSummary,
+    CredentialInput, CredentialPreset, LocalAccessStatus, OpenSubsonicAuthentication,
+    SelectedSourceHandle, SourceHandle, SourceLocalAccess, SourceSummary,
 };
 use ::library::{
     LocalAccessMapping, MetadataItemId, SourceId, project_local_access_path,
@@ -19,7 +19,10 @@ use super::field_layout::{
     compact_field_row_group, install_compact_field_row_responsiveness,
     install_compact_field_row_responsiveness_at, style_compact_field_row,
 };
-use super::login::{connect_folder_button, source_kind_title, source_settings_group};
+use super::login::{
+    connect_folder_button, open_subsonic_authentication_switch, source_kind_title,
+    source_settings_group,
+};
 use crate::layout::large_popup_content_width;
 use crate::player::state::current_playback_track;
 use crate::shell::Shell;
@@ -383,9 +386,9 @@ fn manage_server_content(
 
     let actions = gtk::Box::new(gtk::Orientation::Horizontal, 8);
     actions.set_halign(gtk::Align::End);
-    let remove = text_button("edit-clear-symbolic", "Clear Mapping");
+    let remove = text_button("edit-clear-bundled-symbolic", "Clear Mapping");
     remove.set_visible(access.is_some());
-    let save = text_button("document-save-symbolic", "Save Mapping");
+    let save = text_button("document-save-bundled-symbolic", "Save Mapping");
     save.add_css_class("suggested-action");
     actions.append(&remove);
     actions.append(&save);
@@ -693,8 +696,9 @@ pub(crate) fn credential_source_settings_group(
     shell: &Rc<Shell>,
     preset: CredentialPreset,
     source_title: &'static str,
+    authentication: Option<OpenSubsonicAuthentication>,
     extra: Option<adw::SwitchRow>,
-    submit: impl Fn(&SourceHandle, CredentialInput) + 'static,
+    submit: impl Fn(&SourceHandle, CredentialInput, Option<OpenSubsonicAuthentication>) + 'static,
 ) -> gtk::Widget {
     let section = gtk::Box::new(gtk::Orientation::Vertical, 8);
 
@@ -715,12 +719,18 @@ pub(crate) fn credential_source_settings_group(
         .text(&preset.username)
         .build();
     style_compact_field_row(&username);
-    rows_group.add(&username);
 
     let password = adw::PasswordEntryRow::builder()
         .title(tr("Password"))
         .build();
     style_compact_field_row(&password);
+    let authentication = authentication.map(|authentication| Rc::new(Cell::new(authentication)));
+    if let Some(authentication) = authentication.as_ref() {
+        let api_key =
+            open_subsonic_authentication_switch(Rc::clone(authentication), &username, &password);
+        rows_group.add(&api_key);
+    }
+    rows_group.add(&username);
     rows_group.add(&password);
 
     let cert_verify = adw::SwitchRow::builder()
@@ -733,22 +743,26 @@ pub(crate) fn credential_source_settings_group(
         rows_group.add(extra);
     }
 
-    let save = button_row("Save Server Settings", "document-save-symbolic");
+    let save = button_row("Save Server Settings", "document-save-bundled-symbolic");
     save.add_css_class("suggested-action");
     rows_group.add(&save);
     section.append(&rows_group);
 
     let source = shell.products.source.clone();
     save.connect_activated(move |_| {
+        let authentication = authentication
+            .as_ref()
+            .map(|authentication| authentication.get());
         submit(
             &source,
             CredentialInput {
                 source_name: Some(name.text().trim().to_string()),
                 server_url: address.text().trim().to_string(),
                 username: username.text().trim().to_string(),
-                password: password.text().to_string(),
+                secret: password.text().to_string(),
                 trust_invalid_cert: !cert_verify.is_active(),
             },
+            authentication,
         );
     });
 
@@ -803,7 +817,7 @@ fn server_actions_group(
     let actions = action_button_box();
 
     if !selected {
-        let select = row_action_button("Use This Source", "object-select-symbolic");
+        let select = row_action_button("Use This Source", "object-select-bundled-symbolic");
         let source = shell.products.source.clone();
         let source_id = server.id.clone();
         let exit = exit.clone();
@@ -818,7 +832,7 @@ fn server_actions_group(
         actions.append(&select);
     }
 
-    let resync = row_action_button("Resync Library", "view-refresh-symbolic");
+    let resync = row_action_button("Resync Library", "view-refresh-bundled-symbolic");
     let source = shell.products.source.clone();
     let source_id = server.id.clone();
     let preferences_dialog_for_resync = preferences_dialog.downgrade();
@@ -830,7 +844,7 @@ fn server_actions_group(
     });
     actions.append(&resync);
 
-    let forget = row_action_button("Forget Server", "window-close-symbolic");
+    let forget = row_action_button("Forget Server", "window-close-bundled-symbolic");
     forget.add_css_class("destructive-action");
     let forget_shell = Rc::clone(shell);
     let source_id = server.id.clone();
@@ -901,7 +915,7 @@ fn button_row(title: &str, icon_name: &str) -> adw::ButtonRow {
     let row = adw::ButtonRow::builder()
         .title(tr(title))
         .start_icon_name(icon_name)
-        .end_icon_name("go-next-symbolic")
+        .end_icon_name("go-next-bundled-symbolic")
         .build();
     row.add_css_class("manage-server-action-row");
     row

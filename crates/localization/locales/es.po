@@ -7,26 +7,22 @@ msgstr ""
 "Project-Id-Version: Rufin\n"
 "Report-Msgid-Bugs-To: https://github.com/screwys/Rufin/issues\n"
 "POT-Creation-Date: YEAR-MO-DA HO:MI+ZONE\n"
-"PO-Revision-Date: 2026-07-29 20:45+0000\n"
-"Last-Translator: Houtarou <houtarou@users.noreply.hosted.weblate.org>\n"
+"PO-Revision-Date: 2026-08-19 19:55+0000\n"
+"Last-Translator: \"David Yakobi (Houtarou)\" <houtarou86@duck.com>\n"
 "Language-Team: Spanish <https://hosted.weblate.org/projects/rufin/app/es/>\n"
 "Language: es\n"
 "MIME-Version: 1.0\n"
 "Content-Type: text/plain; charset=UTF-8\n"
 "Content-Transfer-Encoding: 8bit\n"
 "Plural-Forms: nplurals=2; plural=n != 1;\n"
-"X-Generator: Weblate 2026.8.dev0\n"
+"X-Generator: Weblate 2026.9.dev0\n"
 
-#, fuzzy
-#| msgid ""
-#| "Downloaded music from this server will no longer be available offline. "
-#| "Automatic download rules will also be turned off."
 msgid ""
 "Downloads from this server will be removed, and automatic rules will be "
 "turned off"
 msgstr ""
-"Música descargada de este servidor ya no estará disponible fuera de línea. "
-"Las reglas de descarga automática también se desactivarán."
+"Las descargas de este servidor serán eliminadas y las reglas automáticas se "
+"desactivarán"
 
 msgid ""
 "Logs have secrets and absolute folder paths redacted, but you may still want "
@@ -39,13 +35,17 @@ msgstr ""
 msgid "No results ¯\\_(°╭╮°)_/¯"
 msgstr "Ningún resultado 302257\\_(302260342225255342225256302260)_/302257"
 
-#, fuzzy
 msgid ""
 "Only downloads from this rule will be deleted. Shared and manual downloads "
 "stay"
 msgstr ""
-"Las pistas utilizadas sólo por esta regla serán eliminadas. Se mantendrán "
-"las descargas compartidas con otra regla o descarga manual."
+"Sólo se eliminarán las descargas de esta regla. Se mantendrán las descargas "
+"compartidas y manuales"
+
+msgid ""
+"Route server media through this device instead of sharing provider URLs with "
+"the renderer"
+msgstr ""
 
 msgid ""
 "Saved mapping. {direct} direct, {prefix} prefix, {metadata} metadata, "
@@ -54,7 +54,11 @@ msgid_plural ""
 "Saved mapping. {direct} direct, {prefix} prefix, {metadata} metadata, "
 "{unmatched} unmatched of {total} tracks"
 msgstr[0] ""
+"Mapeo guardada. {direct} direct, {prefix} prefix, {metadata} metadato, "
+"{unmatched} sin coincidir {total} pista"
 msgstr[1] ""
+"Mapeo guardada. {direct} direct, {prefix} prefix, {metadata} metadatos, "
+"{unmatched} sin coincidir {total} pistas"
 
 msgid ""
 "Tap to the entry to load the lyrics and save in the app cache, click save "
@@ -71,34 +75,33 @@ msgstr ""
 "¡Gracias por probar Rufin! Si tiene problemas o sugerencias, por favor abra "
 "un problema en Github."
 
-#, fuzzy
 msgid ""
 "These folders are combined into the Local source and shown through folder "
 "browsing"
 msgstr ""
-"Estas carpetas se combinan en la fuente local y se muestran a través de la "
-"navegación de carpetas."
+"Estas carpetas están combinadas en la fuente local y se muestran a través de "
+"la navegación de carpetas"
 
-#, fuzzy
 msgid ""
 "This removes the server, cached library metadata, queue snapshot, and saved "
 "token for"
 msgstr ""
 "Esto elimina el servidor, metadatos de biblioteca en caché, instantánea de "
-"cola y token guardado"
+"cola y token guardado para"
 
-#, fuzzy
 msgid ""
 "This uses Jellyfin API for play radio, necessary if you want recommendation "
 "plugins to work"
 msgstr ""
 "Esto utiliza la API de Jellyfin para reproducir radio, necesaria si desea "
-"que los plugins de recomendación funcionen."
+"que los plugins de recomendación funcionen"
 
 msgid ""
 "This will log you out and clear your secrets including API ones. Your app "
 "cache is not touched."
 msgstr ""
+"Esto cerrará su sesión y limpiará sus secretos incluyendo los de API. Su "
+"caché de aplicación no se tocará."
 
 msgid ""
 "Track evens out every song, while Album preserves the intended differences "
@@ -112,156 +115,162 @@ msgid_plural ""
 "Unsaved changes. {direct} direct, {prefix} prefix, {metadata} metadata, "
 "{unmatched} unmatched of {total} tracks"
 msgstr[0] ""
+"cambio sin guardar. {direct} direct, {prefix} prefix, {metadata} metadata, "
+"{unmatched} sin coincidir {total} pista"
 msgstr[1] ""
+"cambios sin guardar. {direct} direct, {prefix} prefix, {metadata} metadata, "
+"{unmatched} sin coincidir {total} pistas"
 
 msgid ". You only need to fill email and an application name parts"
 msgstr ""
+". Sólo necesita llenar el correo electrónico y las partes de nombre de "
+"aplicación"
 
 msgid "128 kbps"
-msgstr ""
+msgstr "128 kbps"
 
 msgid "192 kbps"
-msgstr ""
+msgstr "192 kbps"
 
 msgid "256 kbps"
-msgstr ""
+msgstr "256 kbps"
 
 msgid "320 kbps"
-msgstr ""
+msgstr "320 kbps"
 
 msgid "5 Latest Albums"
-msgstr ""
-
-msgid "ALSA"
-msgstr ""
+msgstr "5 Últimos álbumes"
 
 msgid "API key"
-msgstr ""
+msgstr "Clave de API"
 
 msgid "API keys"
-msgstr ""
+msgstr "Claves de API"
 
 msgid "About Rufin"
-msgstr ""
+msgstr "Acerca de Rufin"
 
 msgid "Accent color"
-msgstr ""
+msgstr "Color de acento"
 
 msgid "Add Rule"
-msgstr ""
+msgstr "Añadir Regla"
 
 msgid "Add a matching server prefix"
-msgstr ""
+msgstr "Añadir un prefijo de servidor que coincida"
 
 msgid "Add a new source"
-msgstr ""
+msgstr "Añadir una nueva fuente"
 
 msgid "Add a title"
-msgstr ""
+msgstr "Añadir un título"
 
 msgid "Add current"
-msgstr ""
+msgstr "Añade actual"
 
 msgid "Add folder"
-msgstr ""
+msgstr "Agregar carpeta"
 
 msgid "Add server"
-msgstr ""
+msgstr "Agregar servidor"
 
 msgid "Add to Favorites"
-msgstr ""
+msgstr "Añadir a Favoritos"
 
 msgid "Add to Pins"
-msgstr ""
+msgstr "Añadir a Fijados"
 
 msgid "Add to Playlist"
-msgstr ""
+msgstr "Añadir a la lista de reproducción"
 
 msgid "Add tracks when fewer than this many remain"
-msgstr ""
+msgstr "Agregar pistas cuando menos de esto muchos permanecen"
 
 msgid "Add"
-msgstr ""
+msgstr "Añadir"
 
 msgid "Added to favorites"
-msgstr ""
+msgstr "Añadido a los favoritos"
 
 msgid "Added to"
-msgstr ""
+msgstr "Añadido a"
 
 msgid "Album Artists"
-msgstr ""
+msgstr "Artistas de álbum"
 
 msgid "Album artist"
-msgstr ""
+msgstr "Artista de álbum"
 
 msgid "Album artists"
-msgstr ""
+msgstr "Artistas de álbum"
 
 msgid "Album radio"
-msgstr ""
+msgstr "Radio de álbum"
 
 msgid "Album title"
-msgstr ""
+msgstr "Título de álbum"
 
 msgid "Album tracks"
-msgstr ""
+msgstr "Pistas de álbum"
 
 msgid "Album"
-msgstr ""
+msgstr "Álbum"
 
 msgid "Albums"
-msgstr ""
+msgstr "Álbumes"
 
 msgid "All Music"
-msgstr ""
+msgstr "Toda la música"
 
 msgid "All Playlists"
-msgstr ""
+msgstr "Todas las listas"
 
 msgid "All tracks"
-msgstr ""
+msgstr "Todas las pistas"
 
 msgid "Any genre"
-msgstr ""
+msgstr "Cualquier género"
 
 msgid "App settings"
-msgstr ""
+msgstr "Ajustes de la aplicación"
 
 msgid "Appearance"
-msgstr ""
+msgstr "Apariencia"
 
 msgid "Appears On"
-msgstr ""
+msgstr "Aparece en"
 
 msgid "Application name"
-msgstr ""
+msgstr "Nombre de la aplicación"
 
 msgid "Artist / Album"
-msgstr ""
+msgstr "Artista / Album"
 
 msgid "Artist albums"
-msgstr ""
+msgstr "Álbumes de artista"
 
 msgid "Artist name"
-msgstr ""
+msgstr "Nombre del artista"
 
 msgid "Artist radio"
-msgstr ""
+msgstr "Radio del artista"
 
 msgid "Artist tracks"
-msgstr ""
+msgstr "Pistas del artista"
 
 msgid "Artist"
-msgstr ""
+msgstr "Artista"
 
 msgid "Artists"
-msgstr ""
+msgstr "Artistas"
 
 msgid "Audio fade on play/pause"
 msgstr ""
 
 msgid "Audio output"
+msgstr ""
+
+msgid "Audio processing is unavailable while casting"
 msgstr ""
 
 msgid "Audio"
@@ -309,6 +318,9 @@ msgstr ""
 msgid "Cancel"
 msgstr ""
 
+msgid "Casting"
+msgstr ""
+
 msgid "Change Secret Storage"
 msgstr ""
 
@@ -333,6 +345,9 @@ msgid "Choose at least one local music folder"
 msgstr ""
 
 msgid "Choose one or more folders to scan and play directly from this computer"
+msgstr ""
+
+msgid "Choose playback output"
 msgstr ""
 
 msgid "Choose"
@@ -399,6 +414,12 @@ msgid "Connected"
 msgstr ""
 
 msgid "Connecting to music server..."
+msgstr ""
+
+msgid "Connecting to {device}..."
+msgstr ""
+
+msgid "Connection failed"
 msgstr ""
 
 msgid "Connection"
@@ -491,9 +512,6 @@ msgstr ""
 msgid "Diagnostic log"
 msgstr ""
 
-msgid "DirectSound"
-msgstr ""
-
 msgid "Disable private mode"
 msgstr ""
 
@@ -566,6 +584,9 @@ msgstr ""
 msgid "Enter API credentials first"
 msgstr ""
 
+msgid "Enter a server address and API key"
+msgstr ""
+
 msgid "Enter a server address, username, and password"
 msgstr ""
 
@@ -576,9 +597,6 @@ msgid "Equalizer"
 msgstr ""
 
 msgid "Everything, including new tracks"
-msgstr ""
-
-msgid "Exit to tray"
 msgstr ""
 
 msgid "Expand sidebar"
@@ -692,6 +710,12 @@ msgstr ""
 msgid "Go to Artist"
 msgstr ""
 
+msgid "Go to"
+msgstr ""
+
+msgid "Google Cast"
+msgstr ""
+
 msgid "Green"
 msgstr ""
 
@@ -705,9 +729,6 @@ msgid "Help"
 msgstr ""
 
 msgid "Hidden"
-msgstr ""
-
-msgid "Hide lyrics"
 msgstr ""
 
 msgid "Hide sidebar"
@@ -758,7 +779,7 @@ msgstr ""
 msgid "Instrumental"
 msgstr ""
 
-msgid "JACK"
+msgid "Integrations"
 msgstr ""
 
 msgid "Jellyfin"
@@ -770,17 +791,16 @@ msgstr ""
 msgid "Karaoke mode"
 msgstr ""
 
+msgid "Keep Rufin running after closing the window"
+msgstr ""
+
 msgid "Keep album transitions gapless when possible"
 msgstr ""
 
-#, fuzzy
-#| msgid ""
-#| "Keep music from the selected server available without a connection. "
-#| "Folder changes apply to new downloads."
 msgid "Keep music available offline. Folder changes only affect new downloads"
 msgstr ""
 "Mantener la música del servidor seleccionado disponible sin conexión. Los "
-"cambios de carpeta se aplican a nuevas descargas."
+"cambios de carpeta se aplican a nuevas descargas"
 
 msgid "Keyboard Shortcuts"
 msgstr ""
@@ -863,10 +883,16 @@ msgstr ""
 msgid "Local library"
 msgstr ""
 
+msgid "Local music folder is unavailable"
+msgstr ""
+
 msgid "Local music folder"
 msgstr ""
 
 msgid "Local"
+msgstr ""
+
+msgid "Locate Folder"
 msgstr ""
 
 msgid "Lock metadata"
@@ -1061,6 +1087,9 @@ msgstr ""
 msgid "No music from this artist yet"
 msgstr ""
 
+msgid "No network devices found"
+msgstr ""
+
 msgid "No remote sources configured"
 msgstr ""
 
@@ -1187,9 +1216,6 @@ msgstr ""
 msgid "Pins"
 msgstr ""
 
-msgid "PipeWire"
-msgstr ""
-
 msgid "Plain lyrics"
 msgstr ""
 
@@ -1238,10 +1264,19 @@ msgstr ""
 msgid "Play/Pause"
 msgstr ""
 
+msgid "Playback speed"
+msgstr ""
+
 msgid "Playback"
 msgstr ""
 
 msgid "Played"
+msgstr ""
+
+msgid "Playing on this device"
+msgstr ""
+
+msgid "Playing on {device}"
 msgstr ""
 
 msgid "Playlist name"
@@ -1286,6 +1321,9 @@ msgstr ""
 msgid "Preparing library..."
 msgstr ""
 
+msgid "Preserve pitch"
+msgstr ""
+
 msgid "Preset"
 msgstr ""
 
@@ -1316,7 +1354,7 @@ msgstr ""
 msgid "Pronunciation"
 msgstr ""
 
-msgid "PulseAudio"
+msgid "Proxy casting through Rufin"
 msgstr ""
 
 msgid "Purple"
@@ -1350,6 +1388,9 @@ msgid "Recently played"
 msgstr ""
 
 msgid "Recently released"
+msgstr ""
+
+msgid "Recommended when your server provides one"
 msgstr ""
 
 msgid "Reconnect"
@@ -1487,9 +1528,6 @@ msgstr ""
 msgid "Rufin data folder"
 msgstr ""
 
-msgid "Rufin is running in the tray"
-msgstr ""
-
 msgid "Rule actions"
 msgstr ""
 
@@ -1526,9 +1564,6 @@ msgstr ""
 msgid "Saving..."
 msgstr ""
 
-msgid "Scrobbling"
-msgstr ""
-
 msgid "Search Again"
 msgstr ""
 
@@ -1553,13 +1588,13 @@ msgstr ""
 msgid "Searching for Jellyfin servers on the local network..."
 msgstr ""
 
+msgid "Searching for devices..."
+msgstr ""
+
 msgid "Searching will start automatically"
 msgstr ""
 
 msgid "Searching..."
-msgstr ""
-
-msgid "Seconds"
 msgstr ""
 
 msgid "Secret storage"
@@ -1590,9 +1625,6 @@ msgid "Select Music Folder"
 msgstr ""
 
 msgid "Select Source"
-msgstr ""
-
-msgid "Selected device"
 msgstr ""
 
 msgid "Selection"
@@ -1643,9 +1675,6 @@ msgstr ""
 msgid "Shared secret"
 msgstr ""
 
-msgid "Show Lyrics Panel"
-msgstr ""
-
 msgid "Show Rufin"
 msgstr ""
 
@@ -1668,6 +1697,9 @@ msgid "Show sidebar"
 msgstr ""
 
 msgid "Show tray icon"
+msgstr ""
+
+msgid "Show visualizer"
 msgstr ""
 
 msgid "Show/hide lyrics"
@@ -1781,6 +1813,9 @@ msgstr ""
 msgid "Theme"
 msgstr ""
 
+msgid "This device"
+msgstr ""
+
 msgid "This isn't available"
 msgstr ""
 
@@ -1838,6 +1873,9 @@ msgstr ""
 msgid "Type to search"
 msgstr ""
 
+msgid "UPnP"
+msgstr ""
+
 msgid "Undo identified value"
 msgstr ""
 
@@ -1849,6 +1887,11 @@ msgstr ""
 
 msgid "Update"
 msgstr ""
+
+#, fuzzy
+#| msgid "API key"
+msgid "Use API key"
+msgstr "Clave de API"
 
 msgid "Use Jellyfin Instant Mix for recommendations"
 msgstr ""
@@ -1899,9 +1942,6 @@ msgid "Volume Up"
 msgstr ""
 
 msgid "Volume scale"
-msgstr ""
-
-msgid "WASAPI"
 msgstr ""
 
 msgid "Waiting for connection"
@@ -1964,7 +2004,7 @@ msgstr ""
 msgid "is"
 msgstr ""
 
-msgid "macOS"
+msgid "kbps"
 msgstr ""
 
 msgid "range"
@@ -2018,3 +2058,6 @@ msgid "{count} year ago"
 msgid_plural "{count} years ago"
 msgstr[0] ""
 msgstr[1] ""
+
+#~ msgid "ALSA"
+#~ msgstr "ALSA"

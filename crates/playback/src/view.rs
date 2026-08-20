@@ -126,6 +126,33 @@ pub struct ControlsView {
     pub volume: f64,
     pub muted: bool,
     pub audio_output: Option<String>,
+    pub playback_output: PlaybackOutput,
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub enum RemoteOutputProtocol {
+    Upnp,
+    GoogleCast,
+}
+
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub struct RemoteOutput {
+    pub id: String,
+    pub name: String,
+    pub protocol: RemoteOutputProtocol,
+}
+
+#[derive(Clone, Debug, Default, Eq, Hash, PartialEq)]
+pub enum PlaybackOutput {
+    #[default]
+    Local,
+    Remote(RemoteOutput),
+}
+
+impl PlaybackOutput {
+    pub const fn is_local(&self) -> bool {
+        matches!(self, Self::Local)
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -248,9 +275,14 @@ impl PlaybackSession {
                 repeat_mode: sequence.repeat_mode(),
                 shuffle_enabled: sequence.shuffle_enabled(),
                 auto_dj_enabled: self.auto_dj_enabled(),
-                volume: settings.volume,
-                muted: settings.muted,
+                volume: if self.output_muted() {
+                    0.0
+                } else {
+                    self.output_volume()
+                },
+                muted: self.output_muted(),
                 audio_output: settings.audio_output.clone(),
+                playback_output: self.playback_output().clone(),
             },
         }
     }

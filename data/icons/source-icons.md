@@ -7,3 +7,5 @@ External service icons in `hicolor/64x64/apps` are resized from [Last.fm favicon
 `hicolor/scalable/actions/rufin-route-smart-playlists-symbolic.svg` is based on `playlist-symbolic.svg` from [FolderPlay (GPL-3.0)](https://github.com/juancarlosbernal/FolderPlay).
 
 `hicolor/scalable/actions/rufin-audio-radio-symbolic.svg` is based on `audio-radio.svg` from [Breeze Icons (LGPL-3.0-or-later)](https://invent.kde.org/frameworks/breeze-icons).
+
+`hicolor/scalable/actions/open-menu-bundled-symbolic.svg` is based on `open-menu-symbolic.svg` from [Breeze Icons (LGPL-3.0-or-later)](https://invent.kde.org/frameworks/breeze-icons).

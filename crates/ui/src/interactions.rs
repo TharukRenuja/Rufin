@@ -4,7 +4,7 @@ use std::rc::Rc;
 use adw::prelude::*;
 use gtk::{gio, glib};
 
-use localization::tr;
+use localization::{msgid, tr};
 
 use crate::settings::{ContextMenuItem, ContextMenuSettings};
 use crate::shell::Shell;
@@ -15,11 +15,14 @@ const CONTEXT_MENU_PLAYLIST_MIN_WIDTH: i32 = 380;
 const NATIVE_MENU_SELECTION_CLASS: &str = "rufin-menu-selection";
 const NATIVE_MENU_SELECTED_CLASS: &str = "rufin-menu-selected";
 const NATIVE_MENU_PARENT_GRAB_CLASS: &str = "rufin-menu-parent-grab";
+pub(crate) const CONTEXT_MENU_HOVER_OWNER_CLASS: &str = "context-menu-hover-owner";
+pub(crate) const CONTEXT_MENU_HOVER_HELD_CLASS: &str = "context-menu-hover-held";
 
-pub(crate) const ADD_TO_PLAYLIST_ICON: &str = "rufin-route-playlists-symbolic";
+pub(crate) const ADD_TO_PLAYLIST_ICON: &str = "route-playlists-compact-bundled-symbolic";
 pub(crate) const ALBUM_ICON: &str = "rufin-route-albums-symbolic";
 pub(crate) const ARTIST_ICON: &str = "rufin-route-artists-symbolic";
-pub(crate) const DOWNLOAD_ICON: &str = "folder-download-symbolic";
+pub(crate) const DOWNLOAD_ICON: &str = "folder-download-bundled-symbolic";
+pub(crate) const GO_TO_ICON: &str = "adw-external-link-compact-bundled-symbolic";
 pub(crate) const RADIO_ICON: &str = "rufin-audio-radio-symbolic";
 
 pub(crate) type ContextMenuOpen = Rc<dyn Fn(&gtk::Widget, Option<(f64, f64)>)>;
@@ -75,6 +78,7 @@ pub(crate) struct ContextMenuSurface {
     popover: gtk::PopoverMenu,
     actions: gio::SimpleActionGroup,
     entries: RefCell<Vec<ContextMenuEntry<gio::MenuItem>>>,
+    custom_children: RefCell<Vec<(String, gtk::Widget)>>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -97,6 +101,7 @@ impl ContextMenuSurface {
             menu,
             actions: gio::SimpleActionGroup::new(),
             entries: RefCell::new(Vec::new()),
+            custom_children: RefCell::new(Vec::new()),
         }
     }
 
@@ -112,6 +117,17 @@ impl ContextMenuSurface {
                 &format!("{}.{}", self.group_name, action),
                 icon_name,
             )));
+    }
+
+    pub(crate) fn append_fixed_widget(&self, id: &str, widget: &impl IsA<gtk::Widget>) {
+        let item = gio::MenuItem::new(None, None);
+        item.set_attribute_value("custom", Some(&id.to_variant()));
+        self.entries
+            .borrow_mut()
+            .push(ContextMenuEntry::Fixed(item));
+        self.custom_children
+            .borrow_mut()
+            .push((id.to_string(), widget.as_ref().clone()));
     }
 
     pub(crate) fn append_configurable_action(
@@ -168,12 +184,19 @@ impl ContextMenuSurface {
         for item in resolve_context_menu_entries(self.entries.into_inner(), settings) {
             self.menu.append_item(&item);
         }
+        for (id, child) in self.custom_children.into_inner() {
+            debug_assert!(self.popover.add_child(&child, &id));
+        }
         if self.menu.n_items() == 0 {
             self.popover.unparent();
             return;
         }
         self.target
             .insert_action_group(self.group_name, Some(&self.actions));
+        let hover_owners = Rc::new(context_menu_hover_owners(&self.target));
+        for owner in hover_owners.iter() {
+            owner.add_css_class(CONTEXT_MENU_HOVER_HELD_CLASS);
+        }
         show_native_menu_icons(&self.popover);
         keep_parent_grab_for_nested_native_menus(&self.popover);
         let unmap_handler = Rc::new(RefCell::new(Some(popdown_on_anchor_unmap(
@@ -187,15 +210,49 @@ impl ContextMenuSurface {
             let popover = popover.clone();
             let target = target.clone();
             let unmap_handler = Rc::clone(&unmap_handler);
+            let hover_owners = Rc::clone(&hover_owners);
             glib::idle_add_local_once(move || {
                 if let Some(handler) = unmap_handler.borrow_mut().take() {
                     target.disconnect(handler);
                 }
                 popover.unparent();
+                for owner in hover_owners.iter() {
+                    owner.remove_css_class(CONTEXT_MENU_HOVER_HELD_CLASS);
+                }
             });
         });
         self.popover.popup();
     }
+}
+
+fn context_menu_hover_owners(target: &gtk::Widget) -> Vec<gtk::Widget> {
+    fn append_descendants(widget: &gtk::Widget, owners: &mut Vec<gtk::Widget>) {
+        if widget.has_css_class(CONTEXT_MENU_HOVER_OWNER_CLASS)
+            && !owners.iter().any(|owner| owner == widget)
+        {
+            owners.push(widget.clone());
+        }
+        let mut child = widget.first_child();
+        while let Some(widget) = child {
+            child = widget.next_sibling();
+            append_descendants(&widget, owners);
+        }
+    }
+
+    let mut owners = Vec::new();
+    let mut ancestor = Some(target.clone());
+    while let Some(widget) = ancestor {
+        ancestor = widget.parent();
+        if widget.has_css_class(CONTEXT_MENU_HOVER_OWNER_CLASS)
+            && !owners.iter().any(|owner| owner == &widget)
+        {
+            owners.push(widget);
+        }
+    }
+    if owners.is_empty() {
+        append_descendants(target, &mut owners);
+    }
+    owners
 }
 
 fn resolve_context_menu_entries<T>(
@@ -229,8 +286,11 @@ fn resolve_context_menu_entries<T>(
 
 #[cfg(test)]
 mod context_menu_tests {
-    use super::{ContextMenuEntry, resolve_context_menu_entries};
+    use super::{ContextMenuEntry, go_to_context_submenu, resolve_context_menu_entries};
     use crate::settings::{ContextMenuItem, ContextMenuItemSettings, ContextMenuSettings};
+    use gio::prelude::MenuModelExt;
+    use glib::prelude::IsA;
+    use gtk::{gio, glib};
 
     fn settings(order: &[(ContextMenuItem, bool)]) -> ContextMenuSettings {
         ContextMenuSettings {
@@ -241,6 +301,7 @@ mod context_menu_tests {
                     visible: *visible,
                 })
                 .collect(),
+            rating_visible: true,
         }
     }
 
@@ -293,6 +354,36 @@ mod context_menu_tests {
         )];
 
         assert!(resolve_context_menu_entries(entries, &settings).is_empty());
+    }
+
+    #[test]
+    fn go_to_submenu_keeps_all_artist_and_album_destinations() {
+        let menu = go_to_context_submenu(
+            "track",
+            &["First Artist".to_string(), "Second Artist".to_string()],
+            true,
+        );
+        assert_eq!(menu.n_items(), 2);
+
+        let artists = menu
+            .item_link(0, "submenu")
+            .expect("multiple artists submenu");
+        assert_eq!(artists.n_items(), 2);
+        assert_eq!(
+            menu_action(&artists, 0).as_deref(),
+            Some("track.go-artist-0")
+        );
+        assert_eq!(
+            menu_action(&artists, 1).as_deref(),
+            Some("track.go-artist-1")
+        );
+        assert_eq!(menu_action(&menu, 1).as_deref(), Some("track.go-album"));
+    }
+
+    fn menu_action(model: &impl IsA<gio::MenuModel>, index: i32) -> Option<String> {
+        model
+            .item_attribute_value(index, "action", Some(glib::VariantTy::STRING))
+            .and_then(|value| value.str().map(str::to_string))
     }
 }
 
@@ -352,6 +443,44 @@ pub(crate) fn radio_context_submenu(group: &str) -> gio::Menu {
     menu
 }
 
+pub(crate) fn go_to_context_submenu(
+    group: &str,
+    artist_names: &[String],
+    has_album: bool,
+) -> gio::Menu {
+    let menu = gio::Menu::new();
+    match artist_names {
+        [] => {}
+        [_] => append_menu_action(
+            &menu,
+            msgid("Go to Artist"),
+            &format!("{group}.go-artist"),
+            ARTIST_ICON,
+        ),
+        _ => {
+            let artists = gio::Menu::new();
+            for (index, artist_name) in artist_names.iter().enumerate() {
+                artists.append(
+                    Some(artist_name),
+                    Some(&format!("{group}.go-artist-{index}")),
+                );
+            }
+            let item = gio::MenuItem::new_submenu(Some(&tr("Go to Artist")), &artists);
+            item.set_icon(&gio::ThemedIcon::new(ARTIST_ICON));
+            menu.append_item(&item);
+        }
+    }
+    if has_album {
+        append_menu_action(
+            &menu,
+            msgid("Go to Album"),
+            &format!("{group}.go-album"),
+            ALBUM_ICON,
+        );
+    }
+    menu
+}
+
 pub(crate) fn show_native_menu_icons(popover: &gtk::PopoverMenu) {
     show_native_menu_icons_from(popover.upcast_ref());
 }
@@ -362,6 +491,18 @@ pub(crate) fn replace_native_menu_checkmarks(popover: &gtk::PopoverMenu) {
 
 pub(crate) fn keep_parent_grab_for_nested_native_menus(popover: &gtk::PopoverMenu) {
     keep_parent_grab_for_nested_native_menus_from(popover.upcast_ref());
+}
+
+pub(crate) fn keep_parent_grab_for_dropdown(dropdown: &gtk::DropDown) {
+    let mut child = dropdown.first_child();
+    while let Some(widget) = child {
+        child = widget.next_sibling();
+        if let Ok(popover) = widget.downcast::<gtk::Popover>() {
+            // GTK can lose the parent's input grab when an autohide child closes.
+            popover.set_autohide(false);
+            break;
+        }
+    }
 }
 
 pub(crate) fn popdown_native_menu(popover: &gtk::PopoverMenu) {

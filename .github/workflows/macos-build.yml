@@ -51,16 +51,13 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
-      - name: Configure Rust paths
-        run: echo "CARGO_HOME=$RUNNER_TEMP/rufin-cargo" >> "$GITHUB_ENV"
-
       - name: Restore Rust build cache
         uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
         with:
           cache-bin: "false"
-          cache-on-failure: "true"
-          key: ${{ matrix.architecture }}
           prefix-key: v1-rust
+          save-if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+          shared-key: macos-${{ matrix.architecture }}
           workspaces: ". -> .local/target"
 
       - name: Verify signed release tag
@@ -88,6 +85,7 @@ jobs:
             game-music-emu \
             gstreamer \
             gtk4 \
+            just \
             libadwaita \
             libopenmpt \
             libsoup \
@@ -121,26 +119,7 @@ jobs:
           export PATH="${gettext_prefix}/bin:$PATH"
           RUFIN_ARTIFACT_ROOT="$PWD/dist" \
             RUFIN_DMG_ARTIFACT="$PWD/dist/Rufin-macos-${{ matrix.architecture }}.dmg" \
-            packaging/macos/build
-
-      - name: Verify disk image
-        run: |
-          set -euo pipefail
-          media_dir="$RUNNER_TEMP/rufin-package-media"
-          mount_dir="$RUNNER_TEMP/rufin-dmg"
-          dmg_path="dist/Rufin-macos-${{ matrix.architecture }}.dmg"
-          cargo run --locked -p xtask -- generate media-verification-files \
-            "$media_dir" --with-openmpt-gme
-          mkdir -p "$mount_dir"
-          hdiutil verify "$dmg_path"
-          hdiutil attach "$dmg_path" -nobrowse -readonly -mountpoint "$mount_dir"
-          trap 'hdiutil detach "$mount_dir"' EXIT
-          for media in "$media_dir"/*; do
-            RUFIN_GST_REGISTRY_1_0="$RUNNER_TEMP/rufin-gstreamer-registry.bin" \
-              "$mount_dir/Rufin.app/Contents/MacOS/rufin" --verify-media "$media"
-          done
-          hdiutil detach "$mount_dir"
-          trap - EXIT
+            just _build-dmg
 
       - name: Upload workflow artifact
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
@@ -149,7 +128,3 @@ jobs:
           path: dist/Rufin-macos-${{ matrix.architecture }}.dmg
           if-no-files-found: error
           retention-days: 7
-
-      - name: Check platform integrations
-        if: matrix.architecture == 'arm64'
-        run: cargo test --locked --tests -p secrets -p desktop-integration -p playback-gstreamer

@@ -43,7 +43,6 @@ pub type LibraryQueryResult<T> = Result<T, LibraryQueryError>;
 pub(crate) struct LibraryInput {
     pub(crate) library_id: i64,
     pub(crate) source_id: Option<SourceId>,
-    pub(crate) input_version: u32,
     pub(crate) input_digest: [u8; 32],
     pub(crate) freshness: Option<crate::ProviderFreshness>,
     pub(crate) albums: Vec<Album>,
@@ -60,7 +59,6 @@ pub(crate) struct LibraryInput {
     pub(crate) recent_plays: Vec<RecentPlay>,
     pub(crate) local_imports: Vec<LocalImport>,
     pub(crate) local_favorites: Vec<FavoriteItemId>,
-    pub(crate) unresolved_album_releases: Vec<AlbumId>,
     pub(crate) loudness: Vec<crate::LoudnessMeasurementWrite>,
 }
 
@@ -105,14 +103,12 @@ impl LibraryInput {
     pub(crate) fn new(
         source_id: SourceId,
         library_id: i64,
-        input_version: u32,
         input_digest: [u8; 32],
         freshness: Option<crate::ProviderFreshness>,
     ) -> Self {
         Self {
             library_id,
             source_id: Some(source_id),
-            input_version,
             input_digest,
             freshness,
             albums: Vec::new(),
@@ -129,7 +125,6 @@ impl LibraryInput {
             recent_plays: Vec::new(),
             local_imports: Vec::new(),
             local_favorites: Vec::new(),
-            unresolved_album_releases: Vec::new(),
             loudness: Vec::new(),
         }
     }
@@ -443,7 +438,7 @@ pub(crate) struct LoadedState {
     pub(crate) artwork_items: HashMap<String, HashSet<LocalArtworkItemId>>,
     pub(crate) local_access_mapping: Option<LocalAccessMapping>,
     pub(crate) local_access: Vec<LocalAccessFile>,
-    pub(crate) local_access_paths: HashSet<String>,
+    pub(crate) local_access_paths: HashSet<PathBuf>,
     pub(crate) local_access_index: HashMap<LocalMatchKey, Vec<usize>>,
     pub(crate) downloaded_files: HashMap<TrackId, PathBuf>,
     pub(crate) download_coverage: crate::download_coverage::DownloadCoverage,
@@ -451,7 +446,6 @@ pub(crate) struct LoadedState {
     pub(crate) activity: HashMap<TrackId, TrackActivity>,
     pub(crate) recent_plays: Vec<RecentPlay>,
     pub(crate) local_imports: HashMap<TrackSlot, i64>,
-    pub(crate) unresolved_album_releases: HashSet<AlbumId>,
     pub(crate) track_loudness: HashMap<TrackId, StoredLoudnessMeasurement>,
     pub(crate) album_loudness: HashMap<AlbumId, StoredLoudnessMeasurement>,
 }
@@ -467,7 +461,6 @@ pub struct Library {
     pub(crate) home_sessions: Arc<crate::home::HomeSessions>,
     source_id: SourceId,
     library_id: i64,
-    input_version: u32,
     input_digest: [u8; 32],
     state: RwLock<LoadedState>,
 }
@@ -478,7 +471,6 @@ impl std::fmt::Debug for Library {
             .debug_struct("Library")
             .field("source_id", &self.source_id)
             .field("library_id", &self.library_id)
-            .field("input_version", &self.input_version)
             .field("input_digest", &self.input_digest)
             .finish_non_exhaustive()
     }
@@ -596,7 +588,6 @@ impl Library {
             activity,
             recent_plays: input.recent_plays,
             local_imports: HashMap::new(),
-            unresolved_album_releases: input.unresolved_album_releases.into_iter().collect(),
             track_loudness: HashMap::new(),
             album_loudness: HashMap::new(),
         };
@@ -675,7 +666,6 @@ impl Library {
             home_sessions,
             source_id,
             library_id: input.library_id,
-            input_version: input.input_version,
             input_digest: input.input_digest,
             state: RwLock::new(state),
         }))
@@ -687,10 +677,6 @@ impl Library {
 
     pub const fn library_id(&self) -> i64 {
         self.library_id
-    }
-
-    pub const fn input_version(&self) -> u32 {
-        self.input_version
     }
 
     pub const fn input_digest(&self) -> &[u8; 32] {
@@ -1162,6 +1148,62 @@ impl Library {
         })
     }
 
+    pub(crate) fn replace_rating(
+        &self,
+        item: &FavoriteItemId,
+        rating: Option<u8>,
+    ) -> LibraryQueryResult<AcceptedLibraryChange> {
+        let mut state = self.write()?;
+        let mut replacement = ItemReplacement::default();
+        match item {
+            FavoriteItemId::Track(id) => {
+                let mut track = state
+                    .tracks
+                    .get(id)
+                    .ok_or_else(|| LibraryQueryError::MissingItem {
+                        kind: "track",
+                        id: id.to_string(),
+                    })?
+                    .clone();
+                track.user_rating = rating;
+                replacement.tracks.push(track);
+            }
+            FavoriteItemId::Album(id) => {
+                let mut album = state
+                    .albums
+                    .get(id)
+                    .ok_or_else(|| LibraryQueryError::MissingItem {
+                        kind: "album",
+                        id: id.to_string(),
+                    })?
+                    .album
+                    .as_ref()
+                    .clone();
+                album.user_rating = rating;
+                replacement.albums.push(album);
+            }
+            FavoriteItemId::Artist(id) => {
+                let mut artist = state
+                    .artists
+                    .get(id)
+                    .ok_or_else(|| LibraryQueryError::MissingItem {
+                        kind: "artist",
+                        id: id.to_string(),
+                    })?
+                    .artist
+                    .as_ref()
+                    .clone();
+                artist.user_rating = rating;
+                replacement.artists.push(artist);
+            }
+        }
+        let change = apply_item_replacement(&mut state, replacement)?;
+        if matches!(item, FavoriteItemId::Track(_)) {
+            crate::download_coverage::rebuild_smart_playlist_download_coverage(&mut state);
+        }
+        Ok(change)
+    }
+
     pub(crate) fn replace_track_activity(
         &self,
         activity: TrackActivity,
@@ -1313,11 +1355,6 @@ impl Library {
         })
     }
 
-    pub(crate) fn mark_album_release_resolved(&self, id: &AlbumId) -> LibraryQueryResult<()> {
-        self.write()?.unresolved_album_releases.remove(id);
-        Ok(())
-    }
-
     pub(crate) fn replace_playlist(
         &self,
         snapshot: PlaylistSnapshot,
@@ -1343,7 +1380,6 @@ impl Library {
     pub(crate) fn replace_source_update(
         &self,
         replacement: ItemReplacement,
-        unresolved_album_releases: Vec<AlbumId>,
         playlists: Vec<PlaylistSnapshot>,
         removed_playlists: Vec<PlaylistId>,
     ) -> LibraryQueryResult<AcceptedLibraryChange> {
@@ -1357,8 +1393,7 @@ impl Library {
             explicit_playlists.insert(snapshot.playlist.id.clone());
             replace_playlist_in_state(&mut state, snapshot);
         }
-        let mut accepted =
-            apply_item_replacement(&mut state, replacement, unresolved_album_releases)?;
+        let mut accepted = apply_item_replacement(&mut state, replacement)?;
         accepted.playlists.extend(sorted_set(explicit_playlists));
         crate::download_coverage::rebuild_download_coverage(&mut state);
         Ok(accepted)
@@ -1428,7 +1463,6 @@ impl Library {
         imports: Vec<LocalImport>,
         favorites: Vec<FavoriteItemId>,
         activity: Vec<TrackActivity>,
-        unresolved_album_releases: Vec<AlbumId>,
     ) -> LibraryQueryResult<AcceptedLibraryChange> {
         let mut state = self.write()?;
         apply_track_activity_to_replacement(&mut replacement.tracks, activity);
@@ -1453,8 +1487,7 @@ impl Library {
             add_local_file_relations(&mut state, &file);
             state.local_files.insert(path, file);
         }
-        let mut accepted =
-            apply_item_replacement(&mut state, replacement, unresolved_album_releases)?;
+        let mut accepted = apply_item_replacement(&mut state, replacement)?;
         for import in imports {
             if let Some(slot) = state.tracks.slot(&import.track_id) {
                 state.local_imports.insert(slot, import.first_seen_at);
@@ -1631,7 +1664,6 @@ fn replace_track_favorite(
 fn apply_item_replacement(
     state: &mut LoadedState,
     replacement: ItemReplacement,
-    unresolved_album_releases: Vec<AlbumId>,
 ) -> LibraryQueryResult<AcceptedLibraryChange> {
     let ItemReplacement {
         albums,
@@ -1760,11 +1792,6 @@ fn apply_item_replacement(
         state.tracks.remove(track_id);
         state.activity.remove(track_id);
     }
-    let touched_album_ids = albums
-        .iter()
-        .map(|album| album.id.clone())
-        .chain(removed_albums.iter().cloned())
-        .collect::<HashSet<_>>();
     for album_id in removed_albums {
         if let Some(album) = state.albums.get_mut(&album_id) {
             album.source_provided = false;
@@ -1884,13 +1911,6 @@ fn apply_item_replacement(
         &state.activity,
     );
     refresh_loudness_validity(state, &changed_track_ids, &affected_albums);
-    for album_id in touched_album_ids {
-        state.unresolved_album_releases.remove(&album_id);
-    }
-    state
-        .unresolved_album_releases
-        .extend(unresolved_album_releases);
-
     Ok(AcceptedLibraryChange {
         tracks: accepted_track_replacements(state, published_track_ids),
         albums: sorted_set(published_albums),
@@ -3883,7 +3903,7 @@ mod tests {
     }
 
     fn library_with(tracks: Vec<Track>, activity: Vec<TrackActivity>) -> Arc<Library> {
-        let mut input = LibraryInput::new(SourceId::new("test:loaded"), 1, 1, [1; 32], None);
+        let mut input = LibraryInput::new(SourceId::new("test:loaded"), 1, [1; 32], None);
         input.home = Some(HomeFacts::RufinDefined);
         input.tracks = tracks;
         input.activity = activity;
@@ -4013,7 +4033,6 @@ mod tests {
                     removed_tracks: vec![track_id.clone()],
                     ..ItemReplacement::default()
                 },
-                Vec::new(),
                 Vec::new(),
                 Vec::new(),
             )

@@ -17,11 +17,6 @@ on:
         default: false
         required: false
         type: boolean
-      run_platform_checks:
-        description: Run the Windows platform integration tests
-        default: true
-        required: false
-        type: boolean
 
 permissions:
   contents: read
@@ -70,6 +65,7 @@ jobs:
             mingw-w64-ucrt-x86_64-gstreamer
             mingw-w64-ucrt-x86_64-gtk4
             mingw-w64-ucrt-x86_64-hicolor-icon-theme
+            mingw-w64-ucrt-x86_64-just
             mingw-w64-ucrt-x86_64-libadwaita
             mingw-w64-ucrt-x86_64-ninja
             mingw-w64-ucrt-x86_64-nsis
@@ -83,17 +79,17 @@ jobs:
       - name: Configure Rust paths
         shell: msys2 {0}
         run: |
-          echo "CARGO_HOME=$(cygpath -m "$RUNNER_TEMP/rufin-cargo")" >> "$GITHUB_ENV"
+          echo "CARGO_HOME=$(cygpath -m "$GITHUB_WORKSPACE/.local/cargo")" >> "$GITHUB_ENV"
           echo "CARGO_TARGET_DIR=$(cygpath -m "$GITHUB_WORKSPACE/.local/target")" >> "$GITHUB_ENV"
 
       - name: Restore Rust build cache
         uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
         with:
           cache-bin: "false"
-          cache-on-failure: "true"
           cmd-format: msys2 -c "bash scripts/rust-cache-command direct {0}"
-          key: ucrt64
           prefix-key: v1-rust
+          save-if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+          shared-key: windows-ucrt64
           workspaces: ". -> .local/target"
 
       - name: Verify signed release tag
@@ -114,26 +110,7 @@ jobs:
         shell: msys2 {0}
         run: |
           set -euo pipefail
-          RUFIN_ARTIFACT_ROOT="$PWD/dist" packaging/windows/build
-
-      - name: Create media verification files
-        shell: msys2 {0}
-        run: |
-          media_dir="$(cygpath -m "$RUNNER_TEMP")/rufin-package-media"
-          cargo run --locked -p xtask -- generate media-verification-files \
-            "$media_dir" --with-openmpt-gme
-
-      - name: Verify installer
-        shell: pwsh
-        run: |
-          $installer = Get-ChildItem dist -Filter "Rufin-*-setup.exe" | Select-Object -First 1
-          if (-not $installer) {
-            throw "Windows installer was not produced"
-          }
-          & ./packaging/windows/verify-installer.ps1 `
-            -InstallerPath $installer.FullName `
-            -MediaDirectory (Join-Path $env:RUNNER_TEMP "rufin-package-media") `
-            -TemporaryDirectory $env:RUNNER_TEMP
+          RUFIN_ARTIFACT_ROOT="$PWD/dist" just _build-windows
 
       - name: Upload workflow artifact
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
@@ -142,13 +119,3 @@ jobs:
           path: dist/Rufin-*-setup.exe
           if-no-files-found: error
           retention-days: 7
-
-      - name: Check platform integrations
-        if: inputs.run_platform_checks
-        shell: msys2 {0}
-        run: >-
-          cargo test --locked --tests
-          -p windows-updater
-          -p secrets
-          -p desktop-integration
-          -p sources

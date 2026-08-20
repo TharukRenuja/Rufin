@@ -5,6 +5,7 @@ use crate::{
     MAX_NARROW_LAYOUT_THRESHOLD, MIN_NARROW_LAYOUT_THRESHOLD, SidebarRouteItem,
     SidebarRouteItemSettings,
 };
+use ::library::StreamQuality;
 use adw::prelude::*;
 use localization::{language_option_index, language_options, msgid, tr};
 use secrets::SecretStorageMode;
@@ -22,11 +23,16 @@ pub(crate) mod persistence;
 pub(crate) mod source;
 
 use general::{appearance_page, playback_page, scrobbling_page};
+pub(crate) use general::{
+    loudness_normalization_from_index, loudness_normalization_index, transition_from_index,
+    transition_index, volume_scale_from_index, volume_scale_index,
+};
 use layout::{
     discord_display_from_index, discord_display_index, discord_link_from_index, discord_link_index,
     left_sidebar_mode_from_index, left_sidebar_row, right_sidebar_mode_from_index,
     right_sidebar_row, visibility_position_subtitle,
 };
+pub(crate) use library::locate_local_folder;
 
 #[cfg(test)]
 mod tests;
@@ -35,7 +41,7 @@ const PREFERENCES_DIALOG_WIDTH: i32 = 700;
 const PREFERENCES_DIALOG_HEIGHT: i32 = 640;
 const LASTFM_API_CREATE_URL: &str = "https://www.last.fm/api/account/create";
 const LISTENBRAINZ_TOKEN_URL: &str = "https://listenbrainz.org/settings/";
-const SCROBBLING_ICON_NAME: &str = "io.github.screwys.Rufin.scrobbling-symbolic";
+const INTEGRATIONS_ICON_NAME: &str = "network-workgroup-bundled-symbolic";
 
 pub(crate) struct PreferencesState {
     pub(crate) dialog: RefCell<Option<gtk::glib::WeakRef<adw::Dialog>>>,
@@ -58,7 +64,7 @@ impl PreferencesState {
     }
 }
 
-fn selection_row<F>(
+pub(crate) fn selection_row<F>(
     title: &str,
     option_titles: &[String],
     selected: u32,
@@ -68,6 +74,75 @@ where
     F: Fn(u32) + 'static,
 {
     let row = adw::ActionRow::builder().title(title).build();
+    row.add_suffix(&selection_buttons(
+        option_titles,
+        option_titles,
+        selected,
+        on_selected,
+    ));
+    row
+}
+
+fn quality_selection_row<F>(
+    title: &str,
+    qualities: &[StreamQuality],
+    selected: u32,
+    on_selected: F,
+) -> adw::PreferencesRow
+where
+    F: Fn(u32) + 'static,
+{
+    let accessible_titles = qualities
+        .iter()
+        .copied()
+        .map(quality_accessible_title)
+        .collect::<Vec<_>>();
+    let display_titles = qualities
+        .iter()
+        .copied()
+        .map(quality_button_title)
+        .collect::<Vec<_>>();
+    let buttons = selection_buttons(&accessible_titles, &display_titles, selected, on_selected);
+
+    let title_group = gtk::Box::new(gtk::Orientation::Horizontal, 4);
+    title_group.set_hexpand(true);
+    title_group.set_width_request(1);
+    title_group.set_valign(gtk::Align::Center);
+    let title_label = gtk::Label::new(Some(title));
+    title_label.set_xalign(0.0);
+    title_label.set_wrap(true);
+    title_label.set_wrap_mode(gtk::pango::WrapMode::WordChar);
+    title_group.append(&title_label);
+    let unit = gtk::Label::new(Some(&tr("kbps")));
+    unit.add_css_class("dim-label");
+    title_group.append(&unit);
+
+    let content = gtk::Box::new(gtk::Orientation::Horizontal, 12);
+    content.set_margin_top(8);
+    content.set_margin_bottom(8);
+    content.set_margin_start(12);
+    content.set_margin_end(12);
+    content.append(&title_group);
+    content.append(&buttons);
+
+    adw::PreferencesRow::builder()
+        .title(title)
+        .child(&content)
+        .activatable(false)
+        .selectable(false)
+        .build()
+}
+
+fn selection_buttons<F>(
+    accessible_titles: &[String],
+    display_titles: &[String],
+    selected: u32,
+    on_selected: F,
+) -> gtk::Box
+where
+    F: Fn(u32) + 'static,
+{
+    debug_assert_eq!(accessible_titles.len(), display_titles.len());
     let buttons = gtk::Box::new(gtk::Orientation::Horizontal, 0);
     buttons.add_css_class("linked");
     buttons.add_css_class("preference-selection-buttons");
@@ -75,10 +150,13 @@ where
     let on_selected = Rc::new(on_selected);
     let mut first_button: Option<gtk::ToggleButton> = None;
 
-    for (index, title) in option_titles.iter().enumerate() {
-        let button = gtk::ToggleButton::with_label(title);
+    for (index, (accessible_title, display_title)) in
+        accessible_titles.iter().zip(display_titles).enumerate()
+    {
+        let button = gtk::ToggleButton::with_label(display_title);
         button.add_css_class("preference-selection-button");
-        button.set_tooltip_text(Some(title));
+        button.set_tooltip_text(Some(accessible_title));
+        button.update_property(&[gtk::accessible::Property::Label(accessible_title)]);
         if let Some(first) = &first_button {
             button.set_group(Some(first));
         } else {
@@ -94,8 +172,25 @@ where
         buttons.append(&button);
     }
 
-    row.add_suffix(&buttons);
-    row
+    buttons
+}
+
+fn quality_accessible_title(quality: StreamQuality) -> String {
+    match quality {
+        StreamQuality::Original => tr("Original"),
+        StreamQuality::MaxBitrateKbps(320) => tr("320 kbps"),
+        StreamQuality::MaxBitrateKbps(256) => tr("256 kbps"),
+        StreamQuality::MaxBitrateKbps(192) => tr("192 kbps"),
+        StreamQuality::MaxBitrateKbps(128) => tr("128 kbps"),
+        StreamQuality::MaxBitrateKbps(bitrate) => format!("{bitrate} kbps"),
+    }
+}
+
+fn quality_button_title(quality: StreamQuality) -> String {
+    match quality {
+        StreamQuality::Original => tr("Original"),
+        StreamQuality::MaxBitrateKbps(bitrate) => bitrate.to_string(),
+    }
 }
 
 pub(crate) fn present_preferences_dialog(shell: &Rc<Shell>) {
@@ -123,7 +218,7 @@ impl Shell {
 enum PreferencesPageKind {
     General,
     Appearance,
-    Scrobbling,
+    Integrations,
     Playback,
     Library,
 }
@@ -132,7 +227,7 @@ impl PreferencesPageKind {
     const ALL: [Self; 5] = [
         Self::General,
         Self::Appearance,
-        Self::Scrobbling,
+        Self::Integrations,
         Self::Playback,
         Self::Library,
     ];
@@ -141,7 +236,7 @@ impl PreferencesPageKind {
         match self {
             Self::General => "general",
             Self::Appearance => "appearance",
-            Self::Scrobbling => "scrobbling",
+            Self::Integrations => "integrations",
             Self::Playback => "playback",
             Self::Library => "library",
         }
@@ -151,7 +246,7 @@ impl PreferencesPageKind {
         match self {
             Self::General => tr("General"),
             Self::Appearance => tr("Appearance"),
-            Self::Scrobbling => tr("Scrobbling"),
+            Self::Integrations => tr("Integrations"),
             Self::Playback => tr("Playback"),
             Self::Library => tr("Library"),
         }
@@ -159,11 +254,11 @@ impl PreferencesPageKind {
 
     fn icon_name(self) -> &'static str {
         match self {
-            Self::General => "preferences-system-symbolic",
-            Self::Appearance => "preferences-desktop-appearance-symbolic",
-            Self::Scrobbling => SCROBBLING_ICON_NAME,
-            Self::Playback => "media-playback-start-symbolic",
-            Self::Library => "rufin-route-tracks-symbolic",
+            Self::General => "preferences-system-bundled-symbolic",
+            Self::Appearance => "preferences-desktop-appearance-bundled-symbolic",
+            Self::Integrations => INTEGRATIONS_ICON_NAME,
+            Self::Playback => "media-playback-start-bundled-symbolic",
+            Self::Library => "drive-multidisk-bundled-symbolic",
         }
     }
 
@@ -191,7 +286,7 @@ pub(crate) struct PreferencesNavigationControls {
 
 impl PreferencesNavigationControls {
     fn new() -> Self {
-        let back = gtk::Button::from_icon_name("go-previous-symbolic");
+        let back = gtk::Button::from_icon_name("go-previous-bundled-symbolic");
         back.add_css_class("flat");
         back.add_css_class("preferences-nested-back");
         back.update_property(&[gtk::accessible::Property::Label(&tr("Back"))]);
@@ -307,7 +402,7 @@ fn rebuild_preferences_dialog(
         .build();
     let navigation_controls = PreferencesNavigationControls::new();
     let search_button = gtk::ToggleButton::builder()
-        .icon_name("system-search-symbolic")
+        .icon_name("system-search-bundled-symbolic")
         .tooltip_text(tr("Search"))
         .build();
     search_button.add_css_class("flat");
@@ -316,7 +411,7 @@ fn rebuild_preferences_dialog(
     let start_controls = gtk::Box::new(gtk::Orientation::Horizontal, 4);
     start_controls.append(&search_button);
     start_controls.append(&navigation_controls.back);
-    let close_button = gtk::Button::from_icon_name("window-close-symbolic");
+    let close_button = gtk::Button::from_icon_name("window-close-bundled-symbolic");
     close_button.add_css_class("flat");
     close_button.add_css_class("preferences-dialog-close");
     close_button.set_tooltip_text(Some(&tr("Close")));
@@ -484,7 +579,7 @@ fn rebuild_preferences_dialog(
                 .activatable(true)
                 .build();
             row.add_prefix(&gtk::Image::from_icon_name(item.page.icon_name()));
-            row.add_suffix(&gtk::Image::from_icon_name("go-next-symbolic"));
+            row.add_suffix(&gtk::Image::from_icon_name("go-next-bundled-symbolic"));
             let page = item.page;
             let target = item.target.clone();
             let expander = item.expander.clone();
@@ -644,7 +739,7 @@ fn build_preferences_page(
     match kind {
         PreferencesPageKind::General => general_page(shell, dialog).upcast(),
         PreferencesPageKind::Appearance => appearance_page(shell).upcast(),
-        PreferencesPageKind::Scrobbling => scrobbling_page(shell).upcast(),
+        PreferencesPageKind::Integrations => scrobbling_page(shell).upcast(),
         PreferencesPageKind::Playback => playback_page(shell).upcast(),
         PreferencesPageKind::Library => library::library_page(
             shell,
@@ -658,7 +753,7 @@ fn build_preferences_page(
 fn general_page(shell: &Rc<Shell>, dialog: &adw::Dialog) -> adw::PreferencesPage {
     let page = adw::PreferencesPage::builder()
         .title(tr("General"))
-        .icon_name("preferences-system-symbolic")
+        .icon_name("preferences-system-bundled-symbolic")
         .build();
 
     let settings = shell.settings.current.borrow().clone();
@@ -708,14 +803,18 @@ fn general_page(shell: &Rc<Shell>, dialog: &adw::Dialog) -> adw::PreferencesPage
         let window_group = adw::PreferencesGroup::builder()
             .title(tr("App settings"))
             .build();
+        #[cfg(not(target_os = "macos"))]
         let tray_row = adw::SwitchRow::builder()
             .title(tr("Show tray icon"))
             .active(settings.tray_enabled)
+            .sensitive(!settings.keep_running_after_close)
             .build();
-        let exit_to_tray_row = adw::SwitchRow::builder()
-            .title(tr("Exit to tray"))
-            .active(settings.tray_enabled && settings.exit_to_tray)
+        #[cfg(not(target_os = "macos"))]
+        let keep_running_row = adw::SwitchRow::builder()
+            .title(tr("Keep Rufin running after closing the window"))
+            .active(settings.keep_running_after_close)
             .build();
+        #[cfg(not(target_os = "macos"))]
         let start_minimized_row = adw::SwitchRow::builder()
             .title(tr("Start minimized"))
             .active(settings.tray_enabled && settings.start_minimized)
@@ -724,26 +823,37 @@ fn general_page(shell: &Rc<Shell>, dialog: &adw::Dialog) -> adw::PreferencesPage
             .title(tr("Type to search"))
             .active(settings.type_to_search_enabled)
             .build();
-        exit_to_tray_row.set_visible(settings.tray_enabled);
+        #[cfg(not(target_os = "macos"))]
         start_minimized_row.set_visible(settings.tray_enabled);
+        #[cfg(not(target_os = "macos"))]
         let tray_shell = Rc::clone(shell);
-        let tray_exit_row = exit_to_tray_row.clone();
+        #[cfg(not(target_os = "macos"))]
         let start_minimized_row_for_tray = start_minimized_row.clone();
+        #[cfg(not(target_os = "macos"))]
         tray_row.connect_active_notify(move |row| {
             let enabled = row.is_active();
-            tray_exit_row.set_visible(enabled);
             start_minimized_row_for_tray.set_visible(enabled);
             if !enabled {
-                tray_exit_row.set_active(false);
                 start_minimized_row_for_tray.set_active(false);
             }
             tray_shell.set_tray_enabled(enabled);
         });
-        let exit_to_tray_shell = Rc::clone(shell);
-        exit_to_tray_row.connect_active_notify(move |row| {
-            exit_to_tray_shell.set_exit_to_tray_enabled(row.is_active());
+        #[cfg(not(target_os = "macos"))]
+        let keep_running_shell = Rc::clone(shell);
+        #[cfg(not(target_os = "macos"))]
+        let tray_row_for_keep_running = tray_row.clone();
+        #[cfg(not(target_os = "macos"))]
+        keep_running_row.connect_active_notify(move |row| {
+            let enabled = row.is_active();
+            keep_running_shell.set_keep_running_after_close(enabled);
+            if enabled {
+                tray_row_for_keep_running.set_active(true);
+            }
+            tray_row_for_keep_running.set_sensitive(!enabled);
         });
+        #[cfg(not(target_os = "macos"))]
         let start_minimized_shell = Rc::clone(shell);
+        #[cfg(not(target_os = "macos"))]
         start_minimized_row.connect_active_notify(move |row| {
             start_minimized_shell.set_start_minimized_enabled(row.is_active());
         });
@@ -751,8 +861,11 @@ fn general_page(shell: &Rc<Shell>, dialog: &adw::Dialog) -> adw::PreferencesPage
         type_to_search_row.connect_active_notify(move |row| {
             type_to_search_shell.set_type_to_search_enabled(row.is_active());
         });
+        #[cfg(not(target_os = "macos"))]
         window_group.add(&tray_row);
-        window_group.add(&exit_to_tray_row);
+        #[cfg(not(target_os = "macos"))]
+        window_group.add(&keep_running_row);
+        #[cfg(not(target_os = "macos"))]
         window_group.add(&start_minimized_row);
         window_group.add(&type_to_search_row);
         if shell
@@ -973,6 +1086,19 @@ fn general_page(shell: &Rc<Shell>, dialog: &adw::Dialog) -> adw::PreferencesPage
     });
     privacy_group.add(&private_row);
 
+    let cast_proxy_row = adw::SwitchRow::builder()
+        .title(tr("Proxy casting through Rufin"))
+        .subtitle(tr(
+            "Route server media through this device instead of sharing provider URLs with the renderer",
+        ))
+        .active(settings.cast_proxy_enabled)
+        .build();
+    let cast_proxy_shell = Rc::clone(shell);
+    cast_proxy_row.connect_active_notify(move |row| {
+        cast_proxy_shell.set_cast_proxy_enabled(row.is_active());
+    });
+    privacy_group.add(&cast_proxy_row);
+
     let secret_storage_titles = [tr("Legacy"), tr("Secure storage")];
     let secret_storage_refs = secret_storage_titles
         .iter()
@@ -1102,7 +1228,7 @@ fn layout_group(shell: &Rc<Shell>) -> adw::PreferencesGroup {
     group.add(&default_right_row);
 
     let lyrics_panel_row = adw::SwitchRow::builder()
-        .title(tr("Show Lyrics Panel"))
+        .title(tr("Show lyrics"))
         .active(settings.lyrics_panel_visible)
         .build();
     let lyrics_panel_shell = Rc::clone(shell);
@@ -1110,6 +1236,16 @@ fn layout_group(shell: &Rc<Shell>) -> adw::PreferencesGroup {
         lyrics_panel_shell.set_lyrics_panel_visible(row.is_active());
     });
     group.add(&lyrics_panel_row);
+
+    let visualizer_panel_row = adw::SwitchRow::builder()
+        .title(tr("Show visualizer"))
+        .active(settings.visualizer_panel_visible)
+        .build();
+    let visualizer_panel_shell = Rc::clone(shell);
+    visualizer_panel_row.connect_active_notify(move |row| {
+        visualizer_panel_shell.set_visualizer_panel_visible(row.is_active());
+    });
+    group.add(&visualizer_panel_row);
 
     let narrow_row = adw::SwitchRow::builder()
         .title(tr("Use different layout below a threshold width"))
@@ -1287,13 +1423,13 @@ fn sidebar_item_row(
     visible.set_active(entry.visible);
     visible.set_valign(gtk::Align::Center);
 
-    let up = gtk::Button::from_icon_name("go-up-symbolic");
+    let up = gtk::Button::from_icon_name("go-up-bundled-symbolic");
     up.add_css_class("flat");
     up.set_tooltip_text(Some(&tr("Move up")));
     up.set_valign(gtk::Align::Center);
     row.add_suffix(&up);
 
-    let down = gtk::Button::from_icon_name("go-down-symbolic");
+    let down = gtk::Button::from_icon_name("go-down-bundled-symbolic");
     down.add_css_class("flat");
     down.set_tooltip_text(Some(&tr("Move down")));
     down.set_valign(gtk::Align::Center);

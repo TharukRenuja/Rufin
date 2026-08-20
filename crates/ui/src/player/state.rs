@@ -2,7 +2,7 @@ use std::cell::{Cell, RefCell};
 use std::time::Instant;
 
 use gtk::glib;
-use playback::{CurrentMediaId, PlaybackView};
+use playback::{CurrentMediaId, PlaybackView, RemoteOutput};
 
 #[derive(Default)]
 pub(crate) struct PlaybackState {
@@ -13,6 +13,7 @@ pub(crate) struct PlaybackState {
     pub(crate) audio_output_refresh_running: Cell<bool>,
     pub(crate) audio_output_refresh_generation: Cell<u64>,
     pub(crate) audio_output_refreshed_at: Cell<Option<Instant>>,
+    pub(crate) remote_output_options: RefCell<Vec<RemoteOutput>>,
 }
 
 impl PlaybackState {

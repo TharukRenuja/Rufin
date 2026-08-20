@@ -37,7 +37,7 @@ impl JellyfinSource {
             self.search_items("Audio", TRACK_FIELDS, request.query(), request.limit()),
         )?;
         Ok(library::SearchResults {
-            artists: artists.items.into_iter().map(artist_from_item).collect(),
+            artists: normalize_artist_items(artists.items),
             albums: albums.items.into_iter().map(album_from_item).collect(),
             tracks: tracks
                 .items
@@ -76,7 +76,7 @@ impl JellyfinSource {
             .append_pair("Limit", &limit.clamp(1, 100).to_string())
             .append_pair(
                 "Fields",
-                "UserData,ItemCounts,ChildCount,AlbumCount,SongCount,ImageTags,ProviderIds",
+                "ParentId,UserData,ItemCounts,ChildCount,AlbumCount,SongCount,ImageTags,ProviderIds",
             );
         self.get_json::<ItemQueryResult>(url).await
     }
@@ -397,6 +397,24 @@ impl JellyfinSource {
         } else {
             self.send_unit(self.client.delete(url)).await
         }
+    }
+
+    pub(crate) async fn set_rating(
+        &self,
+        item: FavoriteItemId,
+        rating: Option<u8>,
+    ) -> SourceResult<()> {
+        let mut url = endpoint(
+            &self.base_url,
+            &format!("UserItems/{}/UserData", raw_item_id(item.as_str())),
+        )?;
+        url.query_pairs_mut().append_pair("userId", &self.user_id);
+        self.send_unit(
+            self.client
+                .post(url)
+                .json(&serde_json::json!({ "Rating": rating.unwrap_or(0) })),
+        )
+        .await
     }
 }
 
@@ -840,7 +858,7 @@ impl JellyfinSource {
             .append_pair("Limit", &limit.to_string())
             .append_pair(
                 "Fields",
-                "UserData,ItemCounts,ChildCount,AlbumCount,SongCount,ImageTags,ProviderIds",
+                "ParentId,UserData,ItemCounts,ChildCount,AlbumCount,SongCount,ImageTags,ProviderIds",
             );
 
         self.get_json::<ItemQueryResult>(url).await

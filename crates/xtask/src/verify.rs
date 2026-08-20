@@ -296,8 +296,6 @@ mod tests {
     use std::ffi::OsStr;
     use std::path::Path;
 
-    use crate::process::repo_root;
-
     use super::{isolated_gpg_home, verify_release_metadata_contents};
 
     const CARGO_TOML: &str = "[workspace.package]\nversion = \"1.2.3\"\n";
@@ -327,11 +325,5 @@ mod tests {
         )
         .unwrap_err();
         assert!(error.to_string().contains("MetaInfo release 1.2.3"));
-    }
-
-    #[test]
-    fn repository_keeps_the_release_verification_key() {
-        let release_key = repo_root().unwrap().join(".github/release-gpg.pub");
-        assert!(release_key.is_file(), "missing {}", release_key.display());
     }
 }

@@ -615,7 +615,6 @@ mod tests {
         let mut candidate = libraries
             .begin_source_candidate(CandidateHeader {
                 source_id: source_id.clone(),
-                input_version: 1,
                 input_digest: [1; 32],
             })
             .expect("begin source candidate");

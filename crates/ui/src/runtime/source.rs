@@ -62,12 +62,19 @@ pub enum OpenSubsonicKind {
     OpenSubsonic,
 }
 
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum OpenSubsonicAuthentication {
+    #[default]
+    Password,
+    ApiKey,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CredentialInput {
     pub source_name: Option<String>,
     pub server_url: String,
     pub username: String,
-    pub password: String,
+    pub secret: String,
     pub trust_invalid_cert: bool,
 }
 
@@ -79,6 +86,7 @@ pub enum SourceSetup {
     },
     OpenSubsonic {
         kind: OpenSubsonicKind,
+        authentication: OpenSubsonicAuthentication,
         credentials: CredentialInput,
     },
     Local {
@@ -92,6 +100,7 @@ pub struct CredentialPreset {
     pub server_url: String,
     pub username: String,
     pub trust_invalid_cert: bool,
+    pub open_subsonic_authentication: Option<OpenSubsonicAuthentication>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -111,6 +120,7 @@ pub enum SourceSettingsChange {
     OpenSubsonic {
         source_id: SourceId,
         kind: OpenSubsonicKind,
+        authentication: OpenSubsonicAuthentication,
         credentials: CredentialInput,
     },
 }
@@ -200,6 +210,7 @@ pub trait SourcePort: Send + Sync {
     fn select_source(&self, source_id: SourceId);
     fn change_secret_storage(&self, mode: SecretStorageMode) -> Receiver<Result<(), String>>;
     fn add_local_folder(&self, path: PathBuf);
+    fn replace_local_folder(&self, current: String, replacement: PathBuf);
     fn remove_local_folder(&self, path: String);
     fn refresh_source(&self, source_id: SourceId);
     fn check_for_source_changes(&self);
@@ -217,6 +228,7 @@ pub trait SelectedSourcePort: Send + Sync {
     fn refresh_home(&self, kind: HomeSectionKind);
     fn set_music_folder(&self, folder_id: Option<MusicFolderId>);
     fn set_favorite(&self, item: FavoriteItemId, favorite: bool);
+    fn set_rating(&self, item: FavoriteItemId, rating: Option<u8>);
     fn add_playlist_tracks(&self, request: PlaylistTrackAdd) -> usize;
     fn edit_playlist(&self, edit: PlaylistEdit);
     fn folder(

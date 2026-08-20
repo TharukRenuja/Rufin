@@ -26,14 +26,15 @@ use sources::{
     CredentialHostInput, CredentialSettingsInput, JellyfinSettingsInput, JellyfinSetupInput,
     LocalFolderHostInput, NativeSourceResult, ObservedSourceChange, PreparedSourceChange, Source,
     SourceCacheMatch, SourceConfiguration, SourceEditResult, SourceFreshness, SourceInputIdentity,
-    SourceReadProgress, SourceReadStage, SourceSettingsInput, SourceSetupInput, SubsonicFlavor,
+    SourceReadProgress, SourceReadStage, SourceSettingsInput, SourceSetupInput,
+    SubsonicAuthentication, SubsonicFlavor,
 };
 use tracing::warn;
 use ui::runtime::source::{
     ConfiguredSources, CredentialInput, CredentialPreset, DiscoveredServer, DiscoveryStatus,
-    DiscoveryUpdate, EditableSource, LocalFolder, OpenSubsonicKind, SelectedSourcePort,
-    SourceLocalAccess, SourceLocalAccessSummary, SourceOperation, SourcePort, SourceProgress,
-    SourceProgressStage, SourceSettingsChange, SourceSetup, SourceSummary,
+    DiscoveryUpdate, EditableSource, LocalFolder, OpenSubsonicAuthentication, OpenSubsonicKind,
+    SelectedSourcePort, SourceLocalAccess, SourceLocalAccessSummary, SourceOperation, SourcePort,
+    SourceProgress, SourceProgressStage, SourceSettingsChange, SourceSetup, SourceSummary,
 };
 use ui::runtime::{
     HomePublication, SelectedLibrary, SelectedLibraryUpdate, SourceEvent, SourceNotice,
@@ -355,11 +356,6 @@ enum SmartPlaylistOperation {
     },
 }
 
-struct ActiveAlbumRelease {
-    token: u64,
-    cancelled: Arc<AtomicBool>,
-}
-
 struct SelectedSlot {
     session: Arc<ActiveSource>,
     current: Arc<SelectedSourceState>,
@@ -394,7 +390,7 @@ struct OwnerState {
     jellyfin_feeds: BTreeMap<SourceId, ConfiguredJellyfinFeed>,
     local_access: Option<ActiveLocalAccess>,
     selected_revealed: bool,
-    active_album_release: Option<ActiveAlbumRelease>,
+    active_album_release: Option<Arc<AtomicBool>>,
     refresh: Option<Arc<RefreshRequest>>,
     freshness: FreshnessAdmission,
 }
@@ -782,7 +778,6 @@ impl SourceOwner {
         let Some(selected) = session.resolve() else {
             return;
         };
-        let token = self.shared.next_token.fetch_add(1, Ordering::AcqRel);
         let cancelled = Arc::new(AtomicBool::new(false));
         {
             let mut state = self
@@ -801,10 +796,7 @@ impl SourceOwner {
             {
                 return;
             }
-            state.active_album_release = Some(ActiveAlbumRelease {
-                token,
-                cancelled: Arc::clone(&cancelled),
-            });
+            state.active_album_release = Some(Arc::clone(&cancelled));
         }
         let settings = self.shared.settings.clone();
         let events = self.shared.outputs.events.clone();
@@ -812,6 +804,7 @@ impl SourceOwner {
         let source_session_epoch = selected.source_session_epoch;
         let selected = session.downgrade();
         let shared = Arc::clone(&self.shared);
+        let active = Arc::clone(&cancelled);
         drop(self.shared.runtime.spawn_blocking(move || {
             run_selected_album_release_lookup(
                 settings,
@@ -828,7 +821,7 @@ impl SourceOwner {
             if state
                 .active_album_release
                 .as_ref()
-                .is_some_and(|active| active.token == token)
+                .is_some_and(|current| Arc::ptr_eq(current, &active))
             {
                 state.active_album_release = None;
             }
@@ -842,7 +835,7 @@ impl SourceOwner {
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         if let Some(active) = state.active_album_release.take() {
-            active.cancelled.store(true, Ordering::Release);
+            active.store(true, Ordering::Release);
         }
         if reset_reveal {
             state.selected_revealed = false;
@@ -1020,6 +1013,57 @@ impl SourceOwner {
                 self.defer_remote_favorite(&selected, &pending).await;
                 self.send_source_notice(&selected, SourceNoticeKind::ServerUnreachable)
                     .await;
+            }
+        }
+    }
+
+    async fn set_rating(
+        &mut self,
+        selected: Arc<SelectedSourceState>,
+        item: FavoriteItemId,
+        rating: Option<u8>,
+    ) {
+        let library = Arc::clone(&selected.library);
+        let accepted_item = item.clone();
+        match blocking(move || {
+            library
+                .set_rating(accepted_item, rating)
+                .map_err(string_error)
+        })
+        .await
+        {
+            Ok(change) => self.publish_accepted_change(&selected, change).await,
+            Err(error) => {
+                self.shared.warn_nonfatal(&error);
+                return;
+            }
+        }
+        if let Some(source) = selected.source.as_ref() {
+            let result = if selected.configuration.is_local() {
+                let library = Arc::clone(&selected.library);
+                let source = Arc::clone(source);
+                let track_id = match item {
+                    FavoriteItemId::Track(id) => Some(id),
+                    FavoriteItemId::Album(_) | FavoriteItemId::Artist(_) => None,
+                };
+                blocking(move || {
+                    let Some(track_id) = track_id else {
+                        return Ok(NativeSourceResult::Unavailable);
+                    };
+                    let track = library
+                        .track(&track_id)
+                        .map_err(string_error)?
+                        .ok_or_else(|| "the rated Track is no longer in the Library".to_string())?;
+                    source
+                        .set_local_rating(&track, rating)
+                        .map_err(string_error)
+                })
+                .await
+            } else {
+                source.set_rating(item, rating).await.map_err(string_error)
+            };
+            if let Err(error) = result {
+                self.shared.warn_nonfatal(&error);
             }
         }
     }
@@ -1914,6 +1958,57 @@ impl SourcePort for SourceOwner {
         });
     }
 
+    fn replace_local_folder(&self, current: String, replacement: PathBuf) {
+        let local = self
+            .shared
+            .settings
+            .load()
+            .sources
+            .configured
+            .iter()
+            .find(|source| {
+                matches!(
+                    source.configuration.editable(),
+                    Ok(sources::EditableSource::Local { .. })
+                )
+            })
+            .cloned();
+        let Some(local) = local else {
+            self.shared.warn_nonfatal("Local is not configured");
+            return;
+        };
+        let mut roots = match local_roots(&local.configuration) {
+            Ok(roots) => roots,
+            Err(error) => {
+                self.shared.warn_nonfatal(&error);
+                return;
+            }
+        };
+        let Some(root) = roots
+            .iter_mut()
+            .find(|root| root.to_string_lossy() == current)
+        else {
+            self.shared
+                .warn_nonfatal("The Local folder is no longer configured");
+            return;
+        };
+        if root == &replacement {
+            return;
+        }
+        *root = replacement;
+        let source_id = local.configuration.source_id;
+        self.spawn_serialized(true, move |mut operations, cancelled| async move {
+            operations
+                .apply_source_update(
+                    source_id,
+                    SourceSettingsInput::Local { roots },
+                    true,
+                    cancelled,
+                )
+                .await;
+        });
+    }
+
     fn remove_local_folder(&self, path: String) {
         let local = self
             .shared
@@ -2082,6 +2177,12 @@ impl SelectedSourcePort for ActiveSource {
     fn set_favorite(&self, item: FavoriteItemId, favorite: bool) {
         self.spawn_selected(false, move |mut operations, selected, _| async move {
             operations.set_favorite(selected, item, favorite).await;
+        });
+    }
+
+    fn set_rating(&self, item: FavoriteItemId, rating: Option<u8>) {
+        self.spawn_selected(false, move |mut operations, selected, _| async move {
+            operations.set_rating(selected, item, rating).await;
         });
     }
 
@@ -2417,7 +2518,7 @@ async fn route_search_result(
     provider: Option<sources::SourceResult<NativeSourceResult<library::SearchResults>>>,
 ) -> Result<library::SearchResults, String> {
     match live_source_result(provider)? {
-        Some(results) => reconcile_search_results(&loaded, results),
+        Some(results) => hydrate_search_tracks(&loaded, results),
         None => cached_search(loaded, request).await,
     }
 }
@@ -2495,20 +2596,10 @@ fn reconcile_folder_contents(
     Ok(contents)
 }
 
-fn reconcile_search_results(
+fn hydrate_search_tracks(
     loaded: &Library,
     mut results: library::SearchResults,
 ) -> Result<library::SearchResults, String> {
-    for artist in &mut results.artists {
-        if let Some(accepted) = loaded.artist(&artist.id).map_err(string_error)? {
-            *artist = (*accepted).clone();
-        }
-    }
-    for album in &mut results.albums {
-        if let Some(accepted) = loaded.album(&album.id).map_err(string_error)? {
-            *album = (*accepted).clone();
-        }
-    }
     for track in &mut results.tracks {
         *track = accepted_track_or(loaded, track.clone())?;
     }
@@ -2652,6 +2743,7 @@ fn editable_source(configuration: &SourceConfiguration) -> Result<EditableSource
         sources::EditableSource::Credentials {
             credentials,
             jellyfin_use_instant_mix,
+            subsonic_authentication,
             ..
         } => Ok(EditableSource {
             source: SourceSummary {
@@ -2666,6 +2758,8 @@ fn editable_source(configuration: &SourceConfiguration) -> Result<EditableSource
                 server_url: credentials.server_url,
                 username: credentials.username,
                 trust_invalid_cert: credentials.trust_invalid_cert,
+                open_subsonic_authentication: subsonic_authentication
+                    .map(open_subsonic_authentication),
             },
             jellyfin_use_instant_mix,
         }),
@@ -2685,8 +2779,13 @@ fn source_setup_input(input: SourceSetup, jellyfin_device_id: &str) -> SourceSet
             use_instant_mix,
             device_id: jellyfin_device_id.to_string(),
         }),
-        SourceSetup::OpenSubsonic { kind, credentials } => SourceSetupInput::Subsonic {
+        SourceSetup::OpenSubsonic {
+            kind,
+            authentication,
+            credentials,
+        } => SourceSetupInput::Subsonic {
             flavor: subsonic_flavor(kind),
+            authentication: subsonic_authentication(authentication),
             credentials: credential_host_input(credentials),
         },
         SourceSetup::Local { roots } => SourceSetupInput::Local(LocalFolderHostInput { roots }),
@@ -2706,8 +2805,12 @@ fn source_settings_input(input: SourceSettingsChange) -> SourceSettingsInput {
         SourceSettingsChange::OpenSubsonic {
             source_id: _,
             kind: _,
+            authentication,
             credentials,
-        } => SourceSettingsInput::Subsonic(credential_settings_input(credentials)),
+        } => SourceSettingsInput::Subsonic {
+            authentication: subsonic_authentication(authentication),
+            credentials: credential_settings_input(credentials),
+        },
     }
 }
 
@@ -2723,7 +2826,7 @@ fn credential_host_input(input: CredentialInput) -> CredentialHostInput {
         server_name: input.source_name,
         server_url: input.server_url,
         username: input.username,
-        password: input.password,
+        password: input.secret,
         trust_invalid_cert: input.trust_invalid_cert,
     }
 }
@@ -2733,7 +2836,7 @@ fn credential_settings_input(input: CredentialInput) -> CredentialSettingsInput 
         name: input.source_name.unwrap_or_default(),
         base_url: input.server_url,
         username: input.username,
-        password: input.password,
+        password: input.secret,
         trust_invalid_cert: input.trust_invalid_cert,
     }
 }
@@ -2742,6 +2845,22 @@ fn subsonic_flavor(kind: OpenSubsonicKind) -> SubsonicFlavor {
     match kind {
         OpenSubsonicKind::Navidrome => SubsonicFlavor::Navidrome,
         OpenSubsonicKind::OpenSubsonic => SubsonicFlavor::Subsonic,
+    }
+}
+
+fn subsonic_authentication(authentication: OpenSubsonicAuthentication) -> SubsonicAuthentication {
+    match authentication {
+        OpenSubsonicAuthentication::Password => SubsonicAuthentication::Password,
+        OpenSubsonicAuthentication::ApiKey => SubsonicAuthentication::ApiKey,
+    }
+}
+
+fn open_subsonic_authentication(
+    authentication: SubsonicAuthentication,
+) -> OpenSubsonicAuthentication {
+    match authentication {
+        SubsonicAuthentication::Password => OpenSubsonicAuthentication::Password,
+        SubsonicAuthentication::ApiKey => OpenSubsonicAuthentication::ApiKey,
     }
 }
 

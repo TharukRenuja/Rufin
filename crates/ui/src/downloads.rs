@@ -16,7 +16,6 @@ use localization::{tr, track_count_text};
 use crate::routes::library_fields::smart_playlist_display_name;
 use crate::runtime::SelectedLibrary;
 use crate::shell::Shell;
-use crate::shell::cover::presentation::stable_seed;
 use crate::shell::cover::{ArtworkTile, cover_fetch_size_for_display};
 
 struct DownloadBadgeBinding {
@@ -233,7 +232,7 @@ impl Shell {
     }
 
     pub(crate) fn download_source_artwork(self: &Rc<Self>, size: i32) -> gtk::Widget {
-        let (bindings, seed) = self
+        let bindings = self
             .selected_library()
             .as_deref()
             .map(|selected| {
@@ -245,10 +244,10 @@ impl Shell {
                     .take(4)
                     .map(ArtworkBinding::source_artwork)
                     .collect::<Vec<_>>();
-                (bindings, stable_seed(selected.source_id.as_str()))
+                bindings
             })
             .unwrap_or_default();
-        self.cover_group_projection_for_artwork(&bindings, seed, size, size)
+        self.cover_group_projection_for_artwork(&bindings, size, size)
             .widget()
     }
 
@@ -329,17 +328,15 @@ impl Shell {
         let Some(bindings) = bindings.filter(|bindings| !bindings.is_empty()) else {
             return self.download_source_artwork(size);
         };
-        let seed = stable_seed(&format!("{subject:?}"));
         if bindings.len() > 1 {
             return self
-                .cover_group_projection_for_artwork(&bindings, seed, size, size)
+                .cover_group_projection_for_artwork(&bindings, size, size)
                 .widget();
         }
-        let tile = ArtworkTile::new(size, seed);
+        let tile = ArtworkTile::new(size);
         self.bind_artwork_tile(
             &tile,
             bindings.into_iter().next().expect("one artwork binding"),
-            seed,
             size,
             cover_fetch_size_for_display(size),
         );
@@ -426,7 +423,7 @@ impl Shell {
         collection: bool,
         downloaded: impl Fn(&SelectedLibrary) -> bool + 'static,
     ) -> gtk::Image {
-        let image = gtk::Image::from_icon_name("folder-download-symbolic");
+        let image = gtk::Image::from_icon_name("folder-download-bundled-symbolic");
         image.add_css_class("downloaded-badge");
         image.set_pixel_size(14);
         image.set_tooltip_text(Some(&tr("Downloaded")));

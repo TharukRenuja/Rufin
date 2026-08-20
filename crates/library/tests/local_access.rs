@@ -471,7 +471,6 @@ fn accept_tracks(
     let mut candidate = library
         .begin_source_candidate(CandidateHeader {
             source_id,
-            input_version: 1,
             input_digest: [7; 32],
         })
         .expect("begin source candidate");

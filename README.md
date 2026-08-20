@@ -1,16 +1,16 @@
-# Rufin
-
-<p align="center">
+<h1>
+  Rufin
   <a href="Cargo.toml"><img alt="Rust 1.95+" src="https://img.shields.io/badge/rust-1.95%2B-f74c00?logo=rust"></a>
   <a href="LICENSE"><img alt="License: GPL-3.0-or-later" src="https://img.shields.io/badge/license-GPL--3.0--or--later-blue.svg"></a>
   <a href="https://gitlab.gnome.org/GNOME/libadwaita/"><img alt="GTK 4 libadwaita" src="https://img.shields.io/badge/GTK%204-libadwaita-3584E4?logo=gnome&amp;logoColor=white&amp;labelColor=2E3436"></a>
   <a href="https://flathub.org/apps/io.github.screwys.Rufin"><img alt="Flathub installs" src="https://img.shields.io/flathub/downloads/io.github.screwys.Rufin?logo=flathub&amp;label=flathub&amp;color=4A86CF"></a>
-    <a href="https://aur.archlinux.org/packages/rufin-bin"><img alt="AUR version" src="https://img.shields.io/aur/version/rufin-bin?logo=archlinux&amp;label=AUR&amp;color=1793D1"></a>
-    <a href="https://search.nixos.org/packages?channel=unstable&query=rufin"><img alt="Nixpkgs version" src="https://repology.org/badge/version-for-repo/nix_unstable/rufin.svg?header=Nixpkgs"></a>
-</p>
+  <a href="https://aur.archlinux.org/packages/rufin-bin"><img alt="AUR version" src="https://img.shields.io/aur/version/rufin-bin?logo=archlinux&amp;label=AUR&amp;color=1793D1"></a>
+  <a href="https://search.nixos.org/packages?channel=unstable&query=rufin"><img alt="Nixpkgs version" src="https://repology.org/badge/version-for-repo/nix_unstable/rufin.svg?header=Nixpkgs"></a>
+</h1>
 
 <img align="left" alt="Rufin" src="data/icons/hicolor/512x512/apps/io.github.screwys.Rufin.png" width="96"> Rufin is a powerful, fast and easy to use GTK4/libadwaita music client written in Rust, available on [multiple platforms](#installation). It can play music from your Jellyfin, Navidrome/OpenSubsonic flavor servers and local folders; can download tracks from these servers and let you play from downloaded songs while still keeping you in the same remote session. It also has broad set of features and optimizations around these features for the ideal user experience.
 
+<br clear="left">
 
 ![Rufin](data/screenshots/Rufin.png)
 
@@ -28,6 +28,8 @@
 - CUE sheet support with separate playable tracks
 - Broad codec support [^codecs]
 - Audio output device selection
+- Configurable playback speed
+
 
 ## 📚 Library
 
@@ -37,6 +39,7 @@
 - Path matching between music servers and local folders, allowing local playback while keeping server activity and history
 - Metadata editing for supported servers and local formats, with bulk editing and `Identify` available with auto-fill
 - Automatic metadata, artwork and lyrics caching
+- Easy rating support, with an option to enable visual-only partial stars for OpenSubsonic
 - Browsing large libraries feels normal, routes are not paginated 
 
 ## 🌍️ Discovery
@@ -54,6 +57,7 @@
 - Discord Rich Presence
 - Private mode for temporarily pausing external activity
 - Secure storage for server credentials and API secrets by default
+- Casting support for UPnP and Chromecast
 
 ## 🖥️ Interface
 
@@ -65,7 +69,7 @@
 - Automatic updates for Windows and macOS builds
 - Easy built-in log viewing and exporting (privacy-conscious)
 - Type to search for routes
-- `Exit to tray` and `Start minimized` window options 
+- Can run in the background or set to launch minimized
 - System tray integration
 - 
 # Screenshots
@@ -312,11 +316,14 @@ Rufin is greatly influenced by [Feishin](https://github.com/jeffvli/feishin), an
 
 Player backend design and Smart Playlists are inspired from [Strawberry](https://github.com/strawberrymusicplayer/strawberry) (fork of [Clementine](https://github.com/clementine-player/Clementine)).
 
+Icon is designed by [Commenter25](https://commenter.cc) and it is licensed under CC-BY-SA-3.0.
+
 ## Translation credits
 
 - Estonian translation by Priit Jõerüüt
 - Russian and Latvian translation by [aguhadug](https://github.com/aguhadug)
 - German translation by [sevachka](https://github.com/sevachka)
+- Chezch translation by [Jakub Cabal](https://github.com/jakubcabal)
 
 # License
 

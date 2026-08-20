@@ -555,13 +555,17 @@ mod tests {
         let private_key = general_purpose::STANDARD
             .decode(PRIVATE_KEY)
             .expect("test private key");
-        let mut tls_config = ServerConfig::builder()
-            .with_no_client_auth()
-            .with_single_cert(
-                vec![certificate.into()],
-                PrivateKeyDer::try_from(private_key).expect("PKCS#8 test private key"),
-            )
-            .expect("TLS server configuration");
+        let mut tls_config = ServerConfig::builder_with_provider(Arc::new(
+            tokio_rustls::rustls::crypto::aws_lc_rs::default_provider(),
+        ))
+        .with_safe_default_protocol_versions()
+        .expect("TLS protocol versions")
+        .with_no_client_auth()
+        .with_single_cert(
+            vec![certificate.into()],
+            PrivateKeyDer::try_from(private_key).expect("PKCS#8 test private key"),
+        )
+        .expect("TLS server configuration");
         tls_config.alpn_protocols = vec![b"h2".to_vec(), b"http/1.1".to_vec()];
         let tls_acceptor = TlsAcceptor::from(Arc::new(tls_config));
         let listener = TcpListener::bind("127.0.0.1:0")

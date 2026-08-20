@@ -19,6 +19,10 @@ apple-native-keyring-store = { version = "1.0.1", features = ["keychain"] }
 apple-cf = "=0.6.0"
 async-channel = "2.5.0"
 async-trait = "0.1.89"
+ashpd = { version = "0.13.13", default-features = false, features = [
+    "background",
+    "tokio",
+] }
 artwork = { path = "crates/artwork" }
 metadata-lookup = { path = "crates/metadata-lookup" }
 base64 = "0.23.0"
@@ -28,6 +32,7 @@ directories = "6.0.0"
 desktop-integration = { path = "crates/desktop-integration" }
 downloads = { path = "crates/downloads" }
 ebur128 = "0.1.10"
+fcast-sender-sdk = { version = "0.2.0", default-features = false, features = ["chromecast"] }
 futures-util = "0.3.32"
 getrandom = "0.4.0"
 gio = "0.22.6"
@@ -41,6 +46,7 @@ glib-build-tools = "0.22.8"
 httpdate = "1.0.3"
 image = { version = "0.25.10", default-features = false, features = ["bmp", "gif", "jpeg", "png", "tiff", "webp"] }
 if-addrs = "0.15.0"
+mdns-sd = { version = "0.21.0", default-features = false }
 ksni = "0.3.4"
 keyring-core = "1.0.0"
 library = { path = "crates/library" }
@@ -55,8 +61,11 @@ oo7 = "0.6.0"
 percent-encoding = "2.3.2"
 playback = { path = "crates/playback" }
 playback-gstreamer = { path = "crates/playback-gstreamer" }
+playback-cast = { path = "crates/playback-cast" }
 scrobbling = { path = "crates/scrobbling" }
 reqwest = { version = "0.13.3", default-features = false, features = ["http2", "rustls", "system-proxy"] }
+rupnp = "3.0.0"
+rustls = { version = "0.23", default-features = false, features = ["aws_lc_rs", "logging", "tls12"] }
 rusqlite = { version = "0.40.1", default-features = false }
 rustix = { version = "1.1.4", features = ["fs"] }
 rustfft = "6.2.0"
@@ -65,6 +74,7 @@ serde = { version = "1.0.228", features = ["derive", "rc"] }
 serde_json = "1.0.150"
 serde_path_to_error = "0.1.20"
 sha2 = "0.11.0"
+socket2 = "0.6.5"
 sources = { path = "crates/sources" }
 tempfile = "3.23.0"
 thiserror = "2.0.18"
@@ -72,6 +82,7 @@ tray-icon = { version = "0.24.2", default-features = false }
 tokio = "1.52.3"
 tokio-rustls = { version = "0.26.4", default-features = false }
 tokio-tungstenite = { version = "0.30.0", default-features = false }
+tiny_http = "0.12.0"
 tracing = "0.1.41"
 tracing-subscriber = "0.3.23"
 ui = { path = "crates/ui" }
@@ -106,8 +117,12 @@ string_slice = "deny"
 
 [profile.dev]
 debug = "line-tables-only"
-incremental = false
 
 [profile.test]
 debug = "line-tables-only"
-incremental = false
+
+[profile.dev.package.libsqlite3-sys]
+opt-level = 3
+
+[profile.test.package.libsqlite3-sys]
+opt-level = 3

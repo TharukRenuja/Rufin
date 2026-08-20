@@ -5,6 +5,9 @@ pub const EQUALIZER_BAND_COUNT: usize = 10;
 pub const LOUDNESS_NORMALIZATION_TARGET_LUFS: f64 = -18.0;
 pub const MIN_CROSSFADE_SECONDS: u8 = 1;
 pub const MAX_CROSSFADE_SECONDS: u8 = 30;
+pub const MIN_PLAYBACK_RATE: f64 = 0.5;
+pub const MAX_PLAYBACK_RATE: f64 = 2.0;
+pub const DEFAULT_PLAYBACK_RATE: f64 = 1.0;
 pub const DEFAULT_AUTO_DJ_REFILL_THRESHOLD: u8 = 1;
 pub const MIN_AUTO_DJ_REFILL_THRESHOLD: u8 = 1;
 pub const MAX_AUTO_DJ_REFILL_THRESHOLD: u8 = 10;
@@ -97,6 +100,8 @@ pub struct PlaybackSettings {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub audio_output: Option<String>,
     pub equalizer: EqualizerSettings,
+    pub playback_rate: f64,
+    pub preserve_pitch: bool,
     pub volume: f64,
     pub volume_scale: VolumeScale,
     pub muted: bool,
@@ -122,6 +127,10 @@ struct SavedPlaybackSettings {
     audio_output: Option<String>,
     #[serde(default)]
     equalizer: EqualizerSettings,
+    #[serde(default = "default_playback_rate")]
+    playback_rate: f64,
+    #[serde(default = "default_true")]
+    preserve_pitch: bool,
     #[serde(default = "default_volume")]
     volume: f64,
     #[serde(default)]
@@ -153,6 +162,8 @@ impl<'de> Deserialize<'de> for PlaybackSettings {
             stream_quality: saved.stream_quality,
             audio_output: saved.audio_output,
             equalizer: saved.equalizer,
+            playback_rate: saved.playback_rate,
+            preserve_pitch: saved.preserve_pitch,
             volume,
             volume_scale,
             muted: saved.muted,
@@ -171,6 +182,8 @@ impl Default for PlaybackSettings {
             stream_quality: StreamQuality::Original,
             audio_output: None,
             equalizer: EqualizerSettings::default(),
+            playback_rate: DEFAULT_PLAYBACK_RATE,
+            preserve_pitch: true,
             volume: default_volume(),
             volume_scale: VolumeScale::Perceptual,
             muted: false,
@@ -192,12 +205,22 @@ impl PlaybackSettings {
         self.crossfade_seconds = self
             .crossfade_seconds
             .clamp(MIN_CROSSFADE_SECONDS, MAX_CROSSFADE_SECONDS);
+        self.playback_rate = sanitize_playback_rate(self.playback_rate);
         self.volume = sanitize_volume(self.volume);
-        if self
-            .audio_output
-            .as_deref()
-            .is_some_and(|output| output.trim().is_empty())
-        {
+        if self.audio_output.as_deref().is_some_and(|output| {
+            output.trim().is_empty()
+                || matches!(
+                    output,
+                    "autoaudiosink"
+                        | "pipewiresink"
+                        | "pulsesink"
+                        | "alsasink"
+                        | "jackaudiosink"
+                        | "osxaudiosink"
+                        | "wasapisink"
+                        | "directsoundsink"
+                )
+        }) {
             self.audio_output = None;
         }
         self.equalizer.sanitize();
@@ -210,6 +233,18 @@ fn default_true() -> bool {
 
 fn default_volume() -> f64 {
     1.0
+}
+
+fn default_playback_rate() -> f64 {
+    DEFAULT_PLAYBACK_RATE
+}
+
+pub fn sanitize_playback_rate(rate: f64) -> f64 {
+    if rate.is_finite() {
+        rate.clamp(MIN_PLAYBACK_RATE, MAX_PLAYBACK_RATE)
+    } else {
+        DEFAULT_PLAYBACK_RATE
+    }
 }
 
 fn sanitize_volume(volume: f64) -> f64 {
@@ -276,6 +311,72 @@ mod tests {
         settings.crossfade_seconds = MAX_CROSSFADE_SECONDS + 1;
         settings.sanitize();
         assert_eq!(settings.crossfade_seconds, MAX_CROSSFADE_SECONDS);
+    }
+
+    #[test]
+    fn playback_settings_sanitize_playback_rate() {
+        let mut settings = PlaybackSettings {
+            playback_rate: 0.25,
+            ..PlaybackSettings::default()
+        };
+        settings.sanitize();
+        assert_eq!(settings.playback_rate, MIN_PLAYBACK_RATE);
+
+        settings.playback_rate = 4.0;
+        settings.sanitize();
+        assert_eq!(settings.playback_rate, MAX_PLAYBACK_RATE);
+
+        settings.playback_rate = f64::NAN;
+        settings.sanitize();
+        assert_eq!(settings.playback_rate, DEFAULT_PLAYBACK_RATE);
+    }
+
+    #[test]
+    fn playback_settings_migrate_backend_factories_to_system_default() {
+        for output in [
+            "autoaudiosink",
+            "pipewiresink",
+            "pulsesink",
+            "alsasink",
+            "jackaudiosink",
+            "osxaudiosink",
+            "wasapisink",
+            "directsoundsink",
+        ] {
+            let mut settings = PlaybackSettings {
+                audio_output: Some(output.to_string()),
+                ..PlaybackSettings::default()
+            };
+
+            settings.sanitize();
+
+            assert_eq!(settings.audio_output, None, "legacy output {output}");
+        }
+    }
+
+    #[test]
+    fn missing_playback_rate_restores_normal_speed() {
+        let restored = serde_json::from_str::<PlaybackSettings>("{}")
+            .expect("restore playback settings without a playback rate");
+
+        assert_eq!(restored.playback_rate, DEFAULT_PLAYBACK_RATE);
+    }
+
+    #[test]
+    fn preserve_pitch_defaults_on_and_round_trips_off() {
+        let restored = serde_json::from_str::<PlaybackSettings>("{}")
+            .expect("restore playback settings without pitch preservation");
+        assert!(restored.preserve_pitch);
+
+        let settings = PlaybackSettings {
+            preserve_pitch: false,
+            ..PlaybackSettings::default()
+        };
+        let restored = serde_json::from_value::<PlaybackSettings>(
+            serde_json::to_value(settings).expect("serialize pitch preservation"),
+        )
+        .expect("restore pitch preservation");
+        assert!(!restored.preserve_pitch);
     }
 
     #[test]

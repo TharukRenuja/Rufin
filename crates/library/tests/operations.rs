@@ -47,7 +47,6 @@ fn accepted_library_search_matches_substrings_across_item_fields() {
     let mut candidate = library
         .begin_source_candidate(CandidateHeader {
             source_id,
-            input_version: 1,
             input_digest: digest(100),
         })
         .expect("begin search candidate");
@@ -226,7 +225,6 @@ fn artist_artwork_binding_is_reused_until_an_accepted_artwork_change() {
     let mut candidate = libraries
         .begin_source_candidate(CandidateHeader {
             source_id: source_id.clone(),
-            input_version: 1,
             input_digest: digest(101),
         })
         .expect("begin artwork candidate");
@@ -367,7 +365,6 @@ fn source_artwork_uses_album_images_and_keeps_orphan_track_images() {
     let mut candidate = library
         .begin_source_candidate(CandidateHeader {
             source_id,
-            input_version: 1,
             input_digest: digest(89),
         })
         .expect("begin artwork candidate");
@@ -439,7 +436,6 @@ fn candidate_acceptance_rebases_activity_without_rebuilding_the_prepared_library
     let mut candidate = library
         .begin_source_candidate(CandidateHeader {
             source_id,
-            input_version: 1,
             input_digest: digest(91),
         })
         .expect("begin replacement candidate");
@@ -547,7 +543,6 @@ fn remote_activity_preserves_provider_statistics_and_drives_rufin_smart_playlist
     let mut candidate = library
         .begin_source_candidate(CandidateHeader {
             source_id: source_id.clone(),
-            input_version: 1,
             input_digest: digest(92),
         })
         .expect("begin remote candidate");
@@ -829,7 +824,6 @@ fn accepted_library_reopens_with_sparse_relationships_and_playlist_occurrences()
     let mut candidate = library
         .begin_source_candidate(CandidateHeader {
             source_id: source_id.clone(),
-            input_version: 1,
             input_digest: digest(1),
         })
         .expect("begin candidate");
@@ -1118,7 +1112,6 @@ fn finished_candidate_stays_invisible_until_acceptance() {
     let mut candidate = library
         .begin_source_candidate(CandidateHeader {
             source_id: source_id.clone(),
-            input_version: 1,
             input_digest: digest(42),
         })
         .expect("begin replacement candidate");
@@ -1275,6 +1268,62 @@ fn remote_favorites_remain_optimistic_across_restart_and_retry() {
             .expect("read rolled back Track")
             .expect("rolled back Track")
             .favorite
+    );
+}
+
+#[test]
+fn exact_rating_survives_source_refresh_and_reopen() {
+    let directory = tempfile::tempdir().expect("temporary Store directory");
+    let path = directory.path().join("library.db");
+    let source_id = SourceId::new("subsonic:server:ratings");
+    let libraries = Libraries::open(&path).expect("open Library");
+    let mut source_track = track();
+    source_track.user_rating = Some(8);
+    let accepted = accept_track(
+        &libraries,
+        source_id.clone(),
+        digest(121),
+        source_track.clone(),
+        None,
+        1,
+    );
+    let track_id = source_track.id.clone();
+
+    let change = accepted
+        .library
+        .set_rating(FavoriteItemId::Track(track_id.clone()), Some(7))
+        .expect("set exact rating");
+    assert_eq!(
+        change.tracks[0]
+            .track
+            .as_ref()
+            .expect("rated Track")
+            .user_rating,
+        Some(7)
+    );
+
+    accepted
+        .library
+        .accept_source_update(SourceLibraryUpdate {
+            tracks: vec![source_track],
+            ..SourceLibraryUpdate::default()
+        })
+        .expect("accept rounded source rating");
+    drop(accepted);
+    drop(libraries);
+
+    let reopened = Libraries::open(path)
+        .expect("reopen Libraries")
+        .load_source(&source_id)
+        .expect("load source")
+        .expect("rated source");
+    assert_eq!(
+        reopened
+            .track(&track_id)
+            .expect("read Track")
+            .expect("rated Track")
+            .user_rating,
+        Some(7)
     );
 }
 
@@ -1720,7 +1769,6 @@ fn identical_source_update_keeps_the_complete_refresh_shortcut() {
     let mut candidate = library
         .begin_source_candidate(CandidateHeader {
             source_id: source_id.clone(),
-            input_version: 1,
             input_digest,
         })
         .expect("begin source candidate");
@@ -1754,7 +1802,6 @@ fn identical_source_update_keeps_the_complete_refresh_shortcut() {
     let mut candidate = library
         .begin_source_candidate(CandidateHeader {
             source_id,
-            input_version: 1,
             input_digest,
         })
         .expect("begin equal source candidate");
@@ -1792,7 +1839,6 @@ fn canonical_equality_ignores_batch_order_and_projection_counts() {
     let mut first = library
         .begin_source_candidate(CandidateHeader {
             source_id: source_id.clone(),
-            input_version: 1,
             input_digest,
         })
         .expect("begin first candidate");
@@ -1835,7 +1881,6 @@ fn canonical_equality_ignores_batch_order_and_projection_counts() {
     let mut second = library
         .begin_source_candidate(CandidateHeader {
             source_id: source_id.clone(),
-            input_version: 1,
             input_digest,
         })
         .expect("begin reordered candidate");
@@ -1861,7 +1906,6 @@ fn canonical_equality_ignores_batch_order_and_projection_counts() {
     let mut changed = library
         .begin_source_candidate(CandidateHeader {
             source_id: source_id.clone(),
-            input_version: 1,
             input_digest,
         })
         .expect("begin relationship candidate");
@@ -1927,7 +1971,6 @@ fn failed_candidate_batch_cannot_accept_partially_persisted_rows() {
     let mut candidate = library
         .begin_source_candidate(CandidateHeader {
             source_id: source_id.clone(),
-            input_version: 1,
             input_digest: digest(31),
         })
         .expect("begin candidate");
@@ -2254,7 +2297,6 @@ fn local_component_replaces_files_relations_and_dormant_user_data_atomically() {
     let mut candidate = library
         .begin_source_candidate(CandidateHeader {
             source_id: source_id.clone(),
-            input_version: 1,
             input_digest: digest(40),
         })
         .expect("begin Local candidate");
@@ -2620,7 +2662,6 @@ fn full_local_rescan_drops_unreadable_music_until_the_source_recovers() {
     let mut first = library
         .begin_source_candidate(CandidateHeader {
             source_id: source_id.clone(),
-            input_version: 1,
             input_digest: digest(70),
         })
         .expect("begin initial Local candidate");
@@ -2658,7 +2699,6 @@ fn full_local_rescan_drops_unreadable_music_until_the_source_recovers() {
     let mut rescanned = library
         .begin_source_candidate(CandidateHeader {
             source_id: source_id.clone(),
-            input_version: 1,
             input_digest: digest(70),
         })
         .expect("begin Local rescan");
@@ -2735,7 +2775,6 @@ fn full_local_rescan_drops_unreadable_music_until_the_source_recovers() {
     let mut recovered = library
         .begin_source_candidate(CandidateHeader {
             source_id: source_id.clone(),
-            input_version: 1,
             input_digest: digest(70),
         })
         .expect("begin recovered Local candidate");
@@ -4484,7 +4523,6 @@ fn source_item_replacement_survives_removal_and_reattaches_dormant_consumers() {
     let mut candidate = library
         .begin_source_candidate(CandidateHeader {
             source_id: source_id.clone(),
-            input_version: 1,
             input_digest: digest(40),
         })
         .expect("begin candidate");
@@ -5063,7 +5101,6 @@ fn source_update_commits_tracks_and_playlist_readback_as_one_reopenable_value() 
     let mut candidate = library
         .begin_source_candidate(CandidateHeader {
             source_id: source_id.clone(),
-            input_version: 1,
             input_digest: digest(60),
         })
         .expect("begin source candidate");
@@ -5218,7 +5255,6 @@ fn album_release_results_follow_exact_identity_across_replacement_and_reopen() {
     let mut candidate = library
         .begin_source_candidate(CandidateHeader {
             source_id: source_id.clone(),
-            input_version: 1,
             input_digest: digest(50),
         })
         .expect("begin candidate");
@@ -5258,7 +5294,6 @@ fn album_release_results_follow_exact_identity_across_replacement_and_reopen() {
             first_lookup,
             library::AlbumReleaseResult::Found {
                 release_types: vec!["album".to_string()],
-                is_compilation: Some(false),
             },
         )
         .expect("accept found release")
@@ -5377,6 +5412,60 @@ fn album_release_results_follow_exact_identity_across_replacement_and_reopen() {
 }
 
 #[test]
+fn album_release_candidates_continue_after_the_first_bounded_store_page() {
+    let libraries = Libraries::memory().expect("open Library");
+    let source_id = SourceId::new("jellyfin:server:release-pages");
+    let template_track = track();
+    let albums = (0..501)
+        .map(|index| {
+            let mut album = album_for_track(&template_track, index);
+            album.id = library::AlbumId::new(format!("jellyfin:album:{index:04}"));
+            album.title = format!("Album {index:04}");
+            album.musicbrainz_release_group_id = Some(format!("release-group-{index:04}"));
+            album
+        })
+        .collect::<Vec<_>>();
+    let mut candidate = libraries
+        .begin_source_candidate(CandidateHeader {
+            source_id: source_id.clone(),
+            input_digest: digest(62),
+        })
+        .expect("begin release-page candidate");
+    candidate
+        .write(CandidateBatch::Albums(albums))
+        .expect("write release-page Albums");
+    let accepted = candidate
+        .finish(
+            CandidateFinish {
+                freshness: None,
+                home: HomeFacts::RufinDefined,
+                accepted_at: 1,
+            },
+            None,
+        )
+        .and_then(|prepared| prepared.accept())
+        .expect("accept release-page candidate");
+
+    let first = accepted
+        .library
+        .take_album_release_lookups(500)
+        .expect("read first release page");
+    assert_eq!(first.len(), 500);
+    for candidate in first {
+        accepted
+            .library
+            .accept_album_release_result(candidate, library::AlbumReleaseResult::Missing)
+            .expect("accept missing release result");
+    }
+    let second = accepted
+        .library
+        .take_album_release_lookups(500)
+        .expect("read second release page");
+
+    assert_eq!(second.len(), 1);
+}
+
+#[test]
 fn artist_routes_keep_relationship_roles_and_album_level_tracks() {
     let directory = tempfile::tempdir().expect("temporary Store directory");
     let library = Libraries::open(directory.path().join("library.db")).expect("open Library");
@@ -5410,7 +5499,6 @@ fn artist_routes_keep_relationship_roles_and_album_level_tracks() {
     let mut candidate = library
         .begin_source_candidate(CandidateHeader {
             source_id,
-            input_version: 1,
             input_digest: digest(94),
         })
         .expect("begin artist-role candidate");
@@ -5455,21 +5543,20 @@ fn artist_routes_keep_relationship_roles_and_album_level_tracks() {
             .collect::<Vec<_>>(),
         std::slice::from_ref(&track_album_artist.id)
     );
-    for artist_id in [&track_album_artist.id, &album_only_artist.id] {
-        let tracks = accepted
-            .library
-            .artist_track_detail(artist_id, None)
-            .expect("read Artist")
-            .expect("linked Artist");
-        let releases = accepted
-            .library
-            .artist_discography(artist_id, None)
-            .expect("read Artist releases")
-            .expect("linked Artist releases");
-        assert_eq!(tracks.tracks.len(), 2);
-        assert_eq!(releases.albums.len(), 1);
-        assert!(releases.appears_on.is_empty());
-    }
+    let album_artist = accepted
+        .library
+        .artist_discography(&track_album_artist.id, None)
+        .expect("read Album Artist releases")
+        .expect("Album Artist releases");
+    assert_eq!(album_artist.albums.len(), 1);
+    assert!(album_artist.appears_on.is_empty());
+    let album_contributor = accepted
+        .library
+        .artist_discography(&album_only_artist.id, None)
+        .expect("read Album contributor releases")
+        .expect("Album contributor releases");
+    assert!(album_contributor.albums.is_empty());
+    assert_eq!(album_contributor.appears_on.len(), 1);
     let guest_tracks = accepted
         .library
         .artist_track_detail(&guest.id, None)
@@ -5517,8 +5604,8 @@ fn artist_routes_keep_relationship_roles_and_album_level_tracks() {
         .expect("read replacement Artist releases")
         .expect("replacement Artist releases");
     assert_eq!(replacement_tracks.tracks.len(), 2);
-    assert_eq!(replacement_releases.albums.len(), 1);
-    assert!(replacement_releases.appears_on.is_empty());
+    assert!(replacement_releases.albums.is_empty());
+    assert_eq!(replacement_releases.appears_on.len(), 1);
 }
 
 #[test]
@@ -5563,7 +5650,6 @@ fn full_and_point_relationships_match_after_reopen() {
     let mut full = library
         .begin_source_candidate(CandidateHeader {
             source_id: full_source,
-            input_version: 1,
             input_digest: digest(95),
         })
         .expect("begin full relationship candidate");
@@ -5657,7 +5743,6 @@ fn full_and_point_relationships_match_after_reopen() {
     let point = library
         .begin_source_candidate(CandidateHeader {
             source_id: point_source.clone(),
-            input_version: 1,
             input_digest: digest(96),
         })
         .expect("begin empty point candidate");
@@ -5738,7 +5823,6 @@ fn radio_varies_its_bounded_window_and_passes_excluded_tracks() {
     let candidate = library
         .begin_source_candidate(CandidateHeader {
             source_id,
-            input_version: 1,
             input_digest: digest(97),
         })
         .expect("begin empty radio candidate");
@@ -5837,7 +5921,6 @@ fn accept(
     let mut candidate = library
         .begin_source_candidate(CandidateHeader {
             source_id,
-            input_version: 1,
             input_digest,
         })
         .expect("begin candidate");
@@ -5876,7 +5959,6 @@ fn accept_track(
     let mut candidate = library
         .begin_source_candidate(CandidateHeader {
             source_id,
-            input_version: 1,
             input_digest,
         })
         .expect("begin Track candidate");
@@ -5908,7 +5990,6 @@ fn accept_track_and_playlist(
     let mut candidate = library
         .begin_source_candidate(CandidateHeader {
             source_id,
-            input_version: 1,
             input_digest,
         })
         .expect("begin Track and Playlist candidate");
@@ -5941,7 +6022,6 @@ fn accept_local_tracks(
     let mut candidate = library
         .begin_source_candidate(CandidateHeader {
             source_id,
-            input_version: 1,
             input_digest: digest(digest_byte),
         })
         .expect("begin Local candidate");

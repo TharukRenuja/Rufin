@@ -6,9 +6,11 @@ use crate::{
     SourceConfiguration, SourceEditResult, SourceError, SourceResult,
 };
 pub use discovery::{DiscoveredJellyfinServer, discover_jellyfin_servers};
+#[cfg(test)]
+use item::artist_from_item;
 use item::{
     ALBUM_FIELDS, ItemQueryResult, JellyfinItem, MIXED_ITEM_FIELDS, PLAYLIST_FIELDS, TRACK_FIELDS,
-    album_from_item, artist_from_item, folder_from_item, genre_from_item, is_audio_item,
+    album_from_item, folder_from_item, genre_from_item, is_audio_item, normalize_artist_items,
     playlist_from_item, primary_image_ref, track_from_item,
 };
 use library::{

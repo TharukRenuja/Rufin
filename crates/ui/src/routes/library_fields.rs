@@ -456,14 +456,14 @@ pub(crate) fn library_field_config_row(
     row.add_prefix(&check);
     row.set_activatable_widget(Some(&check));
 
-    let up = gtk::Button::from_icon_name("go-up-symbolic");
+    let up = gtk::Button::from_icon_name("go-up-bundled-symbolic");
     up.add_css_class("flat");
     up.set_tooltip_text(Some(&tr("Move up")));
     up.set_valign(gtk::Align::Center);
     up.set_sensitive(enabled);
     row.add_suffix(&up);
 
-    let down = gtk::Button::from_icon_name("go-down-symbolic");
+    let down = gtk::Button::from_icon_name("go-down-bundled-symbolic");
     down.add_css_class("flat");
     down.set_tooltip_text(Some(&tr("Move down")));
     down.set_valign(gtk::Align::Center);
@@ -769,7 +769,7 @@ pub(crate) fn next_layout(key: LibraryListKey, layout: LibraryLayout) -> Library
 }
 pub(crate) fn layout_icon(layout: LibraryLayout) -> &'static str {
     match layout {
-        LibraryLayout::Grid => "view-grid-symbolic",
+        LibraryLayout::Grid => "view-grid-bundled-symbolic",
         LibraryLayout::Row => "rufin-view-list-symbolic",
         LibraryLayout::Detail => "rufin-view-list-details-symbolic",
     }
@@ -840,7 +840,9 @@ pub(crate) fn option_count(value: Option<u32>) -> String {
     value.map(|value| value.to_string()).unwrap_or_default()
 }
 pub(crate) fn option_rating(value: Option<u8>) -> String {
-    value.map(|value| value.to_string()).unwrap_or_default()
+    value
+        .map(|value| format!("{:.1}", f64::from(value) / 2.0))
+        .unwrap_or_default()
 }
 pub(crate) fn favorite_text(favorite: bool) -> String {
     if favorite { "♥" } else { "" }.to_string()

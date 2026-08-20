@@ -72,6 +72,7 @@ struct PipelineSession {
     loudness_tags: SharedLoudnessTags,
     visualizer_probe: Option<gst::PadProbeId>,
     current_stream: PreparedStream,
+    playback_rate: f64,
 }
 impl PlayerPipeline {
     pub(super) fn new(name: &str, shared: Arc<Mutex<SharedBackendState>>) -> Self {
@@ -90,6 +91,7 @@ impl PlayerPipeline {
         settings: &BackendAudioSettings,
         volume: f64,
         muted: bool,
+        playback_rate: f64,
         startup_state: gst::State,
     ) -> Result<(), String> {
         let session_name = format!("{}-{}", self.name, id.0);
@@ -99,6 +101,7 @@ impl PlayerPipeline {
             slot,
             Arc::clone(&self.shared),
             &item.stream,
+            playback_rate,
         )?;
         session.configure_audio(settings)?;
         session.set_stream(&item.stream);
@@ -162,6 +165,14 @@ impl PlayerPipeline {
     }
 
     #[cfg(test)]
+    pub(super) fn has_or_targets_state(&self, state: gst::State) -> bool {
+        self.session.as_ref().is_some_and(|session| {
+            let (result, current, pending) = session.pipeline.state(gst::ClockTime::ZERO);
+            result.is_ok() && (current == state || pending == state)
+        })
+    }
+
+    #[cfg(test)]
     pub(super) fn try_pull_output_sample(&self, timeout: gst::ClockTime) -> Option<gst::Sample> {
         self.session
             .as_ref()
@@ -194,6 +205,23 @@ impl PlayerPipeline {
             return Err(format!("GStreamer session {} is not active", self.name));
         };
         session.seek_physical_millis(millis)
+    }
+
+    pub(super) fn set_playback_rate(
+        &mut self,
+        rate: f64,
+        seek_current_position: bool,
+    ) -> Result<bool, String> {
+        let Some(session) = self.session.as_mut() else {
+            return Ok(false);
+        };
+        session.set_playback_rate(rate, seek_current_position)
+    }
+
+    pub(super) fn needs_initial_rate_seek(&self) -> bool {
+        self.session
+            .as_ref()
+            .is_some_and(PipelineSession::needs_initial_rate_seek)
     }
 
     pub(super) fn physical_seek_target(&self, logical_millis: u64) -> u64 {
@@ -304,6 +332,7 @@ impl PipelineSession {
         slot: Slot,
         shared: Arc<Mutex<SharedBackendState>>,
         stream: &PreparedStream,
+        playback_rate: f64,
     ) -> Result<Self, String> {
         let pipeline = make_playbin(name)?;
         let bus = pipeline
@@ -350,6 +379,7 @@ impl PipelineSession {
             loudness_tags,
             visualizer_probe: None,
             current_stream: stream.clone(),
+            playback_rate: sanitize_playback_rate(playback_rate),
         })
     }
 
@@ -461,20 +491,49 @@ impl PipelineSession {
 
     pub(super) fn seek_physical_millis(&self, millis: u64) -> Result<(), String> {
         let flags = gst::SeekFlags::FLUSH | gst::SeekFlags::ACCURATE;
-        let result = if let Some(end_millis) = self.clock.end_millis() {
-            self.pipeline.seek(
-                1.0,
-                flags | gst::SeekFlags::SEGMENT,
-                gst::SeekType::Set,
-                gst::ClockTime::from_mseconds(millis.min(end_millis)),
-                gst::SeekType::Set,
-                gst::ClockTime::from_mseconds(end_millis),
-            )
-        } else {
-            self.pipeline
-                .seek_simple(flags, gst::ClockTime::from_mseconds(millis))
-        };
+        let (seek_flags, stop_type, stop) = self.clock.end_millis().map_or(
+            (flags, gst::SeekType::None, gst::ClockTime::NONE),
+            |end_millis| {
+                (
+                    flags | gst::SeekFlags::SEGMENT,
+                    gst::SeekType::Set,
+                    Some(gst::ClockTime::from_mseconds(end_millis)),
+                )
+            },
+        );
+        let result = self.pipeline.seek(
+            self.playback_rate,
+            seek_flags,
+            gst::SeekType::Set,
+            gst::ClockTime::from_mseconds(
+                self.clock
+                    .end_millis()
+                    .map_or(millis, |end_millis| millis.min(end_millis)),
+            ),
+            stop_type,
+            stop,
+        );
         result.map_err(|error| error.to_string())
+    }
+
+    fn set_playback_rate(
+        &mut self,
+        rate: f64,
+        seek_current_position: bool,
+    ) -> Result<bool, String> {
+        self.playback_rate = sanitize_playback_rate(rate);
+        if !seek_current_position {
+            return Ok(false);
+        }
+        let Some(position) = self.position() else {
+            return Ok(false);
+        };
+        self.seek_physical_millis(position.mseconds())
+            .map(|()| true)
+    }
+
+    fn needs_initial_rate_seek(&self) -> bool {
+        (self.playback_rate - DEFAULT_PLAYBACK_RATE).abs() > f64::EPSILON
     }
 
     fn rearm_stream_window(&mut self, stream: &PreparedStream) -> Result<gst::Seqnum, String> {
@@ -492,7 +551,7 @@ impl PipelineSession {
         let confirmation_after = gst::Seqnum::next();
         self.pipeline
             .seek(
-                1.0,
+                self.playback_rate,
                 gst::SeekFlags::FLUSH | gst::SeekFlags::ACCURATE | gst::SeekFlags::SEGMENT,
                 gst::SeekType::Set,
                 gst::ClockTime::from_mseconds(start_millis.min(end_millis)),

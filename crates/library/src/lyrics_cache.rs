@@ -39,7 +39,6 @@ pub struct LyricsCacheKey {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct LyricsCacheInput {
-    pub version: u32,
     pub digest: [u8; 32],
 }
 
@@ -79,7 +78,7 @@ impl Libraries {
 
     pub fn store_lyrics(&self, write: LyricsCacheWrite) -> LibraryResult<LyricsCacheTrim> {
         validate_key(&write.key)?;
-        if write.input.version == 0 || write.cached_at < 0 {
+        if write.cached_at < 0 {
             return Err(LibraryError::Persistence(
                 "lyrics cache input is invalid".to_string(),
             ));

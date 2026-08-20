@@ -12,6 +12,10 @@ mod tray;
 #[cfg(target_os = "windows")]
 use tracing::warn;
 
+#[cfg(any(
+    target_os = "windows",
+    all(unix, not(any(target_os = "android", target_vendor = "apple")))
+))]
 pub(crate) const APP_ID: &str = "io.github.screwys.Rufin";
 
 pub use discord::{DEFAULT_CLIENT_ID, Discord, DisplayType, LinkType, Settings};

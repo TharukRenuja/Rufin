@@ -1,5 +1,5 @@
-use library::{CandidateBatch, StreamQuality};
-use wiremock::matchers::{method, path, query_param};
+use library::{CandidateBatch, FavoriteItemId, StreamQuality, TrackId};
+use wiremock::matchers::{method, path, query_param, query_param_is_missing};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 use super::*;
@@ -11,6 +11,7 @@ fn account(base_url: &str, username: &str) -> SubsonicSourceConfig {
         username: username.to_string(),
         trust_invalid_cert: false,
         navidrome_library_version: 0,
+        authentication: SubsonicAuthentication::Password,
     }
 }
 
@@ -60,8 +61,17 @@ fn released_navidrome_configuration_keeps_the_generic_library_reader() {
 fn saved_credentials_keep_legacy_subsonic_and_version_navidrome_passwords() {
     let legacy =
         SubsonicCredential::parse("fixed-salt:fixed-token").expect("released Subsonic credential");
-    assert_eq!(legacy.salt, "fixed-salt");
-    assert_eq!(legacy.token, "fixed-token");
+    let SubsonicCredential::Token {
+        salt,
+        token,
+        navidrome_password,
+    } = &legacy
+    else {
+        panic!("the released credential is token based")
+    };
+    assert_eq!(salt, "fixed-salt");
+    assert_eq!(token, "fixed-token");
+    assert_eq!(navidrome_password, &None);
     assert_eq!(legacy.navidrome_password(), None);
 
     let generic = SubsonicCredential::from_password("generic-secret");
@@ -70,13 +80,17 @@ fn saved_credentials_keep_legacy_subsonic_and_version_navidrome_passwords() {
     let navidrome = SubsonicCredential::from_navidrome_password("secret");
     let serialized = navidrome.serialize();
     let reopened = SubsonicCredential::parse(&serialized).expect("versioned Navidrome credential");
-    assert_eq!(reopened.salt, navidrome.salt);
-    assert_eq!(reopened.token, navidrome.token);
+    assert_eq!(reopened.serialize(), serialized);
     assert_eq!(reopened.navidrome_password(), Some("secret"));
 
-    let unsupported = SubsonicCredential::parse(r#"{"version":2,"salt":"salt","token":"token"}"#)
+    let unsupported = SubsonicCredential::parse(r#"{"version":3,"salt":"salt","token":"token"}"#)
         .expect_err("unknown credential versions must fail");
-    assert!(unsupported.to_string().contains("version 2"));
+    assert!(unsupported.to_string().contains("version 3"));
+
+    let api_key =
+        SubsonicCredential::from_api_key("server-issued-key").expect("OpenSubsonic API key");
+    let reopened = SubsonicCredential::parse(&api_key.serialize()).expect("saved API key");
+    assert_eq!(reopened.authentication(), SubsonicAuthentication::ApiKey);
 }
 
 fn provider(server: &MockServer) -> SubsonicSource {
@@ -89,11 +103,33 @@ fn provider(server: &MockServer) -> SubsonicSource {
             username: "listener".to_string(),
             trust_invalid_cert: false,
             navidrome_library_version: 0,
+            authentication: SubsonicAuthentication::Password,
         }
         .into_payload(),
     );
     open(&configuration, Some("fixed-salt:fixed-token".to_string()))
         .expect("open OpenSubsonic provider")
+}
+
+#[tokio::test]
+async fn half_rating_rounds_up_for_opensubsonic() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/rest/setRating.view"))
+        .and(query_param("id", "track-one"))
+        .and(query_param("rating", "4"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(envelope(serde_json::json!({}))))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    provider(&server)
+        .set_rating(
+            FavoriteItemId::Track(TrackId::new("subsonic:track:track-one")),
+            Some(7),
+        )
+        .await
+        .expect("set OpenSubsonic rating");
 }
 
 fn navidrome_provider(server: &MockServer) -> SubsonicSource {
@@ -106,6 +142,7 @@ fn navidrome_provider(server: &MockServer) -> SubsonicSource {
             username: "listener".to_string(),
             trust_invalid_cert: false,
             navidrome_library_version: NAVIDROME_LIBRARY_VERSION,
+            authentication: SubsonicAuthentication::Password,
         }
         .into_payload(),
     );
@@ -127,6 +164,7 @@ fn saved_configuration(
             username: "Listener".to_string(),
             trust_invalid_cert,
             navidrome_library_version: 0,
+            authentication: SubsonicAuthentication::Password,
         }
         .into_payload(),
     )
@@ -569,6 +607,199 @@ fn envelope(body: serde_json::Value) -> serde_json::Value {
 }
 
 #[tokio::test]
+async fn authentication_reports_protocol_failure_before_reading_the_success_body() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/rest/getUser.view"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "subsonic-response": {
+                "status": "failed",
+                "version": "1.16.1",
+                "error": {
+                    "code": 41,
+                    "message": "Token-based authentication not supported"
+                }
+            }
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let error = match connect(
+        SubsonicFlavor::Subsonic,
+        SubsonicAuthentication::Password,
+        CredentialHostInput {
+            server_name: None,
+            server_url: server.uri(),
+            username: "listener".to_string(),
+            password: "secret".to_string(),
+            trust_invalid_cert: false,
+        },
+    )
+    .await
+    {
+        Ok(_) => panic!("the server rejected token authentication"),
+        Err(error) => error,
+    };
+
+    assert!(
+        error
+            .to_string()
+            .contains("Token-based authentication not supported"),
+        "{error}"
+    );
+    assert!(
+        !error.to_string().contains("missing field `user`"),
+        "{error}"
+    );
+}
+
+#[tokio::test]
+async fn api_key_authentication_discovers_support_and_omits_username_credentials() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/rest/getOpenSubsonicExtensions.view"))
+        .and(query_param_is_missing("apiKey"))
+        .and(query_param_is_missing("u"))
+        .and(query_param_is_missing("p"))
+        .and(query_param_is_missing("s"))
+        .and(query_param_is_missing("t"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(envelope(serde_json::json!({
+                "openSubsonicExtensions": [{
+                    "name": "apiKeyAuthentication",
+                    "versions": [1]
+                }]
+            }))),
+        )
+        .expect(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/rest/tokenInfo.view"))
+        .and(query_param("apiKey", "server-issued-key"))
+        .and(query_param_is_missing("u"))
+        .and(query_param_is_missing("p"))
+        .and(query_param_is_missing("s"))
+        .and(query_param_is_missing("t"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(envelope(serde_json::json!({
+                "tokenInfo": { "username": "canonical-listener" }
+            }))),
+        )
+        .expect(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/rest/getUser.view"))
+        .and(query_param("apiKey", "server-issued-key"))
+        .and(query_param("username", "canonical-listener"))
+        .and(query_param_is_missing("u"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(envelope(serde_json::json!({
+                "type": "Nextcloud Music",
+                "user": {
+                    "username": "canonical-listener",
+                    "adminRole": false
+                }
+            }))),
+        )
+        .expect(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/rest/getSong.view"))
+        .and(query_param("apiKey", "server-issued-key"))
+        .and(query_param("id", "track-one"))
+        .and(query_param_is_missing("u"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(envelope(serde_json::json!({
+                "song": {
+                    "id": "track-one",
+                    "title": "First",
+                    "album": "Blue Rooms",
+                    "artist": "Astral Kin"
+                }
+            }))),
+        )
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let connected = connect(
+        SubsonicFlavor::Subsonic,
+        SubsonicAuthentication::ApiKey,
+        CredentialHostInput {
+            server_name: None,
+            server_url: server.uri(),
+            username: String::new(),
+            password: "server-issued-key".to_string(),
+            trust_invalid_cert: false,
+        },
+    )
+    .await
+    .expect("connect with an advertised OpenSubsonic API key");
+    let (configuration, _, credential) = connected.into_parts();
+    let config = SubsonicSourceConfig::from_configuration(&configuration)
+        .expect("saved API key configuration");
+    assert_eq!(config.username, "canonical-listener");
+    assert_eq!(config.authentication, SubsonicAuthentication::ApiKey);
+    assert!(!configuration.provider_payload.contains("server-issued-key"));
+
+    let source = open(&configuration, credential).expect("reopen API key source");
+    source
+        .read_track(&TrackId::new("subsonic:track:track-one"))
+        .await
+        .expect("use saved API key for later requests");
+}
+
+#[tokio::test]
+async fn api_key_authentication_requires_the_advertised_extension() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/rest/getOpenSubsonicExtensions.view"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(envelope(serde_json::json!({
+                "openSubsonicExtensions": [{ "name": "songLyrics", "versions": [1] }]
+            }))),
+        )
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let error = match connect(
+        SubsonicFlavor::Subsonic,
+        SubsonicAuthentication::ApiKey,
+        CredentialHostInput {
+            server_name: None,
+            server_url: server.uri(),
+            username: String::new(),
+            password: "server-issued-key".to_string(),
+            trust_invalid_cert: false,
+        },
+    )
+    .await
+    {
+        Ok(_) => panic!("the server did not advertise API key authentication"),
+        Err(error) => error,
+    };
+
+    assert!(error.to_string().contains("does not advertise"), "{error}");
+}
+
+#[test]
+fn subsonic_url_redaction_hides_api_keys() {
+    let url =
+        Url::parse("https://music.example/rest/stream.view?apiKey=server-issued-key&id=track-one")
+            .expect("Subsonic URL");
+    let redacted = redacted_subsonic_url(&url);
+
+    assert!(!redacted.contains("server-issued-key"));
+    assert!(redacted.contains("apiKey=%3Credacted%3E"));
+    assert!(redacted.contains("id=track-one"));
+}
+
+#[tokio::test]
 async fn metadata_editing_requires_a_confirmed_admin_account() {
     for (admin, expected) in [(true, true), (false, false)] {
         let server = MockServer::start().await;
@@ -795,6 +1026,7 @@ async fn identity_normalizes_rest_url_and_uses_the_canonical_user() {
     ] {
         let connected = connect(
             SubsonicFlavor::Navidrome,
+            SubsonicAuthentication::Password,
             CredentialHostInput {
                 server_name: None,
                 server_url: base_url,
@@ -847,6 +1079,7 @@ async fn name_only_edit_updates_configuration_without_contacting_opensubsonic() 
     let SourceEditResult::ConfigurationOnly(configuration) = edit(
         current.clone(),
         Some("saved-salt:saved-token".to_string()),
+        SubsonicAuthentication::Password,
         input,
     )
     .await
@@ -879,6 +1112,7 @@ async fn password_backed_same_account_edit_keeps_the_configured_opensubsonic_sou
     let SourceEditResult::Connected(connected) = edit(
         current.clone(),
         Some("old-salt:old-token".to_string()),
+        SubsonicAuthentication::Password,
         input,
     )
     .await
@@ -915,6 +1149,7 @@ fn full_navidrome_library_requires_the_saved_password() {
             username: "listener".to_string(),
             trust_invalid_cert: false,
             navidrome_library_version: NAVIDROME_LIBRARY_VERSION,
+            authentication: SubsonicAuthentication::Password,
         }
         .into_payload(),
     );
@@ -948,6 +1183,7 @@ async fn password_backed_different_account_edit_returns_a_new_opensubsonic_sourc
     let SourceEditResult::Connected(connected) = edit(
         current.clone(),
         Some("old-salt:old-token".to_string()),
+        SubsonicAuthentication::Password,
         input,
     )
     .await
@@ -981,6 +1217,7 @@ async fn trust_only_edit_reopens_opensubsonic_from_the_saved_credential_without_
     let SourceEditResult::Connected(connected) = edit(
         current.clone(),
         Some("saved-salt:saved-token".to_string()),
+        SubsonicAuthentication::Password,
         input,
     )
     .await
@@ -1210,6 +1447,7 @@ async fn stream_description_keeps_auth_for_playback_and_redacts_it_for_logs() {
             username: "listener".to_string(),
             trust_invalid_cert: true,
             navidrome_library_version: 0,
+            authentication: SubsonicAuthentication::Password,
         }
         .into_payload(),
     );
@@ -1258,6 +1496,7 @@ async fn stream_description_keeps_auth_for_playback_and_redacts_it_for_logs() {
             username: "listener".to_string(),
             trust_invalid_cert: true,
             navidrome_library_version: 0,
+            authentication: SubsonicAuthentication::Password,
         }
         .into_payload(),
     );

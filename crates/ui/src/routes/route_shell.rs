@@ -157,7 +157,7 @@ impl Shell {
             has_visible_results,
             content,
         } = options;
-        let wrapper = gtk::Box::new(gtk::Orientation::Vertical, 14);
+        let wrapper = gtk::Box::new(gtk::Orientation::Vertical, ROUTE_TOP_MARGIN);
         wrapper.add_css_class("route-content");
         wrapper.set_margin_top(ROUTE_TOP_MARGIN);
         wrapper.set_margin_bottom(LIBRARY_ROUTE_BOTTOM_MARGIN);

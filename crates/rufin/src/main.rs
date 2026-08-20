@@ -17,12 +17,24 @@ use std::env;
 use std::ffi::OsStr;
 use std::io::{self, Write};
 use std::path::PathBuf;
+#[cfg(unix)]
+use std::process::Command;
 use std::process::ExitCode;
+#[cfg(target_os = "macos")]
+use std::{fs, path::Path};
 #[cfg(target_os = "windows")]
 use tracing::error;
 use tracing::info;
 
 fn main() -> ExitCode {
+    #[cfg(target_os = "macos")]
+    if let Some(result) = restart_in_macos_bundle() {
+        return result;
+    }
+    #[cfg(unix)]
+    if let Some(result) = restart_with_gstreamer_http1() {
+        return result;
+    }
     if let Some(result) = verify_media_argument() {
         return result;
     }
@@ -49,6 +61,158 @@ fn main() -> ExitCode {
     } else {
         ui::run_application(bootstrap)
     }
+}
+
+#[cfg(unix)]
+fn restart_with_gstreamer_http1() -> Option<ExitCode> {
+    if env::var_os("SOUP_FORCE_HTTP1").is_some() {
+        return None;
+    }
+    // Establish libsoup's process setting before GTK or GStreamer can create threads.
+    let executable = env::current_exe().ok()?;
+    let mut command = Command::new(executable);
+    command
+        .args(env::args_os().skip(1))
+        .env("SOUP_FORCE_HTTP1", "1");
+
+    use std::os::unix::process::CommandExt as _;
+
+    let error = command.exec();
+    let _ = writeln!(
+        io::stderr().lock(),
+        "Could not enable GStreamer HTTP/1; continuing with the system default: {error}"
+    );
+    None
+}
+
+#[cfg(target_os = "macos")]
+fn restart_in_macos_bundle() -> Option<ExitCode> {
+    const BUNDLE_ENVIRONMENT_READY: &str = "RUFIN_MACOS_BUNDLE_ENVIRONMENT_READY";
+
+    if env::var_os(BUNDLE_ENVIRONMENT_READY).is_some() {
+        return None;
+    }
+    let executable = env::current_exe().ok()?;
+    let macos_dir = executable.parent()?;
+    let contents_dir = macos_dir.parent()?;
+    if macos_dir.file_name() != Some(OsStr::new("MacOS"))
+        || contents_dir.file_name() != Some(OsStr::new("Contents"))
+    {
+        return None;
+    }
+    let resources_dir = contents_dir.join("Resources");
+    let frameworks_dir = contents_dir.join("Frameworks");
+    if !resources_dir.is_dir() || !frameworks_dir.is_dir() {
+        return None;
+    }
+
+    Some(
+        match macos_bundle_command(&executable, macos_dir, &resources_dir, &frameworks_dir) {
+            Ok(mut command) => {
+                use std::os::unix::process::CommandExt as _;
+
+                let error = command.exec();
+                let _ = writeln!(io::stderr().lock(), "Could not start Rufin: {error}");
+                ExitCode::FAILURE
+            }
+            Err(error) => {
+                let _ = writeln!(io::stderr().lock(), "Could not prepare Rufin: {error}");
+                ExitCode::FAILURE
+            }
+        },
+    )
+}
+
+#[cfg(target_os = "macos")]
+fn macos_bundle_command(
+    executable: &Path,
+    macos_dir: &Path,
+    resources_dir: &Path,
+    frameworks_dir: &Path,
+) -> Result<Command, String> {
+    let loader_dir = resources_dir.join("lib/gdk-pixbuf-2.0/loaders");
+    let loader_cache = env::temp_dir().join("rufin-gdk-pixbuf-loaders.cache");
+    let mut loader_modules = fs::read_dir(&loader_dir)
+        .map_err(|error| format!("could not read image loaders: {error}"))?
+        .filter_map(|entry| entry.ok().map(|entry| entry.path()))
+        .filter(|path| path.extension() == Some(OsStr::new("so")))
+        .collect::<Vec<_>>();
+    loader_modules.sort();
+    if loader_modules.is_empty() {
+        return Err("no bundled image loaders were found".to_string());
+    }
+    let loader_output = Command::new(macos_dir.join("gdk-pixbuf-query-loaders"))
+        .args(loader_modules)
+        .output()
+        .map_err(|error| format!("could not inspect image loaders: {error}"))?;
+    if !loader_output.status.success() {
+        return Err(format!(
+            "image loader inspection failed with status {}",
+            loader_output.status
+        ));
+    }
+    fs::write(&loader_cache, loader_output.stdout)
+        .map_err(|error| format!("could not write the image loader cache: {error}"))?;
+
+    let registry_path = env::var_os("RUFIN_GST_REGISTRY_1_0")
+        .map(PathBuf::from)
+        .or_else(|| {
+            env::var_os("HOME").map(|home| {
+                PathBuf::from(home)
+                    .join("Library/Caches/io.github.screwys.Rufin")
+                    .join(format!(
+                        "gstreamer-registry-{}.bin",
+                        env::consts::ARCH.replace("aarch64", "arm64")
+                    ))
+            })
+        })
+        .unwrap_or_else(|| {
+            env::temp_dir().join(format!(
+                "rufin-gstreamer-registry-{}.bin",
+                env::consts::ARCH.replace("aarch64", "arm64")
+            ))
+        });
+    let mut command = Command::new(executable);
+    command
+        .args(env::args_os().skip(1))
+        .env("RUFIN_MACOS_BUNDLE_ENVIRONMENT_READY", "1")
+        .env("GDK_PIXBUF_MODULEDIR", &loader_dir)
+        .env("GDK_PIXBUF_MODULE_FILE", loader_cache)
+        .env("GIO_MODULE_DIR", resources_dir.join("lib/gio/modules"))
+        .env(
+            "GSETTINGS_SCHEMA_DIR",
+            resources_dir.join("share/glib-2.0/schemas"),
+        )
+        .env(
+            "GST_PLUGIN_SCANNER_1_0",
+            macos_dir.join("gst-plugin-scanner"),
+        )
+        .env("GST_PLUGIN_PATH", "")
+        .env("GST_PLUGIN_PATH_1_0", "")
+        .env(
+            "GST_PLUGIN_SYSTEM_PATH_1_0",
+            resources_dir.join("lib/gstreamer-1.0"),
+        )
+        .env("RUFIN_LOCALEDIR", resources_dir.join("share/locale"))
+        .env("XDG_DATA_DIRS", resources_dir.join("share"));
+    command.env("SOUP_FORCE_HTTP1", "1");
+    if registry_path
+        .parent()
+        .is_some_and(|parent| fs::create_dir_all(parent).is_ok())
+    {
+        command.env("GST_REGISTRY_1_0", registry_path);
+    }
+    let library_path = match env::var_os("DYLD_LIBRARY_PATH") {
+        Some(existing) if !existing.is_empty() => {
+            let mut paths = vec![frameworks_dir.to_path_buf()];
+            paths.extend(env::split_paths(&existing));
+            env::join_paths(paths)
+                .map_err(|error| format!("could not prepare the library path: {error}"))?
+        }
+        _ => frameworks_dir.as_os_str().to_owned(),
+    };
+    command.env("DYLD_LIBRARY_PATH", library_path);
+    Ok(command)
 }
 
 #[cfg(target_os = "windows")]

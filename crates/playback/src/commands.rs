@@ -6,8 +6,8 @@ use library::{
 };
 
 use crate::{
-    AudioOutput, Batch, BatchItem, OccurrenceId, Placement, Provenance, QueuePage, QueuePageQuery,
-    RepeatMode, SourceSessionEpoch,
+    AudioOutput, Batch, BatchItem, OccurrenceId, Placement, PlaybackOutput, Provenance, QueuePage,
+    QueuePageQuery, RemoteOutput, RepeatMode, SourceSessionEpoch,
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -354,6 +354,9 @@ pub trait TransportCommandPort: Send + Sync {
     fn toggle_auto_dj(&self);
     fn set_visualizer_enabled(&self, enabled: bool);
     fn available_audio_outputs(&self) -> Vec<AudioOutput>;
+    fn playback_output(&self) -> PlaybackOutput;
+    fn discover_remote_outputs(&self) -> Result<Vec<RemoteOutput>, String>;
+    fn select_playback_output(&self, output: PlaybackOutput) -> Result<(), String>;
     fn shutdown(&self);
 }
 

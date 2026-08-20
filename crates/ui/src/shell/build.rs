@@ -13,12 +13,12 @@ use crate::player::lyrics::state::LyricsState;
 use crate::player::right_panel::RightPanelWidgets;
 use crate::player::state::PlaybackState;
 use crate::player::{
-    BOTTOM_PLAYER_HEIGHT, PlayerDesktopWidgets, apply_lyrics_panel_visibility, build_bottom_player,
-    build_fullscreen_player, build_right_panel, connect_fullscreen_player_controls,
-    connect_player_controls, connect_queue_lyrics_overlay, connect_queue_panel_controls,
-    default_audio_output_options, warm_audio_output_cache,
+    BOTTOM_PLAYER_HEIGHT, PlayerDesktopWidgets, apply_sidebar_media_visibility,
+    build_bottom_player, build_fullscreen_player, build_right_panel,
+    connect_fullscreen_player_controls, connect_player_controls, connect_queue_lyrics_overlay,
+    connect_queue_panel_controls, default_audio_output_options, warm_audio_output_cache,
 };
-use crate::player::{install_tray, present_initial_window};
+use crate::player::{install_desktop_lifecycle, present_initial_window};
 use crate::preferences::PreferencesState;
 use crate::preferences::dialogs::release_notes::{
     check_for_release_update, schedule_periodic_release_checks,
@@ -145,6 +145,7 @@ pub fn build(
         audio_output_refresh_running: Cell::new(false),
         audio_output_refresh_generation: Cell::new(0),
         audio_output_refreshed_at: Cell::new(None),
+        remote_output_options: RefCell::new(Vec::new()),
     };
     let lyrics_state = LyricsState {
         panel_visible: Cell::new(settings.lyrics_panel_visible),
@@ -257,7 +258,6 @@ pub fn build(
     compact_nav_slot.add_css_class("compact-rail-slot");
     let normal_main_menu = gtk::MenuButton::new();
     let compact_main_menu = gtk::Button::new();
-    let window_bar_search = gtk::Button::from_icon_name("system-search-symbolic");
 
     let main_area_parts = build_main_area();
     let main_area = main_area_parts.root;
@@ -273,12 +273,14 @@ pub fn build(
     let lyrics_surface = right_panel_parts.lyrics_surface;
     let lyrics_resize_handle = right_panel_parts.lyrics_resize_handle;
     let lyrics_host = right_panel_parts.lyrics_host;
+    let visualizer_area = right_panel_parts.visualizer_area;
+    let visualizer_levels = right_panel_parts.visualizer_levels;
 
     let content_chrome = build_content_chrome(&main_area, &right_panel);
     let right_split = content_chrome.right_split;
     let right_panel_slot = content_chrome.right_panel_slot;
     let right_resize_handle = content_chrome.right_resize_handle;
-    let tiny_nav_button = gtk::Button::from_icon_name("sidebar-show-symbolic");
+    let tiny_nav_button = gtk::Button::from_icon_name("sidebar-show-bundled-symbolic");
     tiny_nav_button.add_css_class("icon-button");
     tiny_nav_button.add_css_class("flat");
     tiny_nav_button.add_css_class("circular");
@@ -299,6 +301,7 @@ pub fn build(
     let fullscreen_player = build_fullscreen_player(
         &fullscreen_hero_window_controls,
         &fullscreen_inline_window_controls,
+        Rc::clone(&visualizer_levels),
     );
     let player_controls = build_bottom_player();
 
@@ -377,7 +380,7 @@ pub fn build(
     operation_feedback_text.append(&operation_feedback_title);
     operation_feedback_text.append(&operation_feedback_subtitle);
     operation_feedback.append(&operation_feedback_text);
-    let operation_feedback_close = gtk::Button::from_icon_name("window-close-symbolic");
+    let operation_feedback_close = gtk::Button::from_icon_name("window-close-bundled-symbolic");
     operation_feedback_close.add_css_class("flat");
     operation_feedback_close.set_valign(gtk::Align::Center);
     operation_feedback_close.set_tooltip_text(Some(&tr("Close")));
@@ -401,8 +404,6 @@ pub fn build(
         window_height,
         &toast_overlay,
         window_bar_preview,
-        window_bar_platform.map(|_| &window_bar_search),
-        window_bar_platform.map(|_| &normal_main_menu),
     );
     window_controls.bind_window(&window);
 
@@ -454,6 +455,8 @@ pub fn build(
         lyrics_surface,
         lyrics_resize_handle,
         lyrics_host,
+        visualizer_area,
+        visualizer_visible: Cell::new(settings.visualizer_panel_visible),
     };
     let player_view = PlayerDesktopWidgets {
         fullscreen_player,
@@ -501,17 +504,13 @@ pub fn build(
             }
         });
     }
-    if let Some(platform) = window_bar_platform {
-        super::navigation::configure_platform_window_bar(&shell, &window_bar_search, platform);
-    } else {
-        shell
-            .navigation_view
-            .normal_nav_panel
-            .prepend(&normal_sidebar_header(
-                &shell,
-                &shell.chrome.window_controls.start_width_reservation(),
-            ));
-    }
+    shell
+        .navigation_view
+        .normal_nav_panel
+        .prepend(&normal_sidebar_header(
+            &shell,
+            &shell.chrome.window_controls.start_width_reservation(),
+        ));
     install_normal_navigation_activation(&shell);
     build_normal_navigation(&shell);
     build_compact_navigation(&shell);
@@ -525,7 +524,7 @@ pub fn build(
     }
     connect_shell_actions(&shell);
     install_application_quit(&shell);
-    install_tray(&shell);
+    install_desktop_lifecycle(&shell);
     connect_queue_panel_controls(&shell);
     connect_queue_lyrics_overlay(&shell);
     shell.connect_route_keyboard();
@@ -545,10 +544,7 @@ pub fn build(
     shell.update_bottom_player();
     shell.update_fullscreen_player();
     shell.update_right_panel_button();
-    shell.update_lyrics_panel_button();
-    if !shell.lyrics.panel_visible.get() {
-        apply_lyrics_panel_visibility(Rc::clone(&shell), false);
-    }
+    apply_sidebar_media_visibility(Rc::clone(&shell));
     shell.request_initial_lyrics_if_needed();
     install_product_event_receivers(&shell, receivers);
 

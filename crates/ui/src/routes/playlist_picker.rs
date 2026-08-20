@@ -20,7 +20,6 @@ use crate::preferences::dialogs::popup::present_light_dismiss_dialog;
 use crate::runtime::{SelectedLibrary, SelectedSourceHandle};
 use crate::shell::Shell;
 use crate::shell::cover::THUMB_COVER_SIZE;
-use crate::shell::cover::presentation::stable_seed;
 use localization::tr;
 use localization::track_count_text;
 
@@ -429,7 +428,7 @@ fn playlist_picker_row(
         &track_count_text(playlist.track_count.into()),
     ));
     meta.append(&playlist_picker_meta(
-        "preferences-system-time-symbolic",
+        "preferences-system-time-bundled-symbolic",
         &format_duration_units(playlist.duration_seconds),
     ));
     let genres = gtk::Box::new(gtk::Orientation::Horizontal, 6);
@@ -464,7 +463,6 @@ fn playlist_picker_cover(shell: &Rc<Shell>, playlist: &PlaylistSummary) -> gtk::
             &playlist.representative_albums,
             settings.prefer_server_playlist_covers,
         ),
-        stable_seed(playlist.playlist.id.as_str()),
         CONTEXT_PLAYLIST_ROW_COVER_SIZE,
         THUMB_COVER_SIZE,
     );

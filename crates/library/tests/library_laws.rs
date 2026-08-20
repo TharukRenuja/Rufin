@@ -260,7 +260,6 @@ fn refresh(harness: &mut Harness, model: &mut Model, slot: Slot, accepted_at: i6
         .library()
         .begin_source_candidate(CandidateHeader {
             source_id: slot.source_id(),
-            input_version: 1,
             input_digest: [u8::try_from(slot.index() + 1).expect("fixture source index"); 32],
         })
         .expect("begin refresh candidate");
@@ -400,7 +399,6 @@ fn candidate_drop(harness: &Harness, model: &Model, slot: Slot, finished: bool, 
         .library()
         .begin_source_candidate(CandidateHeader {
             source_id: slot.source_id(),
-            input_version: 1,
             input_digest: [42; 32],
         })
         .expect("begin discarded candidate");

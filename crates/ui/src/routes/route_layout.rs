@@ -6,19 +6,19 @@ use crate::shell::Shell;
 use crate::shell::layout::route_content_width;
 
 use super::collections::configure_library_route_scroller;
+use super::library_fields::COLLECTION_GRID_CARD_MARGIN;
 
 const ROUTE_SCROLL_OWNER_CLASS: &str = "route-scroll-owner";
-pub(crate) const ROUTE_CONTENT_SIDE_INSET: i32 = 6;
 pub(crate) const ROUTE_SCROLLBAR_LANE_WIDTH: i32 = 9;
 const DETAIL_SHOWCASE_MIN_COVER_SIZE: i32 = 150;
 const DETAIL_SHOWCASE_TEXT_MIN_WIDTH: i32 = 420;
 const DETAIL_SHOWCASE_COMPACT_WIDTH: i32 = 760;
 const DETAIL_SHOWCASE_MAX_COVER_SIZE: i32 = 224;
-pub(crate) const PRIMARY_ROUTE_MARGIN_START: i32 = ROUTE_CONTENT_SIDE_INSET;
+pub(crate) const ROUTE_TOP_MARGIN: i32 = 10;
+pub(crate) const PRIMARY_ROUTE_MARGIN_START: i32 = ROUTE_TOP_MARGIN;
 pub(crate) const PRIMARY_ROUTE_MARGIN_END: i32 = ROUTE_SCROLLBAR_LANE_WIDTH;
 pub(crate) const PRIMARY_ROUTE_HORIZONTAL_INSET: i32 =
     PRIMARY_ROUTE_MARGIN_START + PRIMARY_ROUTE_MARGIN_END;
-pub(crate) const ROUTE_TOP_MARGIN: i32 = 10;
 
 pub(crate) fn home_album_content_width(shell: &Shell) -> i32 {
     home_album_content_width_for(route_content_width(shell))
@@ -56,7 +56,7 @@ pub(crate) fn detail_showcase_cover_only(width: i32) -> bool {
 }
 
 pub(crate) fn home_album_content_width_for(width: i32) -> i32 {
-    (width.max(1) - PRIMARY_ROUTE_HORIZONTAL_INSET).max(1)
+    (width.max(1) - COLLECTION_GRID_CARD_MARGIN - PRIMARY_ROUTE_MARGIN_END).max(1)
 }
 
 pub(crate) fn mark_route_scroll_owner(scroller: &gtk::ScrolledWindow) {
@@ -164,7 +164,7 @@ mod tests {
     fn detail_inner_width_comes_from_the_route_viewport() {
         assert_eq!(
             detail_route_inner_width_for_viewport(900, PRIMARY_ROUTE_MARGIN_START),
-            885
+            881
         );
         assert_eq!(
             detail_route_inner_width_for_viewport(8, PRIMARY_ROUTE_MARGIN_START),

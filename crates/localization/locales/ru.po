@@ -7,7 +7,7 @@ msgstr ""
 "Project-Id-Version: Rufin 0.6.0\n"
 "Report-Msgid-Bugs-To: https://github.com/screwys/Rufin/issues\n"
 "POT-Creation-Date: YEAR-MO-DA HO:MI+ZONE\n"
-"PO-Revision-Date: 2026-08-10 14:51+0000\n"
+"PO-Revision-Date: 2026-08-19 19:55+0000\n"
 "Last-Translator: Александр Стельмах <aguhadug@gmail.com>\n"
 "Language-Team: Russian <https://hosted.weblate.org/projects/rufin/app/ru/>\n"
 "Language: ru\n"
@@ -41,6 +41,13 @@ msgid ""
 msgstr ""
 "Будут удалены только загрузки, соответствующие этому правилу. Общие и ручные "
 "загрузки останутся"
+
+msgid ""
+"Route server media through this device instead of sharing provider URLs with "
+"the renderer"
+msgstr ""
+"Направлять медиапоток с сервера через это устройство, вместо того чтобы "
+"передавать URL-адреса провайдера устройству воспроизведения"
 
 msgid ""
 "Saved mapping. {direct} direct, {prefix} prefix, {metadata} metadata, "
@@ -94,19 +101,19 @@ msgstr ""
 "Для работы функции радио используется API Jellyfin, что необходимо для "
 "работы плагинов рекомендаций"
 
-#, fuzzy
 msgid ""
 "This will log you out and clear your secrets including API ones. Your app "
 "cache is not touched."
 msgstr ""
-"Изменение секретного ключа приводит к удалению устаревших конфигурационных "
-"данных и завершению всех сеансов, включая ключи доступа к API. Кэш "
-"приложения не затрагивается."
+"Это завершит вашу сессию и очистит ваши конфиденциальные данные, включая "
+"ключи API. Кэш приложения при этом не будет затронут."
 
 msgid ""
 "Track evens out every song, while Album preserves the intended differences "
 "within each album"
 msgstr ""
+"Режим «Трек» выравнивает звучание каждой песни, а режим «Альбом» сохраняет "
+"задуманные различия между треками в каждом альбоме"
 
 msgid ""
 "Unsaved changes. {direct} direct, {prefix} prefix, {metadata} metadata, "
@@ -144,9 +151,6 @@ msgstr "320 кбит/с"
 msgid "5 Latest Albums"
 msgstr "5 последних альбомов"
 
-msgid "ALSA"
-msgstr "ALSA"
-
 msgid "API key"
 msgstr "Ключ API"
 
@@ -166,7 +170,7 @@ msgid "Add a matching server prefix"
 msgstr "Введите соответствующий префикс сервера"
 
 msgid "Add a new source"
-msgstr "Добавить новый источник"
+msgstr "Новый источник"
 
 msgid "Add a title"
 msgstr "Добавить название"
@@ -242,7 +246,7 @@ msgid "App settings"
 msgstr "Настройки приложения"
 
 msgid "Appearance"
-msgstr "Появление"
+msgstr "Оформление"
 
 msgid "Appears On"
 msgstr "Появляется в"
@@ -276,6 +280,9 @@ msgstr "Плавное затухание звука при воспроизве
 
 msgid "Audio output"
 msgstr "Аудиовыход"
+
+msgid "Audio processing is unavailable while casting"
+msgstr "Обработка звука недоступна во время трансляции"
 
 msgid "Audio"
 msgstr "Аудио"
@@ -322,6 +329,9 @@ msgstr "Отмена загрузки"
 msgid "Cancel"
 msgstr "Отмена"
 
+msgid "Casting"
+msgstr "Трансляция"
+
 msgid "Change Secret Storage"
 msgstr "Изменить секретное хранилище"
 
@@ -350,6 +360,9 @@ msgid "Choose one or more folders to scan and play directly from this computer"
 msgstr ""
 "Выберите одну или несколько папок для сканирования и воспроизведения файлов "
 "непосредственно с этого компьютера"
+
+msgid "Choose playback output"
+msgstr "Выбрать устройство воспроизведения"
 
 msgid "Choose"
 msgstr "Выбрать"
@@ -417,6 +430,16 @@ msgstr "Подключено"
 msgid "Connecting to music server..."
 msgstr "Подключение к музыкальному серверу…"
 
+#, fuzzy
+#| msgid "Connecting to music server..."
+msgid "Connecting to {device}..."
+msgstr "Подключение к музыкальному серверу…"
+
+#, fuzzy
+#| msgid "Connection"
+msgid "Connection failed"
+msgstr "Соединение"
+
 msgid "Connection"
 msgstr "Соединение"
 
@@ -430,13 +453,13 @@ msgid "Control notifications"
 msgstr "Управление уведомлениями"
 
 msgid "Copy"
-msgstr ""
+msgstr "Копировать"
 
 msgid "Could not save diagnostic log"
 msgstr "Не удалось сохранить диагностический журнал"
 
 msgid "Could not update favorites"
-msgstr ""
+msgstr "Не удалось обновить список избранных"
 
 msgid "Couldn't connect to {service}"
 msgstr "Подключиться к {service}"
@@ -451,10 +474,10 @@ msgid "Create"
 msgstr "Создать"
 
 msgid "Crossfade duration"
-msgstr "Длительность плавного перехода между треками"
+msgstr "Длительность кроссфейда"
 
 msgid "Crossfade"
-msgstr "Плавный между треками"
+msgstr "Кроссфейд"
 
 msgid "Custom"
 msgstr "Настраиваемый"
@@ -462,10 +485,8 @@ msgstr "Настраиваемый"
 msgid "Customize display"
 msgstr "Настроить отображение"
 
-#, fuzzy
-#| msgid "Custom"
 msgid "Cut"
-msgstr "Настраиваемый"
+msgstr "Вырезать"
 
 msgid "Dance"
 msgstr "Танцевальная"
@@ -508,9 +529,6 @@ msgstr "Журнал диагностики сохранен"
 
 msgid "Diagnostic log"
 msgstr "Журнал диагностики"
-
-msgid "DirectSound"
-msgstr "DirectSound"
 
 msgid "Disable private mode"
 msgstr "Отключить приватный режим"
@@ -584,6 +602,11 @@ msgstr "Включить приватный режим"
 msgid "Enter API credentials first"
 msgstr "Сначала введите данные для доступа к API"
 
+#, fuzzy
+#| msgid "Enter a server address, username, and password"
+msgid "Enter a server address and API key"
+msgstr "Введите адрес сервера, имя пользователя и пароль"
+
 msgid "Enter a server address, username, and password"
 msgstr "Введите адрес сервера, имя пользователя и пароль"
 
@@ -595,9 +618,6 @@ msgstr "Эквалайзер"
 
 msgid "Everything, including new tracks"
 msgstr "Всё, включая новые треки"
-
-msgid "Exit to tray"
-msgstr "Свернуть в трей"
 
 msgid "Expand sidebar"
 msgstr "Развернуть боковую панель"
@@ -714,6 +734,12 @@ msgstr "Перейти к альбому"
 msgid "Go to Artist"
 msgstr "Перейти к исполнителю"
 
+msgid "Go to"
+msgstr "Перейти к"
+
+msgid "Google Cast"
+msgstr "Google Cast"
+
 msgid "Green"
 msgstr "Зелёный"
 
@@ -728,9 +754,6 @@ msgstr "Помощь"
 
 msgid "Hidden"
 msgstr "Скрыт"
-
-msgid "Hide lyrics"
-msgstr "Скрыть текст песни"
 
 msgid "Hide sidebar"
 msgstr "Скрыть боковую панель"
@@ -782,8 +805,8 @@ msgstr "Установлено"
 msgid "Instrumental"
 msgstr "Инструментальная"
 
-msgid "JACK"
-msgstr "JACK"
+msgid "Integrations"
+msgstr "Интеграции"
 
 msgid "Jellyfin"
 msgstr "Jellyfin"
@@ -794,6 +817,9 @@ msgstr "Jellyfin, Navidrome или OpenSubsonic"
 msgid "Karaoke mode"
 msgstr "Режим караоке"
 
+msgid "Keep Rufin running after closing the window"
+msgstr ""
+
 msgid "Keep album transitions gapless when possible"
 msgstr "По возможности обеспечивать плавный переход между треками альбома"
 
@@ -803,7 +829,7 @@ msgstr ""
 "только на новые загрузки"
 
 msgid "Keyboard Shortcuts"
-msgstr "Сочетания Клавиш"
+msgstr "Сочетания клавиш"
 
 msgid "LRCLIB"
 msgstr "LRCLIB"
@@ -848,7 +874,7 @@ msgid "Limit"
 msgstr "Ограничение"
 
 msgid "Linear"
-msgstr ""
+msgstr "Линейная"
 
 msgid "ListenBrainz scrobbling"
 msgstr "Отправка данных о прослушивании в ListenBrainz"
@@ -883,11 +909,17 @@ msgstr "Сопоставление локальных файлов"
 msgid "Local library"
 msgstr "Локальная библиотека"
 
+msgid "Local music folder is unavailable"
+msgstr "Локальная папка с музыкой недоступна"
+
 msgid "Local music folder"
 msgstr "Локальная папка с музыкой"
 
 msgid "Local"
 msgstr "Локальный источник"
+
+msgid "Locate Folder"
+msgstr "Найти папку"
 
 msgid "Lock metadata"
 msgstr "Заблокировать метаданные"
@@ -1081,6 +1113,9 @@ msgstr "Нет соответствующих треков"
 msgid "No music from this artist yet"
 msgstr "Пока нет музыки от этого исполнителя"
 
+msgid "No network devices found"
+msgstr "Устройства в сети не найдены"
+
 msgid "No remote sources configured"
 msgstr "Не настроено ни одного удаленного источника"
 
@@ -1190,25 +1225,24 @@ msgid "Password"
 msgstr "Пароль"
 
 msgid "Paste"
-msgstr ""
+msgstr "Вставить"
 
 msgid "Pause"
 msgstr "Приостановить"
 
 msgid "Perceptual for a finer control at low volume; Linear for a direct scale"
 msgstr ""
+"Режим воспринимаемой громкости для более точной настройки на низкой "
+"громкости; линейный режим для прямой шкалы"
 
 msgid "Perceptual"
-msgstr ""
+msgstr "Воспринимаемая"
 
 msgid "Pink"
 msgstr "Розовый"
 
 msgid "Pins"
 msgstr "Закрепленные элементы"
-
-msgid "PipeWire"
-msgstr "PipeWire"
 
 msgid "Plain lyrics"
 msgstr "Обычный текст песен"
@@ -1258,11 +1292,20 @@ msgstr "Воспроизвести"
 msgid "Play/Pause"
 msgstr "Воспроизвести/Приостановить"
 
+msgid "Playback speed"
+msgstr "Скорость воспроизведения"
+
 msgid "Playback"
 msgstr "Плеер"
 
 msgid "Played"
 msgstr "Воспроизведено"
+
+msgid "Playing on this device"
+msgstr "Играет на этом устройстве"
+
+msgid "Playing on {device}"
+msgstr "Играет на {device}"
 
 msgid "Playlist name"
 msgstr "Название плейлиста"
@@ -1306,6 +1349,11 @@ msgstr "Настройки"
 msgid "Preparing library..."
 msgstr "Подготовка библиотеки…"
 
+#, fuzzy
+#| msgid "Prefer server lyrics"
+msgid "Preserve pitch"
+msgstr "Предпочитать тексты песен с сервера"
+
 msgid "Preset"
 msgstr "Предустановка"
 
@@ -1338,8 +1386,8 @@ msgstr "Приватный режим"
 msgid "Pronunciation"
 msgstr "Произношение"
 
-msgid "PulseAudio"
-msgstr "PulseAudio"
+msgid "Proxy casting through Rufin"
+msgstr "Прокси-трансляция через Rufin"
 
 msgid "Purple"
 msgstr "Фиолетовый"
@@ -1374,6 +1422,9 @@ msgstr "Недавно прослушанные"
 msgid "Recently released"
 msgstr "Недавно выпущенные"
 
+msgid "Recommended when your server provides one"
+msgstr ""
+
 msgid "Reconnect"
 msgstr "Повторное подключение"
 
@@ -1381,7 +1432,7 @@ msgid "Red"
 msgstr "Красный"
 
 msgid "Redo"
-msgstr ""
+msgstr "Повторить"
 
 msgid "Refresh section"
 msgstr "Обновить раздел"
@@ -1509,9 +1560,6 @@ msgstr "Строки"
 msgid "Rufin data folder"
 msgstr "Папка с данными Rufin"
 
-msgid "Rufin is running in the tray"
-msgstr "Rufin работает в системном трее"
-
 msgid "Rule actions"
 msgstr "Действия с правилами"
 
@@ -1548,9 +1596,6 @@ msgstr "Сохранено, синхронизируйте для предвар
 msgid "Saving..."
 msgstr "Сохранение..."
 
-msgid "Scrobbling"
-msgstr "Скробблинг"
-
 msgid "Search Again"
 msgstr "Повторить поиск"
 
@@ -1575,14 +1620,14 @@ msgstr "Поиск в локальной сети"
 msgid "Searching for Jellyfin servers on the local network..."
 msgstr "Поиск серверов Jellyfin в локальной сети…"
 
+msgid "Searching for devices..."
+msgstr "Выполняется поиск устройств..."
+
 msgid "Searching will start automatically"
 msgstr "Поиск начнётся автоматически"
 
 msgid "Searching..."
 msgstr "Выполняется поиск..."
-
-msgid "Seconds"
-msgstr "Секунды"
 
 msgid "Secret storage"
 msgstr "Скрытое хранилище"
@@ -1602,10 +1647,8 @@ msgstr "Переместить по треку"
 msgid "Seekbar"
 msgstr "Индикатор прогресса"
 
-#, fuzzy
-#| msgid "Selection"
 msgid "Select All"
-msgstr "Выбор"
+msgstr "Выбрать всё"
 
 msgid "Select Download Folder"
 msgstr "Выбрать папку для загрузки"
@@ -1615,9 +1658,6 @@ msgstr "Выбрать папку с музыкой"
 
 msgid "Select Source"
 msgstr "Выбрать Источник"
-
-msgid "Selected device"
-msgstr "Выбранное устройство"
 
 msgid "Selection"
 msgstr "Выбор"
@@ -1667,9 +1707,6 @@ msgstr "Установите тип активности в Discord на \"Пр�
 msgid "Shared secret"
 msgstr "Общий секретный ключ"
 
-msgid "Show Lyrics Panel"
-msgstr "Показать панель с текстом песни"
-
 msgid "Show Rufin"
 msgstr "Показать Rufin"
 
@@ -1695,6 +1732,9 @@ msgstr "Показать боковую панель"
 msgid "Show tray icon"
 msgstr "Показывать значок в системном трее"
 
+msgid "Show visualizer"
+msgstr "Показать визуализатор"
+
 msgid "Show/hide lyrics"
 msgstr "Показать/скрыть текст песни"
 
@@ -1716,10 +1756,8 @@ msgstr "Перемешать"
 msgid "Sidebar Items"
 msgstr "Элементы боковой панели"
 
-#, fuzzy
-#| msgid "Sidebar route by position"
 msgid "Sidebar item {position}"
-msgstr "Маршрут в боковой панели по расположению"
+msgstr "Элемент боковой панели {position}"
 
 msgid "Sidebar route by position"
 msgstr "Маршрут в боковой панели по расположению"
@@ -1791,7 +1829,7 @@ msgid "Synced lyrics"
 msgstr "Синхронизированные тексты песен"
 
 msgid "System default"
-msgstr "Системные настройки по умолчанию"
+msgstr "Системные настройки"
 
 msgid "System"
 msgstr "Система"
@@ -1808,6 +1846,9 @@ msgstr "Текст"
 msgid "Theme"
 msgstr "Тема"
 
+msgid "This device"
+msgstr "Это устройство"
+
 msgid "This isn't available"
 msgstr "Это недоступно"
 
@@ -1821,7 +1862,7 @@ msgid "Title"
 msgstr "Название"
 
 msgid "Toggle Fullscreen"
-msgstr "Переключить полноэкранный режим"
+msgstr "Полноэкранный режим"
 
 msgid "Track number"
 msgstr "Номер трека"
@@ -1865,17 +1906,25 @@ msgstr "Введите текст для поиска или создания н
 msgid "Type to search"
 msgstr "Введите текст для поиска"
 
+msgid "UPnP"
+msgstr "UPnP"
+
 msgid "Undo identified value"
 msgstr "Отменить изменение значения"
 
 msgid "Undo"
-msgstr ""
+msgstr "Отменить"
 
 msgid "Unmuted"
 msgstr "Звук включен"
 
 msgid "Update"
 msgstr "Обновить"
+
+#, fuzzy
+#| msgid "API key"
+msgid "Use API key"
+msgstr "Ключ API"
 
 msgid "Use Jellyfin Instant Mix for recommendations"
 msgstr "Использовать Мгновенный Микс Jellyfin для рекомендаций"
@@ -1932,9 +1981,6 @@ msgstr "Увеличить громкость"
 msgid "Volume scale"
 msgstr "Шкала громкости"
 
-msgid "WASAPI"
-msgstr "WASAPI"
-
 msgid "Waiting for connection"
 msgstr "Ожидание подключения"
 
@@ -1942,7 +1988,7 @@ msgid "Waveform seekbar"
 msgstr "Индикатор прогресса воспроизведения в виде волновой формы"
 
 msgid "Window"
-msgstr ""
+msgstr "Окно"
 
 msgid "Year"
 msgstr "Год"
@@ -1995,8 +2041,8 @@ msgstr "не является"
 msgid "is"
 msgstr "является"
 
-msgid "macOS"
-msgstr "macOS"
+msgid "kbps"
+msgstr "кбит/с"
 
 msgid "range"
 msgstr "диапазон"
@@ -2057,6 +2103,57 @@ msgid_plural "{count} years ago"
 msgstr[0] "{count} год назад"
 msgstr[1] "{count} года назад"
 msgstr[2] "{count} лет назад"
+
+#~ msgid "ALSA"
+#~ msgstr "ALSA"
+
+#~ msgid "AirPlay and Sound Settings..."
+#~ msgstr "Настройки AirPlay и звука..."
+
+#~ msgid "DirectSound"
+#~ msgstr "DirectSound"
+
+#~ msgid "Exit to tray"
+#~ msgstr "Свернуть в трей"
+
+#~ msgid "JACK"
+#~ msgstr "JACK"
+
+#~ msgid "PipeWire"
+#~ msgstr "PipeWire"
+
+#~ msgid "Playback settings"
+#~ msgstr "Настройки воспроизведения"
+
+#~ msgid "PulseAudio"
+#~ msgstr "PulseAudio"
+
+#~ msgid "Rufin is running in the tray"
+#~ msgstr "Rufin работает в системном трее"
+
+#~ msgid "Selected device"
+#~ msgstr "Выбранное устройство"
+
+#~ msgid "Uses the macOS system output"
+#~ msgstr "Использует системный вывод macOS"
+
+#~ msgid "WASAPI"
+#~ msgstr "WASAPI"
+
+#~ msgid "macOS"
+#~ msgstr "macOS"
+
+#~ msgid "Scrobbling"
+#~ msgstr "Скробблинг"
+
+#~ msgid "Hide lyrics"
+#~ msgstr "Скрыть текст песни"
+
+#~ msgid "Seconds"
+#~ msgstr "Секунды"
+
+#~ msgid "Show Lyrics Panel"
+#~ msgstr "Показать панель с текстом песни"
 
 #~ msgid "ReplayGain"
 #~ msgstr "Нормализация громкости"
@@ -2325,9 +2422,6 @@ msgstr[2] "{count} лет назад"
 #~ msgid "No lyrics for the current track."
 #~ msgstr "Для текущего трека текст песни отсутствует."
 
-#~ msgid "No lyrics found."
-#~ msgstr "Текст песни не найден."
-
 #~ msgid "No queue items match the search"
 #~ msgstr "В очереди нет элементов, соответствующих запросу"
 
@@ -2440,9 +2534,6 @@ msgstr[2] "{count} лет назад"
 #~ msgstr ""
 #~ "Настройки сервера сохранены. Выполняется повторная синхронизация "
 #~ "библиотеки…"
-
-#~ msgid "Show playback icon"
-#~ msgstr "Показывать значок воспроизведения"
 
 #~ msgid "Smart playlists will appear here after the default set is seeded."
 #~ msgstr ""

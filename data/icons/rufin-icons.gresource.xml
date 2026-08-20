@@ -7,24 +7,21 @@
     <file>hicolor/64x64/apps/io.github.screwys.Rufin.source.jellyfin.png</file>
     <file>hicolor/64x64/apps/io.github.screwys.Rufin.source.navidrome.png</file>
     <file>hicolor/64x64/apps/io.github.screwys.Rufin.source.opensubsonic.png</file>
-    <file>hicolor/scalable/actions/rufin-add-symbolic.svg</file>
     <file>hicolor/scalable/actions/rufin-audio-radio-symbolic.svg</file>
     <file>hicolor/scalable/actions/rufin-edit-symbolic.svg</file>
-    <file>hicolor/scalable/actions/rufin-favorite-add-symbolic.svg</file>
-    <file>hicolor/scalable/actions/rufin-favorite-remove-symbolic.svg</file>
+    <file>hicolor/scalable/actions/heart-filled-bundled-symbolic.svg</file>
+    <file>hicolor/scalable/actions/heart-outline-bundled-symbolic.svg</file>
     <file>hicolor/scalable/actions/rufin-list-drag-handle-symbolic.svg</file>
     <file>hicolor/scalable/actions/rufin-more-symbolic.svg</file>
     <file>hicolor/scalable/actions/rufin-play-later-symbolic.svg</file>
     <file>hicolor/scalable/actions/rufin-play-next-symbolic.svg</file>
     <file>hicolor/scalable/actions/rufin-play-symbolic.svg</file>
-    <file>hicolor/scalable/actions/rufin-remove-symbolic.svg</file>
     <file>hicolor/scalable/actions/rufin-route-album-artists-selected-symbolic.svg</file>
     <file>hicolor/scalable/actions/rufin-route-album-artists-symbolic.svg</file>
     <file>hicolor/scalable/actions/rufin-route-albums-selected-symbolic.svg</file>
     <file>hicolor/scalable/actions/rufin-route-albums-symbolic.svg</file>
     <file>hicolor/scalable/actions/rufin-route-artists-selected-symbolic.svg</file>
     <file>hicolor/scalable/actions/rufin-route-artists-symbolic.svg</file>
-    <file>hicolor/scalable/actions/rufin-route-favorites-symbolic.svg</file>
     <file>hicolor/scalable/actions/rufin-route-folders-selected-symbolic.svg</file>
     <file>hicolor/scalable/actions/rufin-route-folders-symbolic.svg</file>
     <file>hicolor/scalable/actions/rufin-route-genres-selected-symbolic.svg</file>
@@ -49,7 +46,84 @@
     <file>hicolor/scalable/actions/rufin-view-list-details-symbolic.svg</file>
     <file>hicolor/scalable/actions/rufin-view-list-ordered-symbolic.svg</file>
     <file>hicolor/scalable/actions/rufin-view-list-symbolic.svg</file>
+    <file>hicolor/16x16/actions/edit-clear-bundled-symbolic.svg</file>
+    <file>hicolor/16x16/actions/system-search-bundled-symbolic.svg</file>
+    <file>hicolor/16x16/actions/view-grid-bundled-symbolic.svg</file>
+    <file>hicolor/16x16@2/actions/edit-clear-bundled-symbolic.svg</file>
+    <file>hicolor/16x16@2/actions/system-search-bundled-symbolic.svg</file>
+    <file>hicolor/16x16@2/actions/view-grid-bundled-symbolic.svg</file>
+    <file>hicolor/22x22/actions/edit-clear-bundled-symbolic.svg</file>
+    <file>hicolor/22x22/actions/system-search-bundled-symbolic.svg</file>
+    <file>hicolor/22x22/actions/view-grid-bundled-symbolic.svg</file>
+    <file>hicolor/22x22@2/actions/edit-clear-bundled-symbolic.svg</file>
+    <file>hicolor/22x22@2/actions/system-search-bundled-symbolic.svg</file>
+    <file>hicolor/22x22@2/actions/view-grid-bundled-symbolic.svg</file>
+    <file>hicolor/24x24/actions/edit-clear-bundled-symbolic.svg</file>
+    <file>hicolor/24x24/actions/system-search-bundled-symbolic.svg</file>
+    <file>hicolor/24x24/actions/view-grid-bundled-symbolic.svg</file>
+    <file>hicolor/24x24@2/actions/edit-clear-bundled-symbolic.svg</file>
+    <file>hicolor/24x24@2/actions/system-search-bundled-symbolic.svg</file>
+    <file>hicolor/24x24@2/actions/view-grid-bundled-symbolic.svg</file>
+    <file>hicolor/32x32/actions/edit-clear-bundled-symbolic.svg</file>
+    <file>hicolor/32x32/actions/system-search-bundled-symbolic.svg</file>
+    <file>hicolor/32x32/actions/view-grid-bundled-symbolic.svg</file>
+    <file>hicolor/32x32@2/actions/edit-clear-bundled-symbolic.svg</file>
+    <file>hicolor/32x32@2/actions/system-search-bundled-symbolic.svg</file>
+    <file>hicolor/32x32@2/actions/view-grid-bundled-symbolic.svg</file>
+    <file>hicolor/scalable/actions/adw-external-link-bundled-symbolic.svg</file>
+    <file>hicolor/scalable/actions/adw-external-link-compact-bundled-symbolic.svg</file>
+    <file>hicolor/scalable/actions/appointment-new-bundled-symbolic.svg</file>
+    <file>hicolor/scalable/actions/applications-system-bundled-symbolic.svg</file>
+    <file>hicolor/scalable/actions/audio-volume-high-bundled-symbolic.svg</file>
+    <file>hicolor/scalable/actions/audio-volume-low-bundled-symbolic.svg</file>
+    <file>hicolor/scalable/actions/audio-volume-medium-bundled-symbolic.svg</file>
+    <file>hicolor/scalable/actions/audio-volume-muted-bundled-symbolic.svg</file>
+    <file>hicolor/scalable/actions/audio-x-generic-bundled-symbolic.svg</file>
+    <file>hicolor/scalable/actions/document-edit-bundled-symbolic.svg</file>
+    <file>hicolor/scalable/actions/document-save-bundled-symbolic.svg</file>
+    <file>hicolor/scalable/actions/document-save-disk-bundled-symbolic.svg</file>
+    <file>hicolor/scalable/actions/drive-multidisk-bundled-symbolic.svg</file>
+    <file>hicolor/scalable/actions/edit-undo-bundled-symbolic.svg</file>
+    <file>hicolor/scalable/actions/folder-download-bundled-symbolic.svg</file>
+    <file>hicolor/scalable/actions/folder-music-bundled-symbolic.svg</file>
+    <file>hicolor/scalable/actions/folder-new-bundled-symbolic.svg</file>
+    <file>hicolor/scalable/actions/go-down-bundled-symbolic.svg</file>
+    <file>hicolor/scalable/actions/go-next-bundled-symbolic.svg</file>
+    <file>hicolor/scalable/actions/go-previous-bundled-symbolic.svg</file>
+    <file>hicolor/scalable/actions/go-up-bundled-symbolic.svg</file>
+    <file>hicolor/scalable/actions/help-about-bundled-symbolic.svg</file>
+    <file>hicolor/scalable/actions/list-add-bundled-symbolic.svg</file>
+    <file>hicolor/scalable/actions/list-remove-bundled-symbolic.svg</file>
+    <file>hicolor/scalable/actions/media-playback-pause-bundled-symbolic.svg</file>
+    <file>hicolor/scalable/actions/media-playback-start-bundled-symbolic.svg</file>
+    <file>hicolor/scalable/actions/network-server-bundled-symbolic.svg</file>
+    <file>hicolor/scalable/actions/network-workgroup-bundled-symbolic.svg</file>
+    <file>hicolor/scalable/actions/non-starred-bundled-symbolic.svg</file>
+    <file>hicolor/scalable/actions/object-select-bundled-symbolic.svg</file>
+    <file>hicolor/scalable/actions/open-menu-bundled-symbolic.svg</file>
+    <file>hicolor/scalable/actions/preferences-desktop-appearance-bundled-symbolic.svg</file>
+    <file>hicolor/scalable/actions/preferences-desktop-keyboard-shortcuts-bundled-symbolic.svg</file>
+    <file>hicolor/scalable/actions/preferences-system-bundled-symbolic.svg</file>
+    <file>hicolor/scalable/actions/preferences-system-time-bundled-symbolic.svg</file>
+    <file>hicolor/scalable/actions/process-stop-bundled-symbolic.svg</file>
+    <file>hicolor/scalable/actions/route-playlists-compact-bundled-symbolic.svg</file>
+    <file>hicolor/scalable/actions/sidebar-collapse-right-bundled-symbolic.svg</file>
+    <file>hicolor/scalable/actions/sidebar-expand-right-bundled-symbolic.svg</file>
+    <file>hicolor/scalable/actions/sidebar-show-bundled-symbolic.svg</file>
+    <file>hicolor/scalable/actions/semi-starred-bundled-symbolic.svg</file>
+    <file>hicolor/scalable/actions/starred-bundled-symbolic.svg</file>
+    <file>hicolor/scalable/actions/system-lock-screen-bundled-symbolic.svg</file>
+    <file>hicolor/scalable/actions/user-trash-bundled-symbolic.svg</file>
+    <file>hicolor/scalable/actions/utilities-terminal-bundled-symbolic.svg</file>
+    <file>hicolor/scalable/actions/value-decrease-bundled-symbolic.svg</file>
+    <file>hicolor/scalable/actions/video-display-bundled-symbolic.svg</file>
+    <file>hicolor/scalable/actions/view-fullscreen-bundled-symbolic.svg</file>
+    <file>hicolor/scalable/actions/view-more-bundled-symbolic.svg</file>
+    <file>hicolor/scalable/actions/view-refresh-bundled-symbolic.svg</file>
+    <file>hicolor/scalable/actions/window-close-bundled-symbolic.svg</file>
+    <file>hicolor/scalable/actions/x-office-calendar-bundled-symbolic.svg</file>
     <file>hicolor/scalable/apps/io.github.screwys.Rufin.svg</file>
     <file>hicolor/scalable/status/io.github.screwys.Rufin.scrobbling-symbolic.svg</file>
+    <file>hicolor/symbolic/apps/io.github.screwys.Rufin-symbolic.svg</file>
   </gresource>
 </gresources>

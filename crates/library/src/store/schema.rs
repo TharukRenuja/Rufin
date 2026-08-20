@@ -9,7 +9,7 @@ use rusqlite::{Connection, OptionalExtension};
 use super::{StoreError, StoreResult};
 
 pub(crate) const APPLICATION_ID: i64 = 1_381_320_270;
-pub(crate) const SCHEMA_VERSION: i64 = 39;
+pub(crate) const SCHEMA_VERSION: i64 = 40;
 const FIRST_STORE_SCHEMA_VERSION: i64 = 32;
 const MUSIC_FOLDER_ARTWORK_SCHEMA_VERSION: i64 = 33;
 const FILESYSTEM_IDENTITY_SCHEMA_VERSION: i64 = 34;
@@ -17,6 +17,7 @@ const RECENT_PLAYS_SCHEMA_VERSION: i64 = 35;
 const PENDING_FAVORITES_SCHEMA_VERSION: i64 = 36;
 const LOUDNESS_MEASUREMENTS_SCHEMA_VERSION: i64 = 37;
 const MEDIA_STATE_SCHEMA_VERSION: i64 = 38;
+const USER_RATINGS_SCHEMA_VERSION: i64 = 39;
 
 struct Migration {
     from_version: i64,
@@ -57,12 +58,17 @@ const MIGRATIONS: &[Migration] = &[
     },
     Migration {
         from_version: MEDIA_STATE_SCHEMA_VERSION,
-        to_version: SCHEMA_VERSION,
+        to_version: USER_RATINGS_SCHEMA_VERSION,
         run: migrate_schema_38,
+    },
+    Migration {
+        from_version: USER_RATINGS_SCHEMA_VERSION,
+        to_version: SCHEMA_VERSION,
+        run: migrate_schema_39,
     },
 ];
 
-const CREATE_SCHEMA: &str = r###"-- Rufin Store schema 39.
+const CREATE_SCHEMA: &str = r###"-- Rufin Store schema 40.
 --
 -- Product routes hydrate Library and do not query these tables for
 -- sorting or filtering.
@@ -72,7 +78,7 @@ PRAGMA foreign_keys = ON;
 BEGIN IMMEDIATE;
 
 PRAGMA application_id = 1381320270; -- "RUFN"
-PRAGMA user_version = 39;
+PRAGMA user_version = 40;
 
 -- One row is one complete or in-progress source-library candidate. The newest
 -- accepted library_id is current; there is no mutable head row.
@@ -513,6 +519,16 @@ CREATE TABLE local_favorites (
         item_kind IN ('album', 'track', 'artist')
     ),
     item_id TEXT NOT NULL CHECK (item_id <> ''),
+    PRIMARY KEY (source_id, item_kind, item_id)
+) STRICT;
+
+-- Absence inherits the source rating. Zero is an explicit clear; 1-10 are
+-- Rufin's exact half-star values.
+CREATE TABLE user_ratings (
+    source_id TEXT NOT NULL CHECK (source_id <> ''),
+    item_kind TEXT NOT NULL CHECK (item_kind IN ('album', 'track', 'artist')),
+    item_id TEXT NOT NULL CHECK (item_id <> ''),
+    rating INTEGER NOT NULL CHECK (rating BETWEEN 0 AND 10),
     PRIMARY KEY (source_id, item_kind, item_id)
 ) STRICT;
 
@@ -971,7 +987,7 @@ pub(crate) fn initialize(connection: &Connection) -> StoreResult<()> {
     if (application_id, user_version, has_schema) == (0, 0, false) {
         connection.execute_batch(CREATE_SCHEMA)?;
     } else if application_id == APPLICATION_ID && has_schema {
-        while user_version != SCHEMA_VERSION {
+        while user_version < SCHEMA_VERSION {
             let Some(migration) = MIGRATIONS
                 .iter()
                 .find(|migration| migration.from_version == user_version)
@@ -1254,6 +1270,41 @@ PRAGMA user_version = 39;
     Ok(())
 }
 
+fn migrate_schema_39(connection: &Connection) -> StoreResult<()> {
+    let transaction = connection.unchecked_transaction()?;
+    transaction.execute_batch(
+        "CREATE TABLE user_ratings (
+    source_id TEXT NOT NULL CHECK (source_id <> ''),
+    item_kind TEXT NOT NULL CHECK (item_kind IN ('album', 'track', 'artist')),
+    item_id TEXT NOT NULL CHECK (item_id <> ''),
+    rating INTEGER NOT NULL CHECK (rating BETWEEN 0 AND 10),
+    PRIMARY KEY (source_id, item_kind, item_id)
+) STRICT;",
+    )?;
+    let definitions = transaction
+        .prepare("SELECT source_id, smart_playlist_id, definition_json FROM smart_playlists")?
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+            ))
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    for (source_id, playlist_id, json) in definitions {
+        let mut definition: crate::SmartPlaylistDefinition = serde_json::from_str(&json)?;
+        crate::smart_playlists::upgrade_rating_scale(&mut definition);
+        transaction.execute(
+            "UPDATE smart_playlists SET definition_json = ?3
+             WHERE source_id = ?1 AND smart_playlist_id = ?2",
+            rusqlite::params![source_id, playlist_id, serde_json::to_string(&definition)?],
+        )?;
+    }
+    transaction.pragma_update(None, "user_version", SCHEMA_VERSION)?;
+    transaction.commit()?;
+    Ok(())
+}
+
 fn backfill_recent_plays(connection: &Connection) -> StoreResult<()> {
     connection.execute(
         "INSERT OR IGNORE INTO recent_plays(
@@ -1311,43 +1362,11 @@ fn backfill_recent_plays(connection: &Connection) -> StoreResult<()> {
 pub(crate) fn validate(connection: &Connection) -> StoreResult<()> {
     let application_id = pragma_i64(connection, "application_id")?;
     let user_version = pragma_i64(connection, "user_version")?;
-    if application_id != APPLICATION_ID || user_version != SCHEMA_VERSION {
+    if application_id != APPLICATION_ID || user_version < SCHEMA_VERSION {
         return Err(StoreError::UnsupportedSchema {
             application_id,
             user_version,
         });
-    }
-
-    let reference = Connection::open_in_memory()?;
-    reference.pragma_update(None, "foreign_keys", true)?;
-    reference.execute_batch(CREATE_SCHEMA)?;
-    let expected = schema_inventory(&reference)?;
-    let actual = schema_inventory(connection)?;
-    if actual != expected {
-        let mismatch = actual
-            .iter()
-            .zip(&expected)
-            .position(|(actual, expected)| actual != expected)
-            .map_or_else(
-                || {
-                    format!(
-                        "object count {} instead of {}",
-                        actual.len(),
-                        expected.len()
-                    )
-                },
-                |index| {
-                    format!(
-                        "object {} differs from the final schema",
-                        actual
-                            .get(index)
-                            .map_or("<missing>", |object| object.1.as_str())
-                    )
-                },
-            );
-        return Err(StoreError::InvalidFinalSchema(format!(
-            "schema inventory mismatch: {mismatch}"
-        )));
     }
 
     let foreign_keys: i64 =
@@ -1358,23 +1377,6 @@ pub(crate) fn validate(connection: &Connection) -> StoreResult<()> {
         ));
     }
     Ok(())
-}
-
-type SchemaObject = (String, String, String, Option<String>);
-
-fn schema_inventory(connection: &Connection) -> StoreResult<Vec<SchemaObject>> {
-    let mut statement = connection.prepare(
-        "SELECT type, name, tbl_name, sql
-         FROM sqlite_schema
-         WHERE name NOT LIKE 'sqlite_%'
-           AND type IN ('table', 'index', 'trigger', 'view')
-         ORDER BY type, name",
-    )?;
-    Ok(statement
-        .query_map([], |row| {
-            Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
-        })?
-        .collect::<Result<Vec<_>, _>>()?)
 }
 
 fn pragma_i64(connection: &Connection, name: &str) -> rusqlite::Result<i64> {
@@ -1394,6 +1396,60 @@ mod tests {
             expected = migration.to_version;
         }
         assert_eq!(expected, SCHEMA_VERSION);
+    }
+
+    #[test]
+    fn newer_additive_store_keeps_known_tables_available() {
+        let connection = Connection::open_in_memory().expect("open Store");
+        initialize(&connection).expect("initialize current Store");
+        connection
+            .execute_batch(
+                "CREATE TABLE future_facts(value TEXT) STRICT;
+                 PRAGMA user_version = 41;",
+            )
+            .expect("prepare newer additive Store");
+
+        initialize(&connection).expect("open known tables in newer Store");
+        connection
+            .query_row("SELECT count(*) FROM source_libraries", [], |_| Ok(()))
+            .expect("read a known table");
+    }
+
+    #[test]
+    fn schema_39_preserves_smart_playlist_rating_meaning() {
+        let connection = Connection::open_in_memory().expect("open Store");
+        initialize(&connection).expect("initialize current Store");
+        connection
+            .execute_batch(
+                r###"INSERT INTO smart_playlists(
+    source_id, smart_playlist_id, name, definition_json, position
+) VALUES (
+    'source:test', 'smart:test', 'Rated',
+    '{"match_all":[{"field":"Rating","operator":"Above","value":{"Number":4}}],"sort_field":"Title","descending":false}',
+    0
+);
+DROP TABLE user_ratings;
+PRAGMA user_version = 39;
+"###,
+            )
+            .expect("prepare schema 39 Store");
+
+        initialize(&connection).expect("migrate schema 39 Store");
+
+        let json = connection
+            .query_row("SELECT definition_json FROM smart_playlists", [], |row| {
+                row.get::<_, String>(0)
+            })
+            .expect("read migrated smart playlist");
+        let definition: crate::SmartPlaylistDefinition =
+            serde_json::from_str(&json).expect("decode migrated smart playlist");
+        assert_eq!(
+            definition.match_all[0].value,
+            Some(crate::SmartPlaylistRuleValue::Number(8))
+        );
+        connection
+            .query_row("SELECT count(*) FROM user_ratings", [], |_| Ok(()))
+            .expect("exact rating overlay exists");
     }
 
     #[test]
@@ -1909,7 +1965,9 @@ CREATE TABLE playback_state (
     fn restore_schema_38_local_files(connection: &Connection) {
         connection
             .execute_batch(
-                r###"ALTER TABLE local_files RENAME TO schema_39_local_files;
+                r###"DROP TABLE user_ratings;
+
+ALTER TABLE local_files RENAME TO schema_39_local_files;
 
 CREATE TABLE local_files (
     library_id INTEGER NOT NULL

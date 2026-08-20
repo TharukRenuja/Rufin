@@ -23,7 +23,6 @@ use crate::layout::width_allocation_owner;
 use crate::localization::{bind_search_placeholder, localized_label};
 use crate::runtime::{SelectedLibrary, SelectedSourceHandle};
 use crate::shell::Shell;
-use crate::shell::cover::presentation::stable_seed;
 use crate::shell::cover::{ArtworkTile, LARGE_COVER_SIZE, THUMB_COVER_SIZE};
 use crate::shell::route::{MountedRoute, MountedRouteItemNavigation};
 use crate::{LibraryField, LibraryLayout, LibraryListKey, LibraryListSettings};
@@ -165,7 +164,6 @@ trait SearchGridItem: Clone + 'static {
     fn title(&self) -> &str;
     fn subtitle(&self) -> &str;
     fn artwork(&self) -> ArtworkBinding;
-    fn seed(&self) -> u32;
     fn field(&self, field: LibraryField) -> String;
     fn route(&self) -> Option<Route>;
     fn play(&self, shell: &Rc<Shell>, placement: QueuePlacement);
@@ -204,10 +202,6 @@ impl SearchGridItem for SearchAlbum {
 
     fn subtitle(&self) -> &str {
         &self.album.artist
-    }
-
-    fn seed(&self) -> u32 {
-        stable_seed(self.album.id.as_str())
     }
 
     fn field(&self, field: LibraryField) -> String {
@@ -268,10 +262,6 @@ impl SearchGridItem for SearchArtist {
         ""
     }
 
-    fn seed(&self) -> u32 {
-        stable_seed(self.artist.id.as_str())
-    }
-
     fn field(&self, field: LibraryField) -> String {
         artist_item_field(&self.artist, field)
     }
@@ -328,10 +318,6 @@ impl SearchGridItem for SearchTrack {
 
     fn artwork(&self) -> ArtworkBinding {
         self.artwork.clone()
-    }
-
-    fn seed(&self) -> u32 {
-        stable_seed(self.track.id.as_str())
     }
 
     fn field(&self, field: LibraryField) -> String {
@@ -411,7 +397,7 @@ impl<T: SearchGridItem> SearchGridCell<T> {
     fn new(shell: Rc<Shell>, fields: &[LibraryField]) -> Self {
         let current = Rc::new(RefCell::new(None::<T>));
         let cover_button = collection_grid_cover_shell();
-        let cover = ArtworkTile::new_elastic_square(0);
+        let cover = ArtworkTile::new_elastic_square();
         cover_button.set_child(Some(&cover.widget()));
         let overlay = cards::elastic_cover_overlay();
         overlay.set_child(Some(&cover_button));
@@ -525,7 +511,6 @@ impl<T: SearchGridItem> ReusableCollectionGridCell<T> for SearchGridCell<T> {
         self.shell.bind_artwork_tile(
             &self.cover,
             item.artwork(),
-            item.seed(),
             COLLECTION_GRID_MAX_CARD_WIDTH,
             LARGE_COVER_SIZE,
         );
@@ -798,28 +783,15 @@ impl SearchRouteProjection {
         if self.shell.upgrade().is_none() {
             return;
         }
-        let request = library::SearchRequest::new(query);
-        let receiver = self.source.search(request.clone());
+        let receiver = self.source.search(library::SearchRequest::new(query));
         let library = Arc::clone(&self.library);
         let music_folder_id = self.music_folder_id.clone();
-        let fallback_library = Arc::clone(&library);
         let projection = Rc::downgrade(self);
         glib::spawn_future_local(async move {
-            let live_result = receiver
+            let result = receiver
                 .recv()
                 .await
                 .unwrap_or_else(|_| Err("the Search request stopped".to_string()));
-            let result = match live_result {
-                Ok(results) => Ok(results),
-                Err(live_error) => {
-                    let offline =
-                        gio::spawn_blocking(move || fallback_library.search(&request)).await;
-                    match offline {
-                        Ok(offline) => offline_search_result(live_error, offline),
-                        Err(_) => Err(live_error),
-                    }
-                }
-            };
             let result = match result {
                 Ok(results) => gio::spawn_blocking(move || {
                     prepare_search_results(&library, music_folder_id.as_ref(), results)
@@ -913,13 +885,6 @@ impl SearchRouteProjection {
     fn item_navigation(&self) -> MountedRouteItemNavigation {
         Rc::clone(&self.item_navigation)
     }
-}
-
-fn offline_search_result(
-    live_error: String,
-    offline: library::LibraryQueryResult<SearchResults>,
-) -> Result<SearchResults, String> {
-    offline.map_err(|_| live_error)
 }
 
 fn prepare_search_results(
@@ -1156,7 +1121,6 @@ fn search_track_column(
                 artwork: |track: &SearchTrack| track.artwork.clone(),
                 title: |track: &SearchTrack| track.track.title.clone(),
                 subtitle: |track: &SearchTrack| track.track.artist.clone(),
-                seed: |track: &SearchTrack| stable_seed(track.track.id.as_str()),
                 subtitle_links: |_: &SearchTrack| None,
                 context_menu: true,
             },
@@ -1266,7 +1230,6 @@ fn search_item_image_column<T: SearchGridItem>(
         };
         item.set_child(Some(&bind_shell.cover_tile_for_candidates(
             value.artwork(),
-            value.seed(),
             48,
             THUMB_COVER_SIZE,
         )));
@@ -1307,12 +1270,7 @@ fn search_item_merged_column<T: SearchGridItem>(
             return;
         };
         clear_box(&row);
-        row.append(&bind_shell.cover_tile_for_candidates(
-            value.artwork(),
-            value.seed(),
-            48,
-            THUMB_COVER_SIZE,
-        ));
+        row.append(&bind_shell.cover_tile_for_candidates(value.artwork(), 48, THUMB_COVER_SIZE));
         let labels = gtk::Box::new(gtk::Orientation::Vertical, 2);
         let title = gtk::Label::new(Some(value.title()));
         title.set_xalign(0.0);
@@ -1534,23 +1492,6 @@ mod tests {
         assert!(!prepared.tracks[1].library_backed);
         assert!(prepared.albums[1].summary.is_none());
         assert!(prepared.artists[1].summary.is_none());
-    }
-
-    #[test]
-    fn failed_live_search_uses_loaded_results_before_showing_an_error() {
-        let offline = SearchResults {
-            tracks: vec![crate::test_support::track(1, "Offline result")],
-            ..SearchResults::default()
-        };
-        let recovered = offline_search_result("offline".to_string(), Ok(offline)).unwrap();
-        assert_eq!(recovered.tracks[0].title, "Offline result");
-
-        let error = offline_search_result(
-            "live failure".to_string(),
-            Err(library::LibraryQueryError::Unavailable),
-        )
-        .unwrap_err();
-        assert_eq!(error, "live failure");
     }
 
     #[test]

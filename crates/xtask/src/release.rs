@@ -7,8 +7,7 @@ use crate::Result;
 use crate::generate;
 use crate::process::{
     capture_command, command_stdout, find_on_path, github_repo_from_origin, read_to_string,
-    repo_root, repo_url_from_origin, run_command, run_retry_without_ld_preload, temp_path,
-    write_string,
+    repo_root, repo_url_from_origin, run_command, temp_path, write_string,
 };
 
 const FLATHUB_MANIFEST: &str = "packaging/flatpak/io.github.screwys.Rufin.flathub.json";
@@ -357,20 +356,22 @@ fn verify_nix_flake() -> Result<()> {
     if !Path::new("flake.nix").is_file() {
         return Ok(());
     }
-    run_retry_without_ld_preload([
+    run_command(
         "env",
-        "-u",
-        "LD_PRELOAD",
-        "nix",
-        "--accept-flake-config",
-        "--extra-experimental-features",
-        "nix-command flakes",
-        "flake",
-        "check",
-        "--no-build",
-        "--no-write-lock-file",
-        "--print-build-logs",
-    ])
+        [
+            "-u",
+            "LD_PRELOAD",
+            "nix",
+            "--accept-flake-config",
+            "--extra-experimental-features",
+            "nix-command flakes",
+            "flake",
+            "check",
+            "--no-build",
+            "--no-write-lock-file",
+            "--print-build-logs",
+        ],
+    )
 }
 
 fn release_notes(base_tag: &str, version: &str, summary: &str) -> Result<String> {

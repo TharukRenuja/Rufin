@@ -1,46 +1,78 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
-  <defs>
-    <linearGradient id="tile" x1="128" y1="48" x2="384" y2="464" gradientUnits="userSpaceOnUse">
-      <stop offset="0" stop-color="#ffb04a"/>
-      <stop offset="0.55" stop-color="#f76a37"/>
-      <stop offset="1" stop-color="#e94a2f"/>
-    </linearGradient>
-    <linearGradient id="tile-front" x1="256" y1="350" x2="256" y2="462" gradientUnits="userSpaceOnUse">
-      <stop offset="0" stop-color="#d94431" stop-opacity="0"/>
-      <stop offset="1" stop-color="#c9392f" stop-opacity="0.85"/>
-    </linearGradient>
-    <radialGradient id="record" cx="206" cy="182" r="190" gradientUnits="userSpaceOnUse">
-      <stop offset="0" stop-color="#6d2545"/>
-      <stop offset="1" stop-color="#3c1d35"/>
-    </radialGradient>
-    <mask id="record-cutout" maskUnits="userSpaceOnUse">
-      <rect width="512" height="512" fill="#fff"/>
-      <g transform="translate(-8 2) translate(234 252) scale(1.069) translate(-234 -252)">
-        <path d="M361.5 132v110l-43 70" fill="none" stroke="#000" stroke-width="16" stroke-linecap="butt" stroke-linejoin="bevel"/>
-        <g transform="translate(318 312) rotate(32)">
-          <rect x="-15" y="-8" width="30" height="38" fill="#000"/>
-          <rect x="-5" y="27" width="10" height="18" rx="5" fill="#000"/>
-        </g>
-      </g>
-    </mask>
-  </defs>
-
-  <rect x="50" y="50" width="412" height="412" rx="68" fill="url(#tile)"/>
-  <path d="M50 336c70 22 132 30 206 30s136-8 206-30v58c0 38-30 68-68 68H118c-38 0-68-30-68-68z" fill="url(#tile-front)"/>
-
-  <g transform="translate(22 2) translate(234 252) scale(1.069) translate(-234 -252)" mask="url(#record-cutout)">
-    <circle cx="234" cy="252" r="160" fill="url(#record)"/>
-    <circle cx="234" cy="252" r="72" fill="#fb7137"/>
-    <circle cx="234" cy="252" r="22" fill="#4b1e39"/>
-
-    <path d="M130 252a104 104 0 0 1 104-104" fill="none" stroke="#f47a3a" stroke-width="9" stroke-linecap="round" opacity="0.95"/>
-    <path d="M164 326a104 104 0 0 1-28-43" fill="none" stroke="#f47a3a" stroke-width="9" stroke-linecap="round" opacity="0.95"/>
-    <path d="M268 151a104 104 0 0 1 45 18" fill="none" stroke="#f47a3a" stroke-width="9" stroke-linecap="round" opacity="0.95"/>
-    <path d="M110 252a124 124 0 0 1 124-124" fill="none" stroke="#f47a3a" stroke-width="6" stroke-linecap="round" opacity="0.78"/>
-    <path d="M150 351a124 124 0 0 1-35-57" fill="none" stroke="#f47a3a" stroke-width="6" stroke-linecap="round" opacity="0.78"/>
-    <path d="M272 131a124 124 0 0 1 59 24" fill="none" stroke="#f47a3a" stroke-width="6" stroke-linecap="round" opacity="0.78"/>
-    <path d="M92 252a142 142 0 0 1 142-142" fill="none" stroke="#f47a3a" stroke-width="5" stroke-linecap="round" opacity="0.58"/>
-    <path d="M141 368a142 142 0 0 1-43-72" fill="none" stroke="#f47a3a" stroke-width="5" stroke-linecap="round" opacity="0.58"/>
-  </g>
+<svg width="128" height="128" viewBox="0 0 128 128" xmlns="http://www.w3.org/2000/svg" transform="translate(4,4)" stroke-linecap="round" stroke-linejoin="round">
+	<defs>
+		<linearGradient id="sheen-gradient" x1="32" x2="56" y1="32" y2="56" gradientUnits="userSpaceOnUse">
+			<stop stop-color="#252525" stop-opacity="0" offset="0"/>
+			<stop stop-color="#7b7b7b" stop-opacity=".7" offset=".5"/>
+			<stop stop-color="#252525" stop-opacity="0" offset="1"/>
+		</linearGradient>
+		<linearGradient id="front-gradient">
+			<stop stop-color="#ce3b2f" offset="0"/>
+			<stop stop-color="#f76a37" offset=".038"/>
+			<stop stop-color="#e94a2f" offset=".077"/>
+			<stop stop-color="#e94a2f" offset=".923"/>
+			<stop stop-color="#f76a37" offset=".962"/>
+			<stop stop-color="#ce3b2f" offset="1"/>
+		</linearGradient>
+		<clipPath id="speaker-clip">
+			<use href="#speaker-inside"/>
+		</clipPath>
+		<clipPath id="disc-clip">
+			<use href="#platter"/>
+		</clipPath>
+		<filter id="sheen-blur">
+			<feGaussianBlur stdDeviation="0.85 0.85"/>
+		</filter>
+	</defs>
+	<rect id="front" x="8" y="12" width="104" height="100" rx="8" ry="8" fill="url(#front-gradient)"/>
+	<rect id="speaker-inside" x="20" y="96" width="80" height="12" rx="4" ry="4" fill="#251221"/>
+	<g id="speaker-grill" fill="none" stroke="#6d2545" stroke-linecap="butt" stroke-linejoin="miter" stroke-width="2">
+		<g clip-path="url(#speaker-clip)">
+			<line x1="20" x2="100" y1="100" y2="100"/>
+			<line x1="20" x2="100" y1="104" y2="104"/>
+		</g>
+		<line x1="28" x2="28" y1="96" y2="108"/>
+		<line x1="36" x2="36" y1="96" y2="108"/>
+		<line x1="44" x2="44" y1="96" y2="108"/>
+		<line x1="52" x2="52" y1="96" y2="108"/>
+		<line x1="60" x2="60" y1="96" y2="108"/>
+		<line x1="68" x2="68" y1="96" y2="108"/>
+		<line x1="76" x2="76" y1="96" y2="108"/>
+		<line x1="84" x2="84" y1="96" y2="108"/>
+		<line x1="92" x2="92" y1="96" y2="108"/>
+	</g>
+	<rect id="surface" x="8" y="8" width="104" height="84" rx="8" ry="8" fill="#fc9342"/>
+	<circle id="platter-shadow" cx="44" cy="46" r="44" fill="#111"/>
+	<circle id="platter" cx="44" cy="44" r="44" fill="#252525"/>
+	<g id="grooves" fill="none" stroke="#525252" stroke-width="4">
+		<path d="m80 44a36 36 0 0 1-36 36"/>
+		<path d="m68 44a24 24 0 0 1-24 24"/>
+		<path d="m20 44a24 24 0 0 1 24-24"/>
+		<path d="m8 44a36 36 0 0 1 36-36"/>
+	</g>
+	<path d="m63 4-19 40 40-19-1e-6 -21zm-19 40-40 19-1e-7 21 21 1e-6z" clip-path="url(#disc-clip)" fill="url(#sheen-gradient)" filter="url(#sheen-blur)"/>
+	<circle id="disc-label" cx="44" cy="44" r="16" fill="#b3553c"/>
+	<circle id="disc-label2" cx="44" cy="44" r="4" fill="#fb7137"/>
+	<line id="spindle" x1="44" x2="44" y1="36" y2="44" stroke="#fff" stroke-width="2"/>
+	<line id="cartridge" x1="64" x2="64" y1="70" y2="74" stroke="#c0bfbc" stroke-width="2"/>
+	<g id="arm-shadow" fill="#deddda">
+		<line x1="100" x2="64" y1="52" y2="69" stroke="#deddda" stroke-width="6"/>
+		<rect x="102" y="50" width="1" height="2"/>
+		<rect x="61" y="67" width="1" height="2"/>
+		<circle cx="100" cy="28" r="8"/>
+	</g>
+	<path id="tonearm" d="m100 26v24l-36 17" fill="none" stroke="#fff" stroke-width="6"/>
+	<circle id="counterweight" cx="100" cy="26" r="8" fill="#fff"/>
+	<g id="controls-shadow" fill="#deddda">
+		<circle cx="104" cy="82" r="4"/>
+		<rect x="100" y="80" width="1" height="2"/>
+		<rect x="107" y="80" width="1" height="2"/>
+		<circle cx="104" cy="70" r="4"/>
+		<rect x="107" y="68" width="1" height="2"/>
+		<rect x="100" y="68" width="1" height="2"/>
+	</g>
+	<g id="controls" fill="#fff">
+		<circle cx="104" cy="80" r="4"/>
+		<circle cx="104" cy="68" r="4"/>
+	</g>
 </svg>

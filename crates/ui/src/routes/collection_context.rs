@@ -7,21 +7,23 @@ use ::library::{
 };
 use adw::prelude::*;
 use downloads::DownloadSubject;
-use gtk::{gio, glib};
+use gtk::glib;
 use playback::{QueuePlacement, RadioPlayRequest};
 
 use crate::SidebarPin;
 use crate::favorites::{FAVORITE_ADD_ICON, FAVORITE_REMOVE_ICON};
 use crate::interactions::{
-    ADD_TO_PLAYLIST_ICON, ALBUM_ICON, ARTIST_ICON, ContextMenuSurface, DOWNLOAD_ICON, RADIO_ICON,
-    install_context_menu_openers, radio_context_submenu,
+    ADD_TO_PLAYLIST_ICON, ContextMenuSurface, DOWNLOAD_ICON, GO_TO_ICON, RADIO_ICON,
+    go_to_context_submenu, install_context_menu_openers, radio_context_submenu,
 };
 use crate::player::state::current_playback_track;
 use crate::preferences::dialogs::metadata::present_metadata_dialog;
+use crate::ratings::context_rating_row;
 use crate::settings::ContextMenuItem;
 use crate::shell::Shell;
 use crate::shell::actions::{
-    ADD_ICON, EDIT_ICON, PLAY_ICON, PLAY_LATER_ICON, PLAY_NEXT_ICON, REMOVE_ICON, TRASH_ICON,
+    ADD_ICON, DELETE_ICON, EDIT_ICON, PLAY_ICON, PLAY_LATER_ICON, PLAY_NEXT_ICON, REMOVE_ICON,
+    TRASH_ICON,
 };
 use localization::{msgid, tr};
 
@@ -309,36 +311,17 @@ fn present_resolved_track_context_menu(
             }
         })
         .unwrap_or_default();
-    match artist_credits.as_slice() {
-        [] => {}
-        [_] => surface.append_configurable_action(
-            ContextMenuItem::GoToArtist,
-            msgid("Go to Artist"),
-            "go-artist",
-            ARTIST_ICON,
-        ),
-        _ => {
-            let submenu = gio::Menu::new();
-            for (index, artist) in artist_credits.iter().enumerate() {
-                submenu.append(
-                    Some(&artist.name),
-                    Some(&format!("track.go-artist-{index}")),
-                );
-            }
-            surface.append_configurable_submenu(
-                ContextMenuItem::GoToArtist,
-                msgid("Go to Artist"),
-                &submenu,
-                ARTIST_ICON,
-            );
-        }
-    }
-    if library_backed && track.album_id.is_some() {
-        surface.append_configurable_action(
-            ContextMenuItem::GoToAlbum,
-            msgid("Go to Album"),
-            "go-album",
-            ALBUM_ICON,
+    let go_to_album = library_backed && track.album_id.is_some();
+    if !artist_credits.is_empty() || go_to_album {
+        let artist_names = artist_credits
+            .iter()
+            .map(|artist| artist.name.clone())
+            .collect::<Vec<_>>();
+        surface.append_configurable_submenu(
+            ContextMenuItem::GoTo,
+            msgid("Go to"),
+            &go_to_context_submenu("track", &artist_names, go_to_album),
+            GO_TO_ICON,
         );
     }
     if remove_action.is_some() {
@@ -432,6 +415,18 @@ fn present_resolved_track_context_menu(
                 );
             }
         });
+    }
+    let rating_item = FavoriteItemId::Track(track.id.clone());
+    if context_menu_rating_visible(shell) && library_backed && shell.rating_available(&rating_item)
+    {
+        let shell = Rc::clone(shell);
+        let track_id = track.id.clone();
+        surface.append_fixed_widget(
+            "rating",
+            &context_rating_row(track.user_rating, surface.popover(), move |rating| {
+                shell.set_rating(FavoriteItemId::Track(track_id.clone()), rating);
+            }),
+        );
     }
     surface.popup(&shell.settings.current.borrow().context_menu);
 }
@@ -554,35 +549,15 @@ fn present_resolved_album_context_menu_inner(
     } else {
         album.album.relations.album_artists.clone()
     };
-    match artist_credits.as_slice() {
-        [] => {}
-        [_] => surface.append_configurable_action(
-            ContextMenuItem::GoToArtist,
-            msgid("Go to Artist"),
-            "go-artist",
-            ARTIST_ICON,
-        ),
-        _ => {
-            let submenu = gio::Menu::new();
-            for (index, artist) in artist_credits.iter().enumerate() {
-                submenu.append(
-                    Some(&artist.name),
-                    Some(&format!("album.go-artist-{index}")),
-                );
-            }
-            surface.append_configurable_submenu(
-                ContextMenuItem::GoToArtist,
-                msgid("Go to Artist"),
-                &submenu,
-                ARTIST_ICON,
-            );
-        }
-    }
-    surface.append_configurable_action(
-        ContextMenuItem::GoToAlbum,
-        msgid("Go to Album"),
-        "go-album",
-        ALBUM_ICON,
+    let artist_names = artist_credits
+        .iter()
+        .map(|artist| artist.name.clone())
+        .collect::<Vec<_>>();
+    surface.append_configurable_submenu(
+        ContextMenuItem::GoTo,
+        msgid("Go to"),
+        &go_to_context_submenu("album", &artist_names, true),
+        GO_TO_ICON,
     );
 
     install_loaded_actions(&surface, shell, playback_target, true, play);
@@ -647,6 +622,18 @@ fn present_resolved_album_context_menu_inner(
             glib::idle_add_local_once(move || shell.navigate(Route::AlbumDetail(album_id)));
         }
     });
+    if context_menu_rating_visible(shell)
+        && shell.rating_available(&FavoriteItemId::Album(album.album.id.clone()))
+    {
+        let shell = Rc::clone(shell);
+        let album_id = album.album.id.clone();
+        surface.append_fixed_widget(
+            "rating",
+            &context_rating_row(album.album.user_rating, surface.popover(), move |rating| {
+                shell.set_rating(FavoriteItemId::Album(album_id.clone()), rating);
+            }),
+        );
+    }
     surface.popup(&shell.settings.current.borrow().context_menu);
 }
 
@@ -748,11 +735,11 @@ fn present_resolved_artist_context_menu(
                 artist_id: artist.artist.id.clone(),
             }),
     );
-    surface.append_configurable_action(
-        ContextMenuItem::GoToArtist,
-        msgid("Go to Artist"),
-        "go-artist",
-        ARTIST_ICON,
+    surface.append_configurable_submenu(
+        ContextMenuItem::GoTo,
+        msgid("Go to"),
+        &go_to_context_submenu("artist", std::slice::from_ref(&artist.artist.name), false),
+        GO_TO_ICON,
     );
 
     install_loaded_actions(&surface, shell, playback_target, true, play);
@@ -786,6 +773,22 @@ fn present_resolved_artist_context_menu(
         let artist_id = artist.artist.id.clone();
         move || shell.navigate(Route::ArtistDetail(artist_id.clone()))
     });
+    if context_menu_rating_visible(shell)
+        && shell.rating_available(&FavoriteItemId::Artist(artist.artist.id.clone()))
+    {
+        let shell = Rc::clone(shell);
+        let artist_id = artist.artist.id.clone();
+        surface.append_fixed_widget(
+            "rating",
+            &context_rating_row(
+                artist.artist.user_rating,
+                surface.popover(),
+                move |rating| {
+                    shell.set_rating(FavoriteItemId::Artist(artist_id.clone()), rating);
+                },
+            ),
+        );
+    }
     surface.popup(&shell.settings.current.borrow().context_menu);
 }
 
@@ -895,7 +898,7 @@ pub(crate) fn present_playlist_context_menu(
     );
     surface.append_fixed_action(msgid("Rename"), "rename", EDIT_ICON);
     surface.append_fixed_action(msgid("Add current"), "add-current", ADD_ICON);
-    surface.append_fixed_action(msgid("Delete"), "delete", REMOVE_ICON);
+    surface.append_fixed_action(msgid("Delete"), "delete", DELETE_ICON);
     install_loaded_actions(&surface, shell, playback_target, true, play);
     install_radio_actions(
         &surface,
@@ -982,7 +985,7 @@ pub(crate) fn present_smart_playlist_context_menu(
             }),
     );
     surface.append_fixed_action(msgid("Rename"), "rename", EDIT_ICON);
-    surface.append_fixed_action(msgid("Delete"), "delete", REMOVE_ICON);
+    surface.append_fixed_action(msgid("Delete"), "delete", DELETE_ICON);
     install_loaded_actions(&surface, shell, playback_target, true, play);
     surface.add_action("rename", {
         let shell = Rc::clone(shell);
@@ -1166,6 +1169,10 @@ fn install_radio_actions(surface: &ContextMenuSurface, shell: &Shell, seed: Radi
         let radio = shell.products.playback.radio.clone();
         surface.add_action(action, move || radio.play_radio(request.clone()));
     }
+}
+
+fn context_menu_rating_visible(shell: &Shell) -> bool {
+    shell.settings.current.borrow().context_menu.rating_visible
 }
 
 #[cfg(test)]

@@ -31,6 +31,7 @@ use super::detail_showcase::{
     detail_playback_controls, detail_radio_button, fit_detail_text, fitted_detail_title_label,
     media_detail_showcase,
 };
+use super::library_fields::nonzero_year;
 use super::release_kind::album_release_kind_label;
 use super::route::Route;
 use super::route_layout::{
@@ -113,7 +114,6 @@ impl Shell {
         let cover = detail_cover_projection(
             self,
             ArtworkBinding::album_artwork(&detail.summary.artwork),
-            album.color_seed,
             cover_size,
             "album-detail-cover",
         );
@@ -325,11 +325,7 @@ impl Shell {
                     }
                     let album = Arc::clone(&next.summary.album);
                     debug_assert_eq!(album.id, album_id);
-                    cover.replace(
-                        &shell,
-                        ArtworkBinding::album_artwork(&next.summary.artwork),
-                        album.color_seed,
-                    );
+                    cover.replace(&shell, ArtworkBinding::album_artwork(&next.summary.artwork));
                     facts.replace(&album_summary_items(&next.summary));
                     track_count.set(next.summary.track_count);
                     let next_kind = album_release_kind_label(&album);
@@ -496,13 +492,16 @@ pub(crate) fn load_album_detail(
 
 fn album_summary_items(summary: &AlbumSummary) -> Vec<(&'static str, String)> {
     vec![
-        ("x-office-calendar-symbolic", summary.album.year.to_string()),
+        (
+            "x-office-calendar-bundled-symbolic",
+            nonzero_year(summary.album.year),
+        ),
         (
             "rufin-route-tracks-symbolic",
             track_count_text(summary.track_count.into()),
         ),
         (
-            "preferences-system-time-symbolic",
+            "preferences-system-time-bundled-symbolic",
             format_duration_units(summary.duration_seconds),
         ),
     ]

@@ -83,16 +83,16 @@ impl LyricsPane {
         root.set_margin_end(0);
         root.set_margin_bottom(8);
 
-        let clear_auto_search_button = gtk::Button::from_icon_name("window-close-symbolic");
+        let clear_auto_search_button = gtk::Button::from_icon_name("process-stop-bundled-symbolic");
         clear_auto_search_button.add_css_class("icon-button");
         clear_auto_search_button.add_css_class("flat");
         clear_auto_search_button.add_css_class("circular");
 
-        let search_button = gtk::Button::from_icon_name("system-search-symbolic");
+        let search_button = gtk::Button::from_icon_name("system-search-bundled-symbolic");
         search_button.add_css_class("icon-button");
         search_button.add_css_class("flat");
         search_button.add_css_class("circular");
-        let settings_button = gtk::Button::from_icon_name("applications-system-symbolic");
+        let settings_button = gtk::Button::from_icon_name("applications-system-bundled-symbolic");
         settings_button.add_css_class("icon-button");
         settings_button.add_css_class("flat");
         settings_button.add_css_class("circular");
@@ -108,7 +108,7 @@ impl LyricsPane {
         top_controls.append(&search_button);
         top_controls.append(&settings_button);
 
-        let offset_decrease_button = lyrics_control_button("value-decrease-symbolic");
+        let offset_decrease_button = lyrics_control_button("value-decrease-bundled-symbolic");
         let offset_entry = gtk::Entry::new();
         offset_entry.set_text("0 ms");
         gtk::prelude::EditableExt::set_alignment(&offset_entry, 0.5);
@@ -117,9 +117,9 @@ impl LyricsPane {
         offset_entry.set_max_length(24);
         offset_entry.add_css_class("flat");
         offset_entry.add_css_class("lyrics-offset-value");
-        let offset_increase_button = lyrics_control_button("list-add-symbolic");
+        let offset_increase_button = lyrics_control_button("list-add-bundled-symbolic");
 
-        let save_button = lyrics_control_button("document-save-symbolic");
+        let save_button = lyrics_control_button("document-save-disk-bundled-symbolic");
 
         let controls = gtk::Box::new(gtk::Orientation::Horizontal, 8);
         controls.add_css_class("lyrics-controls");
@@ -318,7 +318,7 @@ impl LyricsPane {
             indicator.set_valign(gtk::Align::Center);
             indicator.set_vexpand(true);
 
-            let icon = gtk::Image::from_icon_name("audio-x-generic-symbolic");
+            let icon = gtk::Image::from_icon_name("audio-x-generic-bundled-symbolic");
             icon.set_pixel_size(36);
             icon.add_css_class("dim-label");
             indicator.append(&icon);
@@ -644,6 +644,7 @@ impl LyricsPane {
 fn lyrics_label(text: &str) -> gtk::Label {
     let label = gtk::Label::new(Some(text));
     label.set_wrap(true);
+    label.set_wrap_mode(gtk::pango::WrapMode::WordChar);
     label.set_xalign(0.5);
     label.set_justify(gtk::Justification::Center);
     label.set_hexpand(true);

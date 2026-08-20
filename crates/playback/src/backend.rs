@@ -1,6 +1,8 @@
 use crate::{EqualizerSettings, LoudnessNormalizationMode, PlaybackSettings, VolumeScale};
-use library::{ResolvedStream, TrackLoudness};
+use library::{ResolvedStream, Track, TrackLoudness};
 use std::ops::Deref;
+use std::path::PathBuf;
+use std::sync::Arc;
 use thiserror::Error;
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -35,6 +37,9 @@ pub enum NextTransition {
 pub struct PreparedStream {
     pub stream: ResolvedStream,
     pub loudness: TrackLoudness,
+    pub track: Option<Track>,
+    pub content_type: Option<String>,
+    pub artwork_path: Option<Arc<PathBuf>>,
     pub allows_preloading: bool,
     pub allows_timing_queries: bool,
 }
@@ -44,6 +49,9 @@ impl PreparedStream {
         Self {
             stream,
             loudness,
+            track: None,
+            content_type: None,
+            artwork_path: None,
             allows_preloading: true,
             allows_timing_queries: true,
         }
@@ -56,6 +64,17 @@ impl PreparedStream {
 
     pub fn without_timing_queries(mut self) -> Self {
         self.allows_timing_queries = false;
+        self
+    }
+
+    pub fn with_media(mut self, track: Track, content_type: Option<String>) -> Self {
+        self.track = Some(track);
+        self.content_type = content_type;
+        self
+    }
+
+    pub fn with_artwork_path(mut self, artwork_path: Option<PathBuf>) -> Self {
+        self.artwork_path = artwork_path.map(Arc::new);
         self
     }
 }
@@ -96,6 +115,7 @@ pub struct BackendAudioSettings {
     pub loudness_normalization: LoudnessNormalizationMode,
     pub audio_output: Option<String>,
     pub equalizer: EqualizerSettings,
+    pub preserve_pitch: bool,
     pub volume: f64,
     pub volume_scale: VolumeScale,
     pub muted: bool,
@@ -121,6 +141,7 @@ impl From<PlaybackSettings> for BackendAudioSettings {
             loudness_normalization: settings.loudness_normalization,
             audio_output: settings.audio_output,
             equalizer: settings.equalizer,
+            preserve_pitch: settings.preserve_pitch,
             volume: settings.volume,
             volume_scale: settings.volume_scale,
             muted: settings.muted,
@@ -144,6 +165,7 @@ pub enum BackendCommand {
         current: PreparedStream,
         next: Option<PreparedNext>,
         start_position_millis: u64,
+        playback_rate: f64,
     },
     PrepareNext {
         current_run: RunId,
@@ -168,6 +190,7 @@ pub enum BackendCommand {
         muted: bool,
     },
     ConfigureAudio(BackendAudioSettings),
+    SetPlaybackRate(f64),
     SetVisualizerEnabled(bool),
 }
 
@@ -182,6 +205,7 @@ impl BackendCommand {
             Self::PrepareNext { current_run, .. } => Some(*current_run),
             Self::SetOutputVolume { .. }
             | Self::ConfigureAudio(_)
+            | Self::SetPlaybackRate(_)
             | Self::SetVisualizerEnabled(_) => None,
         }
     }

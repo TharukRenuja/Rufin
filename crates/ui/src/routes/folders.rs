@@ -14,7 +14,6 @@ use crate::localization::{
 use crate::runtime::{SelectedLibrary, SelectedSourceHandle};
 use crate::shell::Shell;
 use crate::shell::cover::THUMB_COVER_SIZE;
-use crate::shell::cover::presentation::stable_seed;
 use crate::shell::layout::route_content_width;
 use crate::shell::route::MountedRoute;
 use crate::{LibraryListKey, format_duration};
@@ -766,7 +765,6 @@ fn folder_name_column(shell: &Rc<Shell>) -> gtk::ColumnViewColumn {
             FolderTableRow::Track { track, .. } => {
                 content.append(&shell.cover_tile_for_candidates(
                     ArtworkBinding::track(track),
-                    stable_seed(track.id.as_str()),
                     FOLDER_ROW_ARTWORK_SIZE,
                     THUMB_COVER_SIZE,
                 ));

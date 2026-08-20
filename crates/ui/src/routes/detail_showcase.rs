@@ -13,7 +13,7 @@ use crate::layout::width_allocation_owner;
 use crate::localization::bind_label_text_with;
 use crate::shell::Shell;
 use crate::shell::actions::{ActionButtonVariant, configure_action_button, icon_button};
-use crate::shell::actions::{PLAY_LATER_ICON, PLAY_NEXT_ICON, REMOVE_ICON};
+use crate::shell::actions::{DELETE_ICON, PLAY_LATER_ICON, PLAY_NEXT_ICON};
 use crate::shell::cover::presentation::add_album_seed_gradient_class;
 use crate::shell::cover::{
     ArtworkTile, CoverGroupProjection, LARGE_COVER_SIZE, cover_fetch_size_for_display,
@@ -347,7 +347,10 @@ impl DetailSummaryProjection {
 
     pub(crate) fn replace(&self, values: &[(&str, String)]) {
         for (index, (item, icon, label)) in self.items.iter().enumerate() {
-            if let Some((icon_name, text)) = values.get(index) {
+            if let Some((icon_name, text)) = values
+                .get(index)
+                .filter(|(_, text)| summary_value_is_visible(text))
+            {
                 icon.set_icon_name(Some(icon_name));
                 label.set_text(text);
                 item.set_visible(true);
@@ -362,6 +365,10 @@ impl DetailSummaryProjection {
             bind_label_text_with(label, text);
         }
     }
+}
+
+fn summary_value_is_visible(text: &str) -> bool {
+    !text.is_empty()
 }
 
 pub(crate) fn detail_action_button(icon_name: &str, label: &str) -> gtk::Button {
@@ -517,11 +524,11 @@ pub(crate) fn detail_delete_button(label: &str) -> gtk::Button {
     button.add_css_class("circular");
     button.set_valign(gtk::Align::Center);
     button.set_tooltip_text(Some(&tr(label)));
-    button.set_child(Some(&gtk::Image::from_icon_name(REMOVE_ICON)));
+    button.set_child(Some(&gtk::Image::from_icon_name(DELETE_ICON)));
     configure_action_button(
         &button,
         ActionButtonVariant::DetailAction,
-        Some(REMOVE_ICON),
+        Some(DELETE_ICON),
     );
     button
 }
@@ -539,7 +546,6 @@ pub(crate) struct DetailCoverProjection {
     tile: ArtworkTile,
     size: Rc<Cell<i32>>,
     candidates: Rc<RefCell<ArtworkBinding>>,
-    seed: Rc<Cell<u32>>,
     render_size: i32,
     fetch_size: u32,
 }
@@ -558,24 +564,22 @@ impl DetailCoverProjection {
         self.tile.set_square_size(size);
     }
 
-    pub(crate) fn replace(&self, shell: &Rc<Shell>, binding: ArtworkBinding, seed: u32) {
+    pub(crate) fn replace(&self, shell: &Rc<Shell>, binding: ArtworkBinding) {
         self.candidates.replace(binding.clone());
-        self.seed.set(seed);
-        shell.bind_artwork_tile(&self.tile, binding, seed, self.render_size, self.fetch_size);
+        shell.bind_artwork_tile(&self.tile, binding, self.render_size, self.fetch_size);
     }
 }
 
 pub(crate) fn detail_cover_projection(
     shell: &Rc<Shell>,
     candidates: ArtworkBinding,
-    seed: u32,
     size: i32,
     cover_class: &str,
 ) -> DetailCoverProjection {
     let render_size = detail_cover_render_size();
     let fetch_size = LARGE_COVER_SIZE;
-    let tile = ArtworkTile::new_sized(size, size, seed);
-    shell.bind_artwork_tile(&tile, candidates.clone(), seed, render_size, fetch_size);
+    let tile = ArtworkTile::new_sized(size, size);
+    shell.bind_artwork_tile(&tile, candidates.clone(), render_size, fetch_size);
     let cover = tile.widget();
     cover.add_css_class("detail-showcase-cover");
     cover.add_css_class(cover_class);
@@ -589,20 +593,17 @@ pub(crate) fn detail_cover_projection(
     button.set_child(Some(&cover));
 
     let candidates = Rc::new(RefCell::new(candidates));
-    let seed = Rc::new(Cell::new(seed));
     let open_candidates = Rc::clone(&candidates);
-    let open_seed = Rc::clone(&seed);
     let shell = Rc::clone(shell);
     button.connect_clicked(move |_| {
         let candidates = open_candidates.borrow().clone();
-        shell.present_full_artwork(candidates, open_seed.get());
+        shell.present_full_artwork(candidates);
     });
     DetailCoverProjection {
         button,
         tile,
         size: Rc::new(Cell::new(size)),
         candidates,
-        seed,
         render_size,
         fetch_size,
     }
@@ -613,12 +614,12 @@ fn detail_cover_render_size() -> i32 {
 }
 
 impl Shell {
-    fn present_full_artwork(self: &Rc<Self>, candidates: ArtworkBinding, seed: u32) {
+    fn present_full_artwork(self: &Rc<Self>, candidates: ArtworkBinding) {
         let size = full_artwork_size(self.chrome.window.width(), self.chrome.window.height());
         let fetch_size = cover_fetch_size_for_display(size);
-        let tile = ArtworkTile::new_sized(size, size, seed);
+        let tile = ArtworkTile::new_sized(size, size);
         let cover = tile.widget();
-        self.bind_artwork_tile(&tile, candidates, seed, size, fetch_size);
+        self.bind_artwork_tile(&tile, candidates, size, fetch_size);
         cover.add_css_class("full-artwork-cover");
         cover.set_halign(gtk::Align::Center);
         cover.set_valign(gtk::Align::Center);
@@ -672,7 +673,7 @@ pub(crate) fn detail_showcase_frame_with_back(
     overlay.set_width_request(1);
     overlay.set_child(Some(&frame));
 
-    let back = icon_button("go-previous-symbolic", "Back");
+    let back = icon_button("go-previous-bundled-symbolic", "Back");
     back.add_css_class("detail-back-button");
     back.set_halign(gtk::Align::Start);
     back.set_valign(gtk::Align::Start);
@@ -921,7 +922,7 @@ fn percent_encode_path_segment(value: &str) -> String {
 mod tests {
     use super::{
         detail_cover_render_size, detail_external_links_visible, full_artwork_size,
-        lastfm_album_url, lastfm_artist_url, musicbrainz_album_url,
+        lastfm_album_url, lastfm_artist_url, musicbrainz_album_url, summary_value_is_visible,
     };
     use crate::routes::route_layout::detail_showcase_cover_size;
 
@@ -939,6 +940,12 @@ mod tests {
         assert!(!detail_external_links_visible(false, true));
         assert!(!detail_external_links_visible(true, true));
         assert!(detail_external_links_visible(true, false));
+    }
+
+    #[test]
+    fn empty_summary_values_hide_the_icon_and_text() {
+        assert!(!summary_value_is_visible(""));
+        assert!(summary_value_is_visible("1 track"));
     }
 
     #[test]

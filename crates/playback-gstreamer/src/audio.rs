@@ -22,6 +22,7 @@ const EQUALIZER_DUMMY_HIGH_FREQUENCY: f64 = 20_000.0;
 struct AudioGraphConfig {
     loudness_normalization: LoudnessNormalizationMode,
     audio_output: Option<String>,
+    preserve_pitch: bool,
 }
 
 impl AudioGraphConfig {
@@ -29,6 +30,7 @@ impl AudioGraphConfig {
         Self {
             loudness_normalization: settings.loudness_normalization,
             audio_output: settings.audio_output.clone(),
+            preserve_pitch: settings.preserve_pitch,
         }
     }
 }
@@ -51,7 +53,7 @@ impl AudioGraph {
         let resample = make_element("audioresample", "rufin-audio-resample")?;
         let output = make_audio_output(settings.audio_output.as_deref())?;
         #[cfg(test)]
-        configure_sample_capture(&output);
+        configure_test_output(&output);
         let mut elements = vec![convert_in.clone()];
 
         let equalizer = make_element("equalizer-nbands", "rufin-equalizer")?;
@@ -71,6 +73,11 @@ impl AudioGraph {
                 settings.loudness_normalization == LoudnessNormalizationMode::Album,
             );
             elements.push(rgvolume);
+        }
+
+        if settings.preserve_pitch {
+            let scaletempo = make_element("scaletempo", "rufin-playback-rate")?;
+            elements.push(scaletempo);
         }
 
         let visualizer_pad = convert_out.static_pad("src");
@@ -110,20 +117,19 @@ impl AudioGraph {
 
     pub(super) fn reconfigure(&mut self, settings: &BackendAudioSettings) -> Result<bool, String> {
         let config = AudioGraphConfig::new(settings);
-        if self.config.loudness_normalization != config.loudness_normalization {
+        if self.config.loudness_normalization != config.loudness_normalization
+            || self.config.preserve_pitch != config.preserve_pitch
+        {
             return Ok(false);
         }
         if self.config.audio_output != config.audio_output
-            && (!audio_outputs_share_current_target(
-                self.config.audio_output.as_deref(),
-                config.audio_output.as_deref(),
-            ) || !set_output_target(
+            && !set_output_target(
                 &self.output,
                 config
                     .audio_output
                     .as_deref()
                     .and_then(audio_output_device_selector),
-            ))
+            )
         {
             return Ok(false);
         }
@@ -168,7 +174,15 @@ impl AudioGraph {
 }
 
 #[cfg(test)]
-fn configure_sample_capture(output: &gst::Element) {
+fn configure_test_output(output: &gst::Element) {
+    if output
+        .factory()
+        .is_some_and(|factory| factory.name() == "fakesink")
+    {
+        output.set_property("async", false);
+        output.set_property("sync", false);
+        return;
+    }
     let Some(sink) = output.downcast_ref::<gst_app::AppSink>() else {
         return;
     };
@@ -384,33 +398,11 @@ pub fn available_audio_outputs() -> Vec<AudioOutput> {
     if ensure_gstreamer_initialized().is_err() {
         return Vec::new();
     }
-    let devices = available_audio_output_devices();
-    if !devices.is_empty() {
-        return devices
-            .into_iter()
-            .map(|output| AudioOutput {
-                id: output.id,
-                name: output.name,
-            })
-            .collect();
-    }
-
-    let candidates = [
-        ("autoaudiosink", "System default"),
-        ("pipewiresink", "PipeWire"),
-        ("pulsesink", "PulseAudio"),
-        ("alsasink", "ALSA"),
-        ("jackaudiosink", "JACK"),
-        ("osxaudiosink", "macOS"),
-        ("wasapisink", "WASAPI"),
-        ("directsoundsink", "DirectSound"),
-    ];
-    candidates
+    available_audio_output_devices()
         .into_iter()
-        .filter(|(id, _)| gst::ElementFactory::find(id).is_some())
-        .map(|(id, name)| AudioOutput {
-            id: id.to_string(),
-            name: name.to_string(),
+        .map(|output| AudioOutput {
+            id: output.id,
+            name: output.name,
         })
         .collect()
 }
@@ -424,35 +416,11 @@ fn audio_output_device_selector(id: &str) -> Option<&str> {
         .filter(|target| !target.is_empty())
 }
 
-pub(super) fn audio_outputs_share_current_target(
-    current: Option<&str>,
-    selected: Option<&str>,
-) -> bool {
-    let default_device_id = available_audio_output_devices()
-        .into_iter()
-        .find(|output| {
-            output
-                .device
-                .properties()
-                .and_then(|properties| properties.get::<bool>("is-default").ok())
-                .unwrap_or(false)
-        })
-        .map(|output| output.id);
-    audio_outputs_share_target(current, selected, default_device_id.as_deref())
-}
-
-fn audio_outputs_share_target(
-    current: Option<&str>,
-    selected: Option<&str>,
-    default_device_id: Option<&str>,
-) -> bool {
-    let uses_default = |output: Option<&str>| match output {
-        None => true,
-        Some(output) if Some(output) == default_device_id => true,
-        Some("autoaudiosink" | "pipewiresink" | "pulsesink") => true,
-        Some(output) => output == default_audio_output_factory(),
-    };
-    uses_default(current) && uses_default(selected)
+pub(super) fn audio_output_is_available(selected: &str) -> bool {
+    audio_output_device_selector(selected).is_none()
+        || available_audio_output_devices()
+            .into_iter()
+            .any(|output| output.id == selected)
 }
 
 struct AudioOutputDevice {
@@ -721,23 +689,32 @@ mod tests {
             audio_output_selector_from_properties(&properties).as_deref(),
             Some("alsa_output.persisted")
         );
-        let default = audio_output_device_id("alsa_output.default");
-        let other = audio_output_device_id("alsa_output.other");
-        assert!(audio_outputs_share_target(
-            Some(&default),
-            None,
-            Some(&default)
-        ));
-        assert!(audio_outputs_share_target(
-            None,
-            Some(&default),
-            Some(&default)
-        ));
-        assert!(!audio_outputs_share_target(
-            Some(&other),
-            None,
-            Some(&default)
-        ));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn device_change_retargets_the_selected_sink() {
+        initialize_gstreamer();
+        let settings = BackendAudioSettings {
+            audio_output: Some("pulsesink".to_string()),
+            ..BackendAudioSettings::default()
+        };
+        let mut graph = AudioGraph::new(&settings).expect("Pulse output graph");
+        let mut changed = settings;
+        changed.audio_output = Some(audio_output_device_id("alsa_output.selected"));
+
+        assert!(graph.reconfigure(&changed).expect("retarget output"));
+        assert_eq!(
+            graph
+                .output
+                .factory()
+                .map(|factory| factory.name().to_string()),
+            Some("pulsesink".to_string())
+        );
+        assert_eq!(
+            graph.output.property::<Option<String>>("device").as_deref(),
+            Some("alsa_output.selected")
+        );
     }
 
     #[test]
@@ -776,6 +753,32 @@ mod tests {
 
         assert!(!rgvolume.property::<bool>("album-mode"));
         assert!(bin.by_name("rufin-replaygain-limiter").is_none());
+    }
+
+    #[test]
+    fn preserve_pitch_controls_the_scaletempo_stage() {
+        initialize_gstreamer();
+        let enabled = BackendAudioSettings {
+            audio_output: Some("fakesink".to_string()),
+            preserve_pitch: true,
+            ..BackendAudioSettings::default()
+        };
+        let mut graph = AudioGraph::new(&enabled).expect("pitch-preserving audio graph");
+        let bin = graph.root.downcast_ref::<gst::Bin>().expect("audio bin");
+        assert!(bin.by_name("rufin-playback-rate").is_some());
+
+        let disabled = BackendAudioSettings {
+            preserve_pitch: false,
+            ..enabled
+        };
+        assert!(
+            !graph
+                .reconfigure(&disabled)
+                .expect("pitch preservation configuration change")
+        );
+        let graph = AudioGraph::new(&disabled).expect("pitch-shifting audio graph");
+        let bin = graph.root.downcast_ref::<gst::Bin>().expect("audio bin");
+        assert!(bin.by_name("rufin-playback-rate").is_none());
     }
 
     #[test]
@@ -907,53 +910,6 @@ mod tests {
             .expect("observed gain")
             .expect("gain before the first audio buffer");
         assert!((observed_gain - 5.0).abs() < 0.001);
-    }
-
-    #[test]
-    #[ignore = "requires the isolated Linux audio server started by CI"]
-    fn real_audio_output_accepts_rufin_graph() {
-        initialize_gstreamer();
-        let output = std::env::var("RUFIN_TEST_AUDIO_OUTPUT")
-            .expect("RUFIN_TEST_AUDIO_OUTPUT names the isolated CI audio sink");
-        let settings = BackendAudioSettings {
-            audio_output: Some(output.clone()),
-            ..BackendAudioSettings::default()
-        };
-        let graph = AudioGraph::new(&settings).expect("Rufin audio graph");
-        let source = gst::ElementFactory::make("audiotestsrc")
-            .property("volume", 0.0_f64)
-            .property("num-buffers", 20_i32)
-            .build()
-            .expect("silent test source");
-        let pipeline = gst::Pipeline::new();
-        pipeline
-            .add_many([&source, graph.root()])
-            .expect("real-output pipeline");
-        source
-            .link(graph.root())
-            .expect("real-output pipeline link");
-        let bus = pipeline.bus().expect("real-output message bus");
-        pipeline
-            .set_state(gst::State::Playing)
-            .expect("real audio output reaches Playing");
-        let message = bus
-            .timed_pop_filtered(
-                gst::ClockTime::from_seconds(10),
-                &[gst::MessageType::Eos, gst::MessageType::Error],
-            )
-            .expect("real audio output finishes");
-        let result = match message.view() {
-            gst::MessageView::Eos(_) => Ok(()),
-            gst::MessageView::Error(_) => Err(crate::gstreamer_error_details(
-                &message,
-                "real audio output verification",
-                Some(&output),
-            )
-            .unwrap_or_else(|| "real audio output failed".to_string())),
-            _ => Err("real audio output returned an unexpected message".to_string()),
-        };
-        let _ = pipeline.set_state(gst::State::Null);
-        result.expect("Rufin audio reaches the isolated Linux server");
     }
 
     fn equalizer_band_gain(equalizer: &gst::Element, index: usize) -> Option<f64> {

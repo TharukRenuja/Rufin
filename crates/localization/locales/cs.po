@@ -1,0 +1,2162 @@
+# Rufin translation template.
+# Copyright (C) 2026 Rufin contributors
+# This file is distributed under the same license as the Rufin package.
+#
+msgid ""
+msgstr ""
+"Project-Id-Version: Rufin\n"
+"Report-Msgid-Bugs-To: https://github.com/screwys/Rufin/issues\n"
+"POT-Creation-Date: YEAR-MO-DA HO:MI+ZONE\n"
+"PO-Revision-Date: 2026-08-15 18:23+0000\n"
+"Last-Translator: Jakub Cabal <info@jakubcabal.cz>\n"
+"Language-Team: Czech <https://hosted.weblate.org/projects/rufin/app/cs/>\n"
+"Language: cs\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Plural-Forms: nplurals=3; plural=((n==1) ? 0 : (n>=2 && n<=4) ? 1 : 2);\n"
+"X-Generator: Weblate 2026.9.dev0\n"
+
+msgid ""
+"Downloads from this server will be removed, and automatic rules will be "
+"turned off"
+msgstr ""
+"Soubory stažené z tohoto serveru budou odstraněny a automatická pravidla "
+"budou vypnuta"
+
+msgid ""
+"Logs have secrets and absolute folder paths redacted, but you may still want "
+"to review the logs before sharing them"
+msgstr ""
+"V protokolech jsou utajené údaje a absolutní cesty ke složkám začerněny, ale "
+"možná budete chtít protokoly před jejich sdílením přesto zkontrolovat"
+
+msgid "No results ¯\\_(°╭╮°)_/¯"
+msgstr ""
+
+msgid ""
+"Only downloads from this rule will be deleted. Shared and manual downloads "
+"stay"
+msgstr ""
+"Smazány budou pouze soubory stažené na základě tohoto pravidla. Sdílené a "
+"ručně stažené soubory zůstanou zachovány"
+
+msgid ""
+"Route server media through this device instead of sharing provider URLs with "
+"the renderer"
+msgstr ""
+
+msgid ""
+"Saved mapping. {direct} direct, {prefix} prefix, {metadata} metadata, "
+"{unmatched} unmatched of {total} track"
+msgid_plural ""
+"Saved mapping. {direct} direct, {prefix} prefix, {metadata} metadata, "
+"{unmatched} unmatched of {total} tracks"
+msgstr[0] ""
+"Uložené mapování. {direct} direct, {prefix} prefix, {metadata} metadata, "
+"{unmatched} neshodné z {total} skladby"
+msgstr[1] ""
+"Uložené mapování. {direct} direct, {prefix} prefix, {metadata} metadata, "
+"{unmatched} neshodné z {total} sladeb"
+msgstr[2] ""
+"Uložené mapování. {direct} direct, {prefix} prefix, {metadata} metadata, "
+"{unmatched} neshodné z {total} sladeb"
+
+msgid ""
+"Tap to the entry to load the lyrics and save in the app cache, click save "
+"only if you also want to save it in your music folder"
+msgstr ""
+"Klepnutím na položku načtete text skladby a uložíte jej do mezipaměti "
+"aplikace, klikněte na Uložit pouze v případě, že jej chcete uložit také do "
+"složky s hudbou"
+
+msgid ""
+"Thank you for trying out Rufin! If you have problems or suggestions, please "
+"open an issue in Github."
+msgstr ""
+"Děkujeme, že jste vyzkoušeli Rufin! Pokud máte problémy nebo návrhy, "
+"otevřete prosím issue na Githubu."
+
+msgid ""
+"These folders are combined into the Local source and shown through folder "
+"browsing"
+msgstr ""
+"Tyto složky jsou sloučeny do lokálního zdroje a zobrazeny při procházení "
+"složek"
+
+msgid ""
+"This removes the server, cached library metadata, queue snapshot, and saved "
+"token for"
+msgstr ""
+"Tímto se odstraní server, metadata knihovny uložená v mezipaměti, snímek "
+"fronty a uložený token pro"
+
+msgid ""
+"This uses Jellyfin API for play radio, necessary if you want recommendation "
+"plugins to work"
+msgstr ""
+"Toto používá Jellyfin API pro přehrávání rádia, což je nezbytné, pokud "
+"chcete, aby pluginy pro doporučení fungovaly"
+
+msgid ""
+"This will log you out and clear your secrets including API ones. Your app "
+"cache is not touched."
+msgstr ""
+"Tímto se odhlásíte a vymažete své tajné údaje včetně těch k API. Mezipaměť "
+"vaší aplikace zůstane nedotčena."
+
+msgid ""
+"Track evens out every song, while Album preserves the intended differences "
+"within each album"
+msgstr ""
+"Režim Skladba vyrovnává zvuk každé skladby, zatímco režim Album zachovává "
+"rozdíly mezi skladbami v rámci každého alba"
+
+msgid ""
+"Unsaved changes. {direct} direct, {prefix} prefix, {metadata} metadata, "
+"{unmatched} unmatched of {total} track"
+msgid_plural ""
+"Unsaved changes. {direct} direct, {prefix} prefix, {metadata} metadata, "
+"{unmatched} unmatched of {total} tracks"
+msgstr[0] ""
+"Neuložené změny. {direct} direct, {prefix} prefix, {metadata} metadata, "
+"{unmatched} neshoda z {total} skladby"
+msgstr[1] ""
+"Neuložené změny. {direct} direct, {prefix} prefix, {metadata} metadata, "
+"{unmatched} neshoda z {total} skladeb"
+msgstr[2] ""
+"Neuložené změny. {direct} direct, {prefix} prefix, {metadata} metadata, "
+"{unmatched} neshoda z {total} skladeb"
+
+msgid ". You only need to fill email and an application name parts"
+msgstr ". Stačí vyplnit pouze e-mail a název části aplikace"
+
+msgid "128 kbps"
+msgstr "128 kbps"
+
+msgid "192 kbps"
+msgstr "192 kbps"
+
+msgid "256 kbps"
+msgstr "256 kbps"
+
+msgid "320 kbps"
+msgstr "320 kbps"
+
+msgid "5 Latest Albums"
+msgstr "5 nejnovějších alb"
+
+msgid "API key"
+msgstr "API klíč"
+
+msgid "API keys"
+msgstr "API klíče"
+
+msgid "About Rufin"
+msgstr "O aplikaci Rufin"
+
+msgid "Accent color"
+msgstr "Barva zvýraznění"
+
+msgid "Add Rule"
+msgstr "Přidat pravidlo"
+
+msgid "Add a matching server prefix"
+msgstr "Přidejte odpovídající prefix serveru"
+
+msgid "Add a new source"
+msgstr "Přidat nový zdroj"
+
+msgid "Add a title"
+msgstr "Přidat název"
+
+msgid "Add current"
+msgstr "Přidat aktuální"
+
+msgid "Add folder"
+msgstr "Přidat složku"
+
+msgid "Add server"
+msgstr "Přidat server"
+
+msgid "Add to Favorites"
+msgstr "Přidat do oblíbených"
+
+msgid "Add to Pins"
+msgstr "Připnout"
+
+msgid "Add to Playlist"
+msgstr "Přidat do playlistu"
+
+msgid "Add tracks when fewer than this many remain"
+msgstr "Přidat skladby, pokud jich zbývá méně než tento počet"
+
+msgid "Add"
+msgstr "Přidat"
+
+msgid "Added to favorites"
+msgstr "Přidat do oblíbených"
+
+msgid "Added to"
+msgstr "Přidáno do"
+
+msgid "Album Artists"
+msgstr "Interpreti alba"
+
+msgid "Album artist"
+msgstr "Interpret alba"
+
+msgid "Album artists"
+msgstr "Interpreti alba"
+
+msgid "Album radio"
+msgstr "Rádio podle alba"
+
+msgid "Album title"
+msgstr "Název alba"
+
+msgid "Album tracks"
+msgstr "Skladby alba"
+
+msgid "Album"
+msgstr "Album"
+
+msgid "Albums"
+msgstr "Alba"
+
+msgid "All Music"
+msgstr "Všechna hudba"
+
+msgid "All Playlists"
+msgstr "Všechny playlisty"
+
+msgid "All tracks"
+msgstr "Všechny skladby"
+
+msgid "Any genre"
+msgstr "Všechny žánry"
+
+msgid "App settings"
+msgstr "Nastavení aplikace"
+
+msgid "Appearance"
+msgstr "Vzhled"
+
+msgid "Appears On"
+msgstr "Objevuje se v"
+
+msgid "Application name"
+msgstr "Název aplikace"
+
+msgid "Artist / Album"
+msgstr "Interpret / Album"
+
+msgid "Artist albums"
+msgstr "Alba interpretů"
+
+msgid "Artist name"
+msgstr "Jméno interpreta"
+
+msgid "Artist radio"
+msgstr "Rádio interpereta"
+
+msgid "Artist tracks"
+msgstr "Skladby interpreta"
+
+msgid "Artist"
+msgstr "Interpret"
+
+msgid "Artists"
+msgstr "Interpreti"
+
+msgid "Audio fade on play/pause"
+msgstr "Ztlumení zvuku při přehrávání/pozastavení"
+
+msgid "Audio output"
+msgstr "Zvukový výstup"
+
+msgid "Audio processing is unavailable while casting"
+msgstr ""
+
+msgid "Audio"
+msgstr "Zvuk"
+
+msgid "Auto DJ off"
+msgstr "Auto DJ vypnuto"
+
+msgid "Auto DJ on"
+msgstr "Auto DJ zapnuto"
+
+msgid "Auto DJ refill threshold"
+msgstr "Práh doplňování Auto DJ"
+
+msgid "Auto DJ"
+msgstr "Auto DJ"
+
+msgid "Automatic updates"
+msgstr "Automatické aktualizace"
+
+msgid "BPM"
+msgstr "BPM"
+
+msgid "Back"
+msgstr "Zpět"
+
+msgid "Blue"
+msgstr "Modrá"
+
+msgid "Cached"
+msgstr "V mezipaměti"
+
+msgid "Caching Library"
+msgstr "Knihovna pro ukládání do mezipaměti"
+
+msgid "Caching local library..."
+msgstr "Ukládání lokální knihovny do mezipaměti..."
+
+msgid "Cancel download and clear downloaded items"
+msgstr "Zrušit stahování a vymazat stažené položky"
+
+msgid "Cancel download"
+msgstr "Zrušit stahování"
+
+msgid "Cancel"
+msgstr "Zrušit"
+
+#, fuzzy
+#| msgid "Rating"
+msgid "Casting"
+msgstr "Hodnocení"
+
+msgid "Change Secret Storage"
+msgstr "Změnit tajné úložiště"
+
+msgid "Change"
+msgstr "Změnit"
+
+msgid "Changes apply to {count} track"
+msgid_plural "Changes apply to {count} tracks"
+msgstr[0] "Změny se vztahují na {count} skladbu"
+msgstr[1] "Změny se vztahují na {count} skladby"
+msgstr[2] "Změny se vztahují na {count} skladeb"
+
+msgid "Checking..."
+msgstr "Kontrola..."
+
+msgid "Choose a local music folder"
+msgstr "Vyberte místní hudební složku"
+
+msgid "Choose an existing local folder"
+msgstr "Vyberte existující lokální složku"
+
+msgid "Choose at least one local music folder"
+msgstr "Zvolte alespoň jednu lokální hudební složku"
+
+msgid "Choose one or more folders to scan and play directly from this computer"
+msgstr ""
+"Vyberte jednu nebo více složek pro skenování a přehrávání přímo z tohoto "
+"počítače"
+
+msgid "Choose playback output"
+msgstr ""
+
+msgid "Choose"
+msgstr "Vyberte"
+
+msgid "Classical"
+msgstr "Klasická hudba"
+
+msgid "Clear Mapping"
+msgstr "Vymazat mapování"
+
+msgid "Clear fetched lyrics for this track"
+msgstr "Vymazat načtený text pro tuto skladbu"
+
+msgid "Clear queue"
+msgstr "Vymazat frontu"
+
+msgid "Close Window"
+msgstr "Zavřít okno"
+
+msgid "Close app window"
+msgstr "Zavřít okno aplikace"
+
+msgid "Close fullscreen player"
+msgstr "Ukončit režim celé obrazovky"
+
+msgid "Close"
+msgstr "Zavřít"
+
+msgid "Club"
+msgstr "Klubová hudba"
+
+msgid "Collapse sidebar"
+msgstr "Sbalit postranní panel"
+
+msgid "Collection"
+msgstr "Sbírka"
+
+msgid "Collections"
+msgstr "Sbírky"
+
+msgid "Color scheme"
+msgstr "Schéma barev"
+
+msgid "Columns"
+msgstr "Sloupce"
+
+msgid "Comment text"
+msgstr "Text komentáře"
+
+msgid "Comment"
+msgstr "Komentář"
+
+msgid "Compact"
+msgstr "Kompaktní"
+
+msgid "Connect"
+msgstr "Připojit"
+
+msgid "Connected as {username}"
+msgstr "Připojen jako {username}"
+
+msgid "Connected"
+msgstr "Připojeno"
+
+msgid "Connecting to music server..."
+msgstr "Připojování k hudebnímu serveru..."
+
+#, fuzzy
+#| msgid "Connecting to music server..."
+msgid "Connecting to {device}..."
+msgstr "Připojování k hudebnímu serveru..."
+
+#, fuzzy
+#| msgid "Connection"
+msgid "Connection failed"
+msgstr "Spojení"
+
+msgid "Connection"
+msgstr "Spojení"
+
+msgid "Context Menus"
+msgstr "Kontextové menu"
+
+msgid "Continue"
+msgstr "Pokračovat"
+
+msgid "Control notifications"
+msgstr "Správa oznámení"
+
+msgid "Copy"
+msgstr "Kopírovat"
+
+msgid "Could not save diagnostic log"
+msgstr "Nelze uložit diagnostický protokol"
+
+msgid "Could not update favorites"
+msgstr "Nelze aktualizovat oblíbené"
+
+msgid "Couldn't connect to {service}"
+msgstr "Nelze se připojit k {service}"
+
+msgid "Couldn't load this folder"
+msgstr "Nelze načíst tuto složku"
+
+msgid "Couldn't search for lyrics"
+msgstr "Nepodařilo se vyhledat text skladby"
+
+msgid "Create"
+msgstr "Vytvořit"
+
+msgid "Crossfade duration"
+msgstr "Doba trvání přechodu"
+
+msgid "Crossfade"
+msgstr "Přechod"
+
+msgid "Custom"
+msgstr "Přizpůsobené"
+
+msgid "Customize display"
+msgstr "Přizpůsobit zobrazení"
+
+msgid "Cut"
+msgstr "Vyjmout"
+
+msgid "Dance"
+msgstr "Taneční hudba"
+
+msgid "Dark"
+msgstr "Tmavý"
+
+msgid "Date added"
+msgstr "Datum přidání"
+
+msgid "Debug logging"
+msgstr "Protokol ladění"
+
+msgid "Decrease"
+msgstr "Snížit"
+
+msgid "Default left sidebar"
+msgstr "Výchozí levý postranní panel"
+
+msgid "Default right sidebar"
+msgstr "Výchozí pravý postranní panel"
+
+msgid "Delete Playlist"
+msgstr "Smazat playlist"
+
+msgid "Delete"
+msgstr "Smazat"
+
+msgid "Descending"
+msgstr "Sestupně"
+
+msgid "Detail track columns"
+msgstr "Sloupce s podrobnostmi o skladbě"
+
+msgid "Detail"
+msgstr "Podrobnosti"
+
+msgid "Diagnostic log saved"
+msgstr "Diagnostický protokol uložen"
+
+msgid "Diagnostic log"
+msgstr "Diagnostický protokol"
+
+msgid "Disable private mode"
+msgstr "Vypnout soukromý režim"
+
+msgid "Disc number"
+msgstr "Číslo disku"
+
+msgid "Disc"
+msgstr "Disk"
+
+msgid "Discography"
+msgstr "Diskografie"
+
+msgid "Discord"
+msgstr "Discord"
+
+msgid "Don't duplicate"
+msgstr "Neduplikujte"
+
+msgid "Download Folder"
+msgstr "Stáhnout složku"
+
+msgid "Download Queue"
+msgstr "Stáhnout frontu"
+
+msgid "Download quality"
+msgstr "Kvalita stažení"
+
+msgid "Download queued"
+msgstr "Stahování je ve frontě"
+
+msgid "Download started"
+msgstr "Stahování začalo"
+
+msgid "Download"
+msgstr "Stáhnout"
+
+msgid "Downloaded"
+msgstr "Staženo"
+
+msgid "Downloading"
+msgstr "Stahování"
+
+msgid "Downloads"
+msgstr "Stahování"
+
+msgid "Drag to reorder"
+msgstr "Přetažením změňte pořadí"
+
+msgid "Duration"
+msgstr "Délka"
+
+msgid "EP"
+msgstr "EP"
+
+msgid "EPs"
+msgstr "EP"
+
+msgid "Edit metadata"
+msgstr "Upravit metadata"
+
+msgid "Edit"
+msgstr "Upravit"
+
+msgid "Enable equalizer"
+msgstr "Zapnout equalizer"
+
+msgid "Enable private mode"
+msgstr "Zapnout soukromý režim"
+
+msgid "Enter API credentials first"
+msgstr "Nejprve zadejte přihlašovací údaje k API"
+
+#, fuzzy
+#| msgid "Enter a server address, username, and password"
+msgid "Enter a server address and API key"
+msgstr "Zadejte adresu serveru, uživatelské jméno a heslo"
+
+msgid "Enter a server address, username, and password"
+msgstr "Zadejte adresu serveru, uživatelské jméno a heslo"
+
+msgid "Entire Library"
+msgstr "Celá knihovna"
+
+msgid "Equalizer"
+msgstr "Ekvalizér"
+
+msgid "Everything, including new tracks"
+msgstr "Vše, včetně nových skladeb"
+
+msgid "Expand sidebar"
+msgstr "Rozbalit postranní panel"
+
+msgid "Explore"
+msgstr "Prozkoumat"
+
+msgid "External lyric lookup is off"
+msgstr "Externí vyhledávání textů skladeb je vypnuté"
+
+msgid "External lyric lookup"
+msgstr "Externí vyhledávání textů skladeb"
+
+msgid "External metadata lookup"
+msgstr "Externí vyhledávání metadat"
+
+msgid "External site links"
+msgstr "Odkazy na externí stránky"
+
+msgid "Fade audio when playback is paused or resumed"
+msgstr "Ztlumit zvuk při pozastavení nebo obnovení přehrávání"
+
+msgid "Favorite tracks"
+msgstr "Oblíbené skladby"
+
+msgid "Favorite tracks, plus tracks from favorite albums and artists"
+msgstr "Oblíbené skladby, plus skladby z oblíbených alb a interpretů"
+
+msgid "Favorite"
+msgstr "Oblíbené"
+
+msgid "Favorites"
+msgstr "Oblíbené"
+
+msgid "Featured genres"
+msgstr "Vybrané žánry"
+
+msgid "File path replacement"
+msgstr "Nahrazení cesty k souboru"
+
+msgid "Files need Mood/BPM tags written on them. Not supported for Jellyfin"
+msgstr ""
+"Soubory musí obsahovat značky Mood/BPM. Tato funkce není v aplikaci Jellyfin "
+"podporována"
+
+msgid "Find your ListenBrainz user token"
+msgstr "Najděte svůj uživatelský token ListenBrainz"
+
+msgid "Fixed position"
+msgstr "Pevná pozice"
+
+msgid "Flat"
+msgstr "Plochý"
+
+msgid "Folder"
+msgstr "Složka"
+
+msgid "Folders"
+msgstr "Složky"
+
+msgid "Forget Server"
+msgstr "Zapomenout server"
+
+msgid "Forward"
+msgstr "Vpřed"
+
+msgid "Found Servers"
+msgstr "Nalezené servery"
+
+msgid "Full Bass"
+msgstr "Posílení basů"
+
+msgid "Full Treble"
+msgstr "Zesílení výšek"
+
+msgid "Full"
+msgstr "Úplné zobrazení"
+
+msgid "Furigana"
+msgstr "Furigana"
+
+msgid "Gapless"
+msgstr "Přehrávání bez mezer"
+
+msgid "General"
+msgstr "Obecné"
+
+msgid "Generate and cache waveforms for the current track"
+msgstr "Vygenerovat a uložit do mezipaměti průběhy pro aktuální skladbu"
+
+msgid "Genius"
+msgstr "Genius"
+
+msgid "Genre radio"
+msgstr "Rádio žánru"
+
+msgid "Genre tracks"
+msgstr "Skladby žánru"
+
+msgid "Genre"
+msgstr "Žánr"
+
+msgid "Genres"
+msgstr "Žánry"
+
+msgid "Get token"
+msgstr "Získat token"
+
+msgid "Go to Album"
+msgstr "Přejít do alba"
+
+msgid "Go to Artist"
+msgstr "Přejít na interpreta"
+
+#, fuzzy
+#| msgid "Go to Album"
+msgid "Go to"
+msgstr "Přejít do alba"
+
+msgid "Google Cast"
+msgstr ""
+
+msgid "Green"
+msgstr "Zelená"
+
+msgid "Grid labels"
+msgstr "Popisky mřížky"
+
+msgid "Grid"
+msgstr "Mřížka"
+
+msgid "Help"
+msgstr "Nápověda"
+
+msgid "Hidden"
+msgstr "Skryté"
+
+msgid "Hide sidebar"
+msgstr "Skrýt postranní panel"
+
+msgid "History"
+msgstr "Historie"
+
+msgid "Hold and drag to resize"
+msgstr "Podržte a přetáhněte pro změnu velikosti"
+
+msgid "Home Blocks"
+msgstr "Bloky domovské stránky"
+
+msgid "Home"
+msgstr "Domovská stránka"
+
+msgid "Identify"
+msgstr "Identifikovat"
+
+msgid "Identifying..."
+msgstr "Identifikace..."
+
+msgid "If the page doesn't load, then Libre.fm blocks your IP range/VPN"
+msgstr ""
+"Pokud se stránka nenačte, znamená to, že Libre.fm blokuje váš rozsah IP "
+"adres/VPN"
+
+msgid "If you do not have API keys, create them"
+msgstr "Pokud nemáte klíče API, vytvořte si je"
+
+msgid "Image"
+msgstr "Obrázek"
+
+msgid "Include detailed Rufin diagnostics in this session"
+msgstr "Do této relace zahrňte podrobnou diagnostiku aplikace Rufin"
+
+msgid "Increase"
+msgstr "Zvýšit"
+
+msgid "Increases memory usage"
+msgstr "Zvyšuje využití paměti"
+
+msgid "Install available updates when Rufin starts"
+msgstr "Při spuštění aplikace Rufin nainstalovat dostupné aktualizace"
+
+msgid "Installed"
+msgstr "Nainstalováno"
+
+msgid "Instrumental"
+msgstr "Instrumentální"
+
+#, fuzzy
+#| msgid "Duration"
+msgid "Integrations"
+msgstr "Délka"
+
+msgid "Jellyfin"
+msgstr "Jellyfin"
+
+msgid "Jellyfin, Navidrome, or OpenSubsonic"
+msgstr "Jellyfin, Navidrome, nebo OpenSubsonic"
+
+msgid "Karaoke mode"
+msgstr "Režim Karaoke"
+
+msgid "Keep Rufin running after closing the window"
+msgstr ""
+
+msgid "Keep album transitions gapless when possible"
+msgstr "Pokud je to možné, zachovejte plynulé přechody mezi skladbami v albu"
+
+msgid "Keep music available offline. Folder changes only affect new downloads"
+msgstr ""
+"Uchovávejte hudbu k dispozici i v režimu offline. Změny ve složkách se "
+"týkají pouze nově stažených souborů"
+
+msgid "Keyboard Shortcuts"
+msgstr "Klávesové zkratky"
+
+msgid "LRCLIB"
+msgstr "LRCLIB"
+
+msgid "Language and readings"
+msgstr "Jazyk a četba"
+
+msgid "Language"
+msgstr "Jazyk"
+
+msgid "Laptop/Headphones"
+msgstr "Laptop/sluchátka"
+
+msgid "Last played"
+msgstr "Naposledy hrálo"
+
+msgid "Last.fm scrobbling"
+msgstr "Scrobblování na Last.fm"
+
+msgid "Last.fm"
+msgstr "Last.fm"
+
+msgid "Layout"
+msgstr "Rozvržení"
+
+msgid "Legacy"
+msgstr "Stará verze"
+
+msgid "Library"
+msgstr "Knihovna"
+
+msgid "Libre.fm scrobbling"
+msgstr "Scrobblování na Libre.fm"
+
+msgid "Libre.fm"
+msgstr "Libre.fm"
+
+msgid "Light"
+msgstr "Světlé"
+
+msgid "Limit"
+msgstr "Omezení"
+
+msgid "Linear"
+msgstr "Lineární"
+
+msgid "ListenBrainz scrobbling"
+msgstr "Scrobblování na ListenBrainz"
+
+msgid "ListenBrainz"
+msgstr "ListenBrainz"
+
+msgid "Loading folders..."
+msgstr "Načítání složek..."
+
+msgid "Local File Access"
+msgstr "Přístup k místním souborům"
+
+msgid "Local File Mapping"
+msgstr "Mapování lokálních souborů"
+
+msgid "Local Folders"
+msgstr "Místní složky"
+
+msgid "Local Prefix"
+msgstr "Místní Prefix"
+
+msgid "Local file access configured"
+msgstr "Nastaven přístup k místním souborům"
+
+msgid "Local file mapping is no longer available"
+msgstr "Mapování místních souborů již není k dispozici"
+
+msgid "Local file mapping"
+msgstr "Mapování lokálních souborů"
+
+msgid "Local library"
+msgstr "Místní knihovna"
+
+#, fuzzy
+#| msgid "Local music folder"
+msgid "Local music folder is unavailable"
+msgstr "Místní hudební složka"
+
+msgid "Local music folder"
+msgstr "Místní hudební složka"
+
+msgid "Local"
+msgstr "Místní"
+
+#, fuzzy
+#| msgid "Local Folders"
+msgid "Locate Folder"
+msgstr "Místní složky"
+
+msgid "Lock metadata"
+msgstr "Uzamknout metadata"
+
+msgid "Loudness normalization"
+msgstr "Normalizace hlasitosti"
+
+msgid "Lyrics loaded"
+msgstr "Texty skladeb načteny"
+
+msgid "Lyrics offset (ms)"
+msgstr "Posun textu skladby (ms)"
+
+msgid "Lyrics settings"
+msgstr "Nastavení textu skladeb"
+
+msgid "Lyrics"
+msgstr "Text skladby"
+
+msgid "Manage"
+msgstr "Spravovat"
+
+msgid "Mapped Local Path"
+msgstr "Mapovaná lokální cesta"
+
+msgid "Maximum year"
+msgstr "Maximální rok"
+
+msgid "Menu"
+msgstr "Menu"
+
+msgid "Metadata editing is no longer available"
+msgstr "Úprava metadat již není k dispozici"
+
+msgid "Metadata source"
+msgstr "Zdroj metadat"
+
+msgid "Metadata"
+msgstr "Metadata"
+
+msgid "Minimum year"
+msgstr "Minimální rok"
+
+msgid "Mood tracks"
+msgstr "Skladby podle nálady"
+
+msgid "Mood"
+msgstr "Nálada"
+
+msgid "Moods"
+msgstr "Nálady"
+
+msgid "More actions"
+msgstr "Více akcí"
+
+msgid "Most Played"
+msgstr "Nejčastěji přehrávané"
+
+msgid "Most Skipped"
+msgstr "Nejčastěji přeskakované"
+
+msgid "Most played"
+msgstr "Nejčastěji přehrávané"
+
+msgid "Move down"
+msgstr "Posunout dolů"
+
+msgid "Move provider down"
+msgstr "Posunout poskytovatele dolů"
+
+msgid "Move provider up"
+msgstr "Posunout poskytovatele nahoru"
+
+msgid "Move up"
+msgstr "Posunout nahoru"
+
+msgid "Multiple values"
+msgstr "Více hodnot"
+
+msgid "Music Folder"
+msgstr "Hudební složka"
+
+msgid "MusicBrainz + Last.fm"
+msgstr "MusicBrainz + Last.fm"
+
+msgid "MusicBrainz artist ID"
+msgstr "ID interpreta v MusicBrainz"
+
+msgid "MusicBrainz recording ID"
+msgstr "ID nahrávky v MusicBrainz"
+
+msgid "MusicBrainz release ID"
+msgstr "ID vydání v MusicBrainz"
+
+msgid "MusicBrainz release group ID"
+msgstr "ID vydavatelské skupiny na MusicBrainz"
+
+msgid "MusicBrainz release track ID"
+msgstr "ID skladby vydané na MusicBrainz"
+
+msgid "MusicBrainz"
+msgstr "MusicBrainz"
+
+msgid "Mute"
+msgstr "Ztlumit"
+
+msgid "Muted"
+msgstr "Ztlumeno"
+
+msgid "Name"
+msgstr "Jméno"
+
+msgid "Narrow layout threshold"
+msgstr "Prahová hodnota pro úzké rozvržení"
+
+msgid "Narrow left sidebar"
+msgstr "Úzký levý postranní panel"
+
+msgid "Narrow right sidebar"
+msgstr "Úzký pravý postranní panel"
+
+msgid "Navidrome"
+msgstr "Navidrome"
+
+msgid "Navigate page items"
+msgstr "Procházení položek stránky"
+
+msgid "Needs attention"
+msgstr "Vyžaduje pozornost"
+
+msgid "NetEase"
+msgstr "NetEase"
+
+msgid "Never Played"
+msgstr "Nikdy nepřehráno"
+
+msgid "New Playlist"
+msgstr "Nový playlist"
+
+msgid "New Smart Playlist"
+msgstr "Nový chytrý playlist"
+
+msgid "New download rule"
+msgstr "Nové pravidlo stahování"
+
+msgid "Newly added"
+msgstr "Nově přidané"
+
+msgid "Next Track"
+msgstr "Další skladba"
+
+msgid "Next page"
+msgstr "Další strana"
+
+msgid "Next"
+msgstr "Další"
+
+msgid "No Servers Found"
+msgstr "Nebyly nalezeny žádné servery"
+
+msgid "No albums from this artist yet"
+msgstr "Tento interpret zatím nemá žádná alba"
+
+msgid "No cached server path yet"
+msgstr "Cesta k serveru zatím není uložena v mezipaměti"
+
+msgid "No favorites yet"
+msgstr "Zatím žádné oblíbené položky"
+
+msgid "No folder selected"
+msgstr "Nebyla vybrána žádná složka"
+
+msgid "No folders selected"
+msgstr "Nebyly vybrány žádné složky"
+
+msgid "No limit"
+msgstr "Bez omezení"
+
+msgid "No local file mapping"
+msgstr "Žádné mapování místních souborů"
+
+msgid "No local folders configured"
+msgstr "Nebyly nakonfigurovány žádné místní složky"
+
+msgid "No lyrics"
+msgstr "Žádné texty skladeb"
+
+msgid "No matching tracks"
+msgstr "Žádné odpovídající skladby"
+
+msgid "No music from this artist yet"
+msgstr "Tento interpret zatím nemá žádnou hudbu"
+
+#, fuzzy
+#| msgid "No Servers Found"
+msgid "No network devices found"
+msgstr "Nebyly nalezeny žádné servery"
+
+msgid "No remote sources configured"
+msgstr "Nebyly nakonfigurovány žádné vzdálené zdroje"
+
+msgid "No servers found, add one manually or try again"
+msgstr ""
+"Nebyly nalezeny žádné servery. Přidejte jeden ručně nebo to zkuste znovu"
+
+msgid "No smart playlists yet"
+msgstr "Zatím žádné chytré playlisty"
+
+msgid "No source"
+msgstr "Žádný zdroj"
+
+msgid "No sources configured"
+msgstr "Nejsou nakonfigurovány žádné zdroje"
+
+msgid "No tracks here yet"
+msgstr "Zatím tu nejsou žádné skladby"
+
+msgid "No"
+msgstr "Ne"
+
+msgid "None"
+msgstr "Žádné"
+
+msgid "Not connected"
+msgstr "Není připojeno"
+
+msgid "Nothing here yet"
+msgstr "Zatím tu nic není"
+
+msgid "Nothing in this folder"
+msgstr "V této složce nic není"
+
+msgid "Nothing played yet"
+msgstr "Zatím nic nepřehráváno"
+
+msgid "Nothing playing"
+msgstr "Nic se nepřehrává"
+
+msgid "Nothing queued"
+msgstr "Nic ve frontě"
+
+msgid "Notifications"
+msgstr "Notifikace"
+
+msgid "Now playing notifications"
+msgstr "Oznámení o tom, co se aktuálně přehrává"
+
+msgid "Now playing updates"
+msgstr "Aktualizace „Nyní se přehrává“"
+
+msgid "Number of songs"
+msgstr "Počet skladeb"
+
+msgid "Off only for a server you control"
+msgstr "Platí pouze pro server, který spravujete"
+
+msgid "Off"
+msgstr "Vypnuto"
+
+msgid "Only played tracks"
+msgstr "Pouze přehrané skladby"
+
+msgid "Only unplayed tracks"
+msgstr "Pouze nepřehrané skladby"
+
+msgid "Open fullscreen player"
+msgstr "Otevřít přehrávač na celou obrazovku"
+
+msgid "Open on Jellyfin"
+msgstr "Otevřít v Jellyfin"
+
+msgid "Open on Last.fm"
+msgstr "Otevřít na Last.fm"
+
+msgid "Open on MusicBrainz"
+msgstr "Otevřít na MusicBrainz"
+
+msgid "Open on Navidrome"
+msgstr "Otevřít v Navidrome"
+
+msgid "Open release notes"
+msgstr "Otevřít poznámky k verzi"
+
+msgid "OpenSubsonic"
+msgstr "OpenSubsonic"
+
+msgid "Opening Last.fm authorization..."
+msgstr "Zahájení autorizace na Last.fm..."
+
+msgid "Opening Libre.fm authorization..."
+msgstr "Zahájení autorizace na Libre.fm..."
+
+msgid "Orange"
+msgstr "Oranžová"
+
+msgid "Original"
+msgstr "Originál"
+
+msgid "Other"
+msgstr "Ostatní"
+
+msgid "Overview"
+msgstr "Přehled"
+
+msgid "Password"
+msgstr "Heslo"
+
+msgid "Paste"
+msgstr "Vložit"
+
+msgid "Pause"
+msgstr "Pauza"
+
+msgid "Perceptual for a finer control at low volume; Linear for a direct scale"
+msgstr ""
+"Percepční režim pro přesnější ladění při nízkých hlasitostech; Lineární "
+"režim pro rovnou stupnici"
+
+msgid "Perceptual"
+msgstr "Percentuální"
+
+msgid "Pink"
+msgstr "Růžová"
+
+msgid "Pins"
+msgstr "Připnuto"
+
+msgid "Plain lyrics"
+msgstr "Jednoduché texty"
+
+msgid "Play Later"
+msgstr "Přehrát později"
+
+msgid "Play Next"
+msgstr "Přehrát další"
+
+msgid "Play album"
+msgstr "Přehrát album"
+
+msgid "Play artist"
+msgstr "Přehrát interpreta"
+
+msgid "Play count"
+msgstr "Počet přehrání"
+
+msgid "Play filter"
+msgstr "Filtr přehrání"
+
+msgid "Play genre"
+msgstr "Přehrát žánr"
+
+msgid "Play mood"
+msgstr "Poslouchejte podle nálady"
+
+msgid "Play playlist"
+msgstr "Přehrát playlist"
+
+msgid "Play radio"
+msgstr "Pustit Rádio"
+
+msgid "Play random"
+msgstr "Přehrát náhodně"
+
+msgid "Play smart playlist"
+msgstr "Přehrát chytrý playlist"
+
+msgid "Play track"
+msgstr "Přehrát skladbu"
+
+msgid "Play"
+msgstr "Přehrát"
+
+msgid "Play/Pause"
+msgstr "Přehrát/Pozastavit"
+
+#, fuzzy
+#| msgid "Playback"
+msgid "Playback speed"
+msgstr "Přehrávání"
+
+msgid "Playback"
+msgstr "Přehrávání"
+
+msgid "Played"
+msgstr "Přehráno"
+
+msgid "Playing on this device"
+msgstr ""
+
+msgid "Playing on {device}"
+msgstr ""
+
+msgid "Playlist name"
+msgstr "Název playlistu"
+
+msgid "Playlist order"
+msgstr "Pořadí skladeb v playlistu"
+
+msgid "Playlist radio"
+msgstr "Rádio s playlisty"
+
+msgid "Playlist tracks"
+msgstr "Skladby v playlistu"
+
+msgid "Playlist"
+msgstr "Playlist"
+
+msgid "Playlists"
+msgstr "Playlisty"
+
+msgid "Plays"
+msgstr "Přehrává"
+
+msgid "Pop"
+msgstr "Pop"
+
+msgid "Position"
+msgstr "Pozice"
+
+msgid "Prefer server lyrics"
+msgstr "Upřednostnit texty skladeb ze serveru"
+
+msgid "Prefer server playlist covers"
+msgstr "Upřednostnit obaly playlistů ze serveru"
+
+msgid "Prefer translations"
+msgstr "Upřednostnit překlady"
+
+msgid "Preferences"
+msgstr "Nastavení"
+
+msgid "Preparing library..."
+msgstr "Příprava knihovny..."
+
+#, fuzzy
+#| msgid "Prefer server lyrics"
+msgid "Preserve pitch"
+msgstr "Upřednostnit texty skladeb ze serveru"
+
+msgid "Preset"
+msgstr "Předvolba"
+
+msgid "Prevent automatic metadata refreshes from replacing these values"
+msgstr ""
+"Zabránit automatickému obnovování metadat, aby nedošlo k nahrazení těchto "
+"hodnot"
+
+msgid "Previous Track"
+msgstr "Předchozí skladba"
+
+msgid "Previous page"
+msgstr "Předchozí stránka"
+
+msgid "Previous"
+msgstr "Předchozí"
+
+msgid "Privacy and Security"
+msgstr "Soukromí a bezpečnost"
+
+msgid "Private mode is off"
+msgstr "Soukromý režim je vypnutý"
+
+msgid "Private mode is on"
+msgstr "Soukromý režim je zapnutý"
+
+msgid "Private mode"
+msgstr "Soukromý režim"
+
+msgid "Pronunciation"
+msgstr "Výslovnost"
+
+msgid "Proxy casting through Rufin"
+msgstr ""
+
+msgid "Purple"
+msgstr "Fialová"
+
+msgid "Queue a track to begin"
+msgstr "Zařadit skladbu na začátek fronty"
+
+msgid "Queue and transitions"
+msgstr "Fronta a přechody"
+
+msgid "Queue"
+msgstr "Fronta"
+
+msgid "Queued"
+msgstr "Ve frontě"
+
+msgid "Quit Rufin"
+msgstr "Ukončit Rufin"
+
+msgid "Quit"
+msgstr "Ukončit"
+
+msgid "Rating"
+msgstr "Hodnocení"
+
+msgid "Ready"
+msgstr "Připraveno"
+
+msgid "Recently played"
+msgstr "Nedávno přehrané"
+
+msgid "Recently released"
+msgstr "Nedávno vydané"
+
+msgid "Recommended when your server provides one"
+msgstr ""
+
+msgid "Reconnect"
+msgstr "Znovu se připojit"
+
+msgid "Red"
+msgstr "Červená"
+
+msgid "Redo"
+msgstr "Opakovat"
+
+msgid "Refresh section"
+msgstr "Obnovit sekci"
+
+msgid "Refresh"
+msgstr "Obnovit"
+
+msgid "Release date"
+msgstr "Datum vydání"
+
+msgid "Release notifications"
+msgstr "Notifikace vydání"
+
+msgid "Release"
+msgstr "Vydání"
+
+msgid "Remote lyrics"
+msgstr "Vzdálené texty skladeb"
+
+msgid "Remove All Downloads"
+msgstr "Odstranit všechny stažené soubory"
+
+msgid "Remove Download"
+msgstr "Odebrat ze seznamu stahování"
+
+msgid "Remove Downloads"
+msgstr "Smazat stažené soubory"
+
+msgid "Remove Local Folder"
+msgstr "Odebrat místní složku"
+
+msgid "Remove Rule and Delete Downloads"
+msgstr "Odebrat pravidlo a smazat stažené soubory"
+
+msgid "Remove Rule and Downloads"
+msgstr "Odebrat pravidlo a stahování"
+
+msgid "Remove Rule, Keep Downloads"
+msgstr "Odebrat pravidlo, zachovat stažené soubory"
+
+msgid "Remove and Delete"
+msgstr "Odebrat a smazat"
+
+msgid "Remove folder"
+msgstr "Odebrat složku"
+
+msgid "Remove from Favorites"
+msgstr "Odebrat z oblíbených"
+
+msgid "Remove from Pins"
+msgstr "Odepnout"
+
+msgid "Remove from Playlist"
+msgstr "Odebrat z playlistu"
+
+msgid "Remove from Queue"
+msgstr "Odebrat z fronty"
+
+msgid "Remove from playlist"
+msgstr "Odebrat z playlistu"
+
+msgid "Remove prefix"
+msgstr "Odebrat prefix"
+
+msgid "Remove rule"
+msgstr "Odebrat pravidlo"
+
+msgid "Remove"
+msgstr "Odebrat"
+
+msgid "Removed from favorites"
+msgstr "Odebrat z oblíbených"
+
+msgid "Rename Playlist"
+msgstr "Přejmenovat Playlist"
+
+msgid "Rename"
+msgstr "Přejmenovat"
+
+msgid "Repeat all"
+msgstr "Opakovat vše"
+
+msgid "Repeat off"
+msgstr "Vypnout opakování"
+
+msgid "Repeat one"
+msgstr "Opakovat jednou"
+
+msgid "Repeat"
+msgstr "Opakovat"
+
+msgid "Requires OpenSubsonic songLyrics v2"
+msgstr "Vyžaduje OpenSubsonic songLyrics v2"
+
+msgid "Reset equalizer"
+msgstr "Resetovat equalizer"
+
+msgid "Reset to defaults"
+msgstr "Obnovit výchozí nastavení"
+
+msgid "Reset"
+msgstr "Obnovit"
+
+msgid "Restore Default"
+msgstr "Obnovit výchozí"
+
+msgid "Restore"
+msgstr "Obnovit"
+
+msgid "Resume"
+msgstr "Pokračovat"
+
+msgid "Rich presence"
+msgstr "Rozšířené informace o přehrávání"
+
+msgid "Rock"
+msgstr "Rock"
+
+msgid "Romaji"
+msgstr "Rómadži (romanizace japonštiny)"
+
+msgid "Rows"
+msgstr "Řádky"
+
+msgid "Rufin data folder"
+msgstr "Složka s daty aplikace Rufin"
+
+msgid "Rule actions"
+msgstr "Akce založené na pravidlech"
+
+msgid "Save Diagnostic Log"
+msgstr "Uložit diagnostický protokol"
+
+msgid "Save Lyrics"
+msgstr "Uložit texty skladeb"
+
+msgid "Save Mapping"
+msgstr "Uložit mapování"
+
+msgid "Save Server Settings"
+msgstr "Uložit nastavení serveru"
+
+msgid "Save to rescan"
+msgstr "Uložit pro opětovné naskenování"
+
+msgid "Save"
+msgstr "Uložit"
+
+msgid "Saved Sources"
+msgstr "Uložené zdroje"
+
+msgid "Saved to"
+msgstr "Uložit do"
+
+msgid "Saved"
+msgstr "Uloženo"
+
+msgid "Saved, sync to preview matches"
+msgstr "Uloženo, synchronizuje se s náhledem pro nalezení shod"
+
+msgid "Saving..."
+msgstr "Ukládání..."
+
+msgid "Search Again"
+msgstr "Hledat znovu"
+
+msgid "Search Lyrics"
+msgstr "Hledat Texty"
+
+msgid "Search lyrics"
+msgstr "Hledat texty"
+
+msgid "Search preferences"
+msgstr "Možnosti vyhledávání"
+
+msgid "Search queue"
+msgstr "Fronta vyhledávání"
+
+msgid "Search"
+msgstr "Hledat"
+
+msgid "Searching Local Network"
+msgstr "Prohledávání místní sítě"
+
+msgid "Searching for Jellyfin servers on the local network..."
+msgstr "Vyhledávání serverů Jellyfin v místní síti..."
+
+#, fuzzy
+#| msgid "Searching..."
+msgid "Searching for devices..."
+msgstr "Hledání..."
+
+msgid "Searching will start automatically"
+msgstr "Vyhledávání se spustí automaticky"
+
+msgid "Searching..."
+msgstr "Hledání..."
+
+msgid "Secret storage"
+msgstr "Tajné úložiště"
+
+msgid "Secure storage"
+msgstr "Bezpečné úložiště"
+
+msgid "Seek Backward"
+msgstr "Vyhledat vzad"
+
+msgid "Seek Forward"
+msgstr "Hledejte vpřed"
+
+msgid "Seek playback"
+msgstr "Vyhledávání v přehrávání"
+
+msgid "Seekbar"
+msgstr "Indikátor průběhu"
+
+msgid "Select All"
+msgstr "Vybrat vše"
+
+msgid "Select Download Folder"
+msgstr "Vyberte složku pro stažení"
+
+msgid "Select Music Folder"
+msgstr "Vybrat složku s hudbou"
+
+msgid "Select Source"
+msgstr "Vyberte Zdroj"
+
+msgid "Selection"
+msgstr "Výběr"
+
+msgid "Server Actions"
+msgstr "Akce serveru"
+
+msgid "Server Address"
+msgstr "Adresa serveru"
+
+msgid "Server Library"
+msgstr "Knihovna na serveru"
+
+msgid "Server Prefix"
+msgstr "Prefix serveru"
+
+msgid "Server Sample"
+msgstr "Ukázka serveru"
+
+msgid "Server Settings"
+msgstr "Nastavení serveru"
+
+msgid "Server discovery failed: {error}"
+msgstr "Server se nepodařilo nalézt: {error}"
+
+msgid "Server is unreachable"
+msgstr "Server je nedostupný"
+
+msgid "Server lyrics are off in private mode"
+msgstr "V soukromém režimu nejsou texty skladeb ze serveru k dispozici"
+
+msgid "Server path"
+msgstr "Cesta k serveru"
+
+msgid "Server prefix doesn't match"
+msgstr "Prefix serveru se neshoduje"
+
+msgid "Server"
+msgstr "Server"
+
+msgid "Servers"
+msgstr "Servery"
+
+msgid "Set the Discord activity type to Listening"
+msgstr "Nastavte typ aktivity v Discordu na „Poslech“"
+
+msgid "Shared secret"
+msgstr "Sdílený tajný klíč"
+
+msgid "Show Rufin"
+msgstr "Zobrazit Rufin"
+
+msgid "Show downloaded badge"
+msgstr "Zobrazit odznak stažení"
+
+msgid "Show external service icons on album and artist pages"
+msgstr "Zobrazit ikony externích služeb na stránkách alb a interpretů"
+
+msgid "Show external site links"
+msgstr "Zobrazit odkazy na externí stránky"
+
+msgid "Show lyrics"
+msgstr "Zobrazit texty skladeb"
+
+msgid "Show paused status"
+msgstr "Zobrazit stav pozastaveno"
+
+msgid "Show sidebar"
+msgstr "Zobrazit postranní panel"
+
+msgid "Show tray icon"
+msgstr "Zobrazit ikonu v systémové liště"
+
+#, fuzzy
+#| msgid "Visualizer"
+msgid "Show visualizer"
+msgstr "Vizualizace"
+
+msgid "Show/hide lyrics"
+msgstr "Zobrazit/skrýt texty skladeb"
+
+msgid "Show/hide right sidebar"
+msgstr "Zobrazit/skrýt pravý postranní panel"
+
+msgid "Showcase"
+msgstr "Nejlepší"
+
+msgid "Shuffle off"
+msgstr "Promíchání vypnuto"
+
+msgid "Shuffle on"
+msgstr "Promíchání zapnuto"
+
+msgid "Shuffle"
+msgstr "Promíchání"
+
+msgid "Sidebar Items"
+msgstr "Položky postranního panelu"
+
+msgid "Sidebar item {position}"
+msgstr "Položka postranního panelu {position}"
+
+msgid "Sidebar route by position"
+msgstr "Rozložení postranního panelu podle pozice"
+
+msgid "SimpMusic"
+msgstr "SimpMusic"
+
+msgid "Single"
+msgstr "Singl"
+
+msgid "Singles"
+msgstr "Singly"
+
+msgid "Skip count"
+msgstr "Počet přeskočení"
+
+msgid "Skip same-album crossfade"
+msgstr "Přeskočení prolínání mezi skladbami na stejném albu"
+
+msgid "Slate"
+msgstr "Šedá"
+
+msgid "Smart Playlist"
+msgstr "Chytrý Playlist"
+
+msgid "Smart Playlists"
+msgstr "Chytré Playlisty"
+
+msgid "Smart playlist tracks"
+msgstr "Skladby v chytrém playlistu"
+
+msgid "Smart playlists"
+msgstr "Chytré playlisty"
+
+msgid "Song title"
+msgstr "Název skladby"
+
+msgid "Song"
+msgstr "Skladba"
+
+msgid "Sort title"
+msgstr "Seřadit podle názvu"
+
+msgid "Sort"
+msgstr "Seřadit"
+
+msgid "Source to use for cover images and song/artist links"
+msgstr "Zdroj pro získání obálky a odkazů na skladbu/interpreta"
+
+msgid "Sources"
+msgstr "Zdroje"
+
+msgid "Start minimized"
+msgstr "Spustit v minimalizovaném režimu"
+
+msgid "Status display"
+msgstr "Zobrazení stavu"
+
+msgid "Stream quality"
+msgstr "Kvalita streamu"
+
+msgid "Support"
+msgstr "Uživatelská podpora"
+
+msgid "Switching library..."
+msgstr "Přepínání knihovny..."
+
+msgid "Synced lyrics"
+msgstr "Synchronizované texty"
+
+msgid "System default"
+msgstr "Výchozí nastavení systému"
+
+msgid "System"
+msgstr "Systém"
+
+msgid "Teal"
+msgstr "Tyrkysová"
+
+msgid "Techno"
+msgstr "Techno"
+
+msgid "Text"
+msgstr "Text"
+
+msgid "Theme"
+msgstr "Téma"
+
+msgid "This device"
+msgstr ""
+
+msgid "This isn't available"
+msgstr "Toto není dostupné"
+
+msgid "This source cannot edit this field"
+msgstr "Tento zdroj nemůže toto pole upravit"
+
+msgid "Title (merged)"
+msgstr "Název (sloučeno)"
+
+msgid "Title"
+msgstr "Název"
+
+msgid "Toggle Fullscreen"
+msgstr "Přepnout do režimu celé obrazovky"
+
+msgid "Track number"
+msgstr "Číslo skladby"
+
+msgid "Track radio"
+msgstr "Rádio skladeb"
+
+msgid "Track"
+msgstr "Skladba"
+
+msgid "Tracks from every playlist"
+msgstr "Skladby ze všech playlistů"
+
+msgid "Tracks from your five latest albums"
+msgstr "Skladby z vašich pěti nejnovějších alb"
+
+msgid "Tracks"
+msgstr "Skladby"
+
+msgid "Transition mode"
+msgstr "Režim přechodu"
+
+msgid "Translation language"
+msgstr "Jazyk překladu"
+
+msgid "Troubleshooting"
+msgstr "Řešení problémů"
+
+msgid "Turn off only for a server you control"
+msgstr "Vypněte pouze u serveru, který spravujete"
+
+msgid "Turn off private mode"
+msgstr "Vypnout soukromý režim"
+
+msgid "Turn on private mode"
+msgstr "Zapnout soukromý režim"
+
+msgid "Type to search or create a new playlist"
+msgstr "Zadejte text pro vyhledání nebo vytvořte nový playlist"
+
+msgid "Type to search"
+msgstr "Zadejte text pro vyhledání"
+
+msgid "UPnP"
+msgstr ""
+
+msgid "Undo identified value"
+msgstr "Vrátit zpět určenou hodnotu"
+
+msgid "Undo"
+msgstr "Vrátit zpět"
+
+msgid "Unmuted"
+msgstr "Zrušeno ztlumení"
+
+msgid "Update"
+msgstr "Aktualizovat"
+
+#, fuzzy
+#| msgid "API key"
+msgid "Use API key"
+msgstr "API klíč"
+
+msgid "Use Jellyfin Instant Mix for recommendations"
+msgstr "Pro doporučení použijte Jellyfin Instant Mix"
+
+msgid "Use Rufin data folder"
+msgstr "Použít datovou složku aplikace Rufin"
+
+msgid "Use a number above zero"
+msgstr "Zadejte číslo větší než nula"
+
+msgid "Use different layout below a threshold width"
+msgstr "Při šířce menší než stanovená hodnota použít jiné rozložení"
+
+msgid "Use listening activity"
+msgstr "Využít funkci poslechu"
+
+msgid "Use local files for playback, lyrics, and supported metadata editing"
+msgstr ""
+"Používat místní soubory pro přehrávání, texty skladeb a úpravy podporovaných "
+"metadat"
+
+msgid "User token"
+msgstr "Uživatelský token"
+
+msgid "User"
+msgstr "Uživatel"
+
+msgid "Username"
+msgstr "Uživatelské jméno"
+
+msgid "Verify server certificate"
+msgstr "Ověřit certifikát serveru"
+
+msgid "Version History"
+msgstr "Historie verzí"
+
+msgid "View"
+msgstr "Pohled"
+
+msgid "Visible"
+msgstr "Viditelné"
+
+msgid "Visualizer"
+msgstr "Vizualizace"
+
+msgid "Volume Down"
+msgstr "Snížit hlasitost"
+
+msgid "Volume Up"
+msgstr "Zvýšit hlasitost"
+
+msgid "Volume scale"
+msgstr "Stupnice hlasitosti"
+
+msgid "Waiting for connection"
+msgstr "Čekání na připojení"
+
+msgid "Waveform seekbar"
+msgstr "Indikátor průběhu ve formě vlnové křivky"
+
+msgid "Window"
+msgstr "Okno"
+
+msgid "Year"
+msgstr "Rok"
+
+msgid "Yellow"
+msgstr "Žlutá"
+
+msgid "Yes"
+msgstr "Ano"
+
+msgid "above"
+msgstr "výše"
+
+msgid "after"
+msgstr "po"
+
+msgid "before"
+msgstr "před"
+
+msgid "below"
+msgstr "pod"
+
+msgid "contains"
+msgstr "obsahuje"
+
+msgid "does not contain"
+msgstr "neobsahuje"
+
+msgid "does not equal"
+msgstr "není to stejné"
+
+msgid "equals"
+msgstr "je to stejné"
+
+msgid "excludes"
+msgstr "vyloučit"
+
+msgid "here"
+msgstr "zde"
+
+msgid "is empty"
+msgstr "je prázdné"
+
+msgid "is not empty"
+msgstr "není prázdné"
+
+msgid "is not"
+msgstr "není"
+
+msgid "is"
+msgstr "je"
+
+#, fuzzy
+#| msgid "128 kbps"
+msgid "kbps"
+msgstr "128 kbps"
+
+msgid "range"
+msgstr "rozsah"
+
+msgid "to"
+msgstr "až"
+
+msgid "today"
+msgstr "dnes"
+
+msgid "yesterday"
+msgstr "včera"
+
+msgid "{count} album"
+msgid_plural "{count} albums"
+msgstr[0] "{count} album"
+msgstr[1] "{count} alba"
+msgstr[2] "{count} alb"
+
+msgid "{count} day ago"
+msgid_plural "{count} days ago"
+msgstr[0] "{count} dnem"
+msgstr[1] "{count} dny"
+msgstr[2] "{count} dny"
+
+msgid "{count} folder selected"
+msgid_plural "{count} folders selected"
+msgstr[0] "{count} složka vybrána"
+msgstr[1] "{count} složky vybrány"
+msgstr[2] "{count} složek vybráno"
+
+msgid "{count} month ago"
+msgid_plural "{count} months ago"
+msgstr[0] "před {count} měsícem"
+msgstr[1] "před {count} měsíci"
+msgstr[2] "před {count} měsíci"
+
+msgid "{count} result"
+msgid_plural "{count} results"
+msgstr[0] "{count} výsledek"
+msgstr[1] "{count} výsledky"
+msgstr[2] "{count} výsledků"
+
+msgid "{count} track"
+msgid_plural "{count} tracks"
+msgstr[0] "{count} skladba"
+msgstr[1] "{count} skladby"
+msgstr[2] "{count} skladeb"
+
+msgid "{count} week ago"
+msgid_plural "{count} weeks ago"
+msgstr[0] "před {count} týdnem"
+msgstr[1] "před {count} týdny"
+msgstr[2] "před {count} týdny"
+
+msgid "{count} year ago"
+msgid_plural "{count} years ago"
+msgstr[0] "Před {count} rokem"
+msgstr[1] "Před {count} roky"
+msgstr[2] "Před {count} roky"
+
+#~ msgid "ALSA"
+#~ msgstr "ALSA"
+
+#~ msgid "DirectSound"
+#~ msgstr "DirectSound"
+
+#~ msgid "Exit to tray"
+#~ msgstr "Ukončit do systémové lišty"
+
+#~ msgid "JACK"
+#~ msgstr "JACK"
+
+#~ msgid "PipeWire"
+#~ msgstr "PipeWire"
+
+#, fuzzy
+#~| msgid "Lyrics settings"
+#~ msgid "Playback settings"
+#~ msgstr "Nastavení textu skladeb"
+
+#~ msgid "PulseAudio"
+#~ msgstr "PulseAudio"
+
+#~ msgid "Rufin is running in the tray"
+#~ msgstr "Rufin běží v systémové liště"
+
+#~ msgid "Selected device"
+#~ msgstr "Vybrané zařízení"
+
+#~ msgid "WASAPI"
+#~ msgstr "WASAPI"
+
+#~ msgid "macOS"
+#~ msgstr "macOS"
+
+#~ msgid "Scrobbling"
+#~ msgstr "Scrobblování"
+
+#~ msgid "Hide lyrics"
+#~ msgstr "Skrýt text skladby"
+
+#~ msgid "Seconds"
+#~ msgstr "Sekundy"
+
+#~ msgid "Show Lyrics Panel"
+#~ msgstr "Zobrazit panel s texty skladeb"

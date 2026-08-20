@@ -2,6 +2,25 @@
 
 Thank you for your interest in contributing to Rufin! 
 
+Contributions are welcome for:
+
+- Documentation: typos, rephrases, additions, screenshots and more
+- Packaging: editing current methods or adding new ones; `xtask` crate should be checked
+- Bug fixes: if you want to patch a bug, please clearly explain how to reproduce it in your PR
+- New features: You can open an issue/discussion beforehand unless you want to make it a surprise!
+- UX improvements
+
+For translations, you can visit [Weblate](https://hosted.weblate.org/projects/rufin/app/) instead.
+
+## Simple guidelines
+
+For GTK work, please see GTK's
+[Preparing for GTK 5](https://docs.gtk.org/gtk4/migrating-4to5.html) guide, as Rufin tries to remain compatible with GTK 5.
+
+For commit names and PRs, we prefer
+[Conventional Commits](https://www.conventionalcommits.org/en/v1.0.0/#summary) or [Scoped Commits](https://scopedcommits.com/).
+
+
 ## Development environment
 
 For development using your host packages, please see
@@ -45,6 +64,7 @@ Rufin's crates try to follow a product ownership model. The goal is to separate 
 | `lyrics` | lyrics fetching, selection, and state |
 | `metadata-lookup` | external metadata and artwork lookups |
 | `playback` | playback behavior and the queue |
+| `playback-cast` | UPnP, Chromecast and AirPlay casting integration |
 | `playback-gstreamer` | the GStreamer playback backend |
 | `rufin` | app startup, settings persistence, and crate composition |
 | `scrobbling` | scrobbling services|
@@ -96,13 +116,4 @@ is kept under `.local/build`, container state under `.local/container`, and fini
 return commands to the host, or `just container reset` to clear the container state. `just debug`
 always runs on the host and is unavailable inside the container shell.
 
-## Simple guidelines
 
-For GTK work, please see GTK's
-[Preparing for GTK 5](https://docs.gtk.org/gtk4/migrating-4to5.html) guide, as Rufin tries to remain compatible with GTK 5.
-
-For commit names and PRs, you may use
-[Conventional Commits](https://www.conventionalcommits.org/en/v1.0.0/#summary).
-This is not a requirement, but is just a preference. 
-
-For translations, you can visit [Weblate](https://hosted.weblate.org/projects/rufin/app/).

@@ -11,6 +11,7 @@ mod layout;
 mod localization;
 pub(crate) mod player;
 mod preferences;
+mod ratings;
 mod routes;
 pub mod runtime;
 pub mod settings;
