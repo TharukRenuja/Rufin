@@ -18,6 +18,61 @@ use sources::{
 
 use super::*;
 
+#[test]
+fn open_subsonic_api_key_mode_crosses_the_ui_boundary_explicitly() {
+    let setup = source_setup_input(
+        SourceSetup::OpenSubsonic {
+            kind: OpenSubsonicKind::OpenSubsonic,
+            authentication: OpenSubsonicAuthentication::ApiKey,
+            credentials: CredentialInput {
+                source_name: Some("Cloud Music".to_string()),
+                server_url: "https://cloud.example/apps/music/subsonic".to_string(),
+                username: String::new(),
+                secret: "server-issued-key".to_string(),
+                trust_invalid_cert: false,
+            },
+        },
+        "unused-jellyfin-device",
+    );
+
+    let SourceSetupInput::Subsonic {
+        flavor,
+        authentication,
+        credentials,
+    } = setup
+    else {
+        panic!("OpenSubsonic setup must remain provider owned")
+    };
+    assert_eq!(flavor, SubsonicFlavor::Subsonic);
+    assert_eq!(authentication, SubsonicAuthentication::ApiKey);
+    assert_eq!(credentials.username, "");
+    assert_eq!(credentials.password, "server-issued-key");
+}
+
+#[test]
+fn saved_open_subsonic_authentication_is_projected_for_editing() {
+    let configuration = SourceConfiguration {
+        source_id: SourceId::new("subsonic:server:test"),
+        kind: "subsonic".to_string(),
+        name: "Cloud Music".to_string(),
+        provider_payload: serde_json::json!({
+            "version": 1,
+            "base_url": "https://cloud.example/apps/music/subsonic",
+            "username": "listener",
+            "trust_invalid_cert": false,
+            "authentication": "api_key"
+        })
+        .to_string(),
+    };
+
+    let editable = editable_source(&configuration).expect("editable OpenSubsonic source");
+    assert_eq!(
+        editable.credentials.open_subsonic_authentication,
+        Some(OpenSubsonicAuthentication::ApiKey)
+    );
+    assert_eq!(editable.credentials.username, "listener");
+}
+
 fn test_jellyfin_source(source_id: SourceId) -> (SourceConfiguration, Arc<Source>) {
     let configuration = SourceConfiguration {
         source_id,

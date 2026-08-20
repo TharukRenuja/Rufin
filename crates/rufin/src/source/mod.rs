@@ -26,14 +26,15 @@ use sources::{
     CredentialHostInput, CredentialSettingsInput, JellyfinSettingsInput, JellyfinSetupInput,
     LocalFolderHostInput, NativeSourceResult, ObservedSourceChange, PreparedSourceChange, Source,
     SourceCacheMatch, SourceConfiguration, SourceEditResult, SourceFreshness, SourceInputIdentity,
-    SourceReadProgress, SourceReadStage, SourceSettingsInput, SourceSetupInput, SubsonicFlavor,
+    SourceReadProgress, SourceReadStage, SourceSettingsInput, SourceSetupInput,
+    SubsonicAuthentication, SubsonicFlavor,
 };
 use tracing::warn;
 use ui::runtime::source::{
     ConfiguredSources, CredentialInput, CredentialPreset, DiscoveredServer, DiscoveryStatus,
-    DiscoveryUpdate, EditableSource, LocalFolder, OpenSubsonicKind, SelectedSourcePort,
-    SourceLocalAccess, SourceLocalAccessSummary, SourceOperation, SourcePort, SourceProgress,
-    SourceProgressStage, SourceSettingsChange, SourceSetup, SourceSummary,
+    DiscoveryUpdate, EditableSource, LocalFolder, OpenSubsonicAuthentication, OpenSubsonicKind,
+    SelectedSourcePort, SourceLocalAccess, SourceLocalAccessSummary, SourceOperation, SourcePort,
+    SourceProgress, SourceProgressStage, SourceSettingsChange, SourceSetup, SourceSummary,
 };
 use ui::runtime::{
     HomePublication, SelectedLibrary, SelectedLibraryUpdate, SourceEvent, SourceNotice,
@@ -2760,6 +2761,7 @@ fn editable_source(configuration: &SourceConfiguration) -> Result<EditableSource
         sources::EditableSource::Credentials {
             credentials,
             jellyfin_use_instant_mix,
+            subsonic_authentication,
             ..
         } => Ok(EditableSource {
             source: SourceSummary {
@@ -2774,6 +2776,8 @@ fn editable_source(configuration: &SourceConfiguration) -> Result<EditableSource
                 server_url: credentials.server_url,
                 username: credentials.username,
                 trust_invalid_cert: credentials.trust_invalid_cert,
+                open_subsonic_authentication: subsonic_authentication
+                    .map(open_subsonic_authentication),
             },
             jellyfin_use_instant_mix,
         }),
@@ -2793,8 +2797,13 @@ fn source_setup_input(input: SourceSetup, jellyfin_device_id: &str) -> SourceSet
             use_instant_mix,
             device_id: jellyfin_device_id.to_string(),
         }),
-        SourceSetup::OpenSubsonic { kind, credentials } => SourceSetupInput::Subsonic {
+        SourceSetup::OpenSubsonic {
+            kind,
+            authentication,
+            credentials,
+        } => SourceSetupInput::Subsonic {
             flavor: subsonic_flavor(kind),
+            authentication: subsonic_authentication(authentication),
             credentials: credential_host_input(credentials),
         },
         SourceSetup::Local { roots } => SourceSetupInput::Local(LocalFolderHostInput { roots }),
@@ -2814,8 +2823,12 @@ fn source_settings_input(input: SourceSettingsChange) -> SourceSettingsInput {
         SourceSettingsChange::OpenSubsonic {
             source_id: _,
             kind: _,
+            authentication,
             credentials,
-        } => SourceSettingsInput::Subsonic(credential_settings_input(credentials)),
+        } => SourceSettingsInput::Subsonic {
+            authentication: subsonic_authentication(authentication),
+            credentials: credential_settings_input(credentials),
+        },
     }
 }
 
@@ -2831,7 +2844,7 @@ fn credential_host_input(input: CredentialInput) -> CredentialHostInput {
         server_name: input.source_name,
         server_url: input.server_url,
         username: input.username,
-        password: input.password,
+        password: input.secret,
         trust_invalid_cert: input.trust_invalid_cert,
     }
 }
@@ -2841,7 +2854,7 @@ fn credential_settings_input(input: CredentialInput) -> CredentialSettingsInput 
         name: input.source_name.unwrap_or_default(),
         base_url: input.server_url,
         username: input.username,
-        password: input.password,
+        password: input.secret,
         trust_invalid_cert: input.trust_invalid_cert,
     }
 }
@@ -2850,6 +2863,22 @@ fn subsonic_flavor(kind: OpenSubsonicKind) -> SubsonicFlavor {
     match kind {
         OpenSubsonicKind::Navidrome => SubsonicFlavor::Navidrome,
         OpenSubsonicKind::OpenSubsonic => SubsonicFlavor::Subsonic,
+    }
+}
+
+fn subsonic_authentication(authentication: OpenSubsonicAuthentication) -> SubsonicAuthentication {
+    match authentication {
+        OpenSubsonicAuthentication::Password => SubsonicAuthentication::Password,
+        OpenSubsonicAuthentication::ApiKey => SubsonicAuthentication::ApiKey,
+    }
+}
+
+fn open_subsonic_authentication(
+    authentication: SubsonicAuthentication,
+) -> OpenSubsonicAuthentication {
+    match authentication {
+        SubsonicAuthentication::Password => OpenSubsonicAuthentication::Password,
+        SubsonicAuthentication::ApiKey => OpenSubsonicAuthentication::ApiKey,
     }
 }
 

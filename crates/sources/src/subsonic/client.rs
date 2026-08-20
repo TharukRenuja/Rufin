@@ -4,7 +4,7 @@ use crate::remote_http::{self, BodyLimit, RemoteHttpPolicy, RemoteTimeouts};
 use crate::source::RemotePlaylistSource;
 use serde::{
     Deserialize, Serialize,
-    de::{self, DeserializeOwned, Visitor},
+    de::{self, DeserializeOwned, IntoDeserializer, Visitor},
 };
 use std::fmt;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -626,10 +626,13 @@ impl SubsonicSource {
     }
 }
 #[derive(Clone)]
-pub(super) struct SubsonicCredential {
-    pub(super) salt: String,
-    pub(super) token: String,
-    navidrome_password: Option<String>,
+pub(super) enum SubsonicCredential {
+    Token {
+        salt: String,
+        token: String,
+        navidrome_password: Option<String>,
+    },
+    ApiKey(String),
 }
 
 #[derive(Deserialize, Serialize)]
@@ -641,24 +644,43 @@ struct StoredSubsonicCredential {
     navidrome_password: Option<String>,
 }
 
+#[derive(Deserialize, Serialize)]
+struct StoredApiKeyCredential {
+    version: u32,
+    api_key: String,
+}
+
+#[derive(Deserialize)]
+struct StoredCredentialVersion {
+    version: u32,
+}
+
 impl fmt::Debug for SubsonicCredential {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter
-            .debug_struct("SubsonicCredential")
-            .field("salt", &"<redacted>")
-            .field("token", &"<redacted>")
-            .field(
-                "navidrome_password",
-                &self.navidrome_password.as_ref().map(|_| "<redacted>"),
-            )
-            .finish()
+        match self {
+            Self::Token {
+                navidrome_password, ..
+            } => formatter
+                .debug_struct("SubsonicCredential::Token")
+                .field("salt", &"<redacted>")
+                .field("token", &"<redacted>")
+                .field(
+                    "navidrome_password",
+                    &navidrome_password.as_ref().map(|_| "<redacted>"),
+                )
+                .finish(),
+            Self::ApiKey(_) => formatter
+                .debug_tuple("SubsonicCredential::ApiKey")
+                .field(&"<redacted>")
+                .finish(),
+        }
     }
 }
 impl SubsonicCredential {
     pub(super) fn from_password(password: &str) -> Self {
         let salt = random_salt();
         let token = format!("{:x}", md5::compute(format!("{password}{salt}")));
-        Self {
+        Self::Token {
             salt,
             token,
             navidrome_password: None,
@@ -666,30 +688,51 @@ impl SubsonicCredential {
     }
 
     pub(super) fn from_navidrome_password(password: &str) -> Self {
-        let mut credential = Self::from_password(password);
-        credential.navidrome_password = Some(password.to_string());
-        credential
+        let Self::Token { salt, token, .. } = Self::from_password(password) else {
+            unreachable!("a password creates a token credential")
+        };
+        Self::Token {
+            salt,
+            token,
+            navidrome_password: Some(password.to_string()),
+        }
+    }
+
+    pub(super) fn from_api_key(api_key: &str) -> SourceResult<Self> {
+        if api_key.is_empty() {
+            return Err(SourceError::Auth(
+                "the OpenSubsonic API key is missing".to_string(),
+            ));
+        }
+        Ok(Self::ApiKey(api_key.to_string()))
     }
 
     pub(super) fn parse(raw: &str) -> SourceResult<Self> {
         if raw.trim_start().starts_with('{') {
-            let stored =
-                serde_json::from_str::<StoredSubsonicCredential>(raw).map_err(|error| {
-                    SourceError::Other(format!("saved Subsonic credential is invalid: {error}"))
-                })?;
-            if stored.version != 1 {
-                return Err(SourceError::Other(format!(
-                    "saved Subsonic credential version {} is not supported",
-                    stored.version
-                )));
-            }
-            let credential = Self {
-                salt: stored.salt,
-                token: stored.token,
-                navidrome_password: stored.navidrome_password,
+            let version = serde_json::from_str::<StoredCredentialVersion>(raw)
+                .map_err(saved_credential_error)?
+                .version;
+            return match version {
+                1 => {
+                    let stored = serde_json::from_str::<StoredSubsonicCredential>(raw)
+                        .map_err(saved_credential_error)?;
+                    let credential = Self::Token {
+                        salt: stored.salt,
+                        token: stored.token,
+                        navidrome_password: stored.navidrome_password,
+                    };
+                    credential.validate()?;
+                    Ok(credential)
+                }
+                2 => {
+                    let stored = serde_json::from_str::<StoredApiKeyCredential>(raw)
+                        .map_err(saved_credential_error)?;
+                    Self::from_api_key(&stored.api_key)
+                }
+                version => Err(SourceError::Other(format!(
+                    "saved Subsonic credential version {version} is not supported"
+                ))),
             };
-            credential.validate()?;
-            return Ok(credential);
         }
         let Some((salt, token)) = raw.split_once(':') else {
             return Err(SourceError::Other(
@@ -701,7 +744,7 @@ impl SubsonicCredential {
                 "saved Subsonic credential is invalid".to_string(),
             ));
         }
-        Ok(Self {
+        Ok(Self::Token {
             salt: salt.to_string(),
             token: token.to_string(),
             navidrome_password: None,
@@ -709,30 +752,63 @@ impl SubsonicCredential {
     }
 
     pub(super) fn serialize(&self) -> String {
-        let Some(password) = self.navidrome_password.as_ref() else {
-            return format!("{}:{}", self.salt, self.token);
-        };
-        serde_json::to_string(&StoredSubsonicCredential {
-            version: 1,
-            salt: self.salt.clone(),
-            token: self.token.clone(),
-            navidrome_password: Some(password.clone()),
-        })
-        .expect("the Navidrome credential contains only JSON strings")
+        match self {
+            Self::Token {
+                salt,
+                token,
+                navidrome_password: None,
+            } => format!("{salt}:{token}"),
+            Self::Token {
+                salt,
+                token,
+                navidrome_password: Some(password),
+            } => serde_json::to_string(&StoredSubsonicCredential {
+                version: 1,
+                salt: salt.clone(),
+                token: token.clone(),
+                navidrome_password: Some(password.clone()),
+            })
+            .expect("the Navidrome credential contains only JSON strings"),
+            Self::ApiKey(api_key) => serde_json::to_string(&StoredApiKeyCredential {
+                version: 2,
+                api_key: api_key.clone(),
+            })
+            .expect("the OpenSubsonic API key is a JSON string"),
+        }
     }
 
     pub(super) fn navidrome_password(&self) -> Option<&str> {
-        self.navidrome_password.as_deref()
+        match self {
+            Self::Token {
+                navidrome_password, ..
+            } => navidrome_password.as_deref(),
+            Self::ApiKey(_) => None,
+        }
+    }
+
+    pub(super) fn authentication(&self) -> SubsonicAuthentication {
+        match self {
+            Self::Token { .. } => SubsonicAuthentication::Password,
+            Self::ApiKey(_) => SubsonicAuthentication::ApiKey,
+        }
     }
 
     fn validate(&self) -> SourceResult<()> {
-        if self.salt.is_empty()
-            || self.token.is_empty()
-            || self
-                .navidrome_password
-                .as_ref()
-                .is_some_and(|password| password.is_empty())
-        {
+        let invalid = match self {
+            Self::Token {
+                salt,
+                token,
+                navidrome_password,
+            } => {
+                salt.is_empty()
+                    || token.is_empty()
+                    || navidrome_password
+                        .as_ref()
+                        .is_some_and(|password| password.is_empty())
+            }
+            Self::ApiKey(api_key) => api_key.is_empty(),
+        };
+        if invalid {
             return Err(SourceError::Other(
                 "saved Subsonic credential is invalid".to_string(),
             ));
@@ -745,17 +821,20 @@ impl SubsonicCredential {
         username: &'a str,
         extra: &'a [(&'a str, &'a str)],
     ) -> Vec<(&'a str, &'a str)> {
-        let mut query = vec![
-            ("u", username),
-            ("s", self.salt.as_str()),
-            ("t", self.token.as_str()),
-            ("v", API_VERSION),
-            ("c", CLIENT_NAME),
-            ("f", "json"),
-        ];
+        let mut query = match self {
+            Self::Token { salt, token, .. } => {
+                vec![("u", username), ("s", salt.as_str()), ("t", token.as_str())]
+            }
+            Self::ApiKey(api_key) => vec![("apiKey", api_key.as_str())],
+        };
+        query.extend_from_slice(&[("v", API_VERSION), ("c", CLIENT_NAME), ("f", "json")]);
         query.extend_from_slice(extra);
         query
     }
+}
+
+fn saved_credential_error(error: serde_json::Error) -> SourceError {
+    SourceError::Other(format!("saved Subsonic credential is invalid: {error}"))
 }
 #[derive(Debug)]
 pub(super) struct SubsonicApiResponse<T> {
@@ -765,7 +844,12 @@ pub(super) struct SubsonicApiResponse<T> {
 pub(super) async fn subsonic_json<T: DeserializeOwned>(
     request: reqwest::RequestBuilder,
 ) -> SourceResult<SubsonicApiResponse<T>> {
-    let envelope = remote_http::json::<SubsonicEnvelope<T>>(
+    let endpoint = request
+        .try_clone()
+        .and_then(|request| request.build().ok())
+        .map(|request| request.url().path().to_string())
+        .unwrap_or_else(|| "/rest".to_string());
+    let envelope = remote_http::json::<SubsonicEnvelope>(
         request,
         SUBSONIC_HTTP,
         BodyLimit {
@@ -775,18 +859,48 @@ pub(super) async fn subsonic_json<T: DeserializeOwned>(
     )
     .await?;
     if envelope.response.status != "ok" {
-        let message = envelope
-            .response
-            .error
-            .map(|error| error.message)
+        let error = envelope.response.error;
+        let code = error.as_ref().and_then(|error| error.code);
+        let message = error
+            .map(|error| {
+                let message = error
+                    .message
+                    .filter(|message| !message.trim().is_empty())
+                    .unwrap_or_else(|| {
+                        error.code.map_or_else(
+                            || "Subsonic request failed".to_string(),
+                            |code| format!("Subsonic error {code}"),
+                        )
+                    });
+                match error.help_url {
+                    Some(help_url) if !help_url.trim().is_empty() => {
+                        format!("{message} ({help_url})")
+                    }
+                    _ => message,
+                }
+            })
             .unwrap_or_else(|| format!("Subsonic returned {}", envelope.response.status));
-        return Err(SourceError::Server {
-            status: 200,
-            message,
+        return Err(if matches!(code, Some(40..=44)) {
+            SourceError::Auth(message)
+        } else {
+            SourceError::Server {
+                status: 200,
+                message,
+            }
         });
     }
+    let body = serde_path_to_error::deserialize::<_, T>(
+        serde_json::Value::Object(envelope.response.body).into_deserializer(),
+    )
+    .map_err(|error| {
+        SourceError::Other(format!(
+            "opensubsonic response at {endpoint} field {}: {}",
+            error.path(),
+            error.inner()
+        ))
+    })?;
     Ok(SubsonicApiResponse {
-        body: envelope.response.body,
+        body,
         server_type: envelope.response.server_type,
     })
 }
@@ -868,6 +982,13 @@ pub(super) fn endpoint(base_url: &Url, method: &str) -> SourceResult<Url> {
     url.set_query(None);
     Ok(url)
 }
+
+pub(super) fn unauthenticated_url(base_url: &Url, method: &str) -> SourceResult<Url> {
+    let mut url = endpoint(base_url, method)?;
+    url.query_pairs_mut()
+        .extend_pairs([("v", API_VERSION), ("c", CLIENT_NAME), ("f", "json")]);
+    Ok(url)
+}
 const CLIENT_NAME: &str = "Rufin";
 const API_VERSION: &str = "1.16.1";
 const SALT_BYTES: usize = 12;
@@ -876,7 +997,7 @@ pub(super) fn redact_subsonic_query(url: &mut Url) {
     let pairs = url
         .query_pairs()
         .map(|(key, value)| {
-            let value = if matches!(key.as_ref(), "p" | "s" | "t") {
+            let value = if matches!(key.as_ref(), "apiKey" | "p" | "s" | "t") {
                 "<redacted>".into()
             } else {
                 value
@@ -1038,27 +1159,41 @@ impl SubsonicSource {
 #[derive(Clone, Debug, Default, Deserialize)]
 pub(super) struct SubsonicEmpty {}
 #[derive(Clone, Debug, Deserialize)]
-pub(super) struct SubsonicEnvelope<T> {
+pub(super) struct SubsonicEnvelope {
     #[serde(rename = "subsonic-response")]
-    pub(super) response: SubsonicResponse<T>,
+    pub(super) response: SubsonicResponse,
 }
 #[derive(Clone, Debug, Deserialize)]
-pub(super) struct SubsonicResponse<T> {
+pub(super) struct SubsonicResponse {
     pub(super) status: String,
     #[serde(default, rename = "type")]
     pub(super) server_type: Option<String>,
     #[serde(default)]
     pub(super) error: Option<SubsonicError>,
     #[serde(flatten)]
-    pub(super) body: T,
+    pub(super) body: serde_json::Map<String, serde_json::Value>,
 }
 #[derive(Clone, Debug, Deserialize)]
 pub(super) struct SubsonicError {
-    pub(super) message: String,
+    #[serde(default)]
+    pub(super) code: Option<u16>,
+    #[serde(default)]
+    pub(super) message: Option<String>,
+    #[serde(default, rename = "helpUrl")]
+    pub(super) help_url: Option<String>,
 }
 #[derive(Clone, Debug, Deserialize)]
 pub(super) struct AuthenticateBody {
     pub(super) user: SubsonicUser,
+}
+#[derive(Clone, Debug, Deserialize)]
+pub(super) struct TokenInfoBody {
+    #[serde(rename = "tokenInfo")]
+    pub(super) token_info: TokenInfo,
+}
+#[derive(Clone, Debug, Deserialize)]
+pub(super) struct TokenInfo {
+    pub(super) username: String,
 }
 #[derive(Clone, Debug, Deserialize)]
 pub(super) struct SubsonicUser {

@@ -67,6 +67,7 @@ pub enum SourceSetupInput {
     Jellyfin(JellyfinSetupInput),
     Subsonic {
         flavor: SubsonicFlavor,
+        authentication: crate::subsonic::SubsonicAuthentication,
         credentials: CredentialHostInput,
     },
     Local(LocalFolderHostInput),
@@ -75,8 +76,13 @@ pub enum SourceSetupInput {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum SourceSettingsInput {
     Jellyfin(JellyfinSettingsInput),
-    Subsonic(CredentialSettingsInput),
-    Local { roots: Vec<PathBuf> },
+    Subsonic {
+        authentication: crate::subsonic::SubsonicAuthentication,
+        credentials: CredentialSettingsInput,
+    },
+    Local {
+        roots: Vec<PathBuf>,
+    },
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -86,6 +92,7 @@ pub enum EditableSource {
         kind: String,
         credentials: CredentialHostPreset,
         jellyfin_use_instant_mix: Option<bool>,
+        subsonic_authentication: Option<crate::subsonic::SubsonicAuthentication>,
     },
     Local {
         source_id: SourceId,
@@ -222,6 +229,7 @@ impl SourceConfiguration {
                         trust_invalid_cert: config.trust_invalid_cert,
                     },
                     jellyfin_use_instant_mix: Some(config.use_instant_mix),
+                    subsonic_authentication: None,
                 })
             }
             "navidrome" | "subsonic" => {
@@ -236,6 +244,7 @@ impl SourceConfiguration {
                         trust_invalid_cert: config.trust_invalid_cert,
                     },
                     jellyfin_use_instant_mix: None,
+                    subsonic_authentication: Some(config.authentication),
                 })
             }
             crate::local::LOCAL_SOURCE_ID => {
@@ -350,6 +359,10 @@ mod tests {
         assert_eq!(subsonic.base_url, "https://subsonic.example");
         assert_eq!(subsonic.username, "legacy-listener");
         assert!(subsonic.trust_invalid_cert);
+        assert_eq!(
+            subsonic.authentication,
+            crate::subsonic::SubsonicAuthentication::Password
+        );
         let subsonic_payload = subsonic.clone().into_payload();
         assert!(subsonic_payload.get("user_id").is_none());
         assert_eq!(

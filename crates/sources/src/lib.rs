@@ -31,7 +31,7 @@ pub use jellyfin::{DiscoveredJellyfinServer, discover_jellyfin_servers};
 pub use local::{
     LOCAL_LIBRARY_SOURCE_ID, LOCAL_SOURCE_ID, read_local_access, verify_local_media_file,
 };
-pub use subsonic::SubsonicFlavor;
+pub use subsonic::{SubsonicAuthentication, SubsonicFlavor};
 
 use thiserror::Error;
 

@@ -559,6 +559,9 @@ msgstr ""
 msgid "Enter API credentials first"
 msgstr ""
 
+msgid "Enter a server address and API key"
+msgstr ""
+
 msgid "Enter a server address, username, and password"
 msgstr ""
 
@@ -1373,6 +1376,9 @@ msgstr ""
 msgid "Recently released"
 msgstr ""
 
+msgid "Recommended when your server provides one"
+msgstr ""
+
 msgid "Reconnect"
 msgstr ""
 
@@ -1874,6 +1880,9 @@ msgid "Unmuted"
 msgstr ""
 
 msgid "Update"
+msgstr ""
+
+msgid "Use API key"
 msgstr ""
 
 msgid "Use Jellyfin Instant Mix for recommendations"

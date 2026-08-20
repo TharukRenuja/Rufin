@@ -316,8 +316,9 @@ impl Source {
             SourceSetupInput::Jellyfin(input) => crate::jellyfin::connect(input).await,
             SourceSetupInput::Subsonic {
                 flavor,
+                authentication,
                 credentials,
-            } => crate::subsonic::connect(flavor, credentials).await,
+            } => crate::subsonic::connect(flavor, authentication, credentials).await,
         }
     }
 
@@ -338,8 +339,12 @@ impl Source {
             SourceSettingsInput::Jellyfin(input) => {
                 crate::jellyfin::edit(current, current_credential, input, jellyfin_device_id).await
             }
-            SourceSettingsInput::Subsonic(credentials) => {
-                crate::subsonic::edit(current, current_credential, credentials).await
+            SourceSettingsInput::Subsonic {
+                authentication,
+                credentials,
+            } => {
+                crate::subsonic::edit(current, current_credential, authentication, credentials)
+                    .await
             }
         }
     }
@@ -1212,6 +1217,7 @@ mod input_identity_tests {
                 username: username.to_string(),
                 trust_invalid_cert,
                 navidrome_library_version: library_version,
+                authentication: crate::subsonic::SubsonicAuthentication::Password,
             }
             .into_payload(),
         )
