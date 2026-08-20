@@ -552,7 +552,6 @@ fn relay_headers(
         .as_str()
     {
         "audio/mpeg" | "audio/mp3" => "DLNA.ORG_PN=MP3;",
-        "audio/flac" => "DLNA.ORG_PN=FLAC;",
         _ => "",
     };
     let mut headers = vec![
@@ -702,6 +701,19 @@ mod tests {
         assert_eq!(parse_range(Some("bytes=-3"), 10).unwrap(), Some((7, 9)));
         assert!(parse_range(Some("bytes=10-"), 10).is_err());
         assert!(parse_range(Some("items=1-2"), 10).is_err());
+    }
+
+    #[test]
+    fn flac_is_not_advertised_as_a_nonstandard_dlna_profile() {
+        let headers = relay_headers("audio/flac", None).expect("FLAC relay headers");
+        let features = headers
+            .iter()
+            .find(|header| header.field.equiv("contentFeatures.dlna.org"))
+            .map(|header| header.value.as_str())
+            .expect("DLNA content features");
+
+        assert!(!features.contains("DLNA.ORG_PN"));
+        assert!(features.contains("DLNA.ORG_OP=01"));
     }
 
     #[test]
