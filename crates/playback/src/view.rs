@@ -275,7 +275,11 @@ impl PlaybackSession {
                 repeat_mode: sequence.repeat_mode(),
                 shuffle_enabled: sequence.shuffle_enabled(),
                 auto_dj_enabled: self.auto_dj_enabled(),
-                volume: self.output_volume(),
+                volume: if self.output_muted() {
+                    0.0
+                } else {
+                    self.output_volume()
+                },
                 muted: self.output_muted(),
                 audio_output: settings.audio_output.clone(),
                 playback_output: self.playback_output().clone(),

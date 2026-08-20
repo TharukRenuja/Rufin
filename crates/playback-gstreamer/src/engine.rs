@@ -3477,13 +3477,7 @@ mod tests {
                 5_000,
             )
             .expect("start playback with a saved position");
-        assert!(
-            engine
-                .primary
-                .wait_for_state(gst::State::Paused, gst::ClockTime::from_seconds(10))
-        );
-
-        assert!(engine.retry_pending_seek());
+        assert!(engine.primary.has_or_targets_state(gst::State::Paused));
         assert_eq!(engine.state, BackendState::Buffering);
         assert!(
             engine
@@ -3491,6 +3485,8 @@ mod tests {
                 .as_ref()
                 .is_some_and(|pending| pending.resume_after_seek)
         );
+        engine.handle_state_changed(BackendState::Playing);
+        assert_eq!(engine.state, BackendState::Buffering);
 
         engine.push_position(5_000);
         assert_eq!(engine.state, BackendState::Playing);

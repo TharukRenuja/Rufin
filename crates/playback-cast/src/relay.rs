@@ -371,7 +371,9 @@ fn file_response(
         let length =
             usize::try_from(length).map_err(|_| "cast resource is too large".to_string())?;
         return Ok(
-            Response::new(status, headers, Cursor::new(Vec::new()), Some(length), None).boxed(),
+            Response::new(status, headers, Cursor::new(Vec::new()), Some(length), None)
+                .with_chunked_threshold(usize::MAX)
+                .boxed(),
         );
     }
     let length = usize::try_from(length).map_err(|_| "cast resource is too large".to_string())?;
@@ -382,6 +384,7 @@ fn file_response(
         Some(length),
         None,
     )
+    .with_chunked_threshold(usize::MAX)
     .boxed())
 }
 
@@ -422,6 +425,7 @@ fn remote_response(
             Some(length),
             None,
         )
+        .with_chunked_threshold(usize::MAX)
         .boxed());
     }
     let client = upstream_client(&resource.stream)?;
@@ -459,9 +463,15 @@ fn remote_response(
         headers.push(header("Content-Range", content_range)?);
     }
     if matches!(method, Method::Head) {
-        return Ok(Response::new(status, headers, Cursor::new(Vec::new()), length, None).boxed());
+        return Ok(
+            Response::new(status, headers, Cursor::new(Vec::new()), length, None)
+                .with_chunked_threshold(usize::MAX)
+                .boxed(),
+        );
     }
-    Ok(Response::new(status, headers, response, length, None).boxed())
+    Ok(Response::new(status, headers, response, length, None)
+        .with_chunked_threshold(usize::MAX)
+        .boxed())
 }
 
 fn parse_range(value: Option<&str>, total: u64) -> Result<Option<(u64, u64)>, String> {
@@ -704,9 +714,10 @@ mod tests {
         let directory = tempfile::tempdir().expect("temporary directory");
         let path = directory.path().join("track.mp3");
         let artwork_path = directory.path().join("cover.img");
+        let audio = b"0123456789".repeat(4_000);
         File::create(&path)
             .expect("create track")
-            .write_all(b"0123456789")
+            .write_all(&audio)
             .expect("write track");
         File::create(&artwork_path)
             .expect("create artwork")
@@ -731,7 +742,30 @@ mod tests {
             head.headers()
                 .get(reqwest::header::CONTENT_LENGTH)
                 .and_then(|value| value.to_str().ok()),
-            Some("10")
+            Some("40000")
+        );
+        assert!(
+            !head
+                .headers()
+                .contains_key(reqwest::header::TRANSFER_ENCODING)
+        );
+        let full_range = client
+            .get(&first)
+            .header(reqwest::header::RANGE, "bytes=0-")
+            .send()
+            .expect("full range request");
+        assert_eq!(full_range.status(), reqwest::StatusCode::PARTIAL_CONTENT);
+        assert_eq!(
+            full_range
+                .headers()
+                .get(reqwest::header::CONTENT_LENGTH)
+                .and_then(|value| value.to_str().ok()),
+            Some("40000")
+        );
+        assert!(
+            !full_range
+                .headers()
+                .contains_key(reqwest::header::TRANSFER_ENCODING)
         );
         let range = client
             .get(&first)

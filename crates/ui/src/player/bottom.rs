@@ -1,5 +1,7 @@
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::TryRecvError;
 use std::thread;
 use std::time::Duration;
@@ -72,6 +74,7 @@ const BOTTOM_PLAYER_VOLUME_SLOT_WIDTH: i32 = 95;
 const BOTTOM_PLAYER_VOLUME_SLOT_LAYOUT_WIDTH: i32 = 90;
 const BOTTOM_PLAYER_RATING_WIDTH: i32 = 85;
 const BOTTOM_PLAYER_RATING_HEIGHT: i32 = 24;
+const OUTPUT_DISCOVERY_REFRESH_INTERVAL: Duration = Duration::from_secs(5);
 const BOTTOM_PLAYER_TINY_TRANSPORT_WIDTH: i32 = 126;
 const BOTTOM_PLAYER_TINY_CONTROL_SPACING: i32 = 2;
 const BOTTOM_PLAYER_TINY_CONTROLS_WIDTH: i32 = BOTTOM_PLAYER_TINY_TRANSPORT_WIDTH;
@@ -1436,6 +1439,38 @@ fn replace_discovered_remote_outputs(
     *cached = discovered;
 }
 
+#[derive(Clone)]
+struct OutputPopoverStatus {
+    selection_started: Rc<Cell<bool>>,
+    root: gtk::Box,
+    spinner: gtk::Spinner,
+    label: gtk::Label,
+}
+
+impl OutputPopoverStatus {
+    fn finish_search(&self, empty: bool) {
+        if self.selection_started.get() {
+            return;
+        }
+        self.spinner.stop();
+        self.spinner.set_visible(false);
+        self.label.remove_css_class("error");
+        if empty {
+            self.root.set_visible(true);
+            self.label.set_text(&tr("No network devices found"));
+        } else {
+            self.root.set_visible(false);
+        }
+    }
+
+    fn fail_connection(&self) {
+        self.spinner.stop();
+        self.spinner.set_visible(false);
+        self.label.add_css_class("error");
+        self.label.set_text(&tr("Connection failed"));
+    }
+}
+
 fn present_output_popover(anchor: &gtk::Button, shell: &Rc<Shell>) {
     let selected = shell.products.playback.transport.playback_output();
     let popover = gtk::Popover::new();
@@ -1463,7 +1498,20 @@ fn present_output_popover(anchor: &gtk::Button, shell: &Rc<Shell>) {
     searching_label.add_css_class("dim-label");
     searching.append(&searching_label);
     outputs.set_header_suffix(Some(&searching));
-    add_output_row(&outputs, PlaybackOutput::Local, &selected, &popover, shell);
+    let status = OutputPopoverStatus {
+        selection_started: Rc::new(Cell::new(false)),
+        root: searching,
+        spinner,
+        label: searching_label,
+    };
+    add_output_row(
+        &outputs,
+        PlaybackOutput::Local,
+        &selected,
+        &popover,
+        &status,
+        shell,
+    );
     content.append(&outputs);
 
     let mut shown = shell.playback.remote_output_options.borrow().clone();
@@ -1481,6 +1529,7 @@ fn present_output_popover(anchor: &gtk::Button, shell: &Rc<Shell>) {
             PlaybackOutput::Remote(output.clone()),
             &selected,
             &popover,
+            &status,
             shell,
         );
         remote_rows.push((output.clone(), row));
@@ -1490,31 +1539,44 @@ fn present_output_popover(anchor: &gtk::Button, shell: &Rc<Shell>) {
 
     let (sender, receiver) = std::sync::mpsc::channel();
     let transport = shell.products.playback.transport.clone();
+    let discovery_running = Arc::new(AtomicBool::new(true));
+    let worker_running = Arc::clone(&discovery_running);
     thread::spawn(move || {
-        let _ = sender.send(transport.discover_remote_outputs());
+        while worker_running.load(Ordering::Acquire) {
+            if sender.send(transport.discover_remote_outputs()).is_err() {
+                break;
+            }
+            let slices = OUTPUT_DISCOVERY_REFRESH_INTERVAL.as_millis() / 100;
+            for _ in 0..slices {
+                if !worker_running.load(Ordering::Acquire) {
+                    return;
+                }
+                thread::sleep(Duration::from_millis(100));
+            }
+        }
     });
     let outputs_for_discovery = outputs.clone();
     let selected_for_discovery = selected.clone();
     let popover_for_discovery = popover.clone();
     let shell_for_discovery = Rc::clone(shell);
-    let content_for_discovery = content.clone();
+    let status_for_discovery = status.clone();
     let shown_for_discovery = Rc::clone(&shown);
     let rows_for_discovery = Rc::clone(&remote_rows);
+    let poll_running = Arc::clone(&discovery_running);
     gtk::glib::timeout_add_local(Duration::from_millis(50), move || {
         if !popover_for_discovery.is_visible() {
+            poll_running.store(false, Ordering::Release);
             return glib::ControlFlow::Break;
         }
         match receiver.try_recv() {
             Ok(Ok(discovered)) => {
-                spinner.stop();
-                spinner.set_visible(false);
-                if discovered.is_empty() {
-                    searching_label.set_text(&tr("No network devices found"));
-                } else {
-                    searching.set_visible(false);
-                }
+                status_for_discovery.finish_search(discovered.is_empty());
                 let mut shown = shown_for_discovery.borrow_mut();
+                let previous = shown.clone();
                 replace_discovered_remote_outputs(&mut shown, discovered, &selected_for_discovery);
+                if *shown == previous {
+                    return glib::ControlFlow::Continue;
+                }
                 let mut rows = rows_for_discovery.borrow_mut();
                 for (_, row) in rows.drain(..) {
                     outputs_for_discovery.remove(&row);
@@ -1525,6 +1587,7 @@ fn present_output_popover(anchor: &gtk::Button, shell: &Rc<Shell>) {
                         PlaybackOutput::Remote(output.clone()),
                         &selected_for_discovery,
                         &popover_for_discovery,
+                        &status_for_discovery,
                         &shell_for_discovery,
                     );
                     rows.push((output.clone(), row));
@@ -1533,34 +1596,32 @@ fn present_output_popover(anchor: &gtk::Button, shell: &Rc<Shell>) {
                     .playback
                     .remote_output_options
                     .borrow_mut() = shown.clone();
-                glib::ControlFlow::Break
+                glib::ControlFlow::Continue
             }
             Ok(Err(error)) => {
-                spinner.stop();
-                searching.set_visible(false);
-                let label = gtk::Label::new(Some(&error));
-                label.add_css_class("error");
-                label.set_wrap(true);
-                label.set_halign(gtk::Align::Start);
-                content_for_discovery.append(&label);
-                glib::ControlFlow::Break
+                if !status_for_discovery.selection_started.get() {
+                    status_for_discovery.spinner.stop();
+                    status_for_discovery.spinner.set_visible(false);
+                    status_for_discovery.root.set_visible(true);
+                    status_for_discovery.label.add_css_class("error");
+                    status_for_discovery.label.set_text(&error);
+                }
+                glib::ControlFlow::Continue
             }
             Err(TryRecvError::Empty) => glib::ControlFlow::Continue,
             Err(TryRecvError::Disconnected) => {
-                spinner.stop();
-                spinner.set_visible(false);
-                if shown_for_discovery.borrow().is_empty() {
-                    searching_label.set_text(&tr("No network devices found"));
-                } else {
-                    searching.set_visible(false);
-                }
+                status_for_discovery.finish_search(shown_for_discovery.borrow().is_empty());
                 glib::ControlFlow::Break
             }
         }
     });
 
     popover.set_child(Some(&content));
-    popover.connect_closed(|popover| popover.unparent());
+    let close_running = Arc::clone(&discovery_running);
+    popover.connect_closed(move |popover| {
+        close_running.store(false, Ordering::Release);
+        popover.unparent();
+    });
     popover.popup();
 }
 
@@ -1569,6 +1630,7 @@ fn add_output_row(
     output: PlaybackOutput,
     selected: &PlaybackOutput,
     popover: &gtk::Popover,
+    status: &OutputPopoverStatus,
     shell: &Rc<Shell>,
 ) -> adw::ActionRow {
     let title = match &output {
@@ -1595,16 +1657,41 @@ fn add_output_row(
         ));
     }
     let row_output = output.clone();
+    let row_group = group.clone();
     let row_popover = popover.clone();
+    let row_status = status.clone();
     let row_shell = Rc::clone(shell);
     row.connect_activated(move |_| {
-        select_output_async(&row_shell, &row_popover, row_output.clone());
+        select_output_async(
+            &row_shell,
+            &row_group,
+            &row_popover,
+            &row_status,
+            row_output.clone(),
+        );
     });
     group.add(&row);
     row
 }
 
-fn select_output_async(shell: &Rc<Shell>, popover: &gtk::Popover, output: PlaybackOutput) {
+fn select_output_async(
+    shell: &Rc<Shell>,
+    outputs: &adw::PreferencesGroup,
+    popover: &gtk::Popover,
+    status: &OutputPopoverStatus,
+    output: PlaybackOutput,
+) {
+    outputs.set_sensitive(false);
+    status.selection_started.set(true);
+    status.root.set_visible(true);
+    status.spinner.set_visible(true);
+    status.spinner.start();
+    status.label.remove_css_class("error");
+    let device = playback_output_label(&output);
+    status.label.set_text(&tr_with(
+        "Connecting to {device}...",
+        &[("device", device.as_str())],
+    ));
     let (sender, receiver) = std::sync::mpsc::channel();
     let transport = shell.products.playback.transport.clone();
     let selected = output.clone();
@@ -1612,7 +1699,9 @@ fn select_output_async(shell: &Rc<Shell>, popover: &gtk::Popover, output: Playba
         let _ = sender.send(transport.select_playback_output(selected));
     });
     let shell = Rc::clone(shell);
+    let outputs = outputs.clone();
     let popover = popover.clone();
+    let status = status.clone();
     gtk::glib::timeout_add_local(Duration::from_millis(50), move || {
         match receiver.try_recv() {
             Ok(Ok(())) => {
@@ -1628,21 +1717,30 @@ fn select_output_async(shell: &Rc<Shell>, popover: &gtk::Popover, output: Playba
                     .player_controls
                     .output_button
                     .set_tooltip_text(Some(&playback_output_label(&output)));
-                shell.show_feedback_toast(match &output {
+                let message = match &output {
                     PlaybackOutput::Local => tr("Playing on this device"),
                     PlaybackOutput::Remote(output) => {
                         tr_with("Playing on {device}", &[("device", output.name.as_str())])
                     }
-                });
+                };
+                shell.show_feedback_toast(message.clone());
+                outputs.set_sensitive(true);
+                status.spinner.stop();
                 popover.popdown();
                 glib::ControlFlow::Break
             }
             Ok(Err(error)) => {
+                outputs.set_sensitive(true);
+                status.fail_connection();
                 shell.show_feedback_toast(error);
                 glib::ControlFlow::Break
             }
             Err(TryRecvError::Empty) => glib::ControlFlow::Continue,
-            Err(TryRecvError::Disconnected) => glib::ControlFlow::Break,
+            Err(TryRecvError::Disconnected) => {
+                outputs.set_sensitive(true);
+                status.fail_connection();
+                glib::ControlFlow::Break
+            }
         }
     });
 }
