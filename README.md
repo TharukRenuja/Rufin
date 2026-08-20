@@ -323,6 +323,7 @@ Icon is designed by [Commenter25](https://commenter.cc) and it is licensed under
 - Estonian translation by Priit Jõerüüt
 - Russian and Latvian translation by [aguhadug](https://github.com/aguhadug)
 - German translation by [sevachka](https://github.com/sevachka)
+- Chezch translation by [Jakub Cabal](https://github.com/jakubcabal)
 
 # License
 
