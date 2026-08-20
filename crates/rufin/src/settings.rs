@@ -1241,7 +1241,7 @@ mod tests {
                 },
                 auto_dj_refill_threshold: 0,
                 tray_enabled: false,
-                exit_to_tray: true,
+                keep_running_after_close: true,
                 start_minimized: true,
                 lastfm_api_key: String::new(),
                 library_lists: vec![LibraryListSettingsEntry {
@@ -1305,8 +1305,9 @@ mod tests {
             settings.ui.auto_dj_refill_threshold,
             MIN_AUTO_DJ_REFILL_THRESHOLD
         );
-        assert!(!settings.ui.exit_to_tray);
-        assert!(!settings.ui.start_minimized);
+        assert!(settings.ui.keep_running_after_close);
+        assert!(settings.ui.tray_enabled);
+        assert!(settings.ui.start_minimized);
         assert_eq!(settings.ui.lastfm_api_key, "scrobble-key");
         assert!(settings.scrobbling.lastfm.api_key.is_empty());
         assert_eq!(

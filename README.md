@@ -69,7 +69,7 @@
 - Automatic updates for Windows and macOS builds
 - Easy built-in log viewing and exporting (privacy-conscious)
 - Type to search for routes
-- `Exit to tray` and `Start minimized` window options 
+- Can run in the background or set to launch minimized
 - System tray integration
 - 
 # Screenshots

@@ -42,6 +42,44 @@ fn automatic_updates_are_opt_in_and_persisted() {
 }
 
 #[test]
+fn close_preferences_migrate_without_retaining_the_tray_only_setting() {
+    let mut legacy = serde_json::to_value(Settings::default()).expect("serialize settings");
+    let object = legacy.as_object_mut().expect("settings object");
+    object.remove("keep_running_after_close");
+    object.insert("tray_enabled".to_string(), false.into());
+    object.insert("exit_to_tray".to_string(), true.into());
+
+    let mut restored = serde_json::from_value::<Settings>(legacy).expect("restore older settings");
+    restored.sanitize();
+
+    assert!(restored.keep_running_after_close);
+    assert!(restored.tray_enabled);
+    let persisted = serde_json::to_value(restored).expect("serialize migrated settings");
+    assert_eq!(persisted["keep_running_after_close"], true);
+    assert!(persisted.get("exit_to_tray").is_none());
+}
+
+#[test]
+fn keep_running_owns_the_tray_preference_invariant() {
+    let mut keep_running = Settings {
+        tray_enabled: false,
+        keep_running_after_close: true,
+        ..Settings::default()
+    };
+    keep_running.sanitize();
+    assert!(keep_running.tray_enabled);
+
+    let mut tray_disabled = Settings {
+        tray_enabled: false,
+        keep_running_after_close: false,
+        start_minimized: true,
+        ..Settings::default()
+    };
+    tray_disabled.sanitize();
+    assert!(!tray_disabled.start_minimized);
+}
+
+#[test]
 fn waveform_seekbar_is_opt_in_and_persists() {
     assert!(!Settings::default().seekbar_waveform_enabled);
 

@@ -4756,6 +4756,7 @@ name = "ui"
 version = "0.13.1"
 dependencies = [
  "artwork",
+ "ashpd",
  "async-channel",
  "desktop-integration",
  "directories",

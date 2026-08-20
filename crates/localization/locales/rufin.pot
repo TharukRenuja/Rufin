@@ -568,9 +568,6 @@ msgstr ""
 msgid "Everything, including new tracks"
 msgstr ""
 
-msgid "Exit to tray"
-msgstr ""
-
 msgid "Expand sidebar"
 msgstr ""
 
@@ -761,6 +758,9 @@ msgid "Jellyfin, Navidrome, or OpenSubsonic"
 msgstr ""
 
 msgid "Karaoke mode"
+msgstr ""
+
+msgid "Keep Rufin running after closing the window"
 msgstr ""
 
 msgid "Keep album transitions gapless when possible"
@@ -1494,9 +1494,6 @@ msgid "Rows"
 msgstr ""
 
 msgid "Rufin data folder"
-msgstr ""
-
-msgid "Rufin is running in the tray"
 msgstr ""
 
 msgid "Rule actions"

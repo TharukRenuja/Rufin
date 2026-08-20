@@ -19,6 +19,10 @@ apple-native-keyring-store = { version = "1.0.1", features = ["keychain"] }
 apple-cf = "=0.6.0"
 async-channel = "2.5.0"
 async-trait = "0.1.89"
+ashpd = { version = "0.13.13", default-features = false, features = [
+    "background",
+    "tokio",
+] }
 artwork = { path = "crates/artwork" }
 metadata-lookup = { path = "crates/metadata-lookup" }
 base64 = "0.23.0"
