@@ -683,6 +683,7 @@ mod tests {
         );
     }
 
+    #[cfg(target_os = "linux")]
     #[test]
     fn device_change_retargets_the_selected_sink() {
         initialize_gstreamer();
