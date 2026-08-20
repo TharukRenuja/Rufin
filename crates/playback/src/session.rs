@@ -117,6 +117,7 @@ pub enum SessionEffect {
     PersistOutputState {
         volume: f64,
         muted: bool,
+        audio_output: Option<String>,
     },
     FlushPersistence {
         source_id: SourceId,
@@ -605,6 +606,7 @@ impl PlaybackSession {
                     .then(|| SessionEffect::PersistOutputState {
                         volume: self.settings.volume,
                         muted: self.settings.muted,
+                        audio_output: self.settings.audio_output.clone(),
                     })
                     .into_iter()
                     .collect(),
@@ -745,9 +747,10 @@ impl PlaybackSession {
                 output,
             } => {
                 let local = self.playback_output.is_local();
+                let audio_output_changed = local && self.settings.audio_output != output;
                 let unchanged = self.output_volume == volume
                     && self.output_muted == muted
-                    && (!local || self.settings.audio_output == output);
+                    && !audio_output_changed;
                 if unchanged {
                     return SessionUpdate::default();
                 }
@@ -756,9 +759,19 @@ impl PlaybackSession {
                 if local {
                     self.settings.volume = volume;
                     self.settings.muted = muted;
-                    self.settings.audio_output = output;
+                    self.settings.audio_output = output.clone();
                 }
-                SessionUpdate::changed()
+                SessionUpdate {
+                    effects: audio_output_changed
+                        .then(|| SessionEffect::PersistOutputState {
+                            volume,
+                            muted,
+                            audio_output: output,
+                        })
+                        .into_iter()
+                        .collect(),
+                    ..SessionUpdate::changed()
+                }
             }
             BackendEvent::Visualizer { run, levels } => {
                 if self
@@ -1374,6 +1387,7 @@ impl PlaybackSession {
             effects.push(SessionEffect::PersistOutputState {
                 volume: self.settings.volume,
                 muted,
+                audio_output: self.settings.audio_output.clone(),
             });
         }
         SessionUpdate {
@@ -2326,6 +2340,34 @@ mod tests {
 
         session.replace_output(PlaybackOutput::Local);
         assert_eq!(session.view().controls.volume, local_volume);
+    }
+
+    #[test]
+    fn applied_audio_output_replaces_and_persists_the_requested_output() {
+        let mut session = session(&[1]);
+        let mut settings = session.settings().clone();
+        settings.audio_output = Some("gst-device:unavailable".to_string());
+        session
+            .handle_command(SessionCommand::UpdateSettings(settings), &sample(0))
+            .expect("request audio output");
+
+        let update = session.handle_backend(
+            BackendEvent::AudioApplied {
+                volume: session.settings().volume,
+                muted: session.settings().muted,
+                output: None,
+            },
+            &sample(1),
+        );
+
+        assert_eq!(session.settings().audio_output, None);
+        assert!(update.effects.iter().any(|effect| matches!(
+            effect,
+            SessionEffect::PersistOutputState {
+                audio_output: None,
+                ..
+            }
+        )));
     }
 
     #[test]

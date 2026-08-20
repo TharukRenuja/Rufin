@@ -123,16 +123,13 @@ impl AudioGraph {
             return Ok(false);
         }
         if self.config.audio_output != config.audio_output
-            && (!audio_outputs_share_current_target(
-                self.config.audio_output.as_deref(),
-                config.audio_output.as_deref(),
-            ) || !set_output_target(
+            && !set_output_target(
                 &self.output,
                 config
                     .audio_output
                     .as_deref()
                     .and_then(audio_output_device_selector),
-            ))
+            )
         {
             return Ok(false);
         }
@@ -393,33 +390,11 @@ pub fn available_audio_outputs() -> Vec<AudioOutput> {
     if ensure_gstreamer_initialized().is_err() {
         return Vec::new();
     }
-    let devices = available_audio_output_devices();
-    if !devices.is_empty() {
-        return devices
-            .into_iter()
-            .map(|output| AudioOutput {
-                id: output.id,
-                name: output.name,
-            })
-            .collect();
-    }
-
-    let candidates = [
-        ("autoaudiosink", "System default"),
-        ("pipewiresink", "PipeWire"),
-        ("pulsesink", "PulseAudio"),
-        ("alsasink", "ALSA"),
-        ("jackaudiosink", "JACK"),
-        ("osxaudiosink", "macOS"),
-        ("wasapisink", "WASAPI"),
-        ("directsoundsink", "DirectSound"),
-    ];
-    candidates
+    available_audio_output_devices()
         .into_iter()
-        .filter(|(id, _)| gst::ElementFactory::find(id).is_some())
-        .map(|(id, name)| AudioOutput {
-            id: id.to_string(),
-            name: name.to_string(),
+        .map(|output| AudioOutput {
+            id: output.id,
+            name: output.name,
         })
         .collect()
 }
@@ -433,35 +408,11 @@ fn audio_output_device_selector(id: &str) -> Option<&str> {
         .filter(|target| !target.is_empty())
 }
 
-pub(super) fn audio_outputs_share_current_target(
-    current: Option<&str>,
-    selected: Option<&str>,
-) -> bool {
-    let default_device_id = available_audio_output_devices()
-        .into_iter()
-        .find(|output| {
-            output
-                .device
-                .properties()
-                .and_then(|properties| properties.get::<bool>("is-default").ok())
-                .unwrap_or(false)
-        })
-        .map(|output| output.id);
-    audio_outputs_share_target(current, selected, default_device_id.as_deref())
-}
-
-fn audio_outputs_share_target(
-    current: Option<&str>,
-    selected: Option<&str>,
-    default_device_id: Option<&str>,
-) -> bool {
-    let uses_default = |output: Option<&str>| match output {
-        None => true,
-        Some(output) if Some(output) == default_device_id => true,
-        Some("autoaudiosink" | "pipewiresink" | "pulsesink") => true,
-        Some(output) => output == default_audio_output_factory(),
-    };
-    uses_default(current) && uses_default(selected)
+pub(super) fn audio_output_is_available(selected: &str) -> bool {
+    audio_output_device_selector(selected).is_none()
+        || available_audio_output_devices()
+            .into_iter()
+            .any(|output| output.id == selected)
 }
 
 struct AudioOutputDevice {
@@ -730,23 +681,32 @@ mod tests {
             audio_output_selector_from_properties(&properties).as_deref(),
             Some("alsa_output.persisted")
         );
-        let default = audio_output_device_id("alsa_output.default");
-        let other = audio_output_device_id("alsa_output.other");
-        assert!(audio_outputs_share_target(
-            Some(&default),
-            None,
-            Some(&default)
-        ));
-        assert!(audio_outputs_share_target(
-            None,
-            Some(&default),
-            Some(&default)
-        ));
-        assert!(!audio_outputs_share_target(
-            Some(&other),
-            None,
-            Some(&default)
-        ));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn device_change_retargets_the_selected_sink() {
+        initialize_gstreamer();
+        let settings = BackendAudioSettings {
+            audio_output: Some("pulsesink".to_string()),
+            ..BackendAudioSettings::default()
+        };
+        let mut graph = AudioGraph::new(&settings).expect("Pulse output graph");
+        let mut changed = settings;
+        changed.audio_output = Some(audio_output_device_id("alsa_output.selected"));
+
+        assert!(graph.reconfigure(&changed).expect("retarget output"));
+        assert_eq!(
+            graph
+                .output
+                .factory()
+                .map(|factory| factory.name().to_string()),
+            Some("pulsesink".to_string())
+        );
+        assert_eq!(
+            graph.output.property::<Option<String>>("device").as_deref(),
+            Some("alsa_output.selected")
+        );
     }
 
     #[test]

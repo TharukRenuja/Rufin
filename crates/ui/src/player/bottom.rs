@@ -23,10 +23,11 @@ use super::icons::{
     random_clover_icon_button, repeat_icon_button, set_repeat_button_icon, set_volume_icon,
     shuffle_icon_button, skip_icon_button, volume_icon_button, volume_icon_state,
 };
-use super::playback_settings::present_playback_settings_popover;
+use super::playback_settings::configure_playback_settings_popover;
 use super::progress::seekbar_target_seconds;
 use crate::interactions::add_widget_click;
 use crate::layout::{AllocationOwner, allocation_owner};
+use crate::localization::{bind_widget_accessible_label, bind_widget_tooltip};
 use crate::ratings::RatingControl;
 use crate::routes::collection_context::{
     install_current_track_context_menu, present_current_track_context_menu,
@@ -155,7 +156,7 @@ pub(crate) struct PlayerControls {
     mute_icon: gtk::Image,
     mute_icon_state: Rc<Cell<VolumeIcon>>,
     volume: gtk::Scale,
-    pub(crate) settings_button: gtk::Button,
+    pub(crate) settings_button: gtk::MenuButton,
     pub(crate) output_button: gtk::Button,
     output_icon: gtk::Image,
 }
@@ -199,7 +200,7 @@ struct PlayerActionControls {
     mute_icon: gtk::Image,
     mute_icon_state: Rc<Cell<VolumeIcon>>,
     volume: gtk::Scale,
-    settings_button: gtk::Button,
+    settings_button: gtk::MenuButton,
     output_button: gtk::Button,
     output_icon: gtk::Image,
 }
@@ -1182,10 +1183,17 @@ fn build_player_action_controls() -> PlayerActionControls {
         .expect("an icon button contains an image");
     output_icon.add_css_class("player-output-icon");
     buttons.append(&output_button);
-    let settings_button =
-        icon_button_without_tooltip("preferences-system-bundled-symbolic", "Playback settings");
+    let settings_button = gtk::MenuButton::new();
+    settings_button.set_icon_name("preferences-system-bundled-symbolic");
+    settings_button.set_direction(gtk::ArrowType::Up);
+    settings_button.set_has_frame(false);
+    settings_button.add_css_class("icon-button");
+    settings_button.add_css_class("flat");
+    settings_button.add_css_class("circular");
     settings_button.add_css_class("player-settings-button");
-    configure_player_action_button(&settings_button);
+    settings_button.set_valign(gtk::Align::Center);
+    bind_widget_tooltip(&settings_button, "Playback settings");
+    bind_widget_accessible_label(&settings_button, "Playback settings");
     buttons.append(&settings_button);
 
     let volume_group = gtk::Box::new(gtk::Orientation::Horizontal, BOTTOM_PLAYER_VOLUME_SPACING);
@@ -1863,14 +1871,7 @@ pub(crate) fn connect_player_controls(shell: &Rc<Shell>) {
             };
             mute_shell.apply_user_muted(muted);
         });
-    let settings_shell = Rc::clone(shell);
-    shell
-        .player_view
-        .player_controls
-        .settings_button
-        .connect_clicked(move |button| {
-            present_playback_settings_popover(button, &settings_shell);
-        });
+    configure_playback_settings_popover(&shell.player_view.player_controls.settings_button, shell);
     let output_shell = Rc::clone(shell);
     shell
         .player_view

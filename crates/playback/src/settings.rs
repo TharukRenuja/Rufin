@@ -207,11 +207,20 @@ impl PlaybackSettings {
             .clamp(MIN_CROSSFADE_SECONDS, MAX_CROSSFADE_SECONDS);
         self.playback_rate = sanitize_playback_rate(self.playback_rate);
         self.volume = sanitize_volume(self.volume);
-        if self
-            .audio_output
-            .as_deref()
-            .is_some_and(|output| output.trim().is_empty())
-        {
+        if self.audio_output.as_deref().is_some_and(|output| {
+            output.trim().is_empty()
+                || matches!(
+                    output,
+                    "autoaudiosink"
+                        | "pipewiresink"
+                        | "pulsesink"
+                        | "alsasink"
+                        | "jackaudiosink"
+                        | "osxaudiosink"
+                        | "wasapisink"
+                        | "directsoundsink"
+                )
+        }) {
             self.audio_output = None;
         }
         self.equalizer.sanitize();
@@ -320,6 +329,29 @@ mod tests {
         settings.playback_rate = f64::NAN;
         settings.sanitize();
         assert_eq!(settings.playback_rate, DEFAULT_PLAYBACK_RATE);
+    }
+
+    #[test]
+    fn playback_settings_migrate_backend_factories_to_system_default() {
+        for output in [
+            "autoaudiosink",
+            "pipewiresink",
+            "pulsesink",
+            "alsasink",
+            "jackaudiosink",
+            "osxaudiosink",
+            "wasapisink",
+            "directsoundsink",
+        ] {
+            let mut settings = PlaybackSettings {
+                audio_output: Some(output.to_string()),
+                ..PlaybackSettings::default()
+            };
+
+            settings.sanitize();
+
+            assert_eq!(settings.audio_output, None, "legacy output {output}");
+        }
     }
 
     #[test]

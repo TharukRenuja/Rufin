@@ -51,11 +51,6 @@ impl Shell {
         );
         self.bind_icon_locale(&self.player_view.player_controls.mute_button, "Mute");
         self.bind_icon_locale(
-            &self.player_view.player_controls.settings_button,
-            "Playback settings",
-        );
-
-        self.bind_icon_locale(
             &self.player_view.fullscreen_player.close_button,
             "Close fullscreen player",
         );

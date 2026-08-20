@@ -113,9 +113,6 @@ msgstr ""
 msgid "5 Latest Albums"
 msgstr ""
 
-msgid "ALSA"
-msgstr ""
-
 msgid "API key"
 msgstr ""
 
@@ -484,9 +481,6 @@ msgstr ""
 msgid "Diagnostic log"
 msgstr ""
 
-msgid "DirectSound"
-msgstr ""
-
 msgid "Disable private mode"
 msgstr ""
 
@@ -758,9 +752,6 @@ msgid "Instrumental"
 msgstr ""
 
 msgid "Integrations"
-msgstr ""
-
-msgid "JACK"
 msgstr ""
 
 msgid "Jellyfin"
@@ -1192,9 +1183,6 @@ msgstr ""
 msgid "Pins"
 msgstr ""
 
-msgid "PipeWire"
-msgstr ""
-
 msgid "Plain lyrics"
 msgstr ""
 
@@ -1241,9 +1229,6 @@ msgid "Play"
 msgstr ""
 
 msgid "Play/Pause"
-msgstr ""
-
-msgid "Playback settings"
 msgstr ""
 
 msgid "Playback speed"
@@ -1338,9 +1323,6 @@ msgid "Pronunciation"
 msgstr ""
 
 msgid "Proxy casting through Rufin"
-msgstr ""
-
-msgid "PulseAudio"
 msgstr ""
 
 msgid "Purple"
@@ -1614,9 +1596,6 @@ msgid "Select Music Folder"
 msgstr ""
 
 msgid "Select Source"
-msgstr ""
-
-msgid "Selected device"
 msgstr ""
 
 msgid "Selection"
@@ -1936,9 +1915,6 @@ msgstr ""
 msgid "Volume scale"
 msgstr ""
 
-msgid "WASAPI"
-msgstr ""
-
 msgid "Waiting for connection"
 msgstr ""
 
@@ -2000,9 +1976,6 @@ msgid "is"
 msgstr ""
 
 msgid "kbps"
-msgstr ""
-
-msgid "macOS"
 msgstr ""
 
 msgid "range"
