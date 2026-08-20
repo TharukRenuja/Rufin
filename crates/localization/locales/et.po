@@ -140,9 +140,6 @@ msgstr "320 kbps"
 msgid "5 Latest Albums"
 msgstr "5 viimast albumit"
 
-msgid "ALSA"
-msgstr "ALSA"
-
 msgid "API key"
 msgstr "API võti"
 
@@ -196,9 +193,6 @@ msgstr "Lisatud lemmikute hulka"
 
 msgid "Added to"
 msgstr "Lisatud asukohta"
-
-msgid "AirPlay and Sound Settings..."
-msgstr ""
 
 msgid "Album Artists"
 msgstr "Albumi esitajad"
@@ -427,6 +421,16 @@ msgstr "Ühendatud"
 msgid "Connecting to music server..."
 msgstr "Ühendan muusikaserveriga…"
 
+#, fuzzy
+#| msgid "Connecting to music server..."
+msgid "Connecting to {device}..."
+msgstr "Ühendan muusikaserveriga…"
+
+#, fuzzy
+#| msgid "Connection"
+msgid "Connection failed"
+msgstr "Ühendus"
+
 msgid "Connection"
 msgstr "Ühendus"
 
@@ -517,9 +521,6 @@ msgstr "Diagnostikalogi on salvestatud"
 msgid "Diagnostic log"
 msgstr "Diagnostikalogi"
 
-msgid "DirectSound"
-msgstr "DirectSound"
-
 msgid "Disable private mode"
 msgstr "Lülita privaatne režiim välja"
 
@@ -592,6 +593,11 @@ msgstr "Lülita privaatne režiim sisse"
 msgid "Enter API credentials first"
 msgstr "Esmalt sisesta API tuvastusandmed"
 
+#, fuzzy
+#| msgid "Enter a server address, username, and password"
+msgid "Enter a server address and API key"
+msgstr "Sisesta serveri aadress, kasutajanimi ja salasõna"
+
 msgid "Enter a server address, username, and password"
 msgstr "Sisesta serveri aadress, kasutajanimi ja salasõna"
 
@@ -603,9 +609,6 @@ msgstr "Ekvalaiser"
 
 msgid "Everything, including new tracks"
 msgstr "Kõik, sealhulgas uued lood"
-
-msgid "Exit to tray"
-msgstr "Väljumisel jäta rakendus süsteemisalve"
 
 msgid "Expand sidebar"
 msgstr "Laienda külgriba"
@@ -794,9 +797,6 @@ msgstr "Instrumentaallugu"
 msgid "Integrations"
 msgstr "Lõimingud"
 
-msgid "JACK"
-msgstr "JACK"
-
 msgid "Jellyfin"
 msgstr "Jellyfin"
 
@@ -805,6 +805,9 @@ msgstr "Jellyfin, Navidrome või OpenSubsonic"
 
 msgid "Karaoke mode"
 msgstr "Karaoke-režiim"
+
+msgid "Keep Rufin running after closing the window"
+msgstr ""
 
 msgid "Keep album transitions gapless when possible"
 msgstr "Kui võimalik, siis hoia albumi lugude üleminekud pausideta"
@@ -1232,9 +1235,6 @@ msgstr "Roosa"
 msgid "Pins"
 msgstr "Esiletõstmised"
 
-msgid "PipeWire"
-msgstr "PipeWire"
-
 msgid "Plain lyrics"
 msgstr "Tavalised laulusõnad"
 
@@ -1282,9 +1282,6 @@ msgstr "Esita"
 
 msgid "Play/Pause"
 msgstr "Esita/Peata esitus"
-
-msgid "Playback settings"
-msgstr "Taasesituse seadistused"
 
 msgid "Playback speed"
 msgstr "Taasesituse kiirus"
@@ -1343,6 +1340,11 @@ msgstr "Eelistused"
 msgid "Preparing library..."
 msgstr "Valmistan muusikakogu ette…"
 
+#, fuzzy
+#| msgid "Prefer server lyrics"
+msgid "Preserve pitch"
+msgstr "Eelista laulusõnu serverist"
+
 msgid "Preset"
 msgstr "Eelseadistus"
 
@@ -1376,9 +1378,6 @@ msgstr "Hääldus"
 msgid "Proxy casting through Rufin"
 msgstr ""
 
-msgid "PulseAudio"
-msgstr "PulseAudio"
-
 msgid "Purple"
 msgstr "Purpurpunane"
 
@@ -1411,6 +1410,9 @@ msgstr "Hiljuti esitatud"
 
 msgid "Recently released"
 msgstr "Hiljuti avaldatud"
+
+msgid "Recommended when your server provides one"
+msgstr ""
 
 msgid "Reconnect"
 msgstr "Ühenda uuesti"
@@ -1547,9 +1549,6 @@ msgstr "Read"
 msgid "Rufin data folder"
 msgstr "Rufini andmekaust"
 
-msgid "Rufin is running in the tray"
-msgstr "Rufin on töös süsteemisalves"
-
 msgid "Rule actions"
 msgstr "Toiminguid reeglite alusel"
 
@@ -1648,9 +1647,6 @@ msgstr "Vali muusikakaust"
 
 msgid "Select Source"
 msgstr "Vali allikas"
-
-msgid "Selected device"
-msgstr "Valitud seade"
 
 msgid "Selection"
 msgstr "Valik"
@@ -1913,6 +1909,11 @@ msgstr "Summutamine on lõpetatud"
 msgid "Update"
 msgstr "Uuenda"
 
+#, fuzzy
+#| msgid "API key"
+msgid "Use API key"
+msgstr "API võti"
+
 msgid "Use Jellyfin Instant Mix for recommendations"
 msgstr "Kasuta soovitusteks Jellyfini „Instant Mix“ liidestust"
 
@@ -1943,9 +1944,6 @@ msgstr "Kasutaja"
 msgid "Username"
 msgstr "Kasutajanimi"
 
-msgid "Uses the macOS system output"
-msgstr "Kasutab MacOS-i süsteemset väljundit"
-
 msgid "Verify server certificate"
 msgstr "Kontrolli serveri sertifikaati"
 
@@ -1969,9 +1967,6 @@ msgstr "Heli valjemaks"
 
 msgid "Volume scale"
 msgstr "Helivaljuse skaala"
-
-msgid "WASAPI"
-msgstr "WASAPI"
 
 msgid "Waiting for connection"
 msgstr "Oota ühenduse teket"
@@ -2036,9 +2031,6 @@ msgstr "on"
 msgid "kbps"
 msgstr "kbps"
 
-msgid "macOS"
-msgstr "macOS"
-
 msgid "range"
 msgstr "vahemik on"
 
@@ -2090,6 +2082,42 @@ msgid "{count} year ago"
 msgid_plural "{count} years ago"
 msgstr[0] "{count} aasta tagasi"
 msgstr[1] "{count} aastat tagasi"
+
+#~ msgid "ALSA"
+#~ msgstr "ALSA"
+
+#~ msgid "DirectSound"
+#~ msgstr "DirectSound"
+
+#~ msgid "Exit to tray"
+#~ msgstr "Väljumisel jäta rakendus süsteemisalve"
+
+#~ msgid "JACK"
+#~ msgstr "JACK"
+
+#~ msgid "PipeWire"
+#~ msgstr "PipeWire"
+
+#~ msgid "Playback settings"
+#~ msgstr "Taasesituse seadistused"
+
+#~ msgid "PulseAudio"
+#~ msgstr "PulseAudio"
+
+#~ msgid "Rufin is running in the tray"
+#~ msgstr "Rufin on töös süsteemisalves"
+
+#~ msgid "Selected device"
+#~ msgstr "Valitud seade"
+
+#~ msgid "Uses the macOS system output"
+#~ msgstr "Kasutab MacOS-i süsteemset väljundit"
+
+#~ msgid "WASAPI"
+#~ msgstr "WASAPI"
+
+#~ msgid "macOS"
+#~ msgstr "macOS"
 
 #~ msgid "Scrobbling"
 #~ msgstr "Kraasimine"

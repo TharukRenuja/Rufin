@@ -146,9 +146,6 @@ msgstr "320 kbps"
 msgid "5 Latest Albums"
 msgstr "5 jaunākie albumi"
 
-msgid "ALSA"
-msgstr "ALSA"
-
 msgid "API key"
 msgstr "API atslēga"
 
@@ -202,9 +199,6 @@ msgstr "Pievienots izlasei"
 
 msgid "Added to"
 msgstr "Pievienots"
-
-msgid "AirPlay and Sound Settings..."
-msgstr ""
 
 msgid "Album Artists"
 msgstr "Albumu izpildītāji"
@@ -434,6 +428,16 @@ msgstr "Savienots"
 msgid "Connecting to music server..."
 msgstr "Savienojas ar mūzikas serveri…"
 
+#, fuzzy
+#| msgid "Connecting to music server..."
+msgid "Connecting to {device}..."
+msgstr "Savienojas ar mūzikas serveri…"
+
+#, fuzzy
+#| msgid "Connection"
+msgid "Connection failed"
+msgstr "Savienojums"
+
 msgid "Connection"
 msgstr "Savienojums"
 
@@ -524,9 +528,6 @@ msgstr "Diagnostikas žurnāls saglabāts"
 msgid "Diagnostic log"
 msgstr "Diagnostikas žurnāls"
 
-msgid "DirectSound"
-msgstr "DirectSound"
-
 msgid "Disable private mode"
 msgstr "Atslēgt privāto režīmu"
 
@@ -599,6 +600,11 @@ msgstr "Ieslēgt privāto režīmu"
 msgid "Enter API credentials first"
 msgstr "Vispirms ievadiet API autentifikācijas datus"
 
+#, fuzzy
+#| msgid "Enter a server address, username, and password"
+msgid "Enter a server address and API key"
+msgstr "Ievadiet servera adresi, lietotājvārdu un paroli"
+
 msgid "Enter a server address, username, and password"
 msgstr "Ievadiet servera adresi, lietotājvārdu un paroli"
 
@@ -610,9 +616,6 @@ msgstr "Ekvalaizers"
 
 msgid "Everything, including new tracks"
 msgstr "Viss, ieskaitot jaunās dziesmas"
-
-msgid "Exit to tray"
-msgstr "Iziet uz sistēmas joslu"
 
 msgid "Expand sidebar"
 msgstr "Izvērst sānu paneli"
@@ -805,9 +808,6 @@ msgstr "Instrumentāls"
 msgid "Integrations"
 msgstr "Ilgums"
 
-msgid "JACK"
-msgstr "JACK"
-
 msgid "Jellyfin"
 msgstr "Jellyfin"
 
@@ -816,6 +816,9 @@ msgstr "Jellyfin, Navidrome vai OpenSubsonic"
 
 msgid "Karaoke mode"
 msgstr "Karaoke režīms"
+
+msgid "Keep Rufin running after closing the window"
+msgstr ""
 
 msgid "Keep album transitions gapless when possible"
 msgstr "Turēt albumu pārejas bez pauzēm, ja iespējams"
@@ -1247,9 +1250,6 @@ msgstr "Rozā"
 msgid "Pins"
 msgstr "Atslēgas"
 
-msgid "PipeWire"
-msgstr "PipeWire"
-
 msgid "Plain lyrics"
 msgstr "Vienkārši teksti"
 
@@ -1297,11 +1297,6 @@ msgstr "Atskaņot"
 
 msgid "Play/Pause"
 msgstr "Atskaņot/Pauzēt"
-
-#, fuzzy
-#| msgid "Lyrics settings"
-msgid "Playback settings"
-msgstr "Tekstu iestatījumi"
 
 #, fuzzy
 #| msgid "Playback"
@@ -1362,6 +1357,11 @@ msgstr "Iestatījumi"
 msgid "Preparing library..."
 msgstr "Sagatavo bibliotēku…"
 
+#, fuzzy
+#| msgid "Prefer server lyrics"
+msgid "Preserve pitch"
+msgstr "Dot priekšroku servera tekstiem"
+
 msgid "Preset"
 msgstr "Iepriekš iestatīts"
 
@@ -1395,9 +1395,6 @@ msgstr "Izruna"
 msgid "Proxy casting through Rufin"
 msgstr ""
 
-msgid "PulseAudio"
-msgstr "PulseAudio"
-
 msgid "Purple"
 msgstr "Violets"
 
@@ -1430,6 +1427,9 @@ msgstr "Nesen atskaņotie"
 
 msgid "Recently released"
 msgstr "Nesen izdotie"
+
+msgid "Recommended when your server provides one"
+msgstr ""
 
 msgid "Reconnect"
 msgstr "Atjaunot savienojumu"
@@ -1566,9 +1566,6 @@ msgstr "Rindas"
 msgid "Rufin data folder"
 msgstr "Rufin datu mape"
 
-msgid "Rufin is running in the tray"
-msgstr "Rufin darbojas sistēmas joslā"
-
 msgid "Rule actions"
 msgstr "Noteikumu darbības"
 
@@ -1669,9 +1666,6 @@ msgstr "Izvēlēties mūzikas mapi"
 
 msgid "Select Source"
 msgstr "Izvēlēties avotu"
-
-msgid "Selected device"
-msgstr "Izvēlētā ierīce"
 
 msgid "Selection"
 msgstr "Atlasīšana"
@@ -1936,6 +1930,11 @@ msgstr "Skaņa atjaunota"
 msgid "Update"
 msgstr "Atjaunināt"
 
+#, fuzzy
+#| msgid "API key"
+msgid "Use API key"
+msgstr "API atslēga"
+
 msgid "Use Jellyfin Instant Mix for recommendations"
 msgstr "Izmantot Jellyfin Instant Mix ieteikumiem"
 
@@ -1965,9 +1964,6 @@ msgstr "Lietotājs"
 msgid "Username"
 msgstr "Lietotājvārds"
 
-msgid "Uses the macOS system output"
-msgstr ""
-
 msgid "Verify server certificate"
 msgstr "Pārbaudīt servera sertifikātu"
 
@@ -1991,9 +1987,6 @@ msgstr "Skaļuma palielināšana"
 
 msgid "Volume scale"
 msgstr "Skaļuma skala"
-
-msgid "WASAPI"
-msgstr "WASAPI"
 
 msgid "Waiting for connection"
 msgstr "Gaida savienojumu"
@@ -2060,9 +2053,6 @@ msgstr "ir"
 msgid "kbps"
 msgstr "128 kbps"
 
-msgid "macOS"
-msgstr "macOS"
-
 msgid "range"
 msgstr "diapazons"
 
@@ -2122,6 +2112,41 @@ msgid_plural "{count} years ago"
 msgstr[0] "pirms {count} gadiem"
 msgstr[1] "pirms {count} gada"
 msgstr[2] "pirms {count} gadiem"
+
+#~ msgid "ALSA"
+#~ msgstr "ALSA"
+
+#~ msgid "DirectSound"
+#~ msgstr "DirectSound"
+
+#~ msgid "Exit to tray"
+#~ msgstr "Iziet uz sistēmas joslu"
+
+#~ msgid "JACK"
+#~ msgstr "JACK"
+
+#~ msgid "PipeWire"
+#~ msgstr "PipeWire"
+
+#, fuzzy
+#~| msgid "Lyrics settings"
+#~ msgid "Playback settings"
+#~ msgstr "Tekstu iestatījumi"
+
+#~ msgid "PulseAudio"
+#~ msgstr "PulseAudio"
+
+#~ msgid "Rufin is running in the tray"
+#~ msgstr "Rufin darbojas sistēmas joslā"
+
+#~ msgid "Selected device"
+#~ msgstr "Izvēlētā ierīce"
+
+#~ msgid "WASAPI"
+#~ msgstr "WASAPI"
+
+#~ msgid "macOS"
+#~ msgstr "macOS"
 
 #~ msgid "Scrobbling"
 #~ msgstr "Skroblēšana"

@@ -141,9 +141,6 @@ msgstr "320 kbps"
 msgid "5 Latest Albums"
 msgstr "5 Últimos álbumes"
 
-msgid "ALSA"
-msgstr "ALSA"
-
 msgid "API key"
 msgstr "Clave de API"
 
@@ -197,9 +194,6 @@ msgstr "Añadido a los favoritos"
 
 msgid "Added to"
 msgstr "Añadido a"
-
-msgid "AirPlay and Sound Settings..."
-msgstr ""
 
 msgid "Album Artists"
 msgstr "Artistas de álbum"
@@ -422,6 +416,12 @@ msgstr ""
 msgid "Connecting to music server..."
 msgstr ""
 
+msgid "Connecting to {device}..."
+msgstr ""
+
+msgid "Connection failed"
+msgstr ""
+
 msgid "Connection"
 msgstr ""
 
@@ -512,9 +512,6 @@ msgstr ""
 msgid "Diagnostic log"
 msgstr ""
 
-msgid "DirectSound"
-msgstr ""
-
 msgid "Disable private mode"
 msgstr ""
 
@@ -587,6 +584,9 @@ msgstr ""
 msgid "Enter API credentials first"
 msgstr ""
 
+msgid "Enter a server address and API key"
+msgstr ""
+
 msgid "Enter a server address, username, and password"
 msgstr ""
 
@@ -597,9 +597,6 @@ msgid "Equalizer"
 msgstr ""
 
 msgid "Everything, including new tracks"
-msgstr ""
-
-msgid "Exit to tray"
 msgstr ""
 
 msgid "Expand sidebar"
@@ -785,9 +782,6 @@ msgstr ""
 msgid "Integrations"
 msgstr ""
 
-msgid "JACK"
-msgstr ""
-
 msgid "Jellyfin"
 msgstr ""
 
@@ -795,6 +789,9 @@ msgid "Jellyfin, Navidrome, or OpenSubsonic"
 msgstr ""
 
 msgid "Karaoke mode"
+msgstr ""
+
+msgid "Keep Rufin running after closing the window"
 msgstr ""
 
 msgid "Keep album transitions gapless when possible"
@@ -1219,9 +1216,6 @@ msgstr ""
 msgid "Pins"
 msgstr ""
 
-msgid "PipeWire"
-msgstr ""
-
 msgid "Plain lyrics"
 msgstr ""
 
@@ -1268,9 +1262,6 @@ msgid "Play"
 msgstr ""
 
 msgid "Play/Pause"
-msgstr ""
-
-msgid "Playback settings"
 msgstr ""
 
 msgid "Playback speed"
@@ -1330,6 +1321,9 @@ msgstr ""
 msgid "Preparing library..."
 msgstr ""
 
+msgid "Preserve pitch"
+msgstr ""
+
 msgid "Preset"
 msgstr ""
 
@@ -1363,9 +1357,6 @@ msgstr ""
 msgid "Proxy casting through Rufin"
 msgstr ""
 
-msgid "PulseAudio"
-msgstr ""
-
 msgid "Purple"
 msgstr ""
 
@@ -1397,6 +1388,9 @@ msgid "Recently played"
 msgstr ""
 
 msgid "Recently released"
+msgstr ""
+
+msgid "Recommended when your server provides one"
 msgstr ""
 
 msgid "Reconnect"
@@ -1534,9 +1528,6 @@ msgstr ""
 msgid "Rufin data folder"
 msgstr ""
 
-msgid "Rufin is running in the tray"
-msgstr ""
-
 msgid "Rule actions"
 msgstr ""
 
@@ -1634,9 +1625,6 @@ msgid "Select Music Folder"
 msgstr ""
 
 msgid "Select Source"
-msgstr ""
-
-msgid "Selected device"
 msgstr ""
 
 msgid "Selection"
@@ -1900,6 +1888,11 @@ msgstr ""
 msgid "Update"
 msgstr ""
 
+#, fuzzy
+#| msgid "API key"
+msgid "Use API key"
+msgstr "Clave de API"
+
 msgid "Use Jellyfin Instant Mix for recommendations"
 msgstr ""
 
@@ -1927,9 +1920,6 @@ msgstr ""
 msgid "Username"
 msgstr ""
 
-msgid "Uses the macOS system output"
-msgstr ""
-
 msgid "Verify server certificate"
 msgstr ""
 
@@ -1952,9 +1942,6 @@ msgid "Volume Up"
 msgstr ""
 
 msgid "Volume scale"
-msgstr ""
-
-msgid "WASAPI"
 msgstr ""
 
 msgid "Waiting for connection"
@@ -2020,9 +2007,6 @@ msgstr ""
 msgid "kbps"
 msgstr ""
 
-msgid "macOS"
-msgstr ""
-
 msgid "range"
 msgstr ""
 
@@ -2074,3 +2058,6 @@ msgid "{count} year ago"
 msgid_plural "{count} years ago"
 msgstr[0] ""
 msgstr[1] ""
+
+#~ msgid "ALSA"
+#~ msgstr "ALSA"

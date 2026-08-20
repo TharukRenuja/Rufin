@@ -151,9 +151,6 @@ msgstr "320 кбит/с"
 msgid "5 Latest Albums"
 msgstr "5 последних альбомов"
 
-msgid "ALSA"
-msgstr "ALSA"
-
 msgid "API key"
 msgstr "Ключ API"
 
@@ -208,9 +205,6 @@ msgstr "Добавлено в избранное"
 
 msgid "Added to"
 msgstr "Добавлено в"
-
-msgid "AirPlay and Sound Settings..."
-msgstr "Настройки AirPlay и звука..."
 
 msgid "Album Artists"
 msgstr "Авторы альбома"
@@ -436,6 +430,16 @@ msgstr "Подключено"
 msgid "Connecting to music server..."
 msgstr "Подключение к музыкальному серверу…"
 
+#, fuzzy
+#| msgid "Connecting to music server..."
+msgid "Connecting to {device}..."
+msgstr "Подключение к музыкальному серверу…"
+
+#, fuzzy
+#| msgid "Connection"
+msgid "Connection failed"
+msgstr "Соединение"
+
 msgid "Connection"
 msgstr "Соединение"
 
@@ -526,9 +530,6 @@ msgstr "Журнал диагностики сохранен"
 msgid "Diagnostic log"
 msgstr "Журнал диагностики"
 
-msgid "DirectSound"
-msgstr "DirectSound"
-
 msgid "Disable private mode"
 msgstr "Отключить приватный режим"
 
@@ -601,6 +602,11 @@ msgstr "Включить приватный режим"
 msgid "Enter API credentials first"
 msgstr "Сначала введите данные для доступа к API"
 
+#, fuzzy
+#| msgid "Enter a server address, username, and password"
+msgid "Enter a server address and API key"
+msgstr "Введите адрес сервера, имя пользователя и пароль"
+
 msgid "Enter a server address, username, and password"
 msgstr "Введите адрес сервера, имя пользователя и пароль"
 
@@ -612,9 +618,6 @@ msgstr "Эквалайзер"
 
 msgid "Everything, including new tracks"
 msgstr "Всё, включая новые треки"
-
-msgid "Exit to tray"
-msgstr "Свернуть в трей"
 
 msgid "Expand sidebar"
 msgstr "Развернуть боковую панель"
@@ -805,9 +808,6 @@ msgstr "Инструментальная"
 msgid "Integrations"
 msgstr "Интеграции"
 
-msgid "JACK"
-msgstr "JACK"
-
 msgid "Jellyfin"
 msgstr "Jellyfin"
 
@@ -816,6 +816,9 @@ msgstr "Jellyfin, Navidrome или OpenSubsonic"
 
 msgid "Karaoke mode"
 msgstr "Режим караоке"
+
+msgid "Keep Rufin running after closing the window"
+msgstr ""
 
 msgid "Keep album transitions gapless when possible"
 msgstr "По возможности обеспечивать плавный переход между треками альбома"
@@ -1241,9 +1244,6 @@ msgstr "Розовый"
 msgid "Pins"
 msgstr "Закрепленные элементы"
 
-msgid "PipeWire"
-msgstr "PipeWire"
-
 msgid "Plain lyrics"
 msgstr "Обычный текст песен"
 
@@ -1291,9 +1291,6 @@ msgstr "Воспроизвести"
 
 msgid "Play/Pause"
 msgstr "Воспроизвести/Приостановить"
-
-msgid "Playback settings"
-msgstr "Настройки воспроизведения"
 
 msgid "Playback speed"
 msgstr "Скорость воспроизведения"
@@ -1352,6 +1349,11 @@ msgstr "Настройки"
 msgid "Preparing library..."
 msgstr "Подготовка библиотеки…"
 
+#, fuzzy
+#| msgid "Prefer server lyrics"
+msgid "Preserve pitch"
+msgstr "Предпочитать тексты песен с сервера"
+
 msgid "Preset"
 msgstr "Предустановка"
 
@@ -1387,9 +1389,6 @@ msgstr "Произношение"
 msgid "Proxy casting through Rufin"
 msgstr "Прокси-трансляция через Rufin"
 
-msgid "PulseAudio"
-msgstr "PulseAudio"
-
 msgid "Purple"
 msgstr "Фиолетовый"
 
@@ -1422,6 +1421,9 @@ msgstr "Недавно прослушанные"
 
 msgid "Recently released"
 msgstr "Недавно выпущенные"
+
+msgid "Recommended when your server provides one"
+msgstr ""
 
 msgid "Reconnect"
 msgstr "Повторное подключение"
@@ -1558,9 +1560,6 @@ msgstr "Строки"
 msgid "Rufin data folder"
 msgstr "Папка с данными Rufin"
 
-msgid "Rufin is running in the tray"
-msgstr "Rufin работает в системном трее"
-
 msgid "Rule actions"
 msgstr "Действия с правилами"
 
@@ -1659,9 +1658,6 @@ msgstr "Выбрать папку с музыкой"
 
 msgid "Select Source"
 msgstr "Выбрать Источник"
-
-msgid "Selected device"
-msgstr "Выбранное устройство"
 
 msgid "Selection"
 msgstr "Выбор"
@@ -1925,6 +1921,11 @@ msgstr "Звук включен"
 msgid "Update"
 msgstr "Обновить"
 
+#, fuzzy
+#| msgid "API key"
+msgid "Use API key"
+msgstr "Ключ API"
+
 msgid "Use Jellyfin Instant Mix for recommendations"
 msgstr "Использовать Мгновенный Микс Jellyfin для рекомендаций"
 
@@ -1956,9 +1957,6 @@ msgstr "Пользователь"
 msgid "Username"
 msgstr "Имя пользователя"
 
-msgid "Uses the macOS system output"
-msgstr "Использует системный вывод macOS"
-
 msgid "Verify server certificate"
 msgstr "Проверить сертификат сервера"
 
@@ -1982,9 +1980,6 @@ msgstr "Увеличить громкость"
 
 msgid "Volume scale"
 msgstr "Шкала громкости"
-
-msgid "WASAPI"
-msgstr "WASAPI"
 
 msgid "Waiting for connection"
 msgstr "Ожидание подключения"
@@ -2049,9 +2044,6 @@ msgstr "является"
 msgid "kbps"
 msgstr "кбит/с"
 
-msgid "macOS"
-msgstr "macOS"
-
 msgid "range"
 msgstr "диапазон"
 
@@ -2111,6 +2103,45 @@ msgid_plural "{count} years ago"
 msgstr[0] "{count} год назад"
 msgstr[1] "{count} года назад"
 msgstr[2] "{count} лет назад"
+
+#~ msgid "ALSA"
+#~ msgstr "ALSA"
+
+#~ msgid "AirPlay and Sound Settings..."
+#~ msgstr "Настройки AirPlay и звука..."
+
+#~ msgid "DirectSound"
+#~ msgstr "DirectSound"
+
+#~ msgid "Exit to tray"
+#~ msgstr "Свернуть в трей"
+
+#~ msgid "JACK"
+#~ msgstr "JACK"
+
+#~ msgid "PipeWire"
+#~ msgstr "PipeWire"
+
+#~ msgid "Playback settings"
+#~ msgstr "Настройки воспроизведения"
+
+#~ msgid "PulseAudio"
+#~ msgstr "PulseAudio"
+
+#~ msgid "Rufin is running in the tray"
+#~ msgstr "Rufin работает в системном трее"
+
+#~ msgid "Selected device"
+#~ msgstr "Выбранное устройство"
+
+#~ msgid "Uses the macOS system output"
+#~ msgstr "Использует системный вывод macOS"
+
+#~ msgid "WASAPI"
+#~ msgstr "WASAPI"
+
+#~ msgid "macOS"
+#~ msgstr "macOS"
 
 #~ msgid "Scrobbling"
 #~ msgstr "Скробблинг"
