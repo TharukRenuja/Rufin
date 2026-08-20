@@ -38,7 +38,6 @@ mod freedesktop {
         enable_private_mode_label: String,
         disable_private_mode_label: String,
         quit_label: String,
-        tooltip: String,
         private_mode: bool,
     }
 
@@ -53,7 +52,6 @@ mod freedesktop {
                 enable_private_mode_label: tr("Enable private mode"),
                 disable_private_mode_label: tr("Disable private mode"),
                 quit_label: tr("Quit"),
-                tooltip: tr("Rufin is running in the tray"),
                 private_mode,
             }
         }
@@ -97,7 +95,7 @@ mod freedesktop {
                 icon_name: self.icon_name(),
                 icon_pixmap: tray_icon_pixmaps().clone(),
                 title: self.title(),
-                description: self.tooltip.clone(),
+                description: String::new(),
             }
         }
 
@@ -413,7 +411,7 @@ mod windows {
 
             let builder = TrayIconBuilder::new()
                 .with_id(APP_ID)
-                .with_tooltip(tr("Rufin is running in the tray"))
+                .with_tooltip("Rufin")
                 .with_menu(Box::new(menu))
                 .with_icon(build_tray_icon()?);
             let builder = builder.with_menu_on_left_click(false);

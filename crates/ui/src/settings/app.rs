@@ -62,8 +62,8 @@ pub struct Settings {
     pub seekbar_waveform_enabled: bool,
     #[serde(default)]
     pub tray_enabled: bool,
-    #[serde(default)]
-    pub exit_to_tray: bool,
+    #[serde(default, alias = "exit_to_tray")]
+    pub keep_running_after_close: bool,
     #[serde(default)]
     pub start_minimized: bool,
     #[serde(default = "default_true")]
@@ -125,7 +125,7 @@ impl Default for Settings {
             downloads: Vec::new(),
             seekbar_waveform_enabled: false,
             tray_enabled: false,
-            exit_to_tray: false,
+            keep_running_after_close: false,
             start_minimized: false,
             type_to_search_enabled: true,
             rich_presence: RichPresenceSettings::default(),
@@ -178,8 +178,10 @@ impl Settings {
         self.layout.sanitize();
         self.sidebar.sanitize();
         self.context_menu.sanitize();
+        if self.keep_running_after_close {
+            self.tray_enabled = true;
+        }
         if !self.tray_enabled {
-            self.exit_to_tray = false;
             self.start_minimized = false;
         }
         if let Some((width, height)) = sanitized_window_size(self.window_width, self.window_height)

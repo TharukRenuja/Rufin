@@ -807,11 +807,12 @@ fn general_page(shell: &Rc<Shell>, dialog: &adw::Dialog) -> adw::PreferencesPage
         let tray_row = adw::SwitchRow::builder()
             .title(tr("Show tray icon"))
             .active(settings.tray_enabled)
+            .sensitive(!settings.keep_running_after_close)
             .build();
         #[cfg(not(target_os = "macos"))]
-        let exit_to_tray_row = adw::SwitchRow::builder()
-            .title(tr("Exit to tray"))
-            .active(settings.tray_enabled && settings.exit_to_tray)
+        let keep_running_row = adw::SwitchRow::builder()
+            .title(tr("Keep Rufin running after closing the window"))
+            .active(settings.keep_running_after_close)
             .build();
         #[cfg(not(target_os = "macos"))]
         let start_minimized_row = adw::SwitchRow::builder()
@@ -823,31 +824,32 @@ fn general_page(shell: &Rc<Shell>, dialog: &adw::Dialog) -> adw::PreferencesPage
             .active(settings.type_to_search_enabled)
             .build();
         #[cfg(not(target_os = "macos"))]
-        exit_to_tray_row.set_visible(settings.tray_enabled);
-        #[cfg(not(target_os = "macos"))]
         start_minimized_row.set_visible(settings.tray_enabled);
         #[cfg(not(target_os = "macos"))]
         let tray_shell = Rc::clone(shell);
-        #[cfg(not(target_os = "macos"))]
-        let tray_exit_row = exit_to_tray_row.clone();
         #[cfg(not(target_os = "macos"))]
         let start_minimized_row_for_tray = start_minimized_row.clone();
         #[cfg(not(target_os = "macos"))]
         tray_row.connect_active_notify(move |row| {
             let enabled = row.is_active();
-            tray_exit_row.set_visible(enabled);
             start_minimized_row_for_tray.set_visible(enabled);
             if !enabled {
-                tray_exit_row.set_active(false);
                 start_minimized_row_for_tray.set_active(false);
             }
             tray_shell.set_tray_enabled(enabled);
         });
         #[cfg(not(target_os = "macos"))]
-        let exit_to_tray_shell = Rc::clone(shell);
+        let keep_running_shell = Rc::clone(shell);
         #[cfg(not(target_os = "macos"))]
-        exit_to_tray_row.connect_active_notify(move |row| {
-            exit_to_tray_shell.set_exit_to_tray_enabled(row.is_active());
+        let tray_row_for_keep_running = tray_row.clone();
+        #[cfg(not(target_os = "macos"))]
+        keep_running_row.connect_active_notify(move |row| {
+            let enabled = row.is_active();
+            keep_running_shell.set_keep_running_after_close(enabled);
+            if enabled {
+                tray_row_for_keep_running.set_active(true);
+            }
+            tray_row_for_keep_running.set_sensitive(!enabled);
         });
         #[cfg(not(target_os = "macos"))]
         let start_minimized_shell = Rc::clone(shell);
@@ -862,7 +864,7 @@ fn general_page(shell: &Rc<Shell>, dialog: &adw::Dialog) -> adw::PreferencesPage
         #[cfg(not(target_os = "macos"))]
         window_group.add(&tray_row);
         #[cfg(not(target_os = "macos"))]
-        window_group.add(&exit_to_tray_row);
+        window_group.add(&keep_running_row);
         #[cfg(not(target_os = "macos"))]
         window_group.add(&start_minimized_row);
         window_group.add(&type_to_search_row);
