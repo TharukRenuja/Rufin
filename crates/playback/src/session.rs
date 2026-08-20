@@ -1351,18 +1351,20 @@ impl PlaybackSession {
         } else {
             1.0
         };
-        if self.output_volume == volume {
+        if self.output_volume == volume && !self.output_muted {
             return SessionUpdate::default();
         }
         self.output_volume = volume;
+        self.output_muted = false;
         if self.playback_output.is_local() {
             self.settings.volume = volume;
+            self.settings.muted = false;
         }
         SessionUpdate {
             effects: vec![SessionEffect::Backend(BackendCommand::SetOutputVolume {
                 volume,
                 volume_scale: self.settings.volume_scale,
-                muted: self.output_muted,
+                muted: false,
             })],
             view_changed: true,
             queue_page_changed: false,
@@ -2340,6 +2342,42 @@ mod tests {
 
         session.replace_output(PlaybackOutput::Local);
         assert_eq!(session.view().controls.volume, local_volume);
+    }
+
+    #[test]
+    fn mute_hides_and_restores_volume_while_an_explicit_level_unmutes() {
+        let mut session = session(&[1]);
+        let retained = session.output_volume();
+
+        session
+            .handle_command(SessionCommand::SetMuted(true), &sample(0))
+            .expect("mute");
+        assert!(session.view().controls.muted);
+        assert_eq!(session.view().controls.volume, 0.0);
+
+        session
+            .handle_command(SessionCommand::SetMuted(false), &sample(1))
+            .expect("unmute");
+        assert!(!session.view().controls.muted);
+        assert_eq!(session.view().controls.volume, retained);
+
+        session
+            .handle_command(SessionCommand::SetMuted(true), &sample(2))
+            .expect("mute again");
+        let update = session
+            .handle_command(SessionCommand::SetVolume(0.25), &sample(3))
+            .expect("choose volume while muted");
+
+        assert!(!session.view().controls.muted);
+        assert_eq!(session.view().controls.volume, 0.25);
+        assert!(update.effects.iter().any(|effect| matches!(
+            effect,
+            SessionEffect::Backend(BackendCommand::SetOutputVolume {
+                volume,
+                muted: false,
+                ..
+            }) if *volume == 0.25
+        )));
     }
 
     #[test]

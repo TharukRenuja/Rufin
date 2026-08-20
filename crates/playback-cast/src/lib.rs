@@ -127,7 +127,9 @@ impl CastPlaybackBackend {
         let relay = RelayServer::start(target.address(), proxy_media)?;
         let controller = match target {
             DiscoveredTarget::Upnp { device, .. } => {
-                Controller::Upnp(Box::new(UpnpController::new(*device)?))
+                let controller = UpnpController::new(*device)?;
+                controller.verify_connection()?;
+                Controller::Upnp(Box::new(controller))
             }
             DiscoveredTarget::GoogleCast { address, .. } => {
                 Controller::GoogleCast(Box::new(GoogleCastController::new(address)?))

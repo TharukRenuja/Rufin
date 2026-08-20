@@ -390,6 +390,13 @@ msgstr ""
 msgid "Connecting to music server..."
 msgstr ""
 
+#, rust-format
+msgid "Connecting to {device}..."
+msgstr ""
+
+msgid "Connection failed"
+msgstr ""
+
 msgid "Connection"
 msgstr ""
 

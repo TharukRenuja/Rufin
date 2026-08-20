@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::HashMap;
 use std::io::ErrorKind;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr, SocketAddrV4, ToSocketAddrs, UdpSocket};
 use std::thread;
@@ -7,13 +7,14 @@ use std::time::{Duration, Instant};
 use if_addrs::IfAddr;
 use mdns_sd::{ServiceDaemon, ServiceEvent};
 use playback::{RemoteOutput, RemoteOutputProtocol};
-use rupnp::Device;
+use rupnp::{Device, DeviceSpec};
 use socket2::{Domain, Protocol, SockAddr, Socket, Type};
 
 const CAST_SERVICE: &str = "_googlecast._tcp.local.";
 const MEDIA_RENDERER: &str = "urn:schemas-upnp-org:device:MediaRenderer:1";
 const SSDP_ADDRESS: SocketAddrV4 = SocketAddrV4::new(Ipv4Addr::new(239, 255, 255, 250), 1900);
 const SSDP_POLL_INTERVAL: Duration = Duration::from_millis(10);
+const DEVICE_DESCRIPTION_TIMEOUT: Duration = Duration::from_secs(8);
 
 #[derive(Clone, Debug)]
 pub(crate) enum DiscoveredTarget {
@@ -49,7 +50,7 @@ pub(crate) fn discover_upnp(timeout: Duration) -> Result<Vec<DiscoveredTarget>, 
         .build()
         .map_err(|error| error.to_string())?;
     let mut targets = Vec::new();
-    for location in locations {
+    for (location, identity) in locations {
         let uri = match location.parse() {
             Ok(uri) => uri,
             Err(error) => {
@@ -57,14 +58,26 @@ pub(crate) fn discover_upnp(timeout: Duration) -> Result<Vec<DiscoveredTarget>, 
                 continue;
             }
         };
-        let device = match runtime.block_on(Device::from_url(uri)) {
-            Ok(device) => device,
-            Err(error) => {
+        let device = match runtime.block_on(async {
+            tokio::time::timeout(DEVICE_DESCRIPTION_TIMEOUT, Device::from_url(uri)).await
+        }) {
+            Ok(Ok(device)) => device,
+            Ok(Err(error)) => {
                 tracing::debug!(%location, %error, "UPnP renderer description was unusable");
                 continue;
             }
+            Err(_) => {
+                tracing::debug!(%location, "UPnP renderer description timed out");
+                continue;
+            }
         };
-        if device.device_type().to_string() != MEDIA_RENDERER {
+        let Some(renderer) = media_renderer(&device) else {
+            continue;
+        };
+        if !renderer
+            .services_iter()
+            .any(|service| service_type_matches(service.service_type(), "AVTransport"))
+        {
             continue;
         }
         let Some(address) = device_address(&device) else {
@@ -72,8 +85,8 @@ pub(crate) fn discover_upnp(timeout: Duration) -> Result<Vec<DiscoveredTarget>, 
             continue;
         };
         let output = RemoteOutput {
-            id: format!("upnp:{}", device.url()),
-            name: device.friendly_name().to_string(),
+            id: format!("upnp:{identity}"),
+            name: renderer.friendly_name().to_string(),
             protocol: RemoteOutputProtocol::Upnp,
         };
         targets.push(DiscoveredTarget::Upnp {
@@ -87,7 +100,25 @@ pub(crate) fn discover_upnp(timeout: Duration) -> Result<Vec<DiscoveredTarget>, 
     Ok(targets)
 }
 
-fn discover_upnp_locations(timeout: Duration) -> Result<HashSet<String>, String> {
+fn media_renderer(device: &Device) -> Option<&DeviceSpec> {
+    std::iter::once(&**device)
+        .chain(device.devices_iter())
+        .find(|device| device_type_matches(device.device_type(), "MediaRenderer"))
+}
+
+fn device_type_matches(device_type: &rupnp::ssdp::URN, name: &str) -> bool {
+    device_type
+        .to_string()
+        .contains(&format!(":device:{name}:"))
+}
+
+fn service_type_matches(service_type: &rupnp::ssdp::URN, name: &str) -> bool {
+    service_type
+        .to_string()
+        .contains(&format!(":service:{name}:"))
+}
+
+fn discover_upnp_locations(timeout: Duration) -> Result<HashMap<String, String>, String> {
     let interfaces = if_addrs::get_if_addrs().map_err(|error| error.to_string())?;
     let mut addresses = interfaces
         .into_iter()
@@ -122,7 +153,7 @@ fn discover_upnp_locations(timeout: Duration) -> Result<HashSet<String>, String>
         }
     }
     let deadline = Instant::now() + timeout;
-    let mut locations = HashSet::new();
+    let mut locations = HashMap::new();
     let mut buffer = [0_u8; 8_192];
     while Instant::now() < deadline {
         let mut received = false;
@@ -132,9 +163,9 @@ fn discover_upnp_locations(timeout: Duration) -> Result<HashSet<String>, String>
                     Ok((length, _)) => {
                         received = true;
                         if let Ok(response) = std::str::from_utf8(&buffer[..length])
-                            && let Some(location) = parse_ssdp_location(response)
+                            && let Some((location, identity)) = parse_ssdp_renderer(response)
                         {
-                            locations.insert(location.to_string());
+                            locations.insert(location.to_string(), identity.to_string());
                         }
                     }
                     Err(error) if error.kind() == ErrorKind::WouldBlock => break,
@@ -170,7 +201,7 @@ fn discovery_socket(address: Ipv4Addr) -> Result<UdpSocket, String> {
     Ok(socket.into())
 }
 
-fn parse_ssdp_location(response: &str) -> Option<&str> {
+fn parse_ssdp_renderer(response: &str) -> Option<(&str, &str)> {
     let mut lines = response.split("\r\n");
     let status = lines.next()?;
     if !status.starts_with("HTTP/1.1 200") {
@@ -178,6 +209,7 @@ fn parse_ssdp_location(response: &str) -> Option<&str> {
     }
     let mut location = None;
     let mut search_target = None;
+    let mut usn = None;
     for line in lines {
         let Some((name, value)) = line.split_once(':') else {
             continue;
@@ -186,9 +218,18 @@ fn parse_ssdp_location(response: &str) -> Option<&str> {
             location = Some(value.trim());
         } else if name.eq_ignore_ascii_case("st") {
             search_target = Some(value.trim());
+        } else if name.eq_ignore_ascii_case("usn") {
+            usn = Some(value.trim());
         }
     }
-    (search_target?.eq_ignore_ascii_case(MEDIA_RENDERER)).then_some(location?)
+    if !search_target?.eq_ignore_ascii_case(MEDIA_RENDERER) {
+        return None;
+    }
+    let location = location?;
+    let identity = usn
+        .and_then(|value| value.split_once("::").map(|(udn, _)| udn))
+        .unwrap_or(location);
+    Some((location, identity))
 }
 
 fn device_address(device: &Device) -> Option<SocketAddr> {
@@ -260,6 +301,7 @@ fn preferred_address(addresses: impl IntoIterator<Item = IpAddr>) -> Option<IpAd
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rupnp::ssdp::URN;
 
     #[test]
     fn media_renderer_response_yields_its_description_location() {
@@ -273,12 +315,24 @@ mod tests {
         );
 
         assert_eq!(
-            parse_ssdp_location(response),
-            Some("http://192.0.2.10:1096/")
+            parse_ssdp_renderer(response),
+            Some(("http://192.0.2.10:1096/", "uuid:renderer"))
         );
         assert_eq!(
-            parse_ssdp_location(&response.replace("MediaRenderer", "MediaServer")),
+            parse_ssdp_renderer(&response.replace("MediaRenderer", "MediaServer")),
             None
         );
+    }
+
+    #[test]
+    fn newer_media_renderer_versions_remain_discoverable() {
+        assert!(device_type_matches(
+            &URN::device("schemas-upnp-org", "MediaRenderer", 3),
+            "MediaRenderer",
+        ));
+        assert!(!device_type_matches(
+            &URN::device("schemas-upnp-org", "MediaServer", 3),
+            "MediaRenderer",
+        ));
     }
 }

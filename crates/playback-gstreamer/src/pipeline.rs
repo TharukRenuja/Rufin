@@ -165,6 +165,14 @@ impl PlayerPipeline {
     }
 
     #[cfg(test)]
+    pub(super) fn has_or_targets_state(&self, state: gst::State) -> bool {
+        self.session.as_ref().is_some_and(|session| {
+            let (result, current, pending) = session.pipeline.state(gst::ClockTime::ZERO);
+            result.is_ok() && (current == state || pending == state)
+        })
+    }
+
+    #[cfg(test)]
     pub(super) fn try_pull_output_sample(&self, timeout: gst::ClockTime) -> Option<gst::Sample> {
         self.session
             .as_ref()

@@ -1,4 +1,4 @@
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use playback::{BackendCommand, BackendEvent, BackendState, PreparedNext, PreparedStream, RunId};
 use rupnp::ssdp::URN;
@@ -10,6 +10,7 @@ const AV_TRANSPORT: URN = URN::service("schemas-upnp-org", "AVTransport", 1);
 const RENDERING_CONTROL: URN = URN::service("schemas-upnp-org", "RenderingControl", 1);
 const END_POSITION_TOLERANCE_MILLIS: u64 = 2_000;
 const SEEK_POSITION_SAMPLES: u8 = 4;
+const ACTION_TIMEOUT: Duration = Duration::from_secs(10);
 
 struct PendingSeek {
     origin_millis: u64,
@@ -87,7 +88,7 @@ pub(crate) struct UpnpController {
 
 impl UpnpController {
     pub(crate) fn new(device: Device) -> Result<Self, String> {
-        if device.find_service(&AV_TRANSPORT).is_none() {
+        if find_service_any_version(&device, "AVTransport").is_none() {
             return Err(format!(
                 "{} does not provide UPnP AVTransport",
                 device.friendly_name()
@@ -122,6 +123,22 @@ impl UpnpController {
                 }]
             })
             .unwrap_or_default()
+    }
+
+    pub(crate) fn verify_connection(&self) -> Result<(), String> {
+        let result = self.action(
+            AV_TRANSPORT,
+            "GetTransportInfo",
+            "<InstanceID>0</InstanceID>",
+        );
+        if let Err(error) = &result {
+            tracing::debug!(
+                description_url = %self.device.url(),
+                %error,
+                "UPnP renderer connection probe failed"
+            );
+        }
+        result.map(|_| ())
     }
 
     pub(crate) fn handle(
@@ -715,11 +732,12 @@ impl UpnpController {
 
     fn set_volume(&self, volume: f64, muted: bool) -> Result<(), String> {
         let desired = (volume.clamp(0.0, 1.0) * 100.0).round() as u8;
+        let applied = if muted { 0 } else { desired };
         self.action(
             RENDERING_CONTROL,
             "SetVolume",
             &format!(
-                "<InstanceID>0</InstanceID><Channel>Master</Channel><DesiredVolume>{desired}</DesiredVolume>"
+                "<InstanceID>0</InstanceID><Channel>Master</Channel><DesiredVolume>{applied}</DesiredVolume>"
             ),
         )?;
         self.action(
@@ -741,10 +759,16 @@ impl UpnpController {
     ) -> Result<std::collections::HashMap<String, String>, String> {
         let service = self.service(&service_type)?;
         let started = Instant::now();
-        let result = self
-            .runtime
-            .block_on(service.action(self.device.url(), action, payload))
-            .map_err(|error| format!("UPnP {action} failed: {error}"));
+        let result = match self.runtime.block_on(async {
+            tokio::time::timeout(
+                ACTION_TIMEOUT,
+                service.action(self.device.url(), action, payload),
+            )
+            .await
+        }) {
+            Ok(result) => result.map_err(|error| format!("UPnP {action} failed: {error}")),
+            Err(_) => Err(format!("UPnP {action} timed out")),
+        };
         let elapsed = started.elapsed();
         if result.is_err() || elapsed.as_millis() >= 250 {
             tracing::debug!(
@@ -757,13 +781,32 @@ impl UpnpController {
     }
 
     fn service(&self, service_type: &URN) -> Result<&Service, String> {
-        self.device.find_service(service_type).ok_or_else(|| {
+        let name = if service_type == &AV_TRANSPORT {
+            "AVTransport"
+        } else if service_type == &RENDERING_CONTROL {
+            "RenderingControl"
+        } else {
+            return Err(format!("unsupported UPnP service {service_type}"));
+        };
+        find_service_any_version(&self.device, name).ok_or_else(|| {
             format!(
-                "{} does not provide {service_type}",
+                "{} does not provide UPnP {name}",
                 self.device.friendly_name()
             )
         })
     }
+}
+
+fn find_service_any_version<'a>(device: &'a Device, name: &str) -> Option<&'a Service> {
+    device
+        .services_iter()
+        .find(|service| service_type_matches(service.service_type(), name))
+}
+
+fn service_type_matches(service_type: &URN, name: &str) -> bool {
+    service_type
+        .to_string()
+        .contains(&format!(":service:{name}:"))
 }
 
 fn format_upnp_time(millis: u64) -> String {
@@ -897,6 +940,55 @@ mod tests {
             xml_escape("http://host/a?x=1&y=2"),
             "http://host/a?x=1&amp;y=2"
         );
+    }
+
+    #[test]
+    fn renderer_services_match_supported_newer_versions() {
+        assert!(service_type_matches(
+            &URN::service("schemas-upnp-org", "AVTransport", 3),
+            "AVTransport",
+        ));
+        assert!(!service_type_matches(
+            &URN::service("schemas-upnp-org", "RenderingControl", 3),
+            "AVTransport",
+        ));
+    }
+
+    #[test]
+    fn connection_probe_rejects_an_unusable_control_service() {
+        let server = Server::http("127.0.0.1:0").expect("fake renderer");
+        let address = server.server_addr().to_ip().expect("renderer address");
+        let renderer = thread::spawn(move || {
+            let description = server.recv().expect("description request");
+            description
+                .respond(Response::from_string(
+                    r#"<root xmlns="urn:schemas-upnp-org:device-1-0"><device><deviceType>urn:schemas-upnp-org:device:MediaRenderer:1</deviceType><friendlyName>Test Renderer</friendlyName><serviceList><service><serviceType>urn:schemas-upnp-org:service:AVTransport:1</serviceType><serviceId>urn:upnp-org:serviceId:AVTransport</serviceId><SCPDURL>/transport.xml</SCPDURL><controlURL>/transport</controlURL><eventSubURL>/events</eventSubURL></service></serviceList></device></root>"#,
+                ))
+                .expect("device description response");
+            let probe = server.recv().expect("connection probe");
+            probe
+                .respond(Response::from_string("renderer unavailable").with_status_code(500))
+                .expect("connection failure response");
+        });
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("runtime");
+        let device = runtime
+            .block_on(Device::from_url(
+                format!("http://{address}/device.xml")
+                    .parse()
+                    .expect("device URL"),
+            ))
+            .expect("device description");
+        let controller = UpnpController::new(device).expect("controller");
+
+        let error = controller
+            .verify_connection()
+            .expect_err("unusable control service");
+
+        assert!(error.contains("GetTransportInfo"), "error={error}");
+        renderer.join().expect("renderer thread");
     }
 
     #[test]

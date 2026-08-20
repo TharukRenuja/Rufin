@@ -53,7 +53,7 @@ impl AudioGraph {
         let resample = make_element("audioresample", "rufin-audio-resample")?;
         let output = make_audio_output(settings.audio_output.as_deref())?;
         #[cfg(test)]
-        configure_sample_capture(&output);
+        configure_test_output(&output);
         let mut elements = vec![convert_in.clone()];
 
         let equalizer = make_element("equalizer-nbands", "rufin-equalizer")?;
@@ -174,7 +174,15 @@ impl AudioGraph {
 }
 
 #[cfg(test)]
-fn configure_sample_capture(output: &gst::Element) {
+fn configure_test_output(output: &gst::Element) {
+    if output
+        .factory()
+        .is_some_and(|factory| factory.name() == "fakesink")
+    {
+        output.set_property("async", false);
+        output.set_property("sync", false);
+        return;
+    }
     let Some(sink) = output.downcast_ref::<gst_app::AppSink>() else {
         return;
     };
