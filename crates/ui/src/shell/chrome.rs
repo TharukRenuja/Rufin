@@ -39,6 +39,7 @@ pub(crate) struct WindowChrome {
 }
 
 pub(crate) struct WindowControlLayout {
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
     platform_bar: bool,
     #[cfg(not(any(target_os = "windows", target_os = "macos")))]
     start: gtk::WindowControls,
@@ -138,14 +139,9 @@ impl WindowControlLayout {
 
         #[cfg(any(target_os = "windows", target_os = "macos"))]
         {
-            Self {
-                platform_bar: platform_bar_preview,
-            }
+            let _ = platform_bar_preview;
+            Self {}
         }
-    }
-
-    pub(crate) fn uses_platform_bar(&self) -> bool {
-        self.platform_bar
     }
 
     pub(crate) fn wrap_content(&self, content: &impl IsA<gtk::Widget>) -> gtk::Widget {

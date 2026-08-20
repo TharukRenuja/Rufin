@@ -372,22 +372,6 @@ row:focus {
   font-weight: 600;
 }
 
-.platform-window-bar-action {
-  min-width: 30px;
-  min-height: 30px;
-  padding: 0;
-  margin: 0;
-  border-radius: 0;
-}
-
-.macos-platform-window-bar .platform-window-bar-end {
-  margin-right: 4px;
-}
-
-.windows-platform-window-bar .platform-window-bar-start {
-  margin-left: 4px;
-}
-
 .macos-window-bar-preview-controls {
   margin-left: 12px;
 }

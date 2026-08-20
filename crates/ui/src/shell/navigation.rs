@@ -168,21 +168,19 @@ pub(super) fn build_normal_navigation(shell: &Rc<Shell>) {
 }
 
 pub(super) fn build_compact_navigation(shell: &Rc<Shell>) {
-    if !shell.chrome.window_controls.uses_platform_bar() {
-        shell
-            .navigation_view
-            .compact_nav
-            .append(&shell.chrome.window_controls.compact_start_reservation());
-        shell
-            .navigation_view
-            .compact_nav
-            .append(&primary_menu_button(
-                &shell.navigation_view.compact_main_menu.button,
-                &shell.navigation_view.compact_main_menu.popover,
-                shell,
-                true,
-            ));
-    }
+    shell
+        .navigation_view
+        .compact_nav
+        .append(&shell.chrome.window_controls.compact_start_reservation());
+    shell
+        .navigation_view
+        .compact_nav
+        .append(&primary_menu_button(
+            &shell.navigation_view.compact_main_menu.button,
+            &shell.navigation_view.compact_main_menu.popover,
+            shell,
+            true,
+        ));
     for item in nav_items(shell) {
         shell.navigation_view.compact_nav.append(&rail_button(
             shell,
@@ -428,47 +426,6 @@ pub(super) fn normal_sidebar_header(
     header
 }
 
-pub(super) fn configure_platform_window_bar(
-    shell: &Rc<Shell>,
-    search: &gtk::Button,
-    platform: crate::application::WindowBarPreview,
-) {
-    search.add_css_class("flat");
-    search.add_css_class("platform-window-bar-action");
-    bind_widget_tooltip(search, msgid("Search"));
-    let search_shell = Rc::downgrade(shell);
-    search.connect_clicked(move |_| {
-        if let Some(shell) = search_shell.upgrade() {
-            shell.navigate(Route::Search);
-        }
-    });
-
-    let menu = normal_primary_menu_button(
-        &shell.navigation_view.normal_main_menu.button,
-        &shell.navigation_view.normal_main_menu.popover,
-        shell,
-    );
-    if let Some(popover) = shell
-        .navigation_view
-        .normal_main_menu
-        .popover
-        .borrow()
-        .as_ref()
-    {
-        match platform {
-            crate::application::WindowBarPreview::Macos => {
-                popover.add_css_class(LEFT_OPENING_PRIMARY_MENU_CLASS);
-                mirror_primary_menu_cascade(popover);
-            }
-            crate::application::WindowBarPreview::Windows => {
-                popover.set_halign(gtk::Align::Start);
-            }
-        }
-    }
-    menu.add_css_class("flat");
-    menu.add_css_class("platform-window-bar-action");
-}
-
 fn update_pin_selection(container: &gtk::Box, active_route: &Route) -> bool {
     let active_pin_key = sidebar_pin_route_key(active_route);
     let mut selected = false;
@@ -653,13 +610,9 @@ fn normal_primary_menu_button(
 }
 
 pub(super) fn popup_primary_menu(shell: &Rc<Shell>) {
-    if shell.chrome.window_controls.uses_platform_bar() {
-        popup_normal_primary_menu(shell);
-    } else {
-        match shell.left_sidebar_mode() {
-            ResolvedLeftSidebarMode::Compact => popup_compact_primary_menu(shell),
-            _ => popup_normal_primary_menu(shell),
-        }
+    match shell.left_sidebar_mode() {
+        ResolvedLeftSidebarMode::Compact => popup_compact_primary_menu(shell),
+        _ => popup_normal_primary_menu(shell),
     }
 }
 
