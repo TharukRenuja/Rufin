@@ -1,4 +1,4 @@
-use super::audio::{SharedLoudnessTags, apply_shared_loudness, audio_outputs_share_current_target};
+use super::audio::{SharedLoudnessTags, apply_shared_loudness, audio_output_is_available};
 use super::pipeline::{AboutToFinishAction, PlayerPipeline, SourceClock};
 #[cfg(test)]
 use super::waveform::visualizer_pipeline_is_live;
@@ -1154,8 +1154,18 @@ impl GstEngine {
                 }
                 Ok(())
             }
-            BackendCommand::ConfigureAudio(settings) => {
+            BackendCommand::ConfigureAudio(mut settings) => {
                 let previous_settings = self.settings();
+                if let Some(selected) = settings.audio_output.as_deref()
+                    && !audio_output_is_available(selected)
+                {
+                    settings.audio_output =
+                        if settings.audio_output != previous_settings.audio_output {
+                            previous_settings.audio_output.clone()
+                        } else {
+                            None
+                        };
+                }
                 let previous_output = previous_settings.audio_output;
                 let output_changed = previous_output != settings.audio_output;
                 let preserve_pitch_changed =
@@ -1175,11 +1185,7 @@ impl GstEngine {
                             self.push_state(BackendState::Paused);
                         }
                     }
-                    let retargeted = if output_changed
-                        && audio_outputs_share_current_target(
-                            previous_output.as_deref(),
-                            settings.audio_output.as_deref(),
-                        ) {
+                    let retargeted = if output_changed && !audio_output_change_requires_restart() {
                         self.active_pipeline_mut()
                             .try_reconfigure_audio(&settings)?
                     } else {
@@ -2948,6 +2954,16 @@ impl GstEngine {
         self.stop_pipeline(Slot::Secondary);
     }
 }
+
+#[cfg(target_os = "linux")]
+fn audio_output_change_requires_restart() -> bool {
+    std::env::var_os("FLATPAK_ID").is_some()
+}
+
+#[cfg(not(target_os = "linux"))]
+fn audio_output_change_requires_restart() -> bool {
+    false
+}
 #[instrument(skip(receiver, events))]
 fn run_gstreamer_thread(
     receiver: Receiver<BackendCommand>,
@@ -3615,6 +3631,75 @@ mod tests {
                 } if *run == RunId::new(1)
             )),
             "audio configuration events: {applied:?}; resume events: {resumed_events:?}"
+        );
+        engine.shutdown();
+    }
+
+    #[test]
+    fn unavailable_device_selection_keeps_the_working_output() {
+        ensure_gstreamer_initialized().expect("initialize GStreamer");
+        let directory = tempfile::tempdir().expect("playback fixture directory");
+        let path = directory.path().join("unavailable-audio-device.wav");
+        write_long_silent_wave(&path);
+        let uri = gst::glib::filename_to_uri(&path, None).expect("playback fixture URI");
+        let events = Arc::new(Mutex::new(EventMailbox::default()));
+        let mut engine = GstEngine::new(Arc::clone(&events));
+        let current = PreparedRun {
+            run: RunId::new(1),
+            stream: ResolvedStream::new(uri.as_str()).into(),
+        };
+        let settings = BackendAudioSettings {
+            audio_output: Some("fakesink".to_string()),
+            ..BackendAudioSettings::default()
+        };
+        let pipeline_id = engine
+            .start_pipeline(
+                Slot::Primary,
+                &current,
+                &settings,
+                settings.volume,
+                settings.muted,
+                DEFAULT_PLAYBACK_RATE,
+                gst::State::Paused,
+            )
+            .expect("start paused output");
+        {
+            let mut shared = lock_recover(&engine.shared);
+            shared.settings = settings.clone();
+            shared.current = Some(current);
+            shared.set_pipeline_id(Slot::Primary, Some(pipeline_id));
+        }
+        engine.desired_playing = true;
+        engine.state = BackendState::Playing;
+
+        let mut changed = settings;
+        changed.audio_output = Some("gst-device:unavailable".to_string());
+        engine.handle_command(BackendCommand::ConfigureAudio(changed));
+
+        assert!(engine.desired_playing);
+        assert_eq!(
+            lock_recover(&engine.shared)
+                .settings
+                .audio_output
+                .as_deref(),
+            Some("fakesink")
+        );
+        assert_eq!(
+            engine.primary.audio_output_factory().as_deref(),
+            Some("fakesink")
+        );
+        let applied = lock_recover(&events).drain();
+        assert!(applied.iter().any(|event| matches!(
+            event,
+            BackendEvent::AudioApplied {
+                output: Some(output),
+                ..
+            } if output == "fakesink"
+        )));
+        assert!(
+            applied
+                .iter()
+                .all(|event| !matches!(event, BackendEvent::Error { .. }))
         );
         engine.shutdown();
     }

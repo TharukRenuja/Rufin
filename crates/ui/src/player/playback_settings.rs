@@ -23,7 +23,14 @@ const PLAYBACK_SETTINGS_WIDTH: i32 = 400;
 const PLAYBACK_SETTINGS_MAX_HEIGHT: i32 = 520;
 const PLAYBACK_SETTINGS_SCALE_WIDTH: i32 = 180;
 
-pub(crate) fn present_playback_settings_popover(anchor: &gtk::Button, shell: &Rc<Shell>) {
+pub(crate) fn configure_playback_settings_popover(button: &gtk::MenuButton, shell: &Rc<Shell>) {
+    let shell = Rc::clone(shell);
+    button.set_create_popup_func(move |button| {
+        button.set_popover(Some(&playback_settings_popover(&shell)));
+    });
+}
+
+fn playback_settings_popover(shell: &Rc<Shell>) -> gtk::Popover {
     let settings = shell.settings.current.borrow().clone();
     let playback = settings.playback;
     let local_output = shell
@@ -37,7 +44,6 @@ pub(crate) fn present_playback_settings_popover(anchor: &gtk::Button, shell: &Rc
     popover.add_css_class("playback-settings-popover");
     popover.set_autohide(true);
     popover.set_position(gtk::PositionType::Top);
-    popover.set_parent(anchor);
 
     let content = gtk::Box::new(gtk::Orientation::Vertical, 0);
     content.set_margin_top(2);
@@ -142,13 +148,12 @@ pub(crate) fn present_playback_settings_popover(anchor: &gtk::Button, shell: &Rc
     let scroller = gtk::ScrolledWindow::new();
     scroller.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
     scroller.set_min_content_width(PLAYBACK_SETTINGS_WIDTH);
-    scroller.set_propagate_natural_width(true);
+    scroller.set_propagate_natural_width(false);
     scroller.set_propagate_natural_height(true);
     scroller.set_max_content_height(PLAYBACK_SETTINGS_MAX_HEIGHT);
     scroller.set_child(Some(&content));
     popover.set_child(Some(&scroller));
-    popover.connect_closed(|popover| popover.unparent());
-    popover.popup();
+    popover
 }
 
 pub(crate) fn crossfade_duration_row(

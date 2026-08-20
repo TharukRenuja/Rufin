@@ -1,10 +1,11 @@
 set shell := ["bash", "-euc"]
+set quiet
 
 default:
-    @just --list
+    just --list
 
 build target="" architecture="":
-    @if [[ "{{ target }}" == "arch" && -z "{{ architecture }}" ]]; then \
+    if [[ "{{ target }}" == "arch" && -z "{{ architecture }}" ]]; then \
         scripts/container run default none just _build-arch; \
     elif [[ "{{ target }}" == "dmg" && -z "{{ architecture }}" ]]; then \
         just _build-dmg; \
@@ -12,7 +13,7 @@ build target="" architecture="":
         scripts/container run packaging engine \
             just _build-rpm "{{ architecture }}"; \
     elif [[ "{{ target }}" == "flatpak" && -z "{{ architecture }}" ]]; then \
-        scripts/container run packaging sandbox \
+        scripts/container run packaging sandbox env FLATPAK_BWRAP=/usr/bin/bwrap \
             just _build-flatpak; \
     elif [[ "{{ target }}" == "windows" && -z "{{ architecture }}" ]]; then \
         just _build-windows; \
@@ -24,7 +25,7 @@ build target="" architecture="":
     fi
 
 _build:
-    @target_dir="${CARGO_TARGET_DIR:-$PWD/target}"; \
+    target_dir="${CARGO_TARGET_DIR:-$PWD/target}"; \
     artifact_root="${RUFIN_ARTIFACT_ROOT:-$PWD/.local/artifacts}"; \
     missing_gstreamer=(); \
     if command -v gst-inspect-1.0 >/dev/null 2>&1; then \
@@ -310,11 +311,11 @@ _check-all:
     cargo deny --locked check -D unmatched-skip
 
 debug *args:
-    @if [[ "${RUFIN_CONTAINER:-0}" == "1" ]]; then \
+    if [[ "${RUFIN_CONTAINER:-0}" == "1" ]]; then \
         echo "Run 'just debug' on the host." >&2; \
         exit 1; \
     fi
-    @set -- {{ args }}; \
+    set -- {{ args }}; \
     if [[ "${1:-}" == "flatpak" ]]; then \
         shift; \
         flatpak run --env=RUST_LOG="${RUST_LOG:-debug}" io.github.screwys.Rufin "$@" 2>&1; \

@@ -1,3 +1,4 @@
+use crate::interactions::keep_parent_grab_for_dropdown;
 use crate::shell::Shell;
 use gtk::prelude::*;
 use localization::tr;
@@ -19,27 +20,6 @@ pub(crate) fn warm_audio_output_cache(shell: &Rc<Shell>) {
     request_audio_output_refresh(shell);
 }
 
-pub(crate) fn selected_audio_output_title(shell: &Rc<Shell>, selected: Option<&str>) -> String {
-    selected
-        .and_then(|selected| {
-            shell
-                .playback
-                .audio_output_options
-                .borrow()
-                .iter()
-                .find(|(id, _)| id.as_deref() == Some(selected))
-                .map(|(_, title)| title.clone())
-        })
-        .or_else(|| selected.and_then(static_audio_output_title))
-        .unwrap_or_else(|| {
-            if selected.is_some() {
-                tr("Selected device")
-            } else {
-                tr("System default")
-            }
-        })
-}
-
 pub(crate) fn audio_output_dropdown(shell: &Rc<Shell>, width: i32) -> gtk::DropDown {
     let selected = shell
         .settings
@@ -55,6 +35,8 @@ pub(crate) fn audio_output_dropdown(shell: &Rc<Shell>, width: i32) -> gtk::DropD
     dropdown.add_css_class("audio-output-dropdown");
     dropdown.set_valign(gtk::Align::Center);
     dropdown.set_width_request(width);
+    configure_audio_output_dropdown_factory(&dropdown);
+    keep_parent_grab_for_dropdown(&dropdown);
     refresh_audio_output_dropdown(&dropdown, shell, &options, &selected, &syncing);
 
     let output_shell = Rc::clone(shell);
@@ -90,6 +72,41 @@ pub(crate) fn audio_output_dropdown(shell: &Rc<Shell>, width: i32) -> gtk::DropD
     dropdown
 }
 
+fn configure_audio_output_dropdown_factory(dropdown: &gtk::DropDown) {
+    let factory = gtk::SignalListItemFactory::new();
+    factory.connect_setup(|_, item| {
+        let Some(item) = item.downcast_ref::<gtk::ListItem>() else {
+            return;
+        };
+        let label = gtk::Label::new(None);
+        label.set_xalign(0.0);
+        label.set_halign(gtk::Align::Fill);
+        label.set_hexpand(true);
+        label.set_width_request(1);
+        label.set_ellipsize(gtk::pango::EllipsizeMode::End);
+        item.set_child(Some(&label));
+    });
+    factory.connect_bind(|_, item| {
+        let Some(item) = item.downcast_ref::<gtk::ListItem>() else {
+            return;
+        };
+        let Some(label) = item
+            .child()
+            .and_then(|child| child.downcast::<gtk::Label>().ok())
+        else {
+            return;
+        };
+        let Some(value) = item
+            .item()
+            .and_then(|value| value.downcast::<gtk::StringObject>().ok())
+        else {
+            return;
+        };
+        label.set_text(&value.string());
+    });
+    dropdown.set_factory(Some(&factory));
+}
+
 fn refresh_audio_output_dropdown(
     dropdown: &gtk::DropDown,
     shell: &Rc<Shell>,
@@ -98,10 +115,7 @@ fn refresh_audio_output_dropdown(
     syncing: &Rc<Cell<bool>>,
 ) {
     let selected_id = selected.borrow().clone();
-    let selected_title = selected_audio_output_title(shell, selected_id.as_deref());
-    let cached_options = shell.playback.audio_output_options.borrow().clone();
-    let shown =
-        include_selected_audio_output(cached_options, selected_id.as_deref(), selected_title);
+    let shown = shell.playback.audio_output_options.borrow().clone();
     let selected_index = audio_output_index(&shown, selected_id.as_deref()).unwrap_or_default();
     let titles = shown
         .iter()
@@ -202,24 +216,9 @@ fn playback_output_options(discovered: Vec<AudioOutput>) -> AudioOutputOptions {
     outputs.extend(
         discovered
             .into_iter()
-            .filter(|output| output.id != "autoaudiosink")
             .map(|output| (Some(output.id), output.name)),
     );
     outputs
-}
-
-fn include_selected_audio_output(
-    mut options: AudioOutputOptions,
-    selected: Option<&str>,
-    selected_title: String,
-) -> AudioOutputOptions {
-    let selected = selected.filter(|id| *id != "autoaudiosink");
-    if let Some(selected) = selected
-        && audio_output_index(&options, Some(selected)).is_none()
-    {
-        options.push((Some(selected.to_string()), selected_title));
-    }
-    options
 }
 
 fn audio_output_index(
@@ -229,23 +228,9 @@ fn audio_output_index(
     outputs.iter().position(|(id, _)| id.as_deref() == selected)
 }
 
-fn static_audio_output_title(id: &str) -> Option<String> {
-    Some(match id {
-        "autoaudiosink" => tr("System default"),
-        "pipewiresink" => tr("PipeWire"),
-        "pulsesink" => tr("PulseAudio"),
-        "alsasink" => tr("ALSA"),
-        "jackaudiosink" => tr("JACK"),
-        "osxaudiosink" => tr("macOS"),
-        "wasapisink" => tr("WASAPI"),
-        "directsoundsink" => tr("DirectSound"),
-        _ => return None,
-    })
-}
-
 #[cfg(test)]
 mod tests {
-    use super::{audio_output_index, default_audio_output_options, include_selected_audio_output};
+    use super::{audio_output_index, default_audio_output_options};
 
     #[test]
     fn unavailable_selected_output_does_not_mark_system_default_active() {
@@ -253,20 +238,5 @@ mod tests {
 
         assert_eq!(audio_output_index(&outputs, None), Some(0));
         assert_eq!(audio_output_index(&outputs, Some("gst-device:gone")), None);
-    }
-
-    #[test]
-    fn unavailable_selected_output_remains_selectable() {
-        let outputs = include_selected_audio_output(
-            default_audio_output_options(),
-            Some("gst-device:gone"),
-            "Selected device".to_string(),
-        );
-
-        assert_eq!(audio_output_index(&outputs, None), Some(0));
-        assert_eq!(
-            audio_output_index(&outputs, Some("gst-device:gone")),
-            Some(1)
-        );
     }
 }

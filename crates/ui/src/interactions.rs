@@ -493,6 +493,18 @@ pub(crate) fn keep_parent_grab_for_nested_native_menus(popover: &gtk::PopoverMen
     keep_parent_grab_for_nested_native_menus_from(popover.upcast_ref());
 }
 
+pub(crate) fn keep_parent_grab_for_dropdown(dropdown: &gtk::DropDown) {
+    let mut child = dropdown.first_child();
+    while let Some(widget) = child {
+        child = widget.next_sibling();
+        if let Ok(popover) = widget.downcast::<gtk::Popover>() {
+            // GTK can lose the parent's input grab when an autohide child closes.
+            popover.set_autohide(false);
+            break;
+        }
+    }
+}
+
 pub(crate) fn popdown_native_menu(popover: &gtk::PopoverMenu) {
     popdown_nested_native_menus_from(popover.upcast_ref());
     popover.popdown();

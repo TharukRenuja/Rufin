@@ -392,6 +392,7 @@ enum PersistenceWork {
     OutputState {
         volume: f64,
         muted: bool,
+        audio_output: Option<String>,
     },
     Fence(SyncSender<()>),
 }
@@ -443,10 +444,15 @@ impl PersistenceTarget {
                     warn!(%error, "could not save Playback state");
                 }
             }
-            PersistenceWork::OutputState { volume, muted } => {
+            PersistenceWork::OutputState {
+                volume,
+                muted,
+                audio_output,
+            } => {
                 if let Err(error) = self.settings.update(|settings| {
                     settings.ui.playback.volume = volume;
                     settings.ui.playback.muted = muted;
+                    settings.ui.playback.audio_output = audio_output;
                     Ok(())
                 }) {
                     warn!(%error, "could not save Playback output settings");
@@ -594,8 +600,12 @@ impl PlaybackPersistence {
         pending.insert(source_id, checkpoint);
     }
 
-    fn enqueue_output_state(&self, volume: f64, muted: bool) {
-        self.enqueue(PersistenceWork::OutputState { volume, muted });
+    fn enqueue_output_state(&self, volume: f64, muted: bool, audio_output: Option<String>) {
+        self.enqueue(PersistenceWork::OutputState {
+            volume,
+            muted,
+            audio_output,
+        });
     }
 
     fn drain(&self) {
@@ -1242,8 +1252,13 @@ impl PlaybackOwner {
                         progress_millis,
                     }));
             }
-            SessionEffect::PersistOutputState { volume, muted } => {
-                self.persistence.enqueue_output_state(volume, muted);
+            SessionEffect::PersistOutputState {
+                volume,
+                muted,
+                audio_output,
+            } => {
+                self.persistence
+                    .enqueue_output_state(volume, muted, audio_output);
             }
             SessionEffect::FlushPersistence { .. } => {
                 self.persistence.drain();
