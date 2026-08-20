@@ -12,7 +12,6 @@ use crate::favorites::{
 };
 use crate::interactions::install_context_menu_openers;
 use crate::shell::Shell;
-use crate::shell::cover::presentation::stable_seed;
 use crate::shell::cover::{ArtworkTile, LARGE_COVER_SIZE, THUMB_COVER_SIZE};
 use crate::shell::route::{MountedRouteItemNavigation, item_navigation_entry_position};
 use ::library::{
@@ -559,7 +558,6 @@ impl ReusableCollectionGridCell<Track> for TrackGridCell {
         self.shell.bind_artwork_tile(
             &self.cover_tile,
             artwork,
-            stable_seed(track.id.as_str()),
             COLLECTION_GRID_MAX_CARD_WIDTH,
             LARGE_COVER_SIZE,
         );
@@ -755,7 +753,6 @@ impl ReusableCollectionGridCell<AlbumSummary> for AlbumGridCell {
         self.shell.bind_artwork_tile(
             &self.cover_tile,
             ArtworkBinding::album_artwork(&album.artwork),
-            album.album.color_seed,
             COLLECTION_GRID_MAX_CARD_WIDTH,
             LARGE_COVER_SIZE,
         );
@@ -954,7 +951,6 @@ impl ReusableCollectionGridCell<ArtistSummary> for ArtistGridCell {
         self.shell.bind_artwork_tile(
             &self.cover_tile,
             ArtworkBinding::artist(&artist.artwork),
-            stable_seed(artist.artist.id.as_str()),
             COLLECTION_GRID_MAX_CARD_WIDTH,
             LARGE_COVER_SIZE,
         );
@@ -1121,12 +1117,11 @@ impl ReusableCollectionGridCell<PlaylistSummary> for PlaylistGridCell {
                 .borrow()
                 .prefer_server_playlist_covers,
         );
-        self.cover_button
-            .set_child(Some(&self.shell.elastic_cover_group_tile_for_artwork(
-                &artwork,
-                stable_seed(playlist.playlist.id.as_str()),
-                THUMB_COVER_SIZE,
-            )));
+        self.cover_button.set_child(Some(
+            &self
+                .shell
+                .elastic_cover_group_tile_for_artwork(&artwork, THUMB_COVER_SIZE),
+        ));
         self.body.bind(&playlist.playlist.name, |field| {
             DetailLinks::text(&playlist_field(&playlist, field))
         });
@@ -1293,12 +1288,11 @@ impl ReusableCollectionGridCell<SmartPlaylistSummary> for SmartPlaylistGridCell 
             &playlist.smart_playlist,
             &playlist.representative_albums,
         );
-        self.cover_button
-            .set_child(Some(&self.shell.elastic_cover_group_tile_for_artwork(
-                &artwork,
-                stable_seed(playlist.smart_playlist.id.as_str()),
-                THUMB_COVER_SIZE,
-            )));
+        self.cover_button.set_child(Some(
+            &self
+                .shell
+                .elastic_cover_group_tile_for_artwork(&artwork, THUMB_COVER_SIZE),
+        ));
         self.body.bind(
             &smart_playlist_display_name(&playlist.smart_playlist),
             |field| DetailLinks::text(&smart_playlist_field(&playlist, field)),
@@ -1606,7 +1600,7 @@ pub(super) fn collection_grid_cover_shell() -> gtk::Button {
 
 fn collection_grid_cover_button() -> (gtk::Button, ArtworkTile) {
     let cover_button = collection_grid_cover_shell();
-    let cover_tile = ArtworkTile::new_elastic_square(0);
+    let cover_tile = ArtworkTile::new_elastic_square();
     cover_button.set_child(Some(&cover_tile.widget()));
     (cover_button, cover_tile)
 }

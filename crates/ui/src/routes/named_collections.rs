@@ -13,7 +13,6 @@ use crate::localization::localized_column;
 use crate::runtime::SelectedLibrary;
 use crate::shell::Shell;
 use crate::shell::cover::THUMB_COVER_SIZE;
-use crate::shell::cover::presentation::stable_seed;
 use crate::shell::route::{LatestMountedRouteRead, MountedRoute, SelectedRouteIdentity};
 use crate::{LibraryField, LibraryLayout, LibraryListKey, LibraryListSettings};
 use localization::msgid;
@@ -91,13 +90,6 @@ impl NamedCollectionItem {
         match self {
             Self::Genre(genre) => &genre.genre.name,
             Self::Mood(mood) => &mood.mood.name,
-        }
-    }
-
-    fn seed(&self) -> u32 {
-        match self {
-            Self::Genre(genre) => stable_seed(genre.genre.id.as_str()),
-            Self::Mood(mood) => stable_seed(mood.mood.id.as_str()),
         }
     }
 
@@ -575,12 +567,11 @@ impl ReusableCollectionGridCell<NamedCollectionItem> for NamedCollectionGridCell
     }
 
     fn bind(&self, _: u32, item: NamedCollectionItem) {
-        self.cover_button
-            .set_child(Some(&self.shell.elastic_cover_group_tile_for_artwork(
-                &item.artwork(),
-                item.seed(),
-                THUMB_COVER_SIZE,
-            )));
+        self.cover_button.set_child(Some(
+            &self
+                .shell
+                .elastic_cover_group_tile_for_artwork(&item.artwork(), THUMB_COVER_SIZE),
+        ));
         self.body
             .bind(item.name(), |field| DetailLinks::text(&item.field(field)));
         self.body.set_downloaded(

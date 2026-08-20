@@ -114,7 +114,6 @@ impl Shell {
         let cover = detail_cover_projection(
             self,
             ArtworkBinding::album_artwork(&detail.summary.artwork),
-            album.color_seed,
             cover_size,
             "album-detail-cover",
         );
@@ -326,11 +325,7 @@ impl Shell {
                     }
                     let album = Arc::clone(&next.summary.album);
                     debug_assert_eq!(album.id, album_id);
-                    cover.replace(
-                        &shell,
-                        ArtworkBinding::album_artwork(&next.summary.artwork),
-                        album.color_seed,
-                    );
+                    cover.replace(&shell, ArtworkBinding::album_artwork(&next.summary.artwork));
                     facts.replace(&album_summary_items(&next.summary));
                     track_count.set(next.summary.track_count);
                     let next_kind = album_release_kind_label(&album);

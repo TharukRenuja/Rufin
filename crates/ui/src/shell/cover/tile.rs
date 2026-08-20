@@ -7,10 +7,9 @@ use gtk::glib;
 #[derive(Clone)]
 pub(crate) struct ArtworkTile {
     pub(crate) area: gtk::Overlay,
-    fallback: gtk::Picture,
+    fallback: gtk::Box,
     image: gtk::Picture,
     size: Rc<Cell<i32>>,
-    seed: Rc<Cell<u32>>,
     known_missing: Rc<Cell<bool>>,
     artwork_id: Rc<RefCell<Option<artwork::ArtworkVisualIdentity>>>,
     request_key: Rc<RefCell<Option<artwork::ArtworkRequestIdentity>>>,
@@ -23,10 +22,9 @@ pub(crate) struct ArtworkTile {
 #[derive(Clone)]
 pub(crate) struct ArtworkTileWeak {
     area: glib::WeakRef<gtk::Overlay>,
-    fallback: glib::WeakRef<gtk::Picture>,
+    fallback: glib::WeakRef<gtk::Box>,
     image: glib::WeakRef<gtk::Picture>,
     size: Rc<Cell<i32>>,
-    seed: Rc<Cell<u32>>,
     known_missing: Rc<Cell<bool>>,
     artwork_id: Rc<RefCell<Option<artwork::ArtworkVisualIdentity>>>,
     request_key: Rc<RefCell<Option<artwork::ArtworkRequestIdentity>>>,
@@ -45,12 +43,12 @@ pub(super) struct ArtworkBindOutcome {
 }
 
 impl ArtworkTile {
-    pub(crate) fn new(size: i32, seed: u32) -> Self {
-        Self::new_sized(size, size, seed)
+    pub(crate) fn new(size: i32) -> Self {
+        Self::new_sized(size, size)
     }
 
-    pub(crate) fn new_elastic_square(seed: u32) -> Self {
-        let tile = Self::new_sized(1, 1, seed);
+    pub(crate) fn new_elastic_square() -> Self {
+        let tile = Self::new_sized(1, 1);
         tile.area.set_hexpand(true);
         tile.area.set_vexpand(true);
         tile.area.set_halign(gtk::Align::Fill);
@@ -58,7 +56,7 @@ impl ArtworkTile {
         tile
     }
 
-    pub(crate) fn new_sized(width: i32, height: i32, seed: u32) -> Self {
+    pub(crate) fn new_sized(width: i32, height: i32) -> Self {
         let area = gtk::Overlay::new();
         area.add_css_class("cover-tile");
         area.add_css_class("card");
@@ -76,7 +74,7 @@ impl ArtworkTile {
         sizing.set_accessible_role(gtk::AccessibleRole::Presentation);
         area.set_child(Some(&sizing));
 
-        let fallback = cover_picture(gtk::ContentFit::Fill);
+        let fallback = cover_fallback();
         fallback.set_visible(false);
         area.add_overlay(&fallback);
         area.set_measure_overlay(&fallback, false);
@@ -89,7 +87,6 @@ impl ArtworkTile {
         area.set_clip_overlay(&image, true);
         area.set_opacity(0.0);
 
-        let seed = Rc::new(Cell::new(seed));
         let size = Rc::new(Cell::new(width.max(height)));
         let known_missing = Rc::new(Cell::new(false));
         let artwork_id = Rc::new(RefCell::new(None::<artwork::ArtworkVisualIdentity>));
@@ -104,7 +101,6 @@ impl ArtworkTile {
             fallback,
             image,
             size,
-            seed,
             known_missing,
             artwork_id,
             request_key,
@@ -129,7 +125,6 @@ impl ArtworkTile {
             fallback: self.fallback.downgrade(),
             image: self.image.downgrade(),
             size: Rc::clone(&self.size),
-            seed: Rc::clone(&self.seed),
             known_missing: Rc::clone(&self.known_missing),
             artwork_id: Rc::clone(&self.artwork_id),
             request_key: Rc::clone(&self.request_key),
@@ -171,7 +166,6 @@ impl ArtworkTile {
 
     pub(super) fn bind_selected_cover(
         &self,
-        seed: u32,
         artwork_id: artwork::ArtworkVisualIdentity,
         request_key: artwork::ArtworkRequestIdentity,
     ) -> ArtworkBindOutcome {
@@ -188,7 +182,6 @@ impl ArtworkTile {
             *self.request_key.borrow_mut() = Some(request_key);
         }
 
-        self.update_seed(seed);
         if !same_artwork {
             self.image.set_paintable(Option::<&gtk::gdk::Texture>::None);
         }
@@ -221,10 +214,6 @@ impl ArtworkTile {
         }
     }
 
-    pub(crate) fn set_seed(&self, seed: u32) {
-        self.update_seed(seed);
-    }
-
     pub(crate) fn set_square_size(&self, size: i32) {
         let size = size.max(1);
         if self.size.replace(size) == size {
@@ -236,29 +225,23 @@ impl ArtworkTile {
         self.area.queue_resize();
     }
 
-    pub(super) fn bind_pending(&self, seed: u32) -> u64 {
+    pub(super) fn bind_pending(&self) -> u64 {
         self.binding_active.set(false);
-        self.bind_image_state(seed, None, false)
+        self.bind_image_state(None, false)
     }
 
-    pub(super) fn bind_missing(&self, seed: u32) -> u64 {
+    pub(super) fn bind_missing(&self) -> u64 {
         self.binding_active.set(false);
-        self.bind_image_state(seed, None, true)
+        self.bind_image_state(None, true)
     }
 
     pub(super) fn mark_artwork_bound(&self) {
         self.binding_active.set(true);
     }
 
-    fn bind_image_state(
-        &self,
-        seed: u32,
-        texture: Option<gtk::gdk::Texture>,
-        known_missing: bool,
-    ) -> u64 {
+    fn bind_image_state(&self, texture: Option<gtk::gdk::Texture>, known_missing: bool) -> u64 {
         let generation = self.generation.get().saturating_add(1);
         self.generation.set(generation);
-        self.update_seed(seed);
         let has_texture = texture.is_some();
         self.image.set_paintable(texture.as_ref());
         self.known_missing.set(known_missing);
@@ -316,34 +299,16 @@ impl ArtworkTile {
         true
     }
 
-    fn update_seed(&self, seed: u32) {
-        if self.seed.replace(seed) == seed {
-            return;
-        }
-        if self.known_missing.get() {
-            self.fallback
-                .set_paintable(Some(&fallback_cover_texture(seed)));
-        }
-    }
-
     fn sync_presentation(&self, has_texture: bool, known_missing: bool) {
         self.image.set_visible(has_texture);
         if has_texture {
             self.fallback.set_visible(false);
-            self.fallback
-                .set_paintable(Option::<&gtk::gdk::Texture>::None);
             self.area.set_opacity(1.0);
         } else if known_missing {
-            if self.fallback.paintable().is_none() {
-                self.fallback
-                    .set_paintable(Some(&fallback_cover_texture(self.seed.get())));
-            }
             self.fallback.set_visible(true);
             self.area.set_opacity(1.0);
         } else {
             self.fallback.set_visible(false);
-            self.fallback
-                .set_paintable(Option::<&gtk::gdk::Texture>::None);
             self.area.set_opacity(0.0);
         }
     }
@@ -356,7 +321,6 @@ impl ArtworkTileWeak {
             fallback: self.fallback.upgrade()?,
             image: self.image.upgrade()?,
             size: Rc::clone(&self.size),
-            seed: Rc::clone(&self.seed),
             known_missing: Rc::clone(&self.known_missing),
             artwork_id: Rc::clone(&self.artwork_id),
             request_key: Rc::clone(&self.request_key),
@@ -385,39 +349,14 @@ fn cover_picture(content_fit: gtk::ContentFit) -> gtk::Picture {
     picture
 }
 
-fn fallback_cover_texture(seed: u32) -> gtk::gdk::Texture {
-    const SIZE: usize = 64;
-
-    let channel = |value: u8| (f64::from(value).mul_add(0.7, 255.0 * 0.18)).round() as u8;
-    let base = [
-        channel((seed & 0xff) as u8),
-        channel(((seed >> 8) & 0xff) as u8),
-        channel(((seed >> 16) & 0xff) as u8),
-    ];
-    let highlight = base.map(|value| (f64::from(value).mul_add(0.82, 255.0 * 0.18)).round() as u8);
-    let mut rgba = vec![0_u8; SIZE * SIZE * 4];
-    for y in 0..SIZE {
-        for x in 0..SIZE {
-            let normalized_x = (x as f64 + 0.5) / SIZE as f64;
-            let normalized_y = (y as f64 + 0.5) / SIZE as f64;
-            let highlighted = 0.8f64.mul_add(normalized_y, 0.2 * normalized_x) >= 0.16
-                && 0.2f64.mul_add(normalized_y, -0.8 * normalized_x) >= -0.64
-                && 0.2f64.mul_add(normalized_x, 0.8 * normalized_y) <= 0.84
-                && 0.8f64.mul_add(normalized_x, -0.2 * normalized_y) >= -0.04;
-            let color = if highlighted { highlight } else { base };
-            let offset = (y * SIZE + x) * 4;
-            rgba[offset..offset + 3].copy_from_slice(&color);
-            rgba[offset + 3] = u8::MAX;
-        }
-    }
-
-    let bytes = glib::Bytes::from_owned(rgba);
-    gtk::gdk::MemoryTexture::new(
-        SIZE as i32,
-        SIZE as i32,
-        gtk::gdk::MemoryFormat::R8g8b8a8,
-        &bytes,
-        SIZE * 4,
-    )
-    .upcast()
+fn cover_fallback() -> gtk::Box {
+    let fallback = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+    fallback.add_css_class("cover-fallback");
+    fallback.set_accessible_role(gtk::AccessibleRole::Presentation);
+    fallback.set_can_target(false);
+    fallback.set_hexpand(true);
+    fallback.set_vexpand(true);
+    fallback.set_halign(gtk::Align::Fill);
+    fallback.set_valign(gtk::Align::Fill);
+    fallback
 }

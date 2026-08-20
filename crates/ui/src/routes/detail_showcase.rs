@@ -546,7 +546,6 @@ pub(crate) struct DetailCoverProjection {
     tile: ArtworkTile,
     size: Rc<Cell<i32>>,
     candidates: Rc<RefCell<ArtworkBinding>>,
-    seed: Rc<Cell<u32>>,
     render_size: i32,
     fetch_size: u32,
 }
@@ -565,24 +564,22 @@ impl DetailCoverProjection {
         self.tile.set_square_size(size);
     }
 
-    pub(crate) fn replace(&self, shell: &Rc<Shell>, binding: ArtworkBinding, seed: u32) {
+    pub(crate) fn replace(&self, shell: &Rc<Shell>, binding: ArtworkBinding) {
         self.candidates.replace(binding.clone());
-        self.seed.set(seed);
-        shell.bind_artwork_tile(&self.tile, binding, seed, self.render_size, self.fetch_size);
+        shell.bind_artwork_tile(&self.tile, binding, self.render_size, self.fetch_size);
     }
 }
 
 pub(crate) fn detail_cover_projection(
     shell: &Rc<Shell>,
     candidates: ArtworkBinding,
-    seed: u32,
     size: i32,
     cover_class: &str,
 ) -> DetailCoverProjection {
     let render_size = detail_cover_render_size();
     let fetch_size = LARGE_COVER_SIZE;
-    let tile = ArtworkTile::new_sized(size, size, seed);
-    shell.bind_artwork_tile(&tile, candidates.clone(), seed, render_size, fetch_size);
+    let tile = ArtworkTile::new_sized(size, size);
+    shell.bind_artwork_tile(&tile, candidates.clone(), render_size, fetch_size);
     let cover = tile.widget();
     cover.add_css_class("detail-showcase-cover");
     cover.add_css_class(cover_class);
@@ -596,20 +593,17 @@ pub(crate) fn detail_cover_projection(
     button.set_child(Some(&cover));
 
     let candidates = Rc::new(RefCell::new(candidates));
-    let seed = Rc::new(Cell::new(seed));
     let open_candidates = Rc::clone(&candidates);
-    let open_seed = Rc::clone(&seed);
     let shell = Rc::clone(shell);
     button.connect_clicked(move |_| {
         let candidates = open_candidates.borrow().clone();
-        shell.present_full_artwork(candidates, open_seed.get());
+        shell.present_full_artwork(candidates);
     });
     DetailCoverProjection {
         button,
         tile,
         size: Rc::new(Cell::new(size)),
         candidates,
-        seed,
         render_size,
         fetch_size,
     }
@@ -620,12 +614,12 @@ fn detail_cover_render_size() -> i32 {
 }
 
 impl Shell {
-    fn present_full_artwork(self: &Rc<Self>, candidates: ArtworkBinding, seed: u32) {
+    fn present_full_artwork(self: &Rc<Self>, candidates: ArtworkBinding) {
         let size = full_artwork_size(self.chrome.window.width(), self.chrome.window.height());
         let fetch_size = cover_fetch_size_for_display(size);
-        let tile = ArtworkTile::new_sized(size, size, seed);
+        let tile = ArtworkTile::new_sized(size, size);
         let cover = tile.widget();
-        self.bind_artwork_tile(&tile, candidates, seed, size, fetch_size);
+        self.bind_artwork_tile(&tile, candidates, size, fetch_size);
         cover.add_css_class("full-artwork-cover");
         cover.set_halign(gtk::Align::Center);
         cover.set_valign(gtk::Align::Center);

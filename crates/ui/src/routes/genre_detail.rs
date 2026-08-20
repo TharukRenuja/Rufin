@@ -129,7 +129,6 @@ impl Shell {
                         &shell,
                         &next.summary.genre.name,
                         &artwork,
-                        stable_seed(next.summary.genre.id.as_str()),
                         &genre_summary_items(&next.summary),
                         next.tracks,
                     ) {

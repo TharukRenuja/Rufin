@@ -80,14 +80,13 @@ impl GroupedDetailView {
         shell: &Rc<Shell>,
         title: &str,
         artwork: &[ArtworkBinding],
-        seed: u32,
         summary_items: &[(&str, String)],
         tracks: PreparedTrackProjection,
     ) -> bool {
         if !self.tracks.replace_prepared(tracks) {
             return false;
         }
-        self.replace_facts(shell, title, artwork, seed, summary_items);
+        self.replace_facts(shell, title, artwork, summary_items);
         self.sync_track_stack();
         true
     }
@@ -97,11 +96,10 @@ impl GroupedDetailView {
         shell: &Rc<Shell>,
         title: &str,
         artwork: &[ArtworkBinding],
-        seed: u32,
         summary_items: &[(&str, String)],
     ) {
         self.title.set_text(title);
-        self.cover.replace(shell, artwork, seed);
+        self.cover.replace(shell, artwork);
         self.summary.replace(summary_items);
     }
 
@@ -145,7 +143,6 @@ impl Shell {
 
         let cover = self.cover_group_projection_for_artwork(
             &artwork,
-            seed,
             cover_size,
             playlist_cover_size(i32::MAX),
         );

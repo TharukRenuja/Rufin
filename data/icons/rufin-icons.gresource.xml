@@ -100,6 +100,7 @@
     <file>hicolor/scalable/actions/network-workgroup-bundled-symbolic.svg</file>
     <file>hicolor/scalable/actions/non-starred-bundled-symbolic.svg</file>
     <file>hicolor/scalable/actions/object-select-bundled-symbolic.svg</file>
+    <file>hicolor/scalable/actions/open-menu-bundled-symbolic.svg</file>
     <file>hicolor/scalable/actions/preferences-desktop-appearance-bundled-symbolic.svg</file>
     <file>hicolor/scalable/actions/preferences-desktop-keyboard-shortcuts-bundled-symbolic.svg</file>
     <file>hicolor/scalable/actions/preferences-system-bundled-symbolic.svg</file>
@@ -123,5 +124,6 @@
     <file>hicolor/scalable/actions/x-office-calendar-bundled-symbolic.svg</file>
     <file>hicolor/scalable/apps/io.github.screwys.Rufin.svg</file>
     <file>hicolor/scalable/status/io.github.screwys.Rufin.scrobbling-symbolic.svg</file>
+    <file>hicolor/symbolic/apps/io.github.screwys.Rufin-symbolic.svg</file>
   </gresource>
 </gresources>

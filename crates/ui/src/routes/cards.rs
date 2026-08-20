@@ -25,7 +25,6 @@ use crate::shell::actions::{
     PLAY_LATER_ICON, PLAY_NEXT_ICON, configure_action_button, icon_button,
     icon_button_without_tooltip,
 };
-use crate::shell::cover::presentation::stable_seed;
 use crate::shell::cover::{ArtworkTile, cover_fetch_size_for_display};
 
 const COVER_CORNER_HORIZONTAL_INSET: i32 = 4;
@@ -82,11 +81,10 @@ pub(crate) fn album_cover_overlay(
     album_button.add_css_class("flat");
     constrain_cover_widget(&album_button, size);
     clip_cover(&album_button);
-    let tile = ArtworkTile::new_sized(size, size, album_value.color_seed);
+    let tile = ArtworkTile::new_sized(size, size);
     shell.bind_artwork_tile(
         &tile,
         ArtworkBinding::album_artwork(&album.artwork),
-        album_value.color_seed,
         home_showcase_render_size(),
         home_showcase_fetch_size(),
     );
@@ -176,12 +174,10 @@ pub(crate) fn track_cover_overlay(
     cover_button.add_css_class("flat");
     constrain_cover_widget(&cover_button, size);
     clip_cover(&cover_button);
-    let seed = stable_seed(track.id.as_str());
-    let tile = ArtworkTile::new_sized(size, size, seed);
+    let tile = ArtworkTile::new_sized(size, size);
     shell.bind_artwork_tile(
         &tile,
         ArtworkBinding::track(&track),
-        seed,
         home_showcase_render_size(),
         home_showcase_fetch_size(),
     );
