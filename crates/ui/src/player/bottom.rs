@@ -554,16 +554,11 @@ impl Shell {
             );
             self.chrome.window.set_title(Some(&window_title));
 
-            let cover_seed = current
-                .map(|entry| entry.track.duration_seconds)
-                .unwrap_or(42);
-            controls.cover.set_seed(cover_seed);
             if let (Some(entry), Some(source_id)) = (current, source_id.as_ref()) {
                 self.bind_playback_artwork_tile(
                     &controls.cover,
                     source_id,
                     ArtworkBinding::track(&entry.track),
-                    cover_seed,
                     BOTTOM_PLAYER_COVER_SIZE,
                     MEDIUM_COVER_SIZE,
                 );
@@ -940,7 +935,7 @@ fn build_now_playing_controls() -> NowPlayingControls {
     root.set_valign(gtk::Align::Center);
     root.set_margin_start(BOTTOM_PLAYER_HORIZONTAL_PADDING);
 
-    let cover = ArtworkTile::new(BOTTOM_PLAYER_COVER_SIZE, 42);
+    let cover = ArtworkTile::new(BOTTOM_PLAYER_COVER_SIZE);
     cover.area.set_valign(gtk::Align::Center);
     cover.area.set_cursor_from_name(Some("pointer"));
     let cover_label = tr("Open fullscreen player");
@@ -1463,9 +1458,6 @@ fn present_output_popover(anchor: &gtk::Button, shell: &Rc<Shell>) {
     add_output_row(&outputs, PlaybackOutput::Local, &selected, &popover, shell);
     content.append(&outputs);
 
-    #[cfg(target_os = "macos")]
-    add_airplay_row(&outputs, &popover, shell);
-
     let mut shown = shell.playback.remote_output_options.borrow().clone();
     if let PlaybackOutput::Remote(selected) = &selected
         && !shown
@@ -1645,27 +1637,6 @@ fn select_output_async(shell: &Rc<Shell>, popover: &gtk::Popover, output: Playba
             Err(TryRecvError::Disconnected) => glib::ControlFlow::Break,
         }
     });
-}
-
-#[cfg(target_os = "macos")]
-fn add_airplay_row(group: &adw::PreferencesGroup, popover: &gtk::Popover, shell: &Rc<Shell>) {
-    let row = adw::ActionRow::builder()
-        .title(tr("AirPlay and Sound Settings..."))
-        .subtitle(tr("Uses the macOS system output"))
-        .activatable(true)
-        .build();
-    row.add_prefix(&gtk::Image::from_icon_name("audio-speakers-symbolic"));
-    let shell = Rc::clone(shell);
-    let popover = popover.clone();
-    row.connect_activated(move |_| {
-        shell.update_playback_settings(|settings| settings.audio_output = None);
-        select_output_async(&shell, &popover, PlaybackOutput::Local);
-        let _ = gtk::gio::AppInfo::launch_default_for_uri(
-            "x-apple.systempreferences:com.apple.Sound-Settings.extension",
-            None::<&gtk::gio::AppLaunchContext>,
-        );
-    });
-    group.add(&row);
 }
 
 fn preview_player_seek(shell: &Rc<Shell>, seconds: u32) {

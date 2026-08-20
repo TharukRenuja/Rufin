@@ -204,7 +204,7 @@ impl QueueSidebarRowSlot {
         let drag = reusable_queue_drag_handle(&binding);
         row.append(&drag);
 
-        let cover = ArtworkTile::new(50, 0);
+        let cover = ArtworkTile::new(50);
         row.append(&cover.widget());
 
         let labels = gtk::Box::new(gtk::Orientation::Vertical, 2);
@@ -287,7 +287,6 @@ impl QueueSidebarRowSlot {
                 shell.bind_artwork_tile(
                     &self.cover,
                     ArtworkBinding::track(&entry.track),
-                    index as u32 * 7 + entry.track.duration_seconds,
                     50,
                     THUMB_COVER_SIZE,
                 );
@@ -557,7 +556,6 @@ impl Shell {
         }
         let cover = self.cover_tile_for_candidates(
             ArtworkBinding::track(&entry.track),
-            index as u32 * 7 + entry.track.duration_seconds,
             50,
             THUMB_COVER_SIZE,
         );
@@ -621,7 +619,6 @@ impl Shell {
         }
         let cover = self.cover_tile_for_candidates(
             ArtworkBinding::track(&entry.track),
-            index as u32 * 7 + entry.track.duration_seconds,
             QUEUE_FULLSCREEN_COVER_COLUMN_WIDTH,
             THUMB_COVER_SIZE,
         );

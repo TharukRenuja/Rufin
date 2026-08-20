@@ -111,7 +111,6 @@ impl Shell {
                         &shell,
                         &next.summary.mood.name,
                         &artwork,
-                        stable_seed(next.summary.mood.id.as_str()),
                         &mood_summary_items(&next.summary),
                         next.tracks,
                     ) {

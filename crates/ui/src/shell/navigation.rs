@@ -30,7 +30,6 @@ use super::{
     Shell,
     actions::{PLAY_ICON, PLAY_LATER_ICON, PLAY_NEXT_ICON, icon_button},
     chrome,
-    cover::presentation::stable_seed,
     layout::{COMPACT_RAIL_WIDTH, ResolvedLeftSidebarMode},
     route::{RouteStack, route_current_track},
 };
@@ -636,7 +635,7 @@ fn normal_primary_menu_button(
     popover_slot: &RefCell<Option<gtk::PopoverMenu>>,
     shell: &Rc<Shell>,
 ) -> gtk::MenuButton {
-    button.set_icon_name("open-menu-symbolic");
+    button.set_icon_name("open-menu-bundled-symbolic");
     bind_widget_tooltip(button, msgid("Menu"));
     bind_widget_accessible_label(button, msgid("Menu"));
     if popover_slot.borrow().is_none() {
@@ -878,7 +877,7 @@ fn sidebar_menu_content(compact: bool) -> gtk::Box {
     } else {
         NORMAL_NAV_ICON_SIZE
     };
-    let icon = gtk::Image::from_icon_name("open-menu-symbolic");
+    let icon = gtk::Image::from_icon_name("open-menu-bundled-symbolic");
     icon.add_css_class("nav-icon");
     icon.set_pixel_size(icon_size);
     icon.set_size_request(icon_size, icon_size);
@@ -1119,12 +1118,6 @@ fn sidebar_pin_row(
     let track_count = pin.track_count();
     let duration_seconds = pin.duration_seconds();
     let artwork = pin.artwork(prefer_server_playlist_covers);
-    let seed = stable_seed(
-        sidebar_pin_route_key(&route)
-            .as_deref()
-            .expect("a sidebar pin always has a detail route"),
-    );
-
     let row = gtk::Overlay::new();
     row.add_css_class("nav-button");
     row.add_css_class(SIDEBAR_PIN_ROW_CLASS);
@@ -1151,7 +1144,6 @@ fn sidebar_pin_row(
     let cover = shell
         .cover_group_projection_for_artwork(
             &artwork,
-            seed,
             SIDEBAR_PIN_COVER_SIZE,
             SIDEBAR_PIN_COVER_SIZE,
         )
@@ -1241,8 +1233,6 @@ fn compact_sidebar_pin(
     let artwork = pin.artwork(prefer_server_playlist_covers);
     let route_key =
         sidebar_pin_route_key(&route).expect("a compact sidebar pin always has a detail route");
-    let seed = stable_seed(&route_key);
-
     let row = gtk::Overlay::new();
     row.add_css_class("nav-button");
     row.add_css_class(SIDEBAR_PIN_ROW_CLASS);
@@ -1260,7 +1250,6 @@ fn compact_sidebar_pin(
     let cover = shell
         .cover_group_projection_for_artwork(
             &artwork,
-            seed,
             COMPACT_SIDEBAR_PIN_COVER_SIZE,
             COMPACT_SIDEBAR_PIN_COVER_SIZE,
         )

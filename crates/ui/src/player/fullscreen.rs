@@ -162,7 +162,7 @@ pub(crate) fn build_fullscreen_player(
     hero.append(hero_window_controls);
     hero.append(&close_button);
 
-    let cover = ArtworkTile::new(FULLSCREEN_PLAYER_DEFAULT_COVER_SIZE, 42);
+    let cover = ArtworkTile::new(FULLSCREEN_PLAYER_DEFAULT_COVER_SIZE);
     cover.area.add_css_class("fullscreen-player-cover");
     cover.area.set_halign(gtk::Align::End);
     hero.append(&cover.area);
@@ -1557,24 +1557,12 @@ impl Shell {
             .fullscreen_player
             .cover
             .set_square_size(cover_size);
-        let cover_seed = player
-            .transport
-            .current
-            .as_ref()
-            .map(|entry| entry.track.duration_seconds)
-            .unwrap_or(42);
-        self.player_view
-            .fullscreen_player
-            .cover
-            .set_seed(cover_seed);
-
         if let Some(entry) = player.transport.current.as_ref() {
             let fetch_size = cover_fetch_size_for_display(cover_size);
             self.bind_playback_artwork_tile(
                 &self.player_view.fullscreen_player.cover,
                 &player.transport.source_id,
                 ArtworkBinding::track(&entry.track),
-                cover_seed,
                 cover_size,
                 fetch_size,
             );

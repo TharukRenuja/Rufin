@@ -30,7 +30,7 @@ impl CoverGroupProjection {
         self.root.clone().upcast()
     }
 
-    pub(crate) fn replace(&self, shell: &Rc<Shell>, artwork: &[ArtworkBinding], seed: u32) {
+    pub(crate) fn replace(&self, shell: &Rc<Shell>, artwork: &[ArtworkBinding]) {
         if artwork.len() <= 1 {
             for tile in self.quadrants.iter() {
                 shell.clear_artwork_tile(tile);
@@ -38,7 +38,6 @@ impl CoverGroupProjection {
             shell.bind_artwork_tile(
                 &self.single,
                 artwork.first().cloned().unwrap_or_else(ArtworkBinding::new),
-                seed,
                 self.render_size,
                 self.fetch_size,
             );
@@ -52,7 +51,6 @@ impl CoverGroupProjection {
             shell.bind_artwork_tile(
                 tile,
                 artwork[index % artwork.len()].clone(),
-                seed.wrapping_add((index as u32).wrapping_mul(0x9e37_79b9)),
                 cell_size,
                 self.fetch_size,
             );
@@ -79,7 +77,6 @@ impl Shell {
     pub(crate) fn cover_group_projection_for_artwork(
         self: &Rc<Self>,
         artwork: &[ArtworkBinding],
-        seed: u32,
         size: i32,
         render_size: i32,
     ) -> CoverGroupProjection {
@@ -92,7 +89,7 @@ impl Shell {
         root.set_halign(gtk::Align::Start);
         root.set_valign(gtk::Align::Start);
 
-        let single = ArtworkTile::new_sized(size, size, seed);
+        let single = ArtworkTile::new_sized(size, size);
         root.add_named(&single.widget(), Some("single"));
 
         let grid = gtk::Grid::new();
@@ -106,11 +103,7 @@ impl Shell {
         let quadrants = Rc::new(
             (0..4)
                 .map(|index| {
-                    let tile = ArtworkTile::new_sized(
-                        cell_size,
-                        cell_size,
-                        seed.wrapping_add((index as u32).wrapping_mul(0x9e37_79b9)),
-                    );
+                    let tile = ArtworkTile::new_sized(cell_size, cell_size);
                     grid.attach(&tile.widget(), (index % 2) as i32, (index / 2) as i32, 1, 1);
                     tile
                 })
@@ -127,66 +120,56 @@ impl Shell {
             render_size,
             fetch_size,
         };
-        projection.replace(self, artwork, seed);
+        projection.replace(self, artwork);
         projection
     }
 
     pub(crate) fn elastic_cover_tile_for_candidates(
         self: &Rc<Self>,
         candidates: ArtworkBinding,
-        seed: u32,
         fetch_size: u32,
     ) -> (gtk::Widget, ArtworkTile) {
-        let tile = ArtworkTile::new_elastic_square(seed);
+        let tile = ArtworkTile::new_elastic_square();
         let widget = tile.widget();
-        self.bind_artwork_tile(
-            &tile,
-            candidates,
-            seed,
-            MEDIUM_COVER_SIZE as i32,
-            fetch_size,
-        );
+        self.bind_artwork_tile(&tile, candidates, MEDIUM_COVER_SIZE as i32, fetch_size);
         (widget, tile)
     }
 
     pub(crate) fn cover_tile_for_candidates(
         self: &Rc<Self>,
         candidates: ArtworkBinding,
-        seed: u32,
         size: i32,
         fetch_size: u32,
     ) -> gtk::Widget {
-        self.cover_tile_for_candidate_dimensions(candidates, seed, size, size, fetch_size)
+        self.cover_tile_for_candidate_dimensions(candidates, size, size, fetch_size)
     }
 
     pub(crate) fn cover_tile_for_candidate_dimensions(
         self: &Rc<Self>,
         candidates: ArtworkBinding,
-        seed: u32,
         width: i32,
         height: i32,
         fetch_size: u32,
     ) -> gtk::Widget {
-        let tile = ArtworkTile::new_sized(width, height, seed);
+        let tile = ArtworkTile::new_sized(width, height);
         let widget = tile.widget();
-        self.bind_artwork_tile(&tile, candidates, seed, width.max(height), fetch_size);
+        self.bind_artwork_tile(&tile, candidates, width.max(height), fetch_size);
         widget
     }
 
     pub(crate) fn elastic_cover_group_tile_for_artwork(
         self: &Rc<Self>,
         artwork: &[ArtworkBinding],
-        seed: u32,
         mosaic_fetch_size: u32,
     ) -> gtk::Widget {
         let fetch_size = elastic_cover_fetch_size(artwork.len(), mosaic_fetch_size);
         match artwork.len() {
             0 => {
-                self.elastic_cover_tile_for_candidates(ArtworkBinding::new(), seed, fetch_size)
+                self.elastic_cover_tile_for_candidates(ArtworkBinding::new(), fetch_size)
                     .0
             }
             1 => {
-                self.elastic_cover_tile_for_candidates(artwork[0].clone(), seed, fetch_size)
+                self.elastic_cover_tile_for_candidates(artwork[0].clone(), fetch_size)
                     .0
             }
             _ => {
@@ -205,7 +188,6 @@ impl Shell {
                     let child = self
                         .elastic_cover_tile_for_candidates(
                             artwork[index % artwork.len()].clone(),
-                            seed.wrapping_add((index as u32).wrapping_mul(0x9e37_79b9)),
                             fetch_size,
                         )
                         .0;

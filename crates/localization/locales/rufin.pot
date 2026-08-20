@@ -170,9 +170,6 @@ msgstr ""
 msgid "Added to"
 msgstr ""
 
-msgid "AirPlay and Sound Settings..."
-msgstr ""
-
 msgid "Album Artists"
 msgstr ""
 
@@ -1904,9 +1901,6 @@ msgid "User"
 msgstr ""
 
 msgid "Username"
-msgstr ""
-
-msgid "Uses the macOS system output"
 msgstr ""
 
 msgid "Verify server certificate"

@@ -1051,6 +1051,15 @@ row.entry.password:focus-within {
   box-shadow: inset 0 0 0 1px color-mix(in srgb, currentColor 8%, transparent);
 }
 
+.cover-fallback {
+  color: #deddda;
+  background-color: #77767b;
+  background-image: -gtk-icontheme("io.github.screwys.Rufin-symbolic");
+  background-position: center;
+  background-repeat: no-repeat;
+  background-size: 75% 75%;
+}
+
 .cover-hover-layer {
   border-radius: 12px;
   background: color-mix(in srgb, black 34%, transparent);

@@ -23,7 +23,6 @@ use crate::layout::width_allocation_owner;
 use crate::localization::{bind_search_placeholder, localized_label};
 use crate::runtime::{SelectedLibrary, SelectedSourceHandle};
 use crate::shell::Shell;
-use crate::shell::cover::presentation::stable_seed;
 use crate::shell::cover::{ArtworkTile, LARGE_COVER_SIZE, THUMB_COVER_SIZE};
 use crate::shell::route::{MountedRoute, MountedRouteItemNavigation};
 use crate::{LibraryField, LibraryLayout, LibraryListKey, LibraryListSettings};
@@ -165,7 +164,6 @@ trait SearchGridItem: Clone + 'static {
     fn title(&self) -> &str;
     fn subtitle(&self) -> &str;
     fn artwork(&self) -> ArtworkBinding;
-    fn seed(&self) -> u32;
     fn field(&self, field: LibraryField) -> String;
     fn route(&self) -> Option<Route>;
     fn play(&self, shell: &Rc<Shell>, placement: QueuePlacement);
@@ -204,10 +202,6 @@ impl SearchGridItem for SearchAlbum {
 
     fn subtitle(&self) -> &str {
         &self.album.artist
-    }
-
-    fn seed(&self) -> u32 {
-        stable_seed(self.album.id.as_str())
     }
 
     fn field(&self, field: LibraryField) -> String {
@@ -268,10 +262,6 @@ impl SearchGridItem for SearchArtist {
         ""
     }
 
-    fn seed(&self) -> u32 {
-        stable_seed(self.artist.id.as_str())
-    }
-
     fn field(&self, field: LibraryField) -> String {
         artist_item_field(&self.artist, field)
     }
@@ -328,10 +318,6 @@ impl SearchGridItem for SearchTrack {
 
     fn artwork(&self) -> ArtworkBinding {
         self.artwork.clone()
-    }
-
-    fn seed(&self) -> u32 {
-        stable_seed(self.track.id.as_str())
     }
 
     fn field(&self, field: LibraryField) -> String {
@@ -411,7 +397,7 @@ impl<T: SearchGridItem> SearchGridCell<T> {
     fn new(shell: Rc<Shell>, fields: &[LibraryField]) -> Self {
         let current = Rc::new(RefCell::new(None::<T>));
         let cover_button = collection_grid_cover_shell();
-        let cover = ArtworkTile::new_elastic_square(0);
+        let cover = ArtworkTile::new_elastic_square();
         cover_button.set_child(Some(&cover.widget()));
         let overlay = cards::elastic_cover_overlay();
         overlay.set_child(Some(&cover_button));
@@ -525,7 +511,6 @@ impl<T: SearchGridItem> ReusableCollectionGridCell<T> for SearchGridCell<T> {
         self.shell.bind_artwork_tile(
             &self.cover,
             item.artwork(),
-            item.seed(),
             COLLECTION_GRID_MAX_CARD_WIDTH,
             LARGE_COVER_SIZE,
         );
@@ -1156,7 +1141,6 @@ fn search_track_column(
                 artwork: |track: &SearchTrack| track.artwork.clone(),
                 title: |track: &SearchTrack| track.track.title.clone(),
                 subtitle: |track: &SearchTrack| track.track.artist.clone(),
-                seed: |track: &SearchTrack| stable_seed(track.track.id.as_str()),
                 subtitle_links: |_: &SearchTrack| None,
                 context_menu: true,
             },
@@ -1266,7 +1250,6 @@ fn search_item_image_column<T: SearchGridItem>(
         };
         item.set_child(Some(&bind_shell.cover_tile_for_candidates(
             value.artwork(),
-            value.seed(),
             48,
             THUMB_COVER_SIZE,
         )));
@@ -1307,12 +1290,7 @@ fn search_item_merged_column<T: SearchGridItem>(
             return;
         };
         clear_box(&row);
-        row.append(&bind_shell.cover_tile_for_candidates(
-            value.artwork(),
-            value.seed(),
-            48,
-            THUMB_COVER_SIZE,
-        ));
+        row.append(&bind_shell.cover_tile_for_candidates(value.artwork(), 48, THUMB_COVER_SIZE));
         let labels = gtk::Box::new(gtk::Orientation::Vertical, 2);
         let title = gtk::Label::new(Some(value.title()));
         title.set_xalign(0.0);

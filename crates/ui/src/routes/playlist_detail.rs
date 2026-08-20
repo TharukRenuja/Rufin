@@ -161,7 +161,6 @@ impl Shell {
         );
         let cover = self.cover_group_projection_for_artwork(
             &artwork,
-            seed,
             playlist_cover_size(content_width),
             playlist_cover_size(i32::MAX),
         );
@@ -317,7 +316,6 @@ impl Shell {
                             &next.summary.smart_playlist,
                             &next.summary.representative_albums,
                         ),
-                        seed,
                     );
                     tracks_stack.set_visible_child_name(if tracks.source_is_empty() {
                         "empty"
@@ -438,7 +436,6 @@ impl Shell {
 
         let cover = self.cover_group_projection_for_artwork(
             &playlist_artwork(&detail.summary, settings.prefer_server_playlist_covers),
-            seed,
             playlist_cover_size(content_width),
             playlist_cover_size(i32::MAX),
         );
@@ -631,11 +628,7 @@ impl Shell {
                     .current
                     .borrow()
                     .prefer_server_playlist_covers;
-                cover.replace(
-                    &shell,
-                    &playlist_artwork(&next.summary, prefer_server),
-                    seed,
-                );
+                cover.replace(&shell, &playlist_artwork(&next.summary, prefer_server));
                 applied_playlist_artwork.set(prefer_server);
                 while let Some(child) = kind_slot.first_child() {
                     kind_slot.remove(&child);
@@ -698,11 +691,7 @@ impl Shell {
                     .borrow()
                     .prefer_server_playlist_covers;
                 if applied_playlist_artwork.get() != prefer_server {
-                    cover.replace(
-                        &shell,
-                        &playlist_artwork(&header.borrow(), prefer_server),
-                        seed,
-                    );
+                    cover.replace(&shell, &playlist_artwork(&header.borrow(), prefer_server));
                     applied_playlist_artwork.set(prefer_server);
                 }
                 let settings = shell

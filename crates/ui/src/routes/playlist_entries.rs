@@ -17,7 +17,6 @@ use crate::favorites::{
 };
 use crate::localization::{bind_search_placeholder, bind_widget_tooltip, localized_column};
 use crate::shell::Shell;
-use crate::shell::cover::presentation::stable_seed;
 use crate::shell::cover::{ArtworkTile, LARGE_COVER_SIZE, THUMB_COVER_SIZE};
 use crate::shell::route::RouteCurrentTrack;
 use localization::{msgid, tr};
@@ -581,7 +580,7 @@ impl PlaylistEntryGridCell {
         model: PlaylistEntryModel,
         playlist_id: PlaylistId,
     ) -> Self {
-        let cover = ArtworkTile::new_elastic_square(0);
+        let cover = ArtworkTile::new_elastic_square();
         let body = CollectionGridCardCell::new(&shell, fields, cover.widget());
         let state = playlist_entry_cell_state();
         body.set_download_badge(playlist_entry_download_badge(&shell, &state));
@@ -609,7 +608,6 @@ impl ReusableCollectionGridCell<PlaylistEntryRow> for PlaylistEntryGridCell {
         self.shell.bind_artwork_tile(
             &self.cover,
             ArtworkBinding::track(&entry.track),
-            stable_seed(entry.track.id.as_str()),
             COLLECTION_GRID_MAX_CARD_WIDTH,
             LARGE_COVER_SIZE,
         );
@@ -905,7 +903,7 @@ fn playlist_entry_image_column(
             return;
         };
         let state = playlist_entry_cell_state();
-        let cover = ArtworkTile::new(PLAYLIST_ENTRY_COVER_WIDTH, 0);
+        let cover = ArtworkTile::new(PLAYLIST_ENTRY_COVER_WIDTH);
         let widget = cover.widget();
         setup_playlist_entry_cell_actions(
             &widget,
@@ -935,7 +933,6 @@ fn playlist_entry_image_column(
         bind_shell.bind_artwork_tile(
             &cell.cover,
             ArtworkBinding::track(&entry.track),
-            stable_seed(entry.track.id.as_str()),
             PLAYLIST_ENTRY_COVER_WIDTH,
             THUMB_COVER_SIZE,
         );
@@ -1227,7 +1224,7 @@ fn playlist_entry_title_column(
             return;
         };
         let state = playlist_entry_cell_state();
-        let cover = ArtworkTile::new(PLAYLIST_ENTRY_COVER_WIDTH, 0);
+        let cover = ArtworkTile::new(PLAYLIST_ENTRY_COVER_WIDTH);
         let labels = gtk::Box::new(gtk::Orientation::Vertical, 2);
         labels.set_hexpand(true);
         labels.set_halign(gtk::Align::Fill);
@@ -1280,7 +1277,6 @@ fn playlist_entry_title_column(
         bind_shell.bind_artwork_tile(
             &cell.cover,
             ArtworkBinding::track(&entry.track),
-            stable_seed(entry.track.id.as_str()),
             PLAYLIST_ENTRY_COVER_WIDTH,
             THUMB_COVER_SIZE,
         );
