@@ -489,6 +489,7 @@ fn close_should_hide(
     }
 }
 
+#[cfg(not(target_os = "macos"))]
 fn host_is_sandboxed() -> bool {
     #[cfg(target_os = "linux")]
     {
