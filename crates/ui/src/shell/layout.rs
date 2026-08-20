@@ -374,7 +374,7 @@ impl Shell {
     pub(crate) fn left_sidebar_mode(&self) -> ResolvedLeftSidebarMode {
         if !self.navigation_view.split_view.is_collapsed() {
             ResolvedLeftSidebarMode::Full
-        } else if self.navigation_view.compact_nav_slot.is_visible() {
+        } else if self.navigation_view.compact_nav_slot.get_visible() {
             ResolvedLeftSidebarMode::Compact
         } else {
             ResolvedLeftSidebarMode::Hidden
@@ -382,7 +382,7 @@ impl Shell {
     }
 
     pub(crate) fn right_sidebar_visible(&self) -> bool {
-        self.right_panel.right_panel_slot.is_visible()
+        self.right_panel.right_panel_slot.get_visible()
     }
 
     pub(crate) fn fullscreen_player_visible(&self) -> bool {
@@ -491,8 +491,7 @@ impl Shell {
             &self.navigation_view.left_resize_handle,
             app_active && !hidden_sidebar,
         );
-        let right_visibility_changed =
-            self.right_panel.right_panel_slot.is_visible() != right_visible;
+        let right_visibility_changed = previous_right_visible != right_visible;
         set_widget_visible(&self.right_panel.right_panel_slot, right_visible);
         set_widget_visible(&self.right_panel.root, right_visible);
         set_widget_visible(&self.right_panel.right_resize_handle, right_visible);
@@ -639,7 +638,7 @@ fn position_left_resize_handle(handle: &gtk::Box, sidebar_width: i32) {
 }
 
 fn set_widget_visible(widget: &impl IsA<gtk::Widget>, visible: bool) {
-    if widget.is_visible() != visible {
+    if widget.get_visible() != visible {
         widget.set_visible(visible);
     }
 }
