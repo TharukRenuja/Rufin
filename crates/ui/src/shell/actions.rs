@@ -95,10 +95,21 @@ pub(crate) fn install_window_actions(shell: &Rc<Shell>) {
     let fullscreen = gio::SimpleAction::new("toggle-fullscreen", None);
     let fullscreen_shell = Rc::clone(shell);
     fullscreen.connect_activate(move |_, _| {
-        if fullscreen_shell.chrome.window.is_fullscreen() {
-            fullscreen_shell.chrome.window.unfullscreen();
-        } else {
-            fullscreen_shell.chrome.window.fullscreen();
+        #[cfg(any(target_os = "windows", target_os = "macos"))]
+        {
+            if fullscreen_shell.chrome.window.is_maximized() {
+                fullscreen_shell.chrome.window.unmaximize();
+            } else {
+                fullscreen_shell.chrome.window.maximize();
+            }
+        }
+        #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+        {
+            if fullscreen_shell.chrome.window.is_fullscreen() {
+                fullscreen_shell.chrome.window.unfullscreen();
+            } else {
+                fullscreen_shell.chrome.window.fullscreen();
+            }
         }
     });
     shell.chrome.window.add_action(&fullscreen);

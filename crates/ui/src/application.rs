@@ -224,12 +224,10 @@ pub(crate) fn application_window(
     default_height: i32,
     content: &impl IsA<gtk::Widget>,
     preview: Option<WindowBarPreview>,
-    search: Option<&gtk::Button>,
-    menu: Option<&gtk::MenuButton>,
 ) -> gtk::ApplicationWindow {
     if let Some(platform) = platform_window_bar(preview) {
         let window = gtk_application_window(app, title, default_width, default_height, content);
-        install_platform_window_bar(&window, platform, preview.is_some(), search, menu);
+        install_platform_window_bar(&window, platform, preview.is_some());
         return window;
     }
 
@@ -281,8 +279,6 @@ fn install_platform_window_bar(
     window: &gtk::ApplicationWindow,
     platform: WindowBarPreview,
     preview: bool,
-    search: Option<&gtk::Button>,
-    menu: Option<&gtk::MenuButton>,
 ) {
     let titlebar = gtk::HeaderBar::new();
     titlebar.add_css_class("platform-window-bar");
@@ -294,42 +290,19 @@ fn install_platform_window_bar(
         "platform-window-bar-title",
     )));
 
-    let start = gtk::Box::new(gtk::Orientation::Horizontal, 0);
-    start.add_css_class("platform-window-bar-start");
-    start.set_valign(gtk::Align::Center);
-    let end = gtk::Box::new(gtk::Orientation::Horizontal, 0);
-    end.add_css_class("platform-window-bar-end");
-    end.set_valign(gtk::Align::Center);
-
     match platform {
         WindowBarPreview::Macos => {
-            titlebar.add_css_class("macos-platform-window-bar");
             if preview {
-                start.append(&macos_preview_controls());
-            }
-            if let Some(search) = search {
-                end.append(search);
-            }
-            if let Some(menu) = menu {
-                end.append(menu);
+                titlebar.pack_start(&macos_preview_controls());
             }
         }
         WindowBarPreview::Windows => {
-            titlebar.add_css_class("windows-platform-window-bar");
-            if let Some(menu) = menu {
-                start.append(menu);
-            }
-            if let Some(search) = search {
-                start.append(search);
-            }
             if preview {
-                end.append(&windows_preview_controls());
+                titlebar.pack_end(&windows_preview_controls());
             }
         }
     }
 
-    titlebar.pack_start(&start);
-    titlebar.pack_end(&end);
     window.set_titlebar(Some(&titlebar));
 }
 
@@ -380,7 +353,7 @@ fn present_startup_error(app: &adw::Application, error: &str, preview: Option<Wi
         .title("Rufin")
         .description(error)
         .build();
-    let window = application_window(app, "Rufin", 480, 320, &status, preview, None, None);
+    let window = application_window(app, "Rufin", 480, 320, &status, preview);
     present_window(&window);
 }
 

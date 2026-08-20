@@ -258,7 +258,6 @@ pub fn build(
     compact_nav_slot.add_css_class("compact-rail-slot");
     let normal_main_menu = gtk::MenuButton::new();
     let compact_main_menu = gtk::Button::new();
-    let window_bar_search = gtk::Button::from_icon_name("system-search-bundled-symbolic");
 
     let main_area_parts = build_main_area();
     let main_area = main_area_parts.root;
@@ -405,8 +404,6 @@ pub fn build(
         window_height,
         &toast_overlay,
         window_bar_preview,
-        window_bar_platform.map(|_| &window_bar_search),
-        window_bar_platform.map(|_| &normal_main_menu),
     );
     window_controls.bind_window(&window);
 
@@ -507,17 +504,13 @@ pub fn build(
             }
         });
     }
-    if let Some(platform) = window_bar_platform {
-        super::navigation::configure_platform_window_bar(&shell, &window_bar_search, platform);
-    } else {
-        shell
-            .navigation_view
-            .normal_nav_panel
-            .prepend(&normal_sidebar_header(
-                &shell,
-                &shell.chrome.window_controls.start_width_reservation(),
-            ));
-    }
+    shell
+        .navigation_view
+        .normal_nav_panel
+        .prepend(&normal_sidebar_header(
+            &shell,
+            &shell.chrome.window_controls.start_width_reservation(),
+        ));
     install_normal_navigation_activation(&shell);
     build_normal_navigation(&shell);
     build_compact_navigation(&shell);
