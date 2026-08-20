@@ -1,7 +1,7 @@
 use super::view::next_lyrics_line_start_after;
 use crate::shell::Shell;
 use gtk::glib;
-use playback::TransportStatus;
+use playback::{PlaybackOutput, TransportStatus};
 use std::rc::Rc;
 use std::time::Duration;
 
@@ -21,11 +21,10 @@ impl Shell {
         if !self.lyrics_surface_visible() {
             return;
         }
-        let playing = self
-            .selected_playback()
-            .as_deref()
-            .is_some_and(|player| matches!(player.transport.state, TransportStatus::Playing));
-        if !playing {
+        let follows_local_clock = self.selected_playback().as_deref().is_some_and(|player| {
+            lyrics_follow_local_clock(player.transport.state, &player.controls.playback_output)
+        });
+        if !follows_local_clock {
             return;
         }
 
@@ -70,5 +69,34 @@ impl Shell {
         if let Some(previous_source) = lyrics.timing_source.borrow_mut().replace(source) {
             previous_source.remove();
         }
+    }
+}
+
+fn lyrics_follow_local_clock(state: TransportStatus, output: &PlaybackOutput) -> bool {
+    state == TransportStatus::Playing && output.is_local()
+}
+
+#[cfg(test)]
+mod tests {
+    use playback::{PlaybackOutput, RemoteOutput, RemoteOutputProtocol, TransportStatus};
+
+    use super::lyrics_follow_local_clock;
+
+    #[test]
+    fn remote_lyrics_wait_for_receiver_positions() {
+        let remote = PlaybackOutput::Remote(RemoteOutput {
+            id: "renderer".to_string(),
+            name: "Renderer".to_string(),
+            protocol: RemoteOutputProtocol::Upnp,
+        });
+
+        assert!(lyrics_follow_local_clock(
+            TransportStatus::Playing,
+            &PlaybackOutput::Local,
+        ));
+        assert!(!lyrics_follow_local_clock(
+            TransportStatus::Playing,
+            &remote,
+        ));
     }
 }
