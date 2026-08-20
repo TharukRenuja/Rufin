@@ -15,7 +15,7 @@ use crate::localization::{
 };
 use crate::preferences::dialogs::popup::present_light_dismiss_dialog;
 use crate::shell::Shell;
-use crate::shell::actions::{ADD_ICON, MORE_ICON, sort_order_icon};
+use crate::shell::actions::{ADD_ICON, MORE_ICON, sort_order_icon, toggle_mute_shortcut};
 use crate::shell::route::{MountedRoute, MountedRouteItemNavigation, MountedRouteResume};
 use crate::{
     LibraryField, LibraryLayout, LibraryListKey, LibraryListSettings, available_sort_fields,
@@ -271,9 +271,18 @@ impl Shell {
             if key_has_no_shortcut_modifiers(state) {
                 if key == gtk::gdk::Key::space
                     && shell.playback_keyboard_available()
-                    && !focus_blocks_play_pause(current_focus.as_ref())
+                    && !focus_blocks_playback_shortcut(current_focus.as_ref())
                 {
                     shell.products.playback.transport.play_pause();
+                    return glib::Propagation::Stop;
+                }
+                if key
+                    .to_unicode()
+                    .is_some_and(|character| character.eq_ignore_ascii_case(&'m'))
+                    && shell.playback_keyboard_available()
+                    && !focus_blocks_playback_shortcut(current_focus.as_ref())
+                {
+                    toggle_mute_shortcut(&shell);
                     return glib::Propagation::Stop;
                 }
                 if shell.route_keyboard_available()
@@ -786,7 +795,7 @@ fn page_navigation_direction(key: gtk::gdk::Key) -> Option<gtk::DirectionType> {
     }
 }
 
-fn focus_blocks_play_pause(focus: Option<&gtk::Widget>) -> bool {
+fn focus_blocks_playback_shortcut(focus: Option<&gtk::Widget>) -> bool {
     focus.is_some_and(|focus| focus_is_text_input(focus) || focus_is_in_dialog(focus))
 }
 

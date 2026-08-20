@@ -221,11 +221,7 @@ pub(crate) fn install_window_actions(shell: &Rc<Shell>) {
         let shell = Rc::clone(shell);
         move || toggle_auto_dj_shortcut(&shell)
     });
-    #[cfg(target_os = "macos")]
-    let mute_accels = &["<Shift><Meta>Down"][..];
-    #[cfg(not(target_os = "macos"))]
-    let mute_accels = &["<Control>m"][..];
-    add_window_action(shell, "mute", mute_accels, {
+    add_window_action(shell, "mute", &[], {
         let shell = Rc::clone(shell);
         move || toggle_mute_shortcut(&shell)
     });
@@ -585,7 +581,7 @@ fn toggle_auto_dj_shortcut(shell: &Shell) {
     shell.show_control_feedback_toast(title);
 }
 
-fn toggle_mute_shortcut(shell: &Rc<Shell>) {
+pub(crate) fn toggle_mute_shortcut(shell: &Rc<Shell>) {
     let Some(muted) = shell
         .selected_playback()
         .as_deref()
@@ -712,7 +708,7 @@ fn show_shortcuts_dialog(shell: &Shell) {
         &tr("Auto DJ"),
         "win.toggle-auto-dj",
     ));
-    section.add(adw::ShortcutsItem::from_action(&tr("Mute"), "win.mute"));
+    section.add(adw::ShortcutsItem::new(&tr("Mute"), "m"));
     section.add(adw::ShortcutsItem::from_action(
         &tr("Volume Up"),
         "win.volume-up",
