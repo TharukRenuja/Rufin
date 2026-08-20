@@ -1155,8 +1155,11 @@ impl GstEngine {
                 Ok(())
             }
             BackendCommand::ConfigureAudio(settings) => {
-                let previous_output = self.settings().audio_output;
+                let previous_settings = self.settings();
+                let previous_output = previous_settings.audio_output;
                 let output_changed = previous_output != settings.audio_output;
+                let preserve_pitch_changed =
+                    previous_settings.preserve_pitch != settings.preserve_pitch;
                 if self.desired_playing {
                     self.cancel_status_fade();
                 } else {
@@ -1182,7 +1185,7 @@ impl GstEngine {
                     } else {
                         false
                     };
-                    let restart = if output_changed && !retargeted {
+                    let restart = if preserve_pitch_changed || (output_changed && !retargeted) {
                         let current = lock_recover(&self.shared).current.clone();
                         current.map(|current| {
                             let position_millis = self
@@ -3613,6 +3616,55 @@ mod tests {
             )),
             "audio configuration events: {applied:?}; resume events: {resumed_events:?}"
         );
+        engine.shutdown();
+    }
+
+    #[test]
+    fn preserve_pitch_change_restarts_the_current_pipeline() {
+        ensure_gstreamer_initialized().expect("initialize GStreamer");
+        let directory = tempfile::tempdir().expect("playback fixture directory");
+        let path = directory.path().join("preserve-pitch-change.wav");
+        write_long_silent_wave(&path);
+        let uri = gst::glib::filename_to_uri(&path, None).expect("playback fixture URI");
+        let events = Arc::new(Mutex::new(EventMailbox::default()));
+        let mut engine = GstEngine::new(events);
+        let current = PreparedRun {
+            run: RunId::new(1),
+            stream: ResolvedStream::new(uri.as_str()).into(),
+        };
+        let settings = BackendAudioSettings {
+            audio_output: Some("fakesink".to_string()),
+            preserve_pitch: true,
+            ..BackendAudioSettings::default()
+        };
+        let pipeline_id = engine
+            .start_pipeline(
+                Slot::Primary,
+                &current,
+                &settings,
+                settings.volume,
+                settings.muted,
+                DEFAULT_PLAYBACK_RATE,
+                gst::State::Paused,
+            )
+            .expect("start paused output");
+        {
+            let mut shared = lock_recover(&engine.shared);
+            shared.settings = settings.clone();
+            shared.current = Some(current);
+            shared.set_pipeline_id(Slot::Primary, Some(pipeline_id));
+        }
+        engine.state = BackendState::Paused;
+
+        let mut changed = settings;
+        changed.preserve_pitch = false;
+        engine.handle_command(BackendCommand::ConfigureAudio(changed));
+
+        let shared = lock_recover(&engine.shared);
+        assert!(!shared.settings.preserve_pitch);
+        assert_ne!(shared.pipeline_id(Slot::Primary), Some(pipeline_id));
+        assert!(shared.pipeline_id(Slot::Primary).is_some());
+        drop(shared);
         engine.shutdown();
     }
 

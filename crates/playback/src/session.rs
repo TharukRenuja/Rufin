@@ -1441,6 +1441,7 @@ impl PlaybackSession {
             != self.settings.loudness_normalization
             || settings.audio_output != self.settings.audio_output
             || settings.equalizer != self.settings.equalizer
+            || settings.preserve_pitch != self.settings.preserve_pitch
             || settings.audio_fade_on_status_change != self.settings.audio_fade_on_status_change;
         self.settings = settings.clone();
         let mut update = SessionUpdate::changed();
@@ -2345,6 +2346,27 @@ mod tests {
         assert!(!update.effects.iter().any(|effect| matches!(
             effect,
             SessionEffect::Backend(BackendCommand::ConfigureAudio(_))
+        )));
+    }
+
+    #[test]
+    fn preserve_pitch_change_uses_the_audio_configuration_path() {
+        let mut session = session(&[1]);
+        let mut settings = session.settings().clone();
+        settings.preserve_pitch = false;
+
+        let update = session
+            .handle_command(SessionCommand::UpdateSettings(settings), &sample(0))
+            .expect("disable pitch preservation");
+
+        assert!(update.effects.iter().any(|effect| matches!(
+            effect,
+            SessionEffect::Backend(BackendCommand::ConfigureAudio(settings))
+                if !settings.preserve_pitch
+        )));
+        assert!(!update.effects.iter().any(|effect| matches!(
+            effect,
+            SessionEffect::Backend(BackendCommand::SetPlaybackRate(_))
         )));
     }
 
