@@ -7,7 +7,7 @@ msgstr ""
 "Project-Id-Version: Rufin 0.6.0\n"
 "Report-Msgid-Bugs-To: https://github.com/screwys/Rufin/issues\n"
 "POT-Creation-Date: YEAR-MO-DA HO:MI+ZONE\n"
-"PO-Revision-Date: 2026-08-19 19:55+0000\n"
+"PO-Revision-Date: 2026-08-20 22:21+0000\n"
 "Last-Translator: Александр Стельмах <aguhadug@gmail.com>\n"
 "Language-Team: Russian <https://hosted.weblate.org/projects/rufin/app/ru/>\n"
 "Language: ru\n"
@@ -430,15 +430,11 @@ msgstr "Подключено"
 msgid "Connecting to music server..."
 msgstr "Подключение к музыкальному серверу…"
 
-#, fuzzy
-#| msgid "Connecting to music server..."
 msgid "Connecting to {device}..."
-msgstr "Подключение к музыкальному серверу…"
+msgstr "Подключение к {device}..."
 
-#, fuzzy
-#| msgid "Connection"
 msgid "Connection failed"
-msgstr "Соединение"
+msgstr "Соединение не удалось"
 
 msgid "Connection"
 msgstr "Соединение"
@@ -475,6 +471,11 @@ msgstr "Создать"
 
 msgid "Crossfade duration"
 msgstr "Длительность кроссфейда"
+
+#, fuzzy
+#| msgid "Crossfade"
+msgid "Crossfade mode"
+msgstr "Кроссфейд"
 
 msgid "Crossfade"
 msgstr "Кроссфейд"
@@ -602,10 +603,8 @@ msgstr "Включить приватный режим"
 msgid "Enter API credentials first"
 msgstr "Сначала введите данные для доступа к API"
 
-#, fuzzy
-#| msgid "Enter a server address, username, and password"
 msgid "Enter a server address and API key"
-msgstr "Введите адрес сервера, имя пользователя и пароль"
+msgstr "Введите адрес сервера и API ключ"
 
 msgid "Enter a server address, username, and password"
 msgstr "Введите адрес сервера, имя пользователя и пароль"
@@ -700,6 +699,11 @@ msgstr "Полный"
 
 msgid "Furigana"
 msgstr "Фуригана"
+
+#, fuzzy
+#| msgid "Gapless"
+msgid "Gapless mode"
+msgstr "Бесшовный"
 
 msgid "Gapless"
 msgstr "Бесшовный"
@@ -818,7 +822,7 @@ msgid "Karaoke mode"
 msgstr "Режим караоке"
 
 msgid "Keep Rufin running after closing the window"
-msgstr ""
+msgstr "Не останавливать работу Rufin после закрытия окна"
 
 msgid "Keep album transitions gapless when possible"
 msgstr "По возможности обеспечивать плавный переход между треками альбома"
@@ -1047,6 +1051,11 @@ msgstr "Navidrome"
 msgid "Navigate page items"
 msgstr "Перемещаться по элементам страницы"
 
+#, fuzzy
+#| msgid "Notifications"
+msgid "Navigation"
+msgstr "Уведомления"
+
 msgid "Needs attention"
 msgstr "Требуется внимание"
 
@@ -1070,6 +1079,11 @@ msgstr "Недавно добавленные"
 
 msgid "Next Track"
 msgstr "Следующий трек"
+
+#, fuzzy
+#| msgid "Selected device"
+msgid "Next audio device"
+msgstr "Выбранное устройство"
 
 msgid "Next page"
 msgstr "Следующая страница"
@@ -1277,6 +1291,16 @@ msgstr "Воспроизвести плейлист"
 msgid "Play radio"
 msgstr "Воспроизвести радио"
 
+#, fuzzy
+#| msgid "Play random"
+msgid "Play random (play later)"
+msgstr "Воспроизвести в случайном порядке"
+
+#, fuzzy
+#| msgid "Play random"
+msgid "Play random (play next)"
+msgstr "Воспроизвести в случайном порядке"
+
 msgid "Play random"
 msgstr "Воспроизвести в случайном порядке"
 
@@ -1349,10 +1373,8 @@ msgstr "Настройки"
 msgid "Preparing library..."
 msgstr "Подготовка библиотеки…"
 
-#, fuzzy
-#| msgid "Prefer server lyrics"
 msgid "Preserve pitch"
-msgstr "Предпочитать тексты песен с сервера"
+msgstr "Сохранить высоту звука"
 
 msgid "Preset"
 msgstr "Предустановка"
@@ -1364,6 +1386,11 @@ msgstr ""
 
 msgid "Previous Track"
 msgstr "Предыдущий трек"
+
+#, fuzzy
+#| msgid "Previous page"
+msgid "Previous audio device"
+msgstr "Предыдущая страница"
 
 msgid "Previous page"
 msgstr "Предыдущая страница"
@@ -1423,7 +1450,7 @@ msgid "Recently released"
 msgstr "Недавно выпущенные"
 
 msgid "Recommended when your server provides one"
-msgstr ""
+msgstr "Рекомендуется, если ваш сервер предоставляет такую возможность"
 
 msgid "Reconnect"
 msgstr "Повторное подключение"
@@ -1544,6 +1571,9 @@ msgstr "Восстановить"
 
 msgid "Resume"
 msgstr "Возобновить"
+
+msgid "Resync Library"
+msgstr "Синхронизировать библиотеку"
 
 msgid "Rich presence"
 msgstr "Расширенная информация о текущем воспроизведении"
@@ -1720,6 +1750,11 @@ msgstr ""
 msgid "Show external site links"
 msgstr "Показывать ссылки на внешние сайты"
 
+#, fuzzy
+#| msgid "Show Lyrics Panel"
+msgid "Show lyrics in the right panel"
+msgstr "Показать панель с текстом песни"
+
 msgid "Show lyrics"
 msgstr "Показать текст песни"
 
@@ -1731,6 +1766,14 @@ msgstr "Показать боковую панель"
 
 msgid "Show tray icon"
 msgstr "Показывать значок в системном трее"
+
+msgid "Show visualizer and lyrics in the right panel"
+msgstr ""
+
+#, fuzzy
+#| msgid "Show visualizer"
+msgid "Show visualizer in the right panel"
+msgstr "Показать визуализатор"
 
 msgid "Show visualizer"
 msgstr "Показать визуализатор"
@@ -1921,10 +1964,8 @@ msgstr "Звук включен"
 msgid "Update"
 msgstr "Обновить"
 
-#, fuzzy
-#| msgid "API key"
 msgid "Use API key"
-msgstr "Ключ API"
+msgstr "Использовать ключ API"
 
 msgid "Use Jellyfin Instant Mix for recommendations"
 msgstr "Использовать Мгновенный Микс Jellyfin для рекомендаций"
@@ -2131,9 +2172,6 @@ msgstr[2] "{count} лет назад"
 #~ msgid "Rufin is running in the tray"
 #~ msgstr "Rufin работает в системном трее"
 
-#~ msgid "Selected device"
-#~ msgstr "Выбранное устройство"
-
 #~ msgid "Uses the macOS system output"
 #~ msgstr "Использует системный вывод macOS"
 
@@ -2151,9 +2189,6 @@ msgstr[2] "{count} лет назад"
 
 #~ msgid "Seconds"
 #~ msgstr "Секунды"
-
-#~ msgid "Show Lyrics Panel"
-#~ msgstr "Показать панель с текстом песни"
 
 #~ msgid "ReplayGain"
 #~ msgstr "Нормализация громкости"
@@ -2489,9 +2524,6 @@ msgstr[2] "{count} лет назад"
 #~ msgstr ""
 #~ "Восстановить выбранный пресет до значений по умолчанию для каждой полосы "
 #~ "частот."
-
-#~ msgid "Resync Library"
-#~ msgstr "Синхронизировать библиотеку"
 
 #~ msgid "Save to apply this mapping after the next sync."
 #~ msgstr ""
