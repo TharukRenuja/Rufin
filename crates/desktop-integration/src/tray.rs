@@ -16,7 +16,7 @@ mod freedesktop {
     use std::sync::mpsc::{Receiver, Sender, channel};
     use tracing::warn;
 
-    use app_identity::{APP_ID, STABLE_APP_ID};
+    use app_identity::{APP_ID, DISPLAY_NAME, STABLE_APP_ID};
 
     use super::TrayIntent;
 
@@ -77,7 +77,7 @@ mod freedesktop {
         }
 
         fn title(&self) -> String {
-            "Rufin".to_string()
+            DISPLAY_NAME.to_string()
         }
 
         fn icon_name(&self) -> String {
@@ -351,6 +351,7 @@ mod windows {
     use std::sync::mpsc::{Receiver, Sender, channel};
     use std::sync::{Mutex, Once, OnceLock};
 
+    use app_identity::DISPLAY_NAME;
     use localization::tr;
     use tray_icon::TrayIconEvent;
     use tray_icon::menu::{Menu, MenuEvent, MenuItem, PredefinedMenuItem};
@@ -413,7 +414,7 @@ mod windows {
 
             let builder = TrayIconBuilder::new()
                 .with_id(APP_ID)
-                .with_tooltip("Rufin")
+                .with_tooltip(DISPLAY_NAME)
                 .with_menu(Box::new(menu))
                 .with_icon(build_tray_icon()?);
             let builder = builder.with_menu_on_left_click(false);
