@@ -3,7 +3,7 @@
 use std::sync::Arc;
 
 use ::scrobbling::Scrobbler;
-use async_channel::unbounded;
+use async_channel::{bounded, unbounded};
 use playback::{PlaybackBackend, PlaybackHandles};
 use playback_gstreamer::GStreamerPlaybackBackend;
 use secrets::SwitchableSecretStore;
@@ -34,30 +34,28 @@ pub(crate) fn runtime_inputs(
     });
     let stored = settings.load();
     let secrets = Arc::new(SwitchableSecretStore::new(platform_secret_store(&stored)));
-    let (library, repair) = match library::Libraries::open_with_repair(paths::store_file()) {
-        Ok(opened) => opened,
-        Err(error) => {
-            warn!(%error, "could not use the saved Store; startup will continue in memory");
-            (library::Libraries::memory().map_err(string_error)?, None)
+    let store_path = paths::store_file();
+    let library = Arc::new(tokio::task::block_in_place(|| {
+        match runtime.block_on(library::Database::open(&store_path)) {
+            Ok(database) => Ok(database),
+            Err(error) if error.is_store_path_io() => {
+                warn!(%error, path=%store_path.display(), "could not use the Library Store path; startup will continue with a temporary Store");
+                let directory = tempfile::Builder::new().prefix("rufin-store-").tempdir().map_err(library::LibraryError::Io)?.keep();
+                runtime.block_on(library::Database::open(directory.join("library.sqlite")))
+            }
+            Err(error) => Err(error),
         }
-    };
-    if let Some(repair) = repair {
-        warn!(
-            preserved_store_path = %repair.preserved_store.display(),
-            recovered_rows = repair.recovered_rows,
-            skipped_rows = repair.skipped_rows,
-            unreadable_families = ?repair.unreadable_families,
-            "repaired the Rufin Store; source facts will be rebuilt"
-        );
-    }
+    }).map_err(string_error)?);
     let scrobbler = Arc::new(Scrobbler::new(
-        library.clone(),
+        library.as_ref().clone(),
+        runtime.clone(),
         startup_scrobbling_settings(&settings, &secrets),
         stored.ui.private_mode,
     )?);
 
     let (source_events, source_receiver) = unbounded();
-    let (playback_events, playback_receiver) = unbounded();
+    let (playback_events, playback_receiver) = bounded(1);
+    let (visualizer_events, visualizer_receiver) = bounded(1);
     let (download_events, download_receiver) = unbounded();
     let (discovery_events, discovery_receiver) = unbounded();
     let (waveform_events, waveform_receiver) = unbounded();
@@ -72,6 +70,7 @@ pub(crate) fn runtime_inputs(
     };
     let downloads = downloads::Downloads::new(
         paths::downloads_dir(),
+        library.as_ref().clone(),
         runtime.clone(),
         download_events,
         stored.ui.downloads.clone(),
@@ -110,7 +109,7 @@ pub(crate) fn runtime_inputs(
         stored.ui.seekbar_waveform_enabled,
     );
     let lyrics = lyrics::LyricsService::new(
-        library.clone(),
+        library.as_ref().clone(),
         runtime.clone(),
         stored.ui.lyrics.clone(),
         stored.ui.private_mode,
@@ -121,7 +120,9 @@ pub(crate) fn runtime_inputs(
         settings.clone(),
         runtime.clone(),
         playback_events,
-        source.acceptance_sender(),
+        playback_receiver.clone(),
+        visualizer_events,
+        visualizer_receiver.clone(),
         artwork.clone(),
         Arc::clone(&waveform),
         Arc::clone(&lyrics),
@@ -145,7 +146,6 @@ pub(crate) fn runtime_inputs(
 
     let settings_playback = Arc::clone(&playback);
     let settings_lyrics = Arc::clone(&lyrics);
-    let settings_source = Arc::clone(&source);
     let settings_downloads = downloads.clone();
     let settings_scrobbling = Arc::clone(&scrobbling);
     let settings_handle = SettingsUiPort::new(settings, move |previous, current| {
@@ -182,12 +182,6 @@ pub(crate) fn runtime_inputs(
         {
             settings_lyrics.settings_changed(current.ui.lyrics.clone(), current.ui.private_mode);
         }
-        if previous.ui.allows_external_metadata_lookup()
-            != current.ui.allows_external_metadata_lookup()
-        {
-            settings_source
-                .album_release_settings_changed(current.ui.allows_external_metadata_lookup());
-        }
         if previous.ui.downloads != current.ui.downloads {
             settings_downloads.settings_changed(current.ui.downloads.clone());
         }
@@ -220,6 +214,7 @@ pub(crate) fn runtime_inputs(
             source_discovery: discovery_receiver,
             downloads: download_receiver,
             playback: playback_receiver,
+            visualizer: visualizer_receiver,
             waveform: waveform_receiver,
             lyrics: lyrics_receiver,
             release_updates: release_update_receiver,

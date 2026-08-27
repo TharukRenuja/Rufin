@@ -25,7 +25,6 @@ impl Shell {
         self.startup.route_revealed.set(false);
         self.startup.route_allocated.set(false);
         self.cancel_startup_route_reveal();
-        self.cancel_source_thumbnail_warm();
         self.clear_mounted_routes();
         self.render_startup_loading_view();
         self.update_layout();
@@ -151,7 +150,6 @@ impl Shell {
         if let Some(source) = self.selected_source_operations() {
             source.selected_library_revealed();
         }
-        self.start_source_thumbnail_warm();
     }
 
     pub(crate) fn cancel_startup_route_reveal(&self) {
@@ -204,7 +202,7 @@ mod tests {
 
     #[test]
     fn launch_is_preparing_while_an_explicit_change_is_switching() {
-        let saved = library::SourceId::new("saved");
+        let saved = sources::SourceId::new("saved");
         let operation = SourceOperation::Switching {
             target: saved.clone(),
             progress: SourceProgress {

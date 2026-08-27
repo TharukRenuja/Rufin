@@ -646,7 +646,7 @@ fn set_transition_mode_shortcut(shell: &Rc<Shell>, mode: PlaybackTransitionMode)
 
 fn refresh_selected_library(shell: &Shell) {
     if let Some(source) = shell.selected_source_operations() {
-        source.refresh_library();
+        source.refresh_library(crate::runtime::LibraryRefreshTrigger::GlobalAction);
     }
 }
 
@@ -1087,6 +1087,7 @@ pub(crate) fn configure_action_button(
     if is_cover {
         button.add_css_class("cover-hover-button");
         button.add_css_class("cover-hover-animated");
+        button.set_focus_on_click(false);
     } else {
         button.add_css_class("detail-showcase-action-button");
     }

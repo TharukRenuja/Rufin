@@ -3,41 +3,34 @@ use crate::policy::{raw_item_id, stable_hash};
 use crate::{
     ConnectedSource, CredentialHostInput, ImageBytes, JellyfinSettingsInput, JellyfinSetupInput,
     LyricsSearch, NativeLyricLine, NativeLyrics, NativeLyricsDocument, NativeLyricsRole,
-    SourceConfiguration, SourceEditResult, SourceError, SourceResult,
+    SourceConfiguration, SourceEditResult, SourceError, SourceId, SourceResult,
 };
 pub use discovery::{DiscoveredJellyfinServer, discover_jellyfin_servers};
-#[cfg(test)]
-use item::artist_from_item;
 use item::{
-    ALBUM_FIELDS, ItemQueryResult, JellyfinItem, MIXED_ITEM_FIELDS, PLAYLIST_FIELDS, TRACK_FIELDS,
-    album_from_item, folder_from_item, genre_from_item, is_audio_item, normalize_artist_items,
-    playlist_from_item, primary_image_ref, track_from_item,
+    ALBUM_FIELDS, ImageRef, ItemQueryResult, JellyfinItem, MIXED_ITEM_FIELDS, PLAYLIST_FIELDS,
+    TRACK_FIELDS, album_from_item, artist_from_item, genre_from_item, is_audio_item,
+    playlist_from_item, primary_image_ref, stage_album, stage_artist, stage_genre, stage_track,
+    track_from_item,
 };
-use library::{
-    AlbumId, FavoriteItemId, Folder, FolderId, HomeItemId, ImageRef, MusicFolder, MusicFolderId,
-    PlayedFilter, Playlist, PlaylistEntry, PlaylistId, PlaylistSnapshot, RadioSeed, RandomCriteria,
-    ResolvedStream, SourceHomeSection, SourceHomeSectionKind, SourceId, StreamQuality,
-    StreamRequest, Track, TrackId,
+use playback::{
+    RepeatMode, ResolvedStream, SourceReportFact, SourceReportPhase, StreamQuality, StreamRequest,
 };
-use playback::{RepeatMode, SourceReportFact, SourceReportPhase};
 use reqwest::{Client, Url, header};
 use serde::Deserialize;
 use std::sync::Arc;
-use std::sync::atomic::AtomicBool;
 use tracing::instrument;
 
 mod client;
 mod discovery;
 mod events;
 mod item;
-mod metadata;
+pub(crate) mod metadata;
 mod refresh;
+
+type PlaylistId = String;
 
 use client::*;
 pub(crate) use client::{jellyfin_id, normalize_base_url};
-
-#[cfg(test)]
-mod tests;
 
 const CLIENT_NAME: &str = "Rufin";
 const DEVICE_NAME: &str = "Rufin";
@@ -271,7 +264,6 @@ pub struct JellyfinSource {
     authorization: header::HeaderValue,
     use_instant_mix: bool,
     trust_invalid_cert: bool,
-    metadata_editing: AtomicBool,
 }
 impl JellyfinSource {
     fn open(
@@ -293,7 +285,6 @@ impl JellyfinSource {
             authorization,
             use_instant_mix: config.use_instant_mix,
             trust_invalid_cert: client_config.trust_invalid_cert,
-            metadata_editing: AtomicBool::new(false),
         })
     }
 
@@ -337,7 +328,6 @@ impl JellyfinSource {
             response.user.id
         ));
         let canonical_base_url = base_url.as_str().trim_end_matches('/').to_string();
-        let metadata_editing = response.user.policy.is_administrator;
         let user_id = response.user.id;
         let username = response.user.name;
         let credential = response.access_token;
@@ -365,7 +355,6 @@ impl JellyfinSource {
             authorization,
             use_instant_mix: input.use_instant_mix,
             trust_invalid_cert: config.trust_invalid_cert,
-            metadata_editing: AtomicBool::new(metadata_editing),
         };
         Ok(AuthenticatedJellyfin {
             configuration,

@@ -1,7 +1,6 @@
 use super::*;
 
 use crate::remote_http::{self, BodyLimit, RemoteHttpPolicy, RemoteTimeouts};
-use crate::source::RemotePlaylistSource;
 use serde::{
     Deserialize, Serialize,
     de::{self, DeserializeOwned, IntoDeserializer, Visitor},
@@ -25,19 +24,105 @@ const SUBSONIC_HTTP: RemoteHttpPolicy = RemoteHttpPolicy {
 };
 
 impl SubsonicSource {
-    pub(crate) async fn search(
+    pub(crate) async fn generated_track_object_ids(
         &self,
-        request: &library::SearchRequest,
-    ) -> SourceResult<library::SearchResults> {
-        if request.query().trim().is_empty() {
-            return Ok(library::SearchResults::default());
+        seed: &crate::SourceRadioSeed,
+        limit: usize,
+    ) -> SourceResult<Vec<String>> {
+        let tracks = match seed {
+            crate::SourceRadioSeed::Track(id)
+            | crate::SourceRadioSeed::Album(id)
+            | crate::SourceRadioSeed::Artist(id) => {
+                self.similar_songs(raw_item_id(id), limit).await?
+            }
+            crate::SourceRadioSeed::Playlist(id) => {
+                let playlist = self.read_playlist(id).await?;
+                let first = playlist.entries.first().ok_or(SourceError::NotFound)?;
+                self.similar_songs(raw_item_id(&first.track_id), limit)
+                    .await?
+            }
+            crate::SourceRadioSeed::Genre(name) => {
+                let body: RandomSongsBody = self
+                    .get_json(
+                        "getRandomSongs",
+                        &[
+                            ("size", limit.clamp(1, 500).to_string()),
+                            ("genre", name.clone()),
+                        ],
+                    )
+                    .await?;
+                body.random_songs
+                    .map(|songs| songs.song)
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(|song| track_from_dto(self, song))
+                    .collect()
+            }
+        };
+        Ok(tracks.into_iter().map(|track| track.id).collect())
+    }
+
+    pub(crate) async fn browse_folder(
+        &self,
+        folder_object_id: Option<&str>,
+        music_folder_object_id: Option<&str>,
+    ) -> SourceResult<crate::LiveFolderPage> {
+        let mut page = crate::LiveFolderPage::default();
+        if let Some(folder) = folder_object_id {
+            let body: MusicDirectoryBody = self
+                .get_json(
+                    "getMusicDirectory",
+                    &[("id", raw_item_id(folder).to_string())],
+                )
+                .await?;
+            for child in body.directory.child {
+                if child.is_dir.unwrap_or(false) {
+                    let folder = folder_from_child(self, child);
+                    page.folders.push(crate::LiveFolder {
+                        object_id: folder.id,
+                        name: folder.name,
+                    });
+                } else {
+                    page.tracks
+                        .push(String::from(self.id("track", &raw_id_string(&child.id))));
+                }
+            }
+        } else {
+            let parameters = music_folder_object_id
+                .map(|folder| vec![("musicFolderId", raw_item_id(folder).to_string())])
+                .unwrap_or_default();
+            let body: IndexesBody = self.get_json("getIndexes", &parameters).await?;
+            for artist in body
+                .indexes
+                .map(|indexes| indexes.index)
+                .unwrap_or_default()
+                .into_iter()
+                .flat_map(|index| index.artist)
+            {
+                let folder = folder_from_artist(self, artist);
+                page.folders.push(crate::LiveFolder {
+                    object_id: folder.id,
+                    name: folder.name,
+                });
+            }
         }
-        let count = request.limit().to_string();
+        Ok(page)
+    }
+
+    pub(crate) async fn live_search(
+        &self,
+        query: &str,
+        limit: usize,
+    ) -> SourceResult<crate::LiveSearchResults> {
+        if query.trim().is_empty() {
+            return Ok(crate::LiveSearchResults::default());
+        }
+        let count = limit.clamp(1, 100).to_string();
         let body: SearchBody = self
             .get_json(
                 "search3",
                 &[
-                    ("query", request.query().to_string()),
+                    ("query", query.to_string()),
                     ("artistCount", count.clone()),
                     ("artistOffset", "0".to_string()),
                     ("albumCount", count.clone()),
@@ -48,180 +133,116 @@ impl SubsonicSource {
             )
             .await?;
         let results = body.search_result.unwrap_or_default();
-        Ok(library::SearchResults {
+        Ok(crate::LiveSearchResults {
             artists: results
                 .artist
                 .unwrap_or_default()
                 .into_iter()
-                .map(|artist| artist_from_dto(self, artist))
-                .collect(),
+                .map(|value| artist_from_dto(self, value))
+                .map(|artist| {
+                    Ok(crate::LiveSearchArtist {
+                        object_id: artist.id,
+                        name: artist.name,
+                        artwork_binding: artist
+                            .image_ref
+                            .as_ref()
+                            .map(serde_json::to_vec)
+                            .transpose()?,
+                    })
+                })
+                .collect::<SourceResult<_>>()?,
             albums: results
                 .album
                 .unwrap_or_default()
                 .into_iter()
-                .map(|album| album_from_dto(self, album))
-                .collect(),
+                .map(|value| album_from_dto(self, value))
+                .map(|album| {
+                    Ok(crate::LiveSearchAlbum {
+                        object_id: album.id,
+                        title: album.title,
+                        artist: album.artist,
+                        artwork_binding: album
+                            .image_ref
+                            .as_ref()
+                            .map(serde_json::to_vec)
+                            .transpose()?,
+                    })
+                })
+                .collect::<SourceResult<_>>()?,
             tracks: results
                 .song
                 .unwrap_or_default()
                 .into_iter()
-                .map(|song| track_from_dto(self, song))
-                .collect(),
+                .map(|value| track_from_dto(self, value))
+                .map(|track| {
+                    Ok(crate::LiveSearchTrack {
+                        object_id: track.id,
+                        title: track.title,
+                        artist: track.artist,
+                        album: track.album,
+                        artwork_binding: track
+                            .image_ref
+                            .as_ref()
+                            .map(serde_json::to_vec)
+                            .transpose()?,
+                    })
+                })
+                .collect::<SourceResult<_>>()?,
         })
     }
+}
 
-    pub(crate) async fn read_track(&self, track_id: &TrackId) -> SourceResult<Track> {
+impl SubsonicSource {
+    pub(crate) async fn collection_track_object_ids(
+        &self,
+        collection: &crate::SourceCollection,
+        limit: usize,
+    ) -> SourceResult<Vec<String>> {
+        let limit = limit.clamp(1, 500);
+        let album_ids = match collection {
+            crate::SourceCollection::Album(id) => vec![raw_item_id(id).to_string()],
+            crate::SourceCollection::Artist(id) => {
+                let body: ArtistBody = self
+                    .get_json("getArtist", &[("id", raw_item_id(id).to_string())])
+                    .await?;
+                body.artist
+                    .album
+                    .into_iter()
+                    .map(|album| raw_id_string(&album.id))
+                    .collect()
+            }
+        };
+        let mut tracks = Vec::new();
+        for album_id in album_ids {
+            if tracks.len() >= limit {
+                break;
+            }
+            let body: AlbumBody = self.get_json("getAlbum", &[("id", album_id)]).await?;
+            tracks.extend(
+                body.album
+                    .song
+                    .into_iter()
+                    .map(|song| String::from(self.id("track", &raw_id_string(&song.id)))),
+            );
+        }
+        tracks.truncate(limit);
+        Ok(tracks)
+    }
+
+    pub(super) async fn read_track(&self, track_id: &str) -> SourceResult<Track> {
         let body: SongBody = self
-            .get_json(
-                "getSong",
-                &[("id", raw_item_id(track_id.as_str()).to_string())],
-            )
+            .get_json("getSong", &[("id", raw_item_id(track_id).to_string())])
             .await?;
         Ok(track_from_dto(self, body.song))
     }
 }
 
 impl SubsonicSource {
-    pub(crate) async fn read_folder(
-        &self,
-        folder_id: Option<&FolderId>,
-        music_folder_id: Option<&MusicFolderId>,
-    ) -> SourceResult<library::FolderContents> {
-        let Some(folder_id) = folder_id else {
-            let mut extra = Vec::new();
-            if let Some(music_folder_id) = music_folder_id {
-                extra.push((
-                    "musicFolderId",
-                    raw_item_id(music_folder_id.as_str()).to_string(),
-                ));
-            }
-            let body: IndexesBody = self.get_json("getIndexes", &extra).await?;
-            let mut folders = body
-                .indexes
-                .map(|indexes| indexes.index)
-                .unwrap_or_default()
-                .into_iter()
-                .flat_map(|index| index.artist)
-                .map(|artist| folder_from_artist(self, artist))
-                .collect::<Vec<_>>();
-            sort_folders_by_name(&mut folders);
-            return Ok(folder_contents(folders, Vec::new()));
-        };
-
-        let body: MusicDirectoryBody = self
-            .get_json(
-                "getMusicDirectory",
-                &[("id", raw_item_id(folder_id.as_str()).to_string())],
-            )
-            .await?;
-        let directory = body.directory;
-        let mut folders = Vec::new();
-        let mut tracks = Vec::new();
-        for child in directory.child {
-            if child.is_dir.unwrap_or(false) {
-                folders.push(folder_from_child(self, child));
-            } else {
-                tracks.push(track_from_dto(self, child));
-            }
-        }
-        sort_folders_by_name(&mut folders);
-        Ok(folder_contents(folders, tracks))
-    }
-}
-
-fn folder_contents(folders: Vec<Folder>, tracks: Vec<Track>) -> library::FolderContents {
-    library::FolderContents {
-        folders: folders.into(),
-        tracks: tracks.into(),
-    }
-}
-
-impl SubsonicSource {
-    pub(crate) async fn random_tracks(
-        &self,
-        criteria: &RandomCriteria,
-    ) -> SourceResult<Vec<Track>> {
-        if criteria.played_filter != PlayedFilter::All {
-            return Err(SourceError::InvalidRequest("random played filter"));
-        }
-
-        let mut extra = vec![("size", criteria.limit.clamp(1, 500).to_string())];
-        if let Some(min_year) = criteria.min_year {
-            extra.push(("fromYear", min_year.to_string()));
-        }
-        if let Some(max_year) = criteria.max_year {
-            extra.push(("toYear", max_year.to_string()));
-        }
-        if let Some(genre) = criteria
-            .genre_name
-            .as_deref()
-            .filter(|genre| !genre.trim().is_empty())
-        {
-            extra.push(("genre", genre.to_string()));
-        } else if let Some(genre_id) = criteria.genre_id.as_ref() {
-            extra.push(("genre", raw_item_id(genre_id.as_str()).to_string()));
-        }
-
-        let body: RandomSongsBody = self.get_json("getRandomSongs", &extra).await?;
-        Ok(body
-            .random_songs
-            .map(|songs| songs.song)
-            .unwrap_or_default()
-            .into_iter()
-            .map(|song| track_from_dto(self, song))
-            .collect())
-    }
-}
-
-impl SubsonicSource {
-    pub(crate) async fn generated_tracks(
-        &self,
-        seed: &RadioSeed,
-        limit: usize,
-    ) -> SourceResult<Vec<Track>> {
-        match seed {
-            library::RadioSeed::Track(track_id) => {
-                self.similar_songs(raw_item_id(track_id.as_str()), limit)
-                    .await
-            }
-            library::RadioSeed::Album(album_id) => {
-                self.similar_songs(raw_item_id(album_id.as_str()), limit)
-                    .await
-            }
-            library::RadioSeed::Artist(artist_id) => {
-                self.similar_songs(raw_item_id(artist_id.as_str()), limit)
-                    .await
-            }
-            library::RadioSeed::Genre { id, name } => {
-                self.random_tracks(&RandomCriteria {
-                    limit,
-                    min_year: None,
-                    max_year: None,
-                    genre_id: Some(id.clone()),
-                    genre_name: (!name.trim().is_empty()).then(|| name.clone()),
-                    played_filter: PlayedFilter::All,
-                })
-                .await
-            }
-            library::RadioSeed::Playlist(playlist_id) => {
-                let snapshot = self.read_playlist(playlist_id).await?;
-                let seed = snapshot.entries.first().ok_or(SourceError::NotFound)?;
-                self.similar_songs(raw_item_id(seed.track_id.as_str()), limit)
-                    .await
-            }
-        }
-    }
-}
-
-impl SubsonicSource {
-    pub(crate) async fn read_playlist(
-        &self,
-        playlist_id: &PlaylistId,
-    ) -> SourceResult<PlaylistSnapshot> {
+    pub(super) async fn read_playlist(&self, playlist_id: &str) -> SourceResult<PlaylistSnapshot> {
         let body: PlaylistBody = self
             .get_json(
                 "getPlaylist",
-                &[("id", raw_item_id(playlist_id.as_str()).to_string())],
+                &[("id", raw_item_id(playlist_id).to_string())],
             )
             .await?;
         let playlist = playlist_from_dto(self, body.playlist.clone());
@@ -235,7 +256,7 @@ impl SubsonicSource {
                 let raw_track_id = raw_id_string(&song.id);
                 PlaylistEntry {
                     occurrence_id: playlist_entry_id(&playlist.id, index, &raw_track_id),
-                    track_id: TrackId::new(self.id("track", &raw_track_id)),
+                    track_id: String::from(self.id("track", &raw_track_id)),
                 }
             })
             .collect::<Vec<_>>();
@@ -254,7 +275,7 @@ impl SubsonicSource {
             "raw"
         };
         self.resolve_audio(
-            &request.track_id,
+            &request.track_object_id,
             request.quality.max_bitrate_kbps(),
             format,
         )
@@ -272,7 +293,7 @@ impl SubsonicSource {
             StreamQuality::MaxBitrateKbps(_) => ("mp3", Some("mp3")),
         };
         let stream = self.resolve_audio(
-            &request.track_id,
+            &request.track_object_id,
             request.quality.max_bitrate_kbps(),
             format,
         )?;
@@ -281,11 +302,11 @@ impl SubsonicSource {
 
     fn resolve_audio(
         &self,
-        track_id: &TrackId,
+        track_id: &str,
         max_bitrate_kbps: Option<u32>,
         format: &str,
     ) -> SourceResult<ResolvedStream> {
-        let mut extra = vec![("id", raw_item_id(track_id.as_str()).to_string())];
+        let mut extra = vec![("id", raw_item_id(track_id).to_string())];
         if let Some(kbps) = max_bitrate_kbps {
             extra.push(("maxBitRate", kbps.to_string()));
         }
@@ -298,6 +319,33 @@ impl SubsonicSource {
 }
 
 impl SubsonicSource {
+    pub(crate) async fn set_favorite(
+        &self,
+        kind: crate::SourceEntityKind,
+        object_id: &str,
+        favorite: bool,
+    ) -> SourceResult<()> {
+        let method = if favorite { "star" } else { "unstar" };
+        let key = match kind {
+            crate::SourceEntityKind::Track => "id",
+            crate::SourceEntityKind::Album => "albumId",
+            crate::SourceEntityKind::Artist => "artistId",
+        };
+        self.get_unit(method, &[(key, raw_item_id(object_id).to_string())])
+            .await
+    }
+    pub(crate) async fn set_rating(&self, object_id: &str, rating: Option<u8>) -> SourceResult<()> {
+        let whole = rating.unwrap_or(0).div_ceil(2).min(5);
+        self.get_unit(
+            "setRating",
+            &[
+                ("id", raw_item_id(object_id).to_string()),
+                ("rating", whole.to_string()),
+            ],
+        )
+        .await
+    }
+
     pub(crate) async fn image_bytes(
         &self,
         image_ref: &ImageRef,
@@ -313,87 +361,59 @@ impl SubsonicSource {
 }
 
 impl SubsonicSource {
-    pub(crate) async fn set_favorite(
+    pub(crate) async fn create_playlist(
         &self,
-        item_id: FavoriteItemId,
-        favorite: bool,
-    ) -> SourceResult<()> {
-        let method = if favorite { "star" } else { "unstar" };
-        let key = match &item_id {
-            FavoriteItemId::Album(_) => "albumId",
-            FavoriteItemId::Track(_) => "id",
-            FavoriteItemId::Artist(_) => "artistId",
-        };
-        self.get_unit(method, &[(key, raw_item_id(item_id.as_str()).to_string())])
-            .await
-    }
-
-    pub(crate) async fn set_rating(
-        &self,
-        item: FavoriteItemId,
-        rating: Option<u8>,
-    ) -> SourceResult<()> {
-        self.get_unit(
-            "setRating",
-            &[
-                ("id", raw_item_id(item.as_str()).to_string()),
-                ("rating", library::rating_to_whole_star(rating).to_string()),
-            ],
-        )
-        .await
-    }
-}
-
-impl RemotePlaylistSource for SubsonicSource {
-    async fn create_playlist(&self, name: &str, track_ids: &[TrackId]) -> SourceResult<PlaylistId> {
+        name: &str,
+        track_ids: &[String],
+    ) -> SourceResult<PlaylistId> {
         let mut extra = vec![("name", name.trim().to_string())];
         extra.extend(
             track_ids
                 .iter()
-                .map(|track_id| ("songId", raw_item_id(track_id.as_str()).to_string())),
+                .map(|track_id| ("songId", raw_item_id(track_id).to_string())),
         );
         let body: PlaylistBody = self.get_json("createPlaylist", &extra).await?;
-        Ok(PlaylistId::new(
+        Ok(String::from(
             self.id("playlist", &raw_id_string(&body.playlist.id)),
         ))
     }
-    async fn rename_playlist(&self, playlist_id: &PlaylistId, name: &str) -> SourceResult<()> {
+    pub(crate) async fn rename_playlist(&self, playlist_id: &str, name: &str) -> SourceResult<()> {
         self.get_unit(
             "updatePlaylist",
             &[
-                ("playlistId", raw_item_id(playlist_id.as_str()).to_string()),
+                ("playlistId", raw_item_id(playlist_id).to_string()),
                 ("name", name.trim().to_string()),
             ],
         )
         .await
     }
-    async fn delete_playlist(&self, playlist_id: &PlaylistId) -> SourceResult<()> {
+    pub(crate) async fn delete_playlist(&self, playlist_id: &str) -> SourceResult<()> {
         self.get_unit(
             "deletePlaylist",
-            &[("id", raw_item_id(playlist_id.as_str()).to_string())],
+            &[("id", raw_item_id(playlist_id).to_string())],
         )
         .await
     }
-    async fn add_playlist_tracks(
+    pub(crate) async fn add_playlist_tracks(
         &self,
-        playlist_id: &PlaylistId,
-        track_ids: &[TrackId],
+        playlist_id: &str,
+        track_ids: &[String],
     ) -> SourceResult<()> {
-        let mut extra = vec![("playlistId", raw_item_id(playlist_id.as_str()).to_string())];
+        let mut extra = vec![("playlistId", raw_item_id(playlist_id).to_string())];
         extra.extend(
             track_ids
                 .iter()
-                .map(|track_id| ("songIdToAdd", raw_item_id(track_id.as_str()).to_string())),
+                .map(|track_id| ("songIdToAdd", raw_item_id(track_id).to_string())),
         );
         self.get_unit("updatePlaylist", &extra).await
     }
-    async fn remove_playlist_entries(
+    pub(crate) async fn remove_playlist_entries(
         &self,
-        playlist_id: &PlaylistId,
+        playlist_id: &str,
         entry_ids: &[String],
     ) -> SourceResult<()> {
-        let prefix = format!("{}:", playlist_id.as_str());
-        let mut extra = vec![("playlistId", raw_item_id(playlist_id.as_str()).to_string())];
+        let prefix = format!("{}:", playlist_id);
+        let mut extra = vec![("playlistId", raw_item_id(playlist_id).to_string())];
         for entry_id in entry_ids {
             let index = entry_id
                 .strip_prefix(&prefix)
@@ -406,9 +426,9 @@ impl RemotePlaylistSource for SubsonicSource {
         }
         self.get_unit("updatePlaylist", &extra).await
     }
-    async fn move_playlist_entry(
+    pub(crate) async fn move_playlist_entry(
         &self,
-        playlist_id: &PlaylistId,
+        playlist_id: &str,
         entry_id: &str,
         new_index: usize,
     ) -> SourceResult<()> {
@@ -426,19 +446,12 @@ impl RemotePlaylistSource for SubsonicSource {
             .collect::<Vec<_>>();
         self.replace_playlist_tracks(playlist_id, &ids).await
     }
-
-    async fn read_playlist_snapshot(
-        &self,
-        playlist_id: &PlaylistId,
-    ) -> SourceResult<PlaylistSnapshot> {
-        SubsonicSource::read_playlist(self, playlist_id).await
-    }
 }
 
 impl SubsonicSource {
     pub(crate) async fn lyrics(
         &self,
-        track_id: &TrackId,
+        track_id: &str,
         _search: LyricsSearch,
     ) -> SourceResult<Option<NativeLyrics>> {
         let extensions: OpenSubsonicExtensionsBody = self
@@ -453,7 +466,7 @@ impl SubsonicSource {
             .copied()
             .unwrap_or_default();
         if song_lyrics_version >= 1 {
-            let mut extra = vec![("id", raw_item_id(track_id.as_str()).to_string())];
+            let mut extra = vec![("id", raw_item_id(track_id).to_string())];
             if song_lyrics_version >= 2 {
                 extra.push(("enhanced", "true".to_string()));
             }
@@ -592,13 +605,13 @@ fn normalize_native_language(language: String) -> Option<String> {
 }
 
 impl SubsonicSource {
-    pub(crate) async fn report_playback(&self, report: SourceReportFact) -> SourceResult<()> {
+    pub(crate) async fn report_playback(&self, report: &SourceReportFact) -> SourceResult<()> {
         match report.phase {
             SourceReportPhase::Started => {
                 self.get_unit(
                     "scrobble",
                     &[
-                        ("id", raw_item_id(report.track_id.as_str()).to_string()),
+                        ("id", raw_item_id(&report.track_object_id).to_string()),
                         ("submission", "false".to_string()),
                     ],
                 )
@@ -614,7 +627,7 @@ impl SubsonicSource {
                 self.get_unit(
                     "scrobble",
                     &[
-                        ("id", raw_item_id(report.track_id.as_str()).to_string()),
+                        ("id", raw_item_id(&report.track_object_id).to_string()),
                         ("submission", "true".to_string()),
                         ("time", started_at_millis.to_string()),
                     ],
@@ -1015,8 +1028,8 @@ pub(super) fn redacted_subsonic_url(url: &Url) -> String {
 pub(super) fn raw_id_string(id: &SubsonicId) -> String {
     id.0.clone()
 }
-pub(super) fn playlist_entry_id(playlist_id: &PlaylistId, index: usize, track_id: &str) -> String {
-    format!("{}:{index}:{track_id}", playlist_id.as_str())
+pub(super) fn playlist_entry_id(playlist_id: &str, index: usize, track_id: &str) -> String {
+    format!("{}:{index}:{track_id}", playlist_id)
 }
 pub(super) fn current_year() -> u16 {
     let days_since_epoch = SystemTime::now()
@@ -1111,17 +1124,6 @@ impl SubsonicSource {
             .map(|_| ())
     }
 
-    pub(super) async fn get_all_artists(&self) -> SourceResult<Vec<Artist>> {
-        let body: ArtistsBody = self.get_json("getArtists", &[]).await?;
-        Ok(body
-            .artists
-            .index
-            .into_iter()
-            .flat_map(|index| index.artist)
-            .map(|artist| artist_from_dto(self, artist))
-            .collect())
-    }
-
     async fn similar_songs(&self, raw_id: &str, count: usize) -> SourceResult<Vec<Track>> {
         let body: SimilarSongsBody = self
             .get_json(
@@ -1143,14 +1145,14 @@ impl SubsonicSource {
 
     async fn replace_playlist_tracks(
         &self,
-        playlist_id: &PlaylistId,
-        track_ids: &[TrackId],
+        playlist_id: &str,
+        track_ids: &[String],
     ) -> SourceResult<()> {
-        let mut extra = vec![("playlistId", raw_item_id(playlist_id.as_str()).to_string())];
+        let mut extra = vec![("playlistId", raw_item_id(playlist_id).to_string())];
         extra.extend(
             track_ids
                 .iter()
-                .map(|track_id| ("songId", raw_item_id(track_id.as_str()).to_string())),
+                .map(|track_id| ("songId", raw_item_id(track_id).to_string())),
         );
         self.get_unit("createPlaylist", &extra).await
     }
@@ -1224,6 +1226,26 @@ pub(super) struct AlbumListBody {
     pub(super) album_list: AlbumList,
 }
 #[derive(Clone, Debug, Default, Deserialize)]
+pub(super) struct AlbumBody {
+    #[serde(default)]
+    pub(super) album: AlbumDetail,
+}
+#[derive(Clone, Debug, Default, Deserialize)]
+pub(super) struct AlbumDetail {
+    #[serde(default)]
+    pub(super) song: Vec<SubsonicSong>,
+}
+#[derive(Clone, Debug, Default, Deserialize)]
+pub(super) struct ArtistBody {
+    #[serde(default)]
+    pub(super) artist: ArtistDetail,
+}
+#[derive(Clone, Debug, Default, Deserialize)]
+pub(super) struct ArtistDetail {
+    #[serde(default)]
+    pub(super) album: Vec<SubsonicAlbum>,
+}
+#[derive(Clone, Debug, Default, Deserialize)]
 pub(super) struct AlbumList {
     #[serde(default)]
     pub(super) album: Vec<SubsonicAlbum>,
@@ -1270,10 +1292,6 @@ pub(super) struct MusicDirectoryBody {
 pub(super) struct SubsonicDirectory {
     #[serde(default)]
     pub(super) child: Vec<SubsonicSong>,
-}
-#[derive(Clone, Debug, Deserialize)]
-pub(super) struct ArtistsBody {
-    pub(super) artists: ArtistsIndex,
 }
 #[derive(Clone, Debug, Deserialize)]
 pub(super) struct ArtistsIndex {
@@ -1608,5 +1626,75 @@ impl Visitor<'_> for SubsonicIdVisitor {
         E: de::Error,
     {
         Ok(SubsonicId(value.to_string()))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{SubsonicCredential, redacted_subsonic_url};
+    use crate::subsonic::{
+        SubsonicAuthentication, SubsonicFlavor, SubsonicSource, SubsonicSourceConfig,
+    };
+    use reqwest::Url;
+    use wiremock::matchers::{method, path, query_param};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    #[test]
+    fn subsonic_urls_and_credentials_never_expose_authentication_values() {
+        let url = Url::parse(
+            "https://music.example/rest/stream?apiKey=secret-key&p=password&s=salt&t=token&id=track-one",
+        )
+        .expect("Subsonic URL");
+        let redacted = redacted_subsonic_url(&url);
+        for secret in ["secret-key", "password", "salt", "token"] {
+            assert!(!redacted.contains(secret));
+        }
+        assert!(redacted.contains("id=track-one"));
+
+        let credential = SubsonicCredential::from_api_key("secret-key").expect("API key");
+        assert!(!format!("{credential:?}").contains("secret-key"));
+    }
+
+    #[tokio::test]
+    async fn opensubsonic_recommendations_use_provider_similar_songs() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/rest/getSimilarSongs.view"))
+            .and(query_param("id", "artist-one"))
+            .and(query_param("count", "25"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "subsonic-response": {
+                    "status": "ok",
+                    "version": "1.16.1",
+                    "similarSongs": {"song": [{"id": "track-two", "title": "Two"}]}
+                }
+            })))
+            .expect(1)
+            .mount(&server)
+            .await;
+        let credential = SubsonicCredential::from_password("password").serialize();
+        let source = SubsonicSource::open(
+            SubsonicFlavor::Subsonic,
+            SubsonicSourceConfig {
+                base_url: server.uri(),
+                username: "listener".to_string(),
+                trust_invalid_cert: false,
+                navidrome_library_version: 0,
+                authentication: SubsonicAuthentication::Password,
+            },
+            credential,
+        )
+        .expect("OpenSubsonic source");
+
+        assert_eq!(
+            source
+                .generated_track_object_ids(
+                    &crate::SourceRadioSeed::Artist("subsonic:artist:artist-one".to_string()),
+                    25,
+                )
+                .await
+                .expect("OpenSubsonic recommendations"),
+            ["subsonic:track:track-two"]
+        );
     }
 }

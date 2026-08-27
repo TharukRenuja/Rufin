@@ -1,185 +1,280 @@
-//! One accepted favorite operation for Track, Album, and Artist.
-//!
-//! Local persists Rufin's true-row boolean. Remote sources acknowledge their
-//! authoritative value, which Library writes into the accepted source facts.
-//! Neither path creates a second accepted UI map.
+//! Owns Favorite and Rating overrides plus bounded remote Favorite delivery.
+//! Source clients perform network delivery and retry scheduling decisions.
 
-use crate::{
-    AcceptedHomeChange, AcceptedLibraryChange, Album, Artist, FavoriteItemId, Library,
-    LibraryResult,
-};
+use sqlx::sqlite::SqliteConnection;
+use sqlx::{Connection, Sqlite, Transaction};
 
-pub fn rating_from_five_star(value: f64) -> Option<u8> {
-    (value.is_finite() && value > 0.0).then(|| (value * 2.0).round().clamp(1.0, 10.0) as u8)
+use crate::{AlbumKey, ArtistKey, Database, LibraryError, LibraryResult, SourceKey, TrackKey};
+
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum FavoriteTarget {
+    Track(TrackKey),
+    Album(AlbumKey),
+    Artist(ArtistKey),
 }
 
-pub fn rating_from_ten_point(value: f64) -> Option<u8> {
-    (value.is_finite() && value > 0.0).then(|| value.round().clamp(1.0, 10.0) as u8)
-}
-
-pub fn rating_to_whole_star(rating: Option<u8>) -> u8 {
-    rating.map_or(0, |rating| rating.clamp(1, 10).div_ceil(2))
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct PendingFavorite {
-    pub item: FavoriteItemId,
-    pub favorite: bool,
-    pub attempts: u32,
-}
-
-pub(crate) enum FavoriteValue {
-    Album(Album),
-    Artist(Artist),
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum FavoriteAcceptance {
-    RufinOwned {
-        item: FavoriteItemId,
-        favorite: bool,
-    },
-    SourceAcknowledged {
-        item: FavoriteItemId,
-        favorite: bool,
-    },
-}
-
-impl Library {
-    pub fn set_rating(
-        &self,
-        item: FavoriteItemId,
-        rating: Option<u8>,
-    ) -> LibraryResult<AcceptedLibraryChange> {
-        self.store
-            .set_rating(self.source_id().clone(), item.clone(), rating)?;
-        let mut accepted = self.replace_rating(&item, rating)?;
-        accepted.home = AcceptedHomeChange::Rebuild;
-        accepted.download_coverage_changed = true;
-        Ok(accepted)
-    }
-
-    pub fn accept_favorite(
-        &self,
-        acceptance: FavoriteAcceptance,
-    ) -> LibraryResult<AcceptedLibraryChange> {
-        let (item_id, favorite, local) = match acceptance {
-            FavoriteAcceptance::RufinOwned { item, favorite } => (item, favorite, true),
-            FavoriteAcceptance::SourceAcknowledged { item, favorite } => (item, favorite, false),
-        };
-        let fallback = self.favorite_value_if_derived(&item_id)?;
-        self.store.set_favorite(
-            self.source_id().clone(),
-            item_id.clone(),
-            favorite,
-            local,
-            fallback,
-        )?;
-        let mut accepted = self.replace_favorite(&item_id, favorite)?;
-        accepted.home = AcceptedHomeChange::Favorite(item_id);
-        accepted.download_coverage_changed = true;
-        Ok(accepted)
-    }
-
-    pub fn queue_remote_favorite(
-        &self,
-        item: FavoriteItemId,
-        favorite: bool,
-        next_attempt_at: i64,
-    ) -> LibraryResult<AcceptedLibraryChange> {
-        let previous = match &item {
-            FavoriteItemId::Track(id) => {
-                self.track(id)?
-                    .ok_or_else(|| crate::LibraryQueryError::MissingItem {
-                        kind: "track",
-                        id: id.to_string(),
-                    })?
-                    .favorite
-            }
-            FavoriteItemId::Album(id) => {
-                self.album(id)?
-                    .ok_or_else(|| crate::LibraryQueryError::MissingItem {
-                        kind: "album",
-                        id: id.to_string(),
-                    })?
-                    .favorite
-            }
-            FavoriteItemId::Artist(id) => {
-                self.artist(id)?
-                    .ok_or_else(|| crate::LibraryQueryError::MissingItem {
-                        kind: "artist",
-                        id: id.to_string(),
-                    })?
-                    .favorite
-            }
-        };
-        let fallback = self.favorite_value_if_derived(&item)?;
-        self.store.queue_remote_favorite(
-            self.source_id().clone(),
-            item.clone(),
-            favorite,
-            previous,
-            next_attempt_at,
-            fallback,
-        )?;
-        let mut accepted = self.replace_favorite(&item, favorite)?;
-        accepted.home = AcceptedHomeChange::Favorite(item);
-        accepted.download_coverage_changed = true;
-        Ok(accepted)
-    }
-
-    pub fn due_remote_favorites(
-        &self,
-        now: i64,
-        limit: usize,
-    ) -> LibraryResult<Vec<PendingFavorite>> {
-        if now < 0 || limit == 0 {
-            return Ok(Vec::new());
+impl FavoriteTarget {
+    const fn kind(self) -> &'static str {
+        match self {
+            Self::Track(_) => "track",
+            Self::Album(_) => "album",
+            Self::Artist(_) => "artist",
         }
-        Ok(self
-            .store
-            .due_remote_favorites(self.source_id().clone(), now, limit.min(500))?)
     }
 
-    pub fn complete_remote_favorite(
+    const fn raw(self) -> i64 {
+        match self {
+            Self::Track(key) => key.raw(),
+            Self::Album(key) => key.raw(),
+            Self::Artist(key) => key.raw(),
+        }
+    }
+}
+
+impl Database {
+    pub async fn set_rating(
         &self,
-        item: FavoriteItemId,
+        source: SourceKey,
+        target: FavoriteTarget,
+        rating: Option<u8>,
+    ) -> LibraryResult<bool> {
+        if rating.is_some_and(|rating| rating > 10) {
+            return Err(LibraryError::InvalidRequest(
+                "Ratings must be between 0 and 10".to_string(),
+            ));
+        }
+        let stored = rating.map(|rating| i64::from(rating) * 10);
+        let (sql, key) = match target {
+            FavoriteTarget::Track(key) => (
+                "UPDATE tracks SET user_rating=?3 WHERE source_key=?1 AND track_key=?2",
+                key.raw(),
+            ),
+            FavoriteTarget::Album(key) => (
+                "UPDATE albums SET user_rating=?3 WHERE source_key=?1 AND album_key=?2",
+                key.raw(),
+            ),
+            FavoriteTarget::Artist(key) => (
+                "UPDATE artists SET user_rating=?3 WHERE source_key=?1 AND artist_key=?2",
+                key.raw(),
+            ),
+        };
+        let mut writer = self.writer().await?;
+        let connection = writer.as_mut().ok_or(LibraryError::WriterUnavailable)?;
+        Ok(sqlx::query(sql)
+            .bind(source)
+            .bind(key)
+            .bind(stored)
+            .execute(connection)
+            .await?
+            .rows_affected()
+            == 1)
+    }
+
+    pub async fn set_favorite(
+        &self,
+        source: SourceKey,
+        target: FavoriteTarget,
         favorite: bool,
-    ) -> LibraryResult<()> {
-        self.store
-            .complete_remote_favorite(self.source_id().clone(), item, favorite)?;
-        Ok(())
+    ) -> LibraryResult<bool> {
+        let mut writer = self.writer().await?;
+        let connection = writer.as_mut().ok_or(LibraryError::WriterUnavailable)?;
+        update_favorite(connection, source, target, Some(favorite)).await
     }
 
-    pub fn defer_remote_favorite(
+    pub async fn queue_remote_favorite(
         &self,
-        item: FavoriteItemId,
+        source: SourceKey,
+        target: FavoriteTarget,
         favorite: bool,
         next_attempt_at: i64,
-    ) -> LibraryResult<()> {
-        self.store.defer_remote_favorite(
-            self.source_id().clone(),
-            item,
-            favorite,
-            next_attempt_at,
-        )?;
-        Ok(())
+    ) -> LibraryResult<bool> {
+        if next_attempt_at < 0 {
+            return Err(LibraryError::InvalidRequest(
+                "Favorite delivery time cannot be negative".to_string(),
+            ));
+        }
+        let mut writer = self.writer().await?;
+        let connection = writer.as_mut().ok_or(LibraryError::WriterUnavailable)?;
+        let mut transaction = connection.begin().await?;
+        let Some(previous) = effective_favorite(&mut transaction, source, target).await? else {
+            transaction.rollback().await?;
+            return Ok(false);
+        };
+        sqlx::query(
+            "INSERT INTO favorite_outbox(
+                 source_key, entity_kind, entity_key, favorite,
+                 previous_favorite, attempts, next_attempt_at
+             ) VALUES (?1, ?2, ?3, ?4, ?5, 0, ?6)
+             ON CONFLICT(source_key, entity_kind, entity_key) DO UPDATE SET
+                 favorite=excluded.favorite,
+                 previous_favorite=favorite_outbox.previous_favorite,
+                 attempts=0, next_attempt_at=excluded.next_attempt_at",
+        )
+        .bind(source)
+        .bind(target.kind())
+        .bind(target.raw())
+        .bind(favorite)
+        .bind(previous)
+        .bind(next_attempt_at)
+        .execute(&mut *transaction)
+        .await?;
+        update_favorite(&mut transaction, source, target, Some(favorite)).await?;
+        transaction.commit().await?;
+        Ok(true)
     }
 
-    pub fn reject_remote_favorite(
+    pub async fn acknowledge_remote_favorite(
         &self,
-        item: FavoriteItemId,
+        source: SourceKey,
+        target: FavoriteTarget,
         favorite: bool,
-    ) -> LibraryResult<Option<AcceptedLibraryChange>> {
-        let Some(previous) =
-            self.store
-                .reject_remote_favorite(self.source_id().clone(), item.clone(), favorite)?
-        else {
-            return Ok(None);
+    ) -> LibraryResult<bool> {
+        let mut writer = self.writer().await?;
+        let connection = writer.as_mut().ok_or(LibraryError::WriterUnavailable)?;
+        let mut transaction = connection.begin().await?;
+        let current = sqlx::query_scalar::<_, i64>(
+            "DELETE FROM favorite_outbox
+             WHERE source_key=?1 AND entity_kind=?2 AND entity_key=?3 AND favorite=?4
+             RETURNING outbox_key",
+        )
+        .bind(source)
+        .bind(target.kind())
+        .bind(target.raw())
+        .bind(favorite)
+        .fetch_optional(&mut *transaction)
+        .await?;
+        if current.is_none() {
+            transaction.commit().await?;
+            return Ok(false);
+        }
+        let sql = match target {
+            FavoriteTarget::Track(_) => {
+                "UPDATE tracks SET source_favorite=?3, user_favorite=NULL
+                 WHERE source_key=?1 AND track_key=?2"
+            }
+            FavoriteTarget::Album(_) => {
+                "UPDATE albums SET source_favorite=?3, user_favorite=NULL
+                 WHERE source_key=?1 AND album_key=?2"
+            }
+            FavoriteTarget::Artist(_) => {
+                "UPDATE artists SET source_favorite=?3, user_favorite=NULL
+                 WHERE source_key=?1 AND artist_key=?2"
+            }
         };
-        let mut accepted = self.replace_favorite(&item, previous)?;
-        accepted.home = AcceptedHomeChange::Favorite(item);
-        accepted.download_coverage_changed = true;
-        Ok(Some(accepted))
+        let changed = sqlx::query(sql)
+            .bind(source)
+            .bind(target.raw())
+            .bind(favorite)
+            .execute(&mut *transaction)
+            .await?
+            .rows_affected()
+            == 1;
+        transaction.commit().await?;
+        Ok(changed)
     }
+
+    pub async fn defer_remote_favorite(
+        &self,
+        source: SourceKey,
+        target: FavoriteTarget,
+        favorite: bool,
+        next_attempt_at: i64,
+    ) -> LibraryResult<bool> {
+        let mut writer = self.writer().await?;
+        let connection = writer.as_mut().ok_or(LibraryError::WriterUnavailable)?;
+        Ok(sqlx::query(
+            "UPDATE favorite_outbox
+             SET attempts=attempts+1, next_attempt_at=?5
+             WHERE source_key=?1 AND entity_kind=?2 AND entity_key=?3 AND favorite=?4",
+        )
+        .bind(source)
+        .bind(target.kind())
+        .bind(target.raw())
+        .bind(favorite)
+        .bind(next_attempt_at)
+        .execute(connection)
+        .await?
+        .rows_affected()
+            == 1)
+    }
+
+    pub async fn reject_remote_favorite(
+        &self,
+        source: SourceKey,
+        target: FavoriteTarget,
+        favorite: bool,
+    ) -> LibraryResult<Option<bool>> {
+        let mut writer = self.writer().await?;
+        let connection = writer.as_mut().ok_or(LibraryError::WriterUnavailable)?;
+        let mut transaction = connection.begin().await?;
+        let previous = sqlx::query_scalar::<_, bool>(
+            "DELETE FROM favorite_outbox
+             WHERE source_key=?1 AND entity_kind=?2 AND entity_key=?3 AND favorite=?4
+             RETURNING previous_favorite",
+        )
+        .bind(source)
+        .bind(target.kind())
+        .bind(target.raw())
+        .bind(favorite)
+        .fetch_optional(&mut *transaction)
+        .await?;
+        if let Some(previous) = previous {
+            update_favorite(&mut transaction, source, target, Some(previous)).await?;
+        }
+        transaction.commit().await?;
+        Ok(previous)
+    }
+}
+
+async fn effective_favorite(
+    transaction: &mut Transaction<'_, Sqlite>,
+    source: SourceKey,
+    target: FavoriteTarget,
+) -> LibraryResult<Option<bool>> {
+    let sql = match target {
+        FavoriteTarget::Track(_) => {
+            "SELECT COALESCE(user_favorite, source_favorite)
+             FROM tracks WHERE source_key=?1 AND track_key=?2"
+        }
+        FavoriteTarget::Album(_) => {
+            "SELECT COALESCE(user_favorite, source_favorite)
+             FROM albums WHERE source_key=?1 AND album_key=?2"
+        }
+        FavoriteTarget::Artist(_) => {
+            "SELECT COALESCE(user_favorite, source_favorite)
+             FROM artists WHERE source_key=?1 AND artist_key=?2"
+        }
+    };
+    Ok(sqlx::query_scalar(sql)
+        .bind(source)
+        .bind(target.raw())
+        .fetch_optional(&mut **transaction)
+        .await?)
+}
+
+async fn update_favorite(
+    connection: &mut SqliteConnection,
+    source: SourceKey,
+    target: FavoriteTarget,
+    favorite: Option<bool>,
+) -> LibraryResult<bool> {
+    let sql = match target {
+        FavoriteTarget::Track(_) => {
+            "UPDATE tracks SET user_favorite=?3 WHERE source_key=?1 AND track_key=?2"
+        }
+        FavoriteTarget::Album(_) => {
+            "UPDATE albums SET user_favorite=?3 WHERE source_key=?1 AND album_key=?2"
+        }
+        FavoriteTarget::Artist(_) => {
+            "UPDATE artists SET user_favorite=?3 WHERE source_key=?1 AND artist_key=?2"
+        }
+    };
+    Ok(sqlx::query(sql)
+        .bind(source)
+        .bind(target.raw())
+        .bind(favorite)
+        .execute(connection)
+        .await?
+        .rows_affected()
+        == 1)
 }

@@ -9,7 +9,6 @@ use futures_util::{SinkExt, StreamExt};
 use getrandom::fill;
 use reqwest::StatusCode;
 use serde::Deserialize;
-use std::collections::BTreeSet;
 use std::time::Instant;
 use tokio::time::{Duration, interval, sleep};
 use tokio_tungstenite::{
@@ -19,7 +18,8 @@ use tokio_tungstenite::{
 use tracing::{debug, warn};
 
 use super::*;
-use crate::ObservedSourceChange;
+use crate::JellyfinLiveChange;
+use crate::source::LIVE_CHANGE_LIMIT;
 
 const KEEP_ALIVE_INTERVAL: Duration = Duration::from_secs(30);
 const JELLYFIN_WEBSOCKET_KEY_BYTES: usize = 16;
@@ -72,11 +72,18 @@ impl JellyfinSource {
         &self,
         on_ready: &mut (dyn FnMut() -> bool + Send),
         on_gap: &mut (dyn FnMut() -> bool + Send),
-        on_change: &mut (dyn FnMut(ObservedSourceChange) -> bool + Send),
+        on_change: &mut (dyn FnMut(JellyfinLiveChange) -> bool + Send),
     ) -> SourceResult<()> {
         let mut delay = FEED_RETRY_MIN;
+        let mut boundary_established = false;
+        let mut gap_reported = false;
         loop {
-            let keep_listening = match self.listen_library_changes_once(on_ready, on_change).await {
+            let ready = &mut || {
+                boundary_established = true;
+                gap_reported = false;
+                on_ready()
+            };
+            let keep_listening = match self.listen_library_changes_once(ready, on_change).await {
                 Ok(keep_listening) => keep_listening,
                 Err(error) => {
                     warn!(%error, "Jellyfin library change feed disconnected");
@@ -86,8 +93,11 @@ impl JellyfinSource {
             if !keep_listening {
                 return Ok(());
             }
-            if !on_gap() {
-                return Ok(());
+            if boundary_established && !gap_reported {
+                gap_reported = true;
+                if !on_gap() {
+                    return Ok(());
+                }
             }
             sleep(delay).await;
             delay = delay.saturating_mul(2).min(FEED_RETRY_MAX);
@@ -97,7 +107,7 @@ impl JellyfinSource {
     async fn listen_library_changes_once(
         &self,
         on_ready: &mut (dyn FnMut() -> bool + Send),
-        on_change: &mut (dyn FnMut(ObservedSourceChange) -> bool + Send),
+        on_change: &mut (dyn FnMut(JellyfinLiveChange) -> bool + Send),
     ) -> SourceResult<bool> {
         let mut socket = self.connect_library_socket().await?;
         if !on_ready() {
@@ -148,7 +158,7 @@ struct SocketMessage {
 
 #[derive(Debug, Eq, PartialEq)]
 enum JellyfinSocketMessage {
-    Change(ObservedSourceChange),
+    Change(JellyfinLiveChange),
     ForceKeepAlive,
     Other,
 }
@@ -180,26 +190,38 @@ fn library_socket_message(text: &str) -> SourceResult<JellyfinSocketMessage> {
             };
             let data = serde_json::from_value::<LibraryChangedData>(data)
                 .map_err(|error| SourceError::Other(error.to_string()))?;
-            if !data.folders_added_to.is_empty()
+            let folder_change = !data.folders_added_to.is_empty()
                 || !data.folders_removed_from.is_empty()
-                || !data.collection_folders.is_empty()
-            {
-                return Ok(JellyfinSocketMessage::Change(ObservedSourceChange::full()));
-            }
-            let upserts = data
+                || !data.collection_folders.is_empty();
+            let mut upserts = data
                 .items_added
                 .into_iter()
                 .chain(data.items_updated)
-                .collect::<BTreeSet<_>>();
-            let removals = data.items_removed.into_iter().collect::<BTreeSet<_>>();
-            if upserts.is_empty() && removals.is_empty() {
-                Ok(JellyfinSocketMessage::Other)
-            } else if !upserts.is_disjoint(&removals) {
-                Ok(JellyfinSocketMessage::Change(ObservedSourceChange::full()))
-            } else {
+                .collect::<Vec<_>>();
+            upserts.sort();
+            upserts.dedup();
+            let mut removals = data.items_removed;
+            removals.sort();
+            removals.dedup();
+            if upserts.len().saturating_add(removals.len()) > LIVE_CHANGE_LIMIT {
                 Ok(JellyfinSocketMessage::Change(
-                    ObservedSourceChange::jellyfin(upserts, removals),
+                    JellyfinLiveChange::BoundaryLost,
                 ))
+            } else if upserts.is_empty() && removals.is_empty() && folder_change {
+                Ok(JellyfinSocketMessage::Change(
+                    JellyfinLiveChange::BoundaryLost,
+                ))
+            } else if upserts.is_empty() && removals.is_empty() {
+                Ok(JellyfinSocketMessage::Other)
+            } else if upserts.iter().any(|id| removals.binary_search(id).is_ok()) {
+                Ok(JellyfinSocketMessage::Change(
+                    JellyfinLiveChange::BoundaryLost,
+                ))
+            } else {
+                Ok(JellyfinSocketMessage::Change(JellyfinLiveChange::Items {
+                    upserts,
+                    removals,
+                }))
             }
         }
         "ForceKeepAlive" => Ok(JellyfinSocketMessage::ForceKeepAlive),
@@ -231,7 +253,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn folder_context_widens_item_changes_to_full() {
+    fn exact_item_ids_remain_authoritative_with_folder_context() {
         let message = library_socket_message(
             r#"{"MessageType":"LibraryChanged","Data":{"ItemsAdded":["item-one"],"ItemsUpdated":["item-two","item-one"],"ItemsRemoved":["item-three"],"FoldersAddedTo":["folder-one"]}}"#,
         )
@@ -239,7 +261,23 @@ mod tests {
 
         assert_eq!(
             message,
-            JellyfinSocketMessage::Change(ObservedSourceChange::full())
+            JellyfinSocketMessage::Change(JellyfinLiveChange::Items {
+                upserts: vec!["item-one".to_string(), "item-two".to_string()],
+                removals: vec!["item-three".to_string()],
+            })
+        );
+    }
+
+    #[test]
+    fn folder_only_change_loses_the_item_boundary() {
+        let message = library_socket_message(
+            r#"{"MessageType":"LibraryChanged","Data":{"FoldersAddedTo":["folder-one"]}}"#,
+        )
+        .expect("parse message");
+
+        assert_eq!(
+            message,
+            JellyfinSocketMessage::Change(JellyfinLiveChange::BoundaryLost)
         );
     }
 
@@ -252,10 +290,10 @@ mod tests {
 
         assert_eq!(
             message,
-            JellyfinSocketMessage::Change(ObservedSourceChange::jellyfin(
-                BTreeSet::from(["item-one".to_string(), "item-two".to_string()]),
-                BTreeSet::from(["item-three".to_string()]),
-            ))
+            JellyfinSocketMessage::Change(JellyfinLiveChange::Items {
+                upserts: vec!["item-one".to_string(), "item-two".to_string()],
+                removals: vec!["item-three".to_string()],
+            })
         );
     }
 
@@ -268,7 +306,7 @@ mod tests {
 
         assert_eq!(
             message,
-            JellyfinSocketMessage::Change(ObservedSourceChange::full())
+            JellyfinSocketMessage::Change(JellyfinLiveChange::BoundaryLost)
         );
     }
 
@@ -280,5 +318,22 @@ mod tests {
         .expect("parse message");
 
         assert_eq!(message, JellyfinSocketMessage::Other);
+    }
+
+    #[test]
+    fn source_sized_item_evidence_loses_the_exact_boundary() {
+        let ids = (0..=LIVE_CHANGE_LIMIT)
+            .map(|index| format!(r#""item-{index}""#))
+            .collect::<Vec<_>>()
+            .join(",");
+        let message = library_socket_message(&format!(
+            r#"{{"MessageType":"LibraryChanged","Data":{{"ItemsUpdated":[{ids}]}}}}"#
+        ))
+        .expect("parse message");
+
+        assert_eq!(
+            message,
+            JellyfinSocketMessage::Change(JellyfinLiveChange::BoundaryLost)
+        );
     }
 }

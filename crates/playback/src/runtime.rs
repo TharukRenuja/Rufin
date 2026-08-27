@@ -3,18 +3,78 @@ use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
-use library::{SourceId, Track};
+use library::{SourceKey, TrackKey};
 use thiserror::Error;
 
 use crate::{
     BackendEvent, BackendFailure, Batch, ClockSample, LoadedPlayRequest, MaterializationId,
-    MaterializationReservation, Placement, PlaybackBackend, PlaybackCheckpointRevision,
-    PlaybackNotice, PlaybackOutput as SelectedPlaybackOutput, PlaybackProjection, PlaybackSession,
-    PlaybackSettings, PreparedStream, QueuePage, QueuePageQuery, RunId, Sequence, SequenceError,
+    MaterializationReservation, Placement, PlaybackBackend, PlaybackNotice,
+    PlaybackOutput as SelectedPlaybackOutput, PlaybackProjection, PlaybackSession,
+    PlaybackSettings, PreparedStream, RunId, Sequence, SequenceEntry, SequenceError,
     SessionCommand, SessionEffect, SessionUpdate, SourceSessionEpoch,
 };
 
 const BACKEND_POLL_INTERVAL: Duration = Duration::from_millis(33);
+const QUEUE_PERSISTENCE_PAGE_LIMIT: usize = 128;
+
+#[derive(Clone, Debug)]
+pub struct QueuePersistence {
+    source_key: SourceKey,
+    revision: u64,
+    total: usize,
+    current: Option<crate::OccurrenceId>,
+    prepared_next: Option<crate::OccurrenceId>,
+    progress_millis: u64,
+    repeat_mode: crate::RepeatMode,
+    shuffled: bool,
+}
+
+impl QueuePersistence {
+    pub(crate) fn capture(sequence: &Sequence) -> Self {
+        Self {
+            source_key: sequence.source_key(),
+            revision: sequence.revision(),
+            total: sequence.entries().len(),
+            current: sequence.selected().map(|entry| entry.occurrence.clone()),
+            prepared_next: sequence
+                .peek_next_eos()
+                .map(|entry| entry.occurrence.clone()),
+            progress_millis: sequence.progress_millis(),
+            repeat_mode: sequence.repeat_mode(),
+            shuffled: sequence.shuffle_enabled(),
+        }
+    }
+    pub fn coalesce(&mut self, newer: Self) {
+        if self.source_key != newer.source_key || newer.revision < self.revision {
+            return;
+        }
+        *self = newer;
+    }
+    pub const fn source_key(&self) -> SourceKey {
+        self.source_key
+    }
+    pub const fn revision(&self) -> u64 {
+        self.revision
+    }
+    pub const fn total(&self) -> usize {
+        self.total
+    }
+    pub fn current(&self) -> Option<&crate::OccurrenceId> {
+        self.current.as_ref()
+    }
+    pub fn prepared_next(&self) -> Option<&crate::OccurrenceId> {
+        self.prepared_next.as_ref()
+    }
+    pub const fn progress_millis(&self) -> u64 {
+        self.progress_millis
+    }
+    pub const fn repeat_mode(&self) -> crate::RepeatMode {
+        self.repeat_mode
+    }
+    pub const fn shuffled(&self) -> bool {
+        self.shuffled
+    }
+}
 
 #[derive(Debug, Error)]
 pub enum PlaybackError {
@@ -36,26 +96,30 @@ pub type PlaybackResult<T> = Result<T, PlaybackError>;
 
 #[derive(Debug, Default)]
 pub struct PlaybackUpdate {
-    pub checkpoint: Option<PlaybackCheckpointRevision>,
+    pub queue_persistence: Option<QueuePersistence>,
     pub projection: Option<PlaybackProjection>,
     pub effects: Vec<SessionEffect>,
     pub current_media_changed: bool,
+    pub queue_changed: bool,
+    pub visualizer: Option<(RunId, Vec<f64>)>,
 }
 
 impl PlaybackUpdate {
-    fn is_empty(&self) -> bool {
-        self.checkpoint.is_none()
+    pub fn is_empty(&self) -> bool {
+        self.queue_persistence.is_none()
             && self.projection.is_none()
             && self.effects.is_empty()
             && !self.current_media_changed
+            && !self.queue_changed
+            && self.visualizer.is_none()
     }
 
     fn merge(&mut self, mut newer: Self) {
-        if let Some(next) = newer.checkpoint.take() {
-            if let Some(current) = self.checkpoint.as_mut() {
+        if let Some(next) = newer.queue_persistence.take() {
+            if let Some(current) = self.queue_persistence.as_mut() {
                 current.coalesce(next);
             } else {
-                self.checkpoint = Some(next);
+                self.queue_persistence = Some(next);
             }
         }
         match (&mut self.projection, newer.projection.take()) {
@@ -70,6 +134,10 @@ impl PlaybackUpdate {
         }
         self.effects.append(&mut newer.effects);
         self.current_media_changed |= newer.current_media_changed;
+        self.queue_changed |= newer.queue_changed;
+        if newer.visualizer.is_some() {
+            self.visualizer = newer.visualizer;
+        }
     }
 }
 
@@ -97,15 +165,10 @@ enum RuntimeCommand {
         command: SessionCommand,
         reply: Reply<()>,
     },
-    RefreshTracks {
-        source_session_epoch: SourceSessionEpoch,
-        tracks: Vec<Track>,
-        reply: Reply<PlaybackProjection>,
-    },
     AdmitLoaded {
-        source_id: SourceId,
+        source_id: SourceKey,
         source_session_epoch: SourceSessionEpoch,
-        activation: Option<(String, library::TrackId, usize)>,
+        activation: Option<(String, library::TrackKey, usize)>,
         placement: Placement,
         reply: Reply<Option<MaterializationReservation>>,
     },
@@ -115,21 +178,22 @@ enum RuntimeCommand {
     },
     CompleteMaterialization {
         id: MaterializationId,
-        source_id: SourceId,
+        source_id: SourceKey,
         batch: Batch,
         placement: Placement,
+        anchor: Box<Option<crate::PlaybackMedia>>,
         reply: Reply<bool>,
     },
     FailMaterialization {
         id: MaterializationId,
-        source_id: SourceId,
+        source_id: SourceKey,
         placement: Placement,
         message: String,
         reply: Reply<bool>,
     },
     CancelMaterialization {
         id: MaterializationId,
-        source_id: SourceId,
+        source_id: SourceKey,
         placement: Placement,
         reply: Reply<bool>,
     },
@@ -139,31 +203,30 @@ enum RuntimeCommand {
         reply: Reply<()>,
     },
     CompleteAutoDj {
-        source_id: SourceId,
+        source_id: SourceKey,
         seed_occurrence: crate::OccurrenceId,
-        candidates: Vec<Track>,
+        candidates: Vec<TrackKey>,
         requested_count: usize,
         shuffle_seed: u64,
         reply: Reply<bool>,
     },
     AutoDjUnavailable {
-        source_id: SourceId,
+        source_id: SourceKey,
         seed_occurrence: crate::OccurrenceId,
         error: Option<String>,
         reply: Reply<bool>,
-    },
-    QueuePage {
-        query: QueuePageQuery,
-        reply: Reply<QueuePage>,
-    },
-    QueuedTrackIds {
-        reply: Reply<(SourceId, SourceSessionEpoch, Vec<library::TrackId>)>,
     },
     CurrentMedia {
         reply: Reply<Option<Arc<crate::CurrentMedia>>>,
     },
     Projection {
         reply: Reply<PlaybackProjection>,
+    },
+    QueuePersistencePage {
+        revision: u64,
+        offset: usize,
+        limit: usize,
+        reply: Reply<Option<Vec<SequenceEntry>>>,
     },
     ReplaceBackend {
         output: SelectedPlaybackOutput,
@@ -249,29 +312,12 @@ impl Playback {
         self.request(|reply| RuntimeCommand::Session { command, reply })
     }
 
-    /// Replaces queued Track values and returns the coherent current
-    /// projection without publishing it through the ordinary output stream.
-    ///
-    /// Rufin uses this during a same-source Library replacement so GTK receives
-    /// the new Library and matching Playback projection in one Source event.
-    pub fn refresh_tracks(
-        &self,
-        source_session_epoch: SourceSessionEpoch,
-        tracks: Vec<Track>,
-    ) -> PlaybackResult<PlaybackProjection> {
-        self.request(|reply| RuntimeCommand::RefreshTracks {
-            source_session_epoch,
-            tracks,
-            reply,
-        })
-    }
-
     pub fn admit_loaded(
         &self,
         request: &LoadedPlayRequest,
     ) -> PlaybackResult<Option<MaterializationReservation>> {
         self.request(|reply| RuntimeCommand::AdmitLoaded {
-            source_id: request.source_id.clone(),
+            source_id: request.source_key,
             source_session_epoch: request.source_session_epoch,
             activation: request.activation_context(),
             placement: request.placement(),
@@ -290,15 +336,17 @@ impl Playback {
     pub fn complete_materialization(
         &self,
         id: MaterializationId,
-        source_id: SourceId,
+        source_id: SourceKey,
         batch: Batch,
         placement: Placement,
+        anchor: Option<crate::PlaybackMedia>,
     ) -> PlaybackResult<bool> {
         self.request(|reply| RuntimeCommand::CompleteMaterialization {
             id,
             source_id,
             batch,
             placement,
+            anchor: Box::new(anchor),
             reply,
         })
     }
@@ -306,7 +354,7 @@ impl Playback {
     pub fn fail_materialization(
         &self,
         id: MaterializationId,
-        source_id: SourceId,
+        source_id: SourceKey,
         placement: Placement,
         message: String,
     ) -> PlaybackResult<bool> {
@@ -322,7 +370,7 @@ impl Playback {
     pub fn cancel_materialization(
         &self,
         id: MaterializationId,
-        source_id: SourceId,
+        source_id: SourceKey,
         placement: Placement,
     ) -> PlaybackResult<bool> {
         self.request(|reply| RuntimeCommand::CancelMaterialization {
@@ -344,9 +392,9 @@ impl Playback {
     #[allow(clippy::too_many_arguments)]
     pub fn complete_auto_dj_candidates(
         &self,
-        source_id: SourceId,
+        source_id: SourceKey,
         seed_occurrence: crate::OccurrenceId,
-        candidates: Vec<Track>,
+        candidates: Vec<TrackKey>,
         requested_count: usize,
         shuffle_seed: u64,
     ) -> PlaybackResult<bool> {
@@ -362,7 +410,7 @@ impl Playback {
 
     pub fn auto_dj_unavailable(
         &self,
-        source_id: SourceId,
+        source_id: SourceKey,
         seed_occurrence: crate::OccurrenceId,
         error: Option<String>,
     ) -> PlaybackResult<bool> {
@@ -374,22 +422,26 @@ impl Playback {
         })
     }
 
-    pub fn queue_page(&self, query: QueuePageQuery) -> PlaybackResult<QueuePage> {
-        self.request(|reply| RuntimeCommand::QueuePage { query, reply })
-    }
-
-    pub fn queued_track_ids(
-        &self,
-    ) -> PlaybackResult<(SourceId, SourceSessionEpoch, Vec<library::TrackId>)> {
-        self.request(|reply| RuntimeCommand::QueuedTrackIds { reply })
-    }
-
     pub fn current_media(&self) -> PlaybackResult<Option<Arc<crate::CurrentMedia>>> {
         self.request(|reply| RuntimeCommand::CurrentMedia { reply })
     }
 
     pub fn projection(&self) -> PlaybackResult<PlaybackProjection> {
         self.request(|reply| RuntimeCommand::Projection { reply })
+    }
+
+    pub fn queue_persistence_page(
+        &self,
+        revision: u64,
+        offset: usize,
+        limit: usize,
+    ) -> PlaybackResult<Option<Vec<SequenceEntry>>> {
+        self.request(|reply| RuntimeCommand::QueuePersistencePage {
+            revision,
+            offset,
+            limit,
+            reply,
+        })
     }
 
     pub fn replace_backend(
@@ -495,31 +547,6 @@ fn apply_runtime_command(
         RuntimeCommand::Session { command, reply } => {
             reply_update(runtime.command(command, &sample), outputs, reply);
         }
-        RuntimeCommand::RefreshTracks {
-            source_session_epoch,
-            tracks,
-            reply,
-        } => {
-            let value = runtime
-                .command(
-                    SessionCommand::RefreshTracks {
-                        source_session_epoch,
-                        tracks,
-                    },
-                    &sample,
-                )
-                .and_then(|mut update| {
-                    update.projection.take();
-                    update.current_media_changed = false;
-                    publish_update(outputs, update)?;
-                    Ok(PlaybackProjection {
-                        view: runtime.session.view(),
-                        queue_page: None,
-                        notices: Vec::new(),
-                    })
-                });
-            let _ = reply.send(value);
-        }
         RuntimeCommand::AdmitLoaded {
             source_id,
             source_session_epoch,
@@ -549,10 +576,11 @@ fn apply_runtime_command(
             source_id,
             batch,
             placement,
+            anchor,
             reply,
         } => {
             let value = runtime
-                .complete_materialization(id, &source_id, batch, placement, &sample)
+                .complete_materialization(id, &source_id, batch, placement, *anchor, &sample)
                 .and_then(|update| publish_optional_update(outputs, update));
             let _ = reply.send(value);
         }
@@ -610,17 +638,29 @@ fn apply_runtime_command(
                 .and_then(|update| publish_optional_update(outputs, update));
             let _ = reply.send(value);
         }
-        RuntimeCommand::QueuePage { query, reply } => {
-            let _ = reply.send(runtime.queue_page(query));
-        }
-        RuntimeCommand::QueuedTrackIds { reply } => {
-            let _ = reply.send(runtime.queued_track_ids());
-        }
         RuntimeCommand::CurrentMedia { reply } => {
             let _ = reply.send(runtime.current_media());
         }
         RuntimeCommand::Projection { reply } => {
             let _ = reply.send(Ok(runtime.initial_projection()));
+        }
+        RuntimeCommand::QueuePersistencePage {
+            revision,
+            offset,
+            limit,
+            reply,
+        } => {
+            let sequence = runtime.session.sequence();
+            let page = (sequence.revision() == revision).then(|| {
+                sequence
+                    .entries()
+                    .iter()
+                    .skip(offset)
+                    .take(limit.clamp(1, QUEUE_PERSISTENCE_PAGE_LIMIT))
+                    .cloned()
+                    .collect()
+            });
+            let _ = reply.send(Ok(page));
         }
         RuntimeCommand::ReplaceBackend {
             output,
@@ -720,6 +760,35 @@ fn run_playback_outputs(
     }
 }
 
+#[cfg(test)]
+mod persistence_tests {
+    use super::*;
+    use crate::{BatchItem, Placement, Provenance};
+
+    #[test]
+    fn traversal_coalesces_into_one_pending_structural_order() {
+        let mut sequence = Sequence::new(SourceKey::from_raw(1));
+        sequence
+            .apply_batch_with_change(
+                Batch::new(
+                    (1..=4)
+                        .map(|key| BatchItem::new(TrackKey::from_raw(key), Provenance::Manual))
+                        .collect(),
+                ),
+                Placement::Replace { anchor_index: 0 },
+            )
+            .expect("batch");
+        let mut pending = QueuePersistence::capture(&sequence);
+        sequence.set_shuffle_seed(true, 7);
+        let newer = QueuePersistence::capture(&sequence);
+        let expected_revision = newer.revision();
+        pending.coalesce(newer);
+        assert_eq!(pending.revision(), expected_revision);
+        assert_eq!(pending.total(), 4);
+        assert!(pending.shuffled());
+    }
+}
+
 struct PlaybackRuntime {
     session: PlaybackSession,
     backend: Box<dyn PlaybackBackend>,
@@ -753,7 +822,6 @@ impl PlaybackRuntime {
     fn initial_projection(&self) -> PlaybackProjection {
         PlaybackProjection {
             view: self.session.view(),
-            queue_page: Some(self.session.sequence().current_page()),
             notices: Vec::new(),
         }
     }
@@ -769,13 +837,13 @@ impl PlaybackRuntime {
 
     fn admit_loaded(
         &mut self,
-        source_id: &SourceId,
+        source_id: &SourceKey,
         source_session_epoch: SourceSessionEpoch,
-        activation: Option<(String, library::TrackId, usize)>,
+        activation: Option<(String, library::TrackKey, usize)>,
         placement: Placement,
         sample: &ClockSample,
     ) -> PlaybackResult<(Option<MaterializationReservation>, Option<PlaybackUpdate>)> {
-        if self.session.sequence().source_id() != source_id
+        if self.session.sequence().source_key() != *source_id
             || self.session.source_session_epoch() != source_session_epoch
         {
             return Err(PlaybackError::InactiveSourceSession);
@@ -800,14 +868,15 @@ impl PlaybackRuntime {
     fn complete_materialization(
         &mut self,
         id: MaterializationId,
-        source_id: &SourceId,
+        source_id: &SourceKey,
         batch: Batch,
         placement: Placement,
+        anchor: Option<crate::PlaybackMedia>,
         sample: &ClockSample,
     ) -> PlaybackResult<Option<PlaybackUpdate>> {
         let update = self
             .session
-            .apply_materialization(id, source_id, batch, placement, sample)?
+            .apply_materialization(id, source_id, batch, placement, anchor, sample)?
             .map(|update| self.finish(update, sample))
             .transpose()?;
         Ok(update)
@@ -816,7 +885,7 @@ impl PlaybackRuntime {
     fn fail_materialization(
         &mut self,
         id: MaterializationId,
-        source_id: &SourceId,
+        source_id: &SourceKey,
         placement: Placement,
         message: String,
         sample: &ClockSample,
@@ -830,7 +899,7 @@ impl PlaybackRuntime {
     fn cancel_materialization(
         &mut self,
         id: MaterializationId,
-        source_id: &SourceId,
+        source_id: &SourceKey,
         placement: Placement,
     ) -> PlaybackResult<bool> {
         Ok(self
@@ -853,9 +922,9 @@ impl PlaybackRuntime {
 
     fn complete_auto_dj_candidates(
         &mut self,
-        source_id: &SourceId,
+        source_id: &SourceKey,
         seed_occurrence: &crate::OccurrenceId,
-        candidates: Vec<Track>,
+        candidates: Vec<TrackKey>,
         requested_count: usize,
         shuffle_seed: u64,
         sample: &ClockSample,
@@ -877,7 +946,7 @@ impl PlaybackRuntime {
 
     fn auto_dj_unavailable(
         &mut self,
-        source_id: &SourceId,
+        source_id: &SourceKey,
         seed_occurrence: &crate::OccurrenceId,
         error: Option<String>,
         sample: &ClockSample,
@@ -898,20 +967,6 @@ impl PlaybackRuntime {
             output.merge(self.finish(update, sample)?);
         }
         Ok(output)
-    }
-
-    fn queue_page(&self, query: QueuePageQuery) -> PlaybackResult<QueuePage> {
-        Ok(self.session.sequence().page(query))
-    }
-
-    fn queued_track_ids(
-        &self,
-    ) -> PlaybackResult<(SourceId, SourceSessionEpoch, Vec<library::TrackId>)> {
-        Ok((
-            self.session.sequence().source_id().clone(),
-            self.session.source_session_epoch(),
-            self.session.sequence().unique_track_ids(),
-        ))
     }
 
     fn current_media(&self) -> PlaybackResult<Option<std::sync::Arc<crate::CurrentMedia>>> {
@@ -996,26 +1051,24 @@ impl PlaybackRuntime {
     }
 
     fn commit(&self, update: SessionUpdate) -> PlaybackUpdate {
-        let checkpoint = update
-            .checkpoint_change
-            .map(|change| PlaybackCheckpointRevision::capture(self.session.sequence(), change));
+        let queue_persistence = update
+            .queue_persistence_changed
+            .then(|| QueuePersistence::capture(self.session.sequence()));
         let mut notices = Vec::new();
         let mut effects = Vec::new();
         let mut current_media_changed = false;
+        let mut visualizer = None;
         for effect in update.effects {
-            match &effect {
-                SessionEffect::Listening(crate::ListeningFact::Started { run, .. }) => {
-                    notices.push(PlaybackNotice::RunStarted(*run));
+            match effect {
+                effect @ SessionEffect::Listening(crate::ListeningFact::Started { run, .. }) => {
+                    notices.push(PlaybackNotice::RunStarted(run));
                     effects.push(effect);
                 }
                 SessionEffect::PositionDiscontinuity(discontinuity) => {
-                    notices.push(PlaybackNotice::PositionDiscontinuity(*discontinuity));
+                    notices.push(PlaybackNotice::PositionDiscontinuity(discontinuity));
                 }
                 SessionEffect::Visualizer { run, levels } => {
-                    notices.push(PlaybackNotice::Visualizer {
-                        run: *run,
-                        levels: levels.clone(),
-                    });
+                    visualizer = Some((run, levels));
                 }
                 SessionEffect::CurrentMediaChanged => {
                     current_media_changed = true;
@@ -1025,474 +1078,15 @@ impl PlaybackRuntime {
         }
         let projection = (update.view_changed || !notices.is_empty()).then(|| PlaybackProjection {
             view: self.session.view(),
-            queue_page: update
-                .queue_page_changed
-                .then(|| self.session.sequence().current_page()),
             notices,
         });
         PlaybackUpdate {
-            checkpoint,
+            queue_persistence,
             projection,
             effects,
             current_media_changed,
-        }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use std::sync::atomic::{AtomicBool, Ordering};
-
-    use library::{AlbumId, TrackId};
-
-    use super::*;
-    use crate::{BackendCommand, BackendError, QueuePlacement};
-
-    #[derive(Default)]
-    struct AcceptingBackend;
-
-    impl PlaybackBackend for AcceptingBackend {
-        fn send(&mut self, _command: BackendCommand) -> Result<(), BackendError> {
-            Ok(())
-        }
-
-        fn drain_events(&mut self) -> Vec<BackendEvent> {
-            Vec::new()
-        }
-    }
-
-    struct BlockingShutdownBackend {
-        shutdown_started: SyncSender<()>,
-        shutdown_release: Receiver<()>,
-        shutdown_finished: SyncSender<()>,
-    }
-
-    #[derive(Default)]
-    struct BackendProbe {
-        commands: Arc<Mutex<Vec<BackendCommand>>>,
-        shutdown: Arc<AtomicBool>,
-    }
-
-    impl PlaybackBackend for BackendProbe {
-        fn send(&mut self, command: BackendCommand) -> Result<(), BackendError> {
-            self.commands
-                .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner())
-                .push(command);
-            Ok(())
-        }
-
-        fn drain_events(&mut self) -> Vec<BackendEvent> {
-            Vec::new()
-        }
-
-        fn shutdown(&mut self) -> Result<(), BackendError> {
-            self.shutdown.store(true, Ordering::Release);
-            Ok(())
-        }
-    }
-
-    impl PlaybackBackend for BlockingShutdownBackend {
-        fn send(&mut self, _command: BackendCommand) -> Result<(), BackendError> {
-            Ok(())
-        }
-
-        fn drain_events(&mut self) -> Vec<BackendEvent> {
-            Vec::new()
-        }
-
-        fn shutdown(&mut self) -> Result<(), BackendError> {
-            self.shutdown_started
-                .send(())
-                .map_err(|error| BackendError::Backend(error.to_string()))?;
-            self.shutdown_release
-                .recv()
-                .map_err(|error| BackendError::Backend(error.to_string()))?;
-            self.shutdown_finished
-                .send(())
-                .map_err(|error| BackendError::Backend(error.to_string()))
-        }
-    }
-
-    #[test]
-    fn retirement_finishes_before_backend_shutdown() {
-        let (shutdown_started, started) = sync_channel(1);
-        let (shutdown_release, release) = sync_channel(1);
-        let (shutdown_finished, finished) = sync_channel(1);
-        let (persistence_flushed, flushed) = sync_channel(1);
-        let (retirement_finished, retired) = sync_channel(1);
-        let (playback, _) = Playback::start(
-            Sequence::new(SourceId::fake(1)),
-            SourceSessionEpoch::new(1),
-            "test",
-            PlaybackSettings::default(),
-            false,
-            2,
-            SelectedPlaybackOutput::Local,
-            Box::new(BlockingShutdownBackend {
-                shutdown_started,
-                shutdown_release: release,
-                shutdown_finished,
-            }),
-            Arc::new(|| sample(0)),
-            move |update| {
-                if update
-                    .effects
-                    .iter()
-                    .any(|effect| matches!(effect, SessionEffect::FlushPersistence { .. }))
-                {
-                    let _ = persistence_flushed.send(());
-                }
-            },
-        )
-        .expect("start Playback");
-
-        let retire_thread = thread::spawn(move || {
-            let _ = retirement_finished.send(playback.retire());
-        });
-        started
-            .recv_timeout(Duration::from_secs(5))
-            .expect("backend shutdown started");
-        let retirement = match retired.recv_timeout(Duration::from_secs(5)) {
-            Ok(retirement) => retirement,
-            Err(error) => {
-                let _ = shutdown_release.send(());
-                panic!("Playback retirement waited for backend shutdown: {error}");
-            }
-        };
-        retirement.expect("retire Playback");
-        flushed
-            .recv_timeout(Duration::from_secs(5))
-            .expect("persistence flushed before retirement finished");
-        assert!(matches!(
-            finished.try_recv(),
-            Err(std::sync::mpsc::TryRecvError::Empty)
-        ));
-
-        shutdown_release.send(()).expect("release backend shutdown");
-        finished
-            .recv_timeout(Duration::from_secs(5))
-            .expect("backend shutdown finished");
-        retire_thread.join().expect("join retirement caller");
-    }
-
-    #[test]
-    fn runtime_collapses_current_media_changes_without_marking_position_ticks() {
-        let source_id = SourceId::fake(1);
-        let mut sequence = Sequence::new(source_id);
-        sequence
-            .apply_batch(
-                crate::Batch::new(vec![
-                    crate::BatchItem::new(track(1), crate::Provenance::Manual),
-                    crate::BatchItem::new(track(2), crate::Provenance::Manual),
-                ]),
-                Placement::Replace { anchor_index: 0 },
-            )
-            .expect("seed queue");
-        let mut runtime = PlaybackRuntime::new(
-            sequence,
-            SourceSessionEpoch::new(1),
-            "test",
-            PlaybackSettings::default(),
-            false,
-            2,
-            SelectedPlaybackOutput::Local,
-            Box::<AcceptingBackend>::default(),
-        );
-
-        let started = runtime
-            .command(SessionCommand::Play, &sample(0))
-            .expect("start");
-        assert!(started.current_media_changed);
-        let run = runtime.session.current_run().expect("current run");
-
-        let position = runtime
-            .session
-            .handle_backend(BackendEvent::Position { run, millis: 500 }, &sample(1));
-        let position = runtime.finish(position, &sample(1)).expect("position");
-        assert!(!position.current_media_changed);
-
-        let next = runtime
-            .command(SessionCommand::Next, &sample(2))
-            .expect("next");
-        assert!(next.current_media_changed);
-    }
-
-    #[test]
-    fn replacing_backend_keeps_the_current_run_queue_and_position() {
-        let source_id = SourceId::fake(1);
-        let mut sequence = Sequence::new(source_id);
-        sequence
-            .apply_batch(
-                crate::Batch::new(vec![
-                    crate::BatchItem::new(track(1), crate::Provenance::Manual),
-                    crate::BatchItem::new(track(2), crate::Provenance::Manual),
-                ]),
-                Placement::Replace { anchor_index: 0 },
-            )
-            .expect("seed queue");
-        let old = BackendProbe::default();
-        let old_commands = Arc::clone(&old.commands);
-        let old_shutdown = Arc::clone(&old.shutdown);
-        let mut runtime = PlaybackRuntime::new(
-            sequence,
-            SourceSessionEpoch::new(1),
-            "test",
-            PlaybackSettings::default(),
-            false,
-            2,
-            SelectedPlaybackOutput::Local,
-            Box::new(old),
-        );
-        runtime
-            .command(SessionCommand::Play, &sample(0))
-            .expect("begin run");
-        let run = runtime.session.current_run().expect("current run");
-        runtime
-            .resolve_stream(
-                run,
-                Ok(PreparedStream::from(library::ResolvedStream::new(
-                    "file:///track.flac",
-                ))),
-                &sample(1),
-            )
-            .expect("resolve stream");
-        let started = runtime
-            .session
-            .handle_backend(BackendEvent::Started { run }, &sample(2));
-        runtime.finish(started, &sample(2)).expect("accept start");
-        let position = runtime.session.handle_backend(
-            BackendEvent::Position {
-                run,
-                millis: 42_000,
-            },
-            &sample(3),
-        );
-        runtime
-            .finish(position, &sample(3))
-            .expect("accept position");
-
-        let new = BackendProbe::default();
-        let new_commands = Arc::clone(&new.commands);
-        let remote = crate::RemoteOutput {
-            id: "upnp:living-room".to_string(),
-            name: "Living Room".to_string(),
-            protocol: crate::RemoteOutputProtocol::Upnp,
-        };
-        let update = runtime
-            .replace_backend(
-                SelectedPlaybackOutput::Remote(remote.clone()),
-                Box::new(new),
-                &sample(4),
-            )
-            .expect("replace backend");
-
-        assert!(old_shutdown.load(Ordering::Acquire));
-        assert!(old_commands
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .iter()
-            .any(|command| matches!(command, BackendCommand::Stop { run: stopped } if *stopped == run)));
-        let commands = new_commands
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        assert!(commands.iter().any(|command| matches!(
-            command,
-            BackendCommand::Start {
-                run: started,
-                start_position_millis: 42_000,
-                ..
-            } if *started == run
-        )));
-        assert!(
-            !commands
-                .iter()
-                .any(|command| matches!(command, BackendCommand::ConfigureAudio(_)))
-        );
-        let projection = update.projection.expect("output projection");
-        assert_eq!(projection.view.queue.total, 2);
-        assert_eq!(projection.view.transport.current.unwrap().id.run, Some(run));
-        assert_eq!(
-            projection.view.controls.playback_output,
-            SelectedPlaybackOutput::Remote(remote)
-        );
-    }
-
-    #[test]
-    fn loaded_selection_cannot_cross_a_source_session() {
-        let source_id = SourceId::fake(1);
-        let mut runtime = runtime(source_id.clone());
-        let request = LoadedPlayRequest::now(
-            source_id.clone(),
-            SourceSessionEpoch::new(2),
-            vec![track(1)].into(),
-            0,
-        );
-        let error = runtime
-            .admit_loaded(
-                &source_id,
-                request.source_session_epoch,
-                request.activation_context(),
-                request.placement(),
-                &sample(1),
-            )
-            .expect_err("stale source session");
-
-        assert!(matches!(error, PlaybackError::InactiveSourceSession));
-        assert_eq!(
-            runtime
-                .queue_page(QueuePageQuery::current())
-                .expect("queue")
-                .total,
-            0
-        );
-    }
-
-    #[test]
-    fn exact_loaded_context_activation_bypasses_materialization() {
-        let source_id = SourceId::fake(1);
-        let mut runtime = runtime(source_id.clone());
-        let tracks: Arc<[Track]> = vec![track(1), track(1)].into();
-        let initial = LoadedPlayRequest::context(
-            source_id.clone(),
-            SourceSessionEpoch::new(1),
-            tracks.clone(),
-            0,
-            QueuePlacement::Now,
-            "tracks",
-            false,
-        )
-        .expect("initial context request");
-        let (reservation, update) = runtime
-            .admit_loaded(
-                &source_id,
-                initial.source_session_epoch,
-                initial.activation_context(),
-                initial.placement(),
-                &sample(1),
-            )
-            .expect("admit initial context");
-        assert!(update.is_none());
-        let reservation = reservation.expect("initial context must materialize");
-        let reservation_source = reservation.source_id.clone();
-        let (batch, placement) = initial.materialize_batch(7).expect("initial batch");
-        runtime
-            .complete_materialization(
-                reservation.id,
-                &reservation_source,
-                batch,
-                placement,
-                &sample(1),
-            )
-            .expect("complete initial context")
-            .expect("initial context update");
-        let before = runtime
-            .queue_page(QueuePageQuery::current())
-            .expect("initial queue");
-        let expected = before.rows[1].entry.occurrence.clone();
-
-        let activate = LoadedPlayRequest::context(
-            source_id.clone(),
-            SourceSessionEpoch::new(1),
-            tracks,
-            1,
-            QueuePlacement::Now,
-            "tracks",
-            false,
-        )
-        .expect("activation request");
-        let (reservation, update) = runtime
-            .admit_loaded(
-                &source_id,
-                activate.source_session_epoch,
-                activate.activation_context(),
-                activate.placement(),
-                &sample(2),
-            )
-            .expect("activate context occurrence");
-        let update = update.expect("exact activation update");
-        let after = runtime
-            .queue_page(QueuePageQuery::current())
-            .expect("updated queue");
-
-        assert!(reservation.is_none());
-        assert!(update.checkpoint.is_none());
-        assert_eq!(after.rows.len(), before.rows.len());
-        assert_eq!(after.current_absolute_index, Some(1));
-        assert_eq!(
-            after.rows.get(1).map(|row| &row.entry.occurrence),
-            Some(&expected)
-        );
-    }
-
-    #[test]
-    fn shuffled_context_starts_a_new_queue() {
-        let source_id = SourceId::fake(1);
-        let tracks: Arc<[Track]> = vec![track(1), track(2)].into();
-        let request = LoadedPlayRequest::context(
-            source_id,
-            SourceSessionEpoch::new(1),
-            tracks,
-            0,
-            QueuePlacement::Now,
-            "album:1",
-            true,
-        )
-        .expect("shuffled context request");
-
-        assert!(request.activation_context().is_none());
-    }
-
-    fn runtime(source_id: SourceId) -> PlaybackRuntime {
-        PlaybackRuntime::new(
-            Sequence::new(source_id),
-            SourceSessionEpoch::new(1),
-            "test",
-            PlaybackSettings::default(),
-            false,
-            2,
-            SelectedPlaybackOutput::Local,
-            Box::<AcceptingBackend>::default(),
-        )
-    }
-
-    fn track(number: u32) -> Track {
-        Track::new(library::TrackData {
-            id: TrackId::fake(number),
-            album_id: Some(AlbumId::fake(1)),
-            title: format!("Track {number}"),
-            artist: "Artist".to_string(),
-            album: "Album".to_string(),
-            album_artwork: None,
-            year: 2026,
-            release_date: None,
-            date_added: None,
-            last_played: None,
-            play_count: None,
-            user_rating: None,
-            duration_seconds: 180,
-            favorite: false,
-            disc_number: 1,
-            track_number: number as u16,
-            image_ref: None,
-            local_artwork: None,
-            musicbrainz_recording_id: None,
-            musicbrainz_release_track_id: None,
-            source_path: None,
-            cue: None,
-            source_format: None,
-            comment: None,
-            skip_count: None,
-            bpm: None,
-            relations: library::TrackRelations::default(),
-        })
-    }
-
-    fn sample(monotonic_millis: u64) -> ClockSample {
-        ClockSample {
-            monotonic_millis,
-            unix_seconds: 1_700_000_000,
-            local_period: "2026-07".to_string(),
+            queue_changed: update.queue_changed,
+            visualizer,
         }
     }
 }

@@ -2,7 +2,7 @@ use std::cell::Cell;
 use std::rc::Rc;
 
 use adw::prelude::*;
-use library::{FavoriteItemId, MetadataItemId};
+use library::FavoriteTarget;
 use localization::{msgid, tr};
 
 const STAR_WIDTH: i32 = 95;
@@ -64,13 +64,6 @@ impl RatingControl {
 
     pub(crate) fn widget(&self) -> &gtk::Box {
         &self.root
-    }
-
-    pub(crate) fn set_rating(&self, rating: Option<u8>) {
-        self.value.set(rating.unwrap_or(0));
-        if self.preview.get().is_none() {
-            set_rating_icons(&self.stars, self.value.get());
-        }
     }
 
     pub(crate) fn connect_commit(&self, commit: impl Fn(Option<u8>) + 'static) {
@@ -174,38 +167,9 @@ pub(crate) fn context_rating_row(
 }
 
 impl crate::shell::Shell {
-    pub(crate) fn rating_available(&self, item: &FavoriteItemId) -> bool {
-        let configured = self.source.configured.borrow();
-        let Some(source) = configured
-            .sources
-            .iter()
-            .find(|source| configured.selected_source_id.as_ref() == Some(&source.id))
-        else {
-            return false;
-        };
-        if source.kind != "local" {
-            return true;
-        }
-        let FavoriteItemId::Track(track_id) = item else {
-            return false;
-        };
-        self.metadata_editing_available(MetadataItemId::Track(track_id.clone()))
-    }
-
-    pub(crate) fn set_rating(&self, item: FavoriteItemId, rating: Option<u8>) {
+    pub(crate) fn set_rating(&self, item: FavoriteTarget, rating: Option<u8>) {
         if let Some(source) = self.selected_source_operations() {
             source.set_rating(item, rating);
-        }
-    }
-
-    pub(crate) fn set_current_track_rating(&self, rating: Option<u8>) {
-        if let Some(track_id) = self
-            .selected_playback()
-            .as_deref()
-            .and_then(|player| player.transport.current.as_ref())
-            .map(|entry| entry.track.id.clone())
-        {
-            self.set_rating(FavoriteItemId::Track(track_id), rating);
         }
     }
 }

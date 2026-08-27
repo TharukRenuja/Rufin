@@ -449,7 +449,7 @@ fn stream_duration_millis(stream: &PreparedStream) -> Option<u64> {
             stream
                 .track
                 .as_ref()
-                .map(|track| u64::from(track.duration_seconds) * 1_000)
+                .and_then(|track| u64::try_from(track.duration_millis).ok())
         })
 }
 

@@ -2,7 +2,7 @@ use std::fs;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 
-use library::LocalArtworkRef;
+use crate::LocalImageRef;
 use lofty::file::TaggedFile;
 use lofty::file::TaggedFileExt;
 use lofty::picture::{Picture, PictureType};
@@ -38,36 +38,8 @@ pub(super) fn supported_image(path: &Path) -> bool {
         })
 }
 
-/// Select from the one scan-owned image inventory for this actual directory.
-///
-/// This preserves Rufin's released sidecar names and sole-image fallback
-/// without another `read_dir` per Track or a directory-name hierarchy guess.
-pub(super) fn sidecar(images: &[PathBuf]) -> Option<PathBuf> {
-    images
-        .iter()
-        .filter_map(|path| sidecar_rank(path).map(|rank| (rank, path)))
-        .min_by_key(|(rank, _)| *rank)
-        .map(|(_, path)| path.clone())
-        .or_else(|| match images {
-            [path] => Some(path.clone()),
-            _ => None,
-        })
-}
-
-fn sidecar_rank(path: &Path) -> Option<(usize, usize)> {
-    let stem = path.file_stem()?.to_str()?;
-    let extension = path.extension()?.to_str()?;
-    let stem_rank = ["cover", "folder", "front", "album"]
-        .iter()
-        .position(|candidate| stem.eq_ignore_ascii_case(candidate))?;
-    let extension_rank = ["jpg", "jpeg", "png", "webp"]
-        .iter()
-        .position(|candidate| extension.eq_ignore_ascii_case(candidate))?;
-    Some((stem_rank, extension_rank))
-}
-
-pub(super) fn file_reference(path: &Path, revision: String) -> LocalArtworkRef {
-    LocalArtworkRef::File {
+pub(super) fn file_reference(path: &Path, revision: String) -> LocalImageRef {
+    LocalImageRef::File {
         path: path.to_string_lossy().into_owned(),
         revision,
     }
@@ -77,12 +49,28 @@ pub(super) fn embedded_reference(
     path: &Path,
     picture_index: u32,
     revision: String,
-) -> LocalArtworkRef {
-    LocalArtworkRef::Embedded {
+) -> LocalImageRef {
+    LocalImageRef::Embedded {
         path: path.to_string_lossy().into_owned(),
         picture_index,
         revision,
     }
+}
+
+pub(super) fn inspect_embedded(
+    discoverer: &mut discovery::Reader,
+    path: &Path,
+    revision: String,
+) -> Option<LocalImageRef> {
+    if let Ok(Some(file)) = read_lofty(path, true) {
+        let picture_index =
+            best_picture_index(&file, file.primary_tag().or_else(|| file.first_tag()))?;
+        return Some(embedded_reference(path, picture_index, revision));
+    }
+    discoverer
+        .read(path)
+        .and_then(|metadata| metadata.artwork_index)
+        .map(|picture_index| embedded_reference(path, picture_index, revision))
 }
 
 pub(super) fn best_picture_index(

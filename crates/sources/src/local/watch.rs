@@ -1,5 +1,7 @@
 use std::collections::HashSet;
 use std::path::PathBuf;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
@@ -9,7 +11,8 @@ use notify::{
 };
 use tracing::warn;
 
-use crate::{ObservedSourceChange, SourceError, SourceResult};
+use crate::source::LIVE_CHANGE_LIMIT;
+use crate::{LocalLiveChange, SourceError, SourceResult};
 
 const POLL_INTERVAL: Duration = Duration::from_millis(500);
 const DEBOUNCE: Duration = Duration::from_secs(2);
@@ -29,7 +32,7 @@ impl LocalChangeFeed {
     pub fn listen_forever(
         &self,
         on_ready: &mut dyn FnMut(bool) -> bool,
-        on_change: &mut dyn FnMut(ObservedSourceChange) -> bool,
+        on_change: &mut dyn FnMut(LocalLiveChange) -> bool,
         should_stop: &dyn Fn() -> bool,
     ) -> SourceResult<()> {
         let mut delay = FEED_RETRY_MIN;
@@ -59,20 +62,22 @@ impl LocalChangeFeed {
         &self,
         reconnecting: bool,
         on_ready: &mut dyn FnMut(bool) -> bool,
-        on_change: &mut dyn FnMut(ObservedSourceChange) -> bool,
+        on_change: &mut dyn FnMut(LocalLiveChange) -> bool,
         should_stop: &dyn Fn() -> bool,
     ) -> SourceResult<()> {
-        let (messages, receiver) = mpsc::channel();
+        let (messages, receiver) = mpsc::sync_channel(1);
+        let overflow = Arc::new(AtomicBool::new(false));
+        let callback_overflow = Arc::clone(&overflow);
         let listener = std::thread::current();
         let mut watcher = notify::recommended_watcher(move |event: notify::Result<Event>| {
             let message = match event {
                 Ok(event) if !matches!(event.kind, EventKind::Access(_)) => {
-                    FeedMessage::Event(event)
+                    FeedMessage::Change(event_evidence(event))
                 }
                 Ok(_) => return,
                 Err(error) => FeedMessage::Failed(error.to_string()),
             };
-            if messages.send(message).is_ok() {
+            if admit_feed_message(&messages, &callback_overflow, message) {
                 listener.unpark();
             }
         })
@@ -100,15 +105,12 @@ impl LocalChangeFeed {
 
         let mut retry_failed_roots_at = Instant::now() + FAILED_ROOT_RETRY;
         while !should_stop() {
-            match wait_for_message(&receiver, POLL_INTERVAL, should_stop) {
-                FeedWait::Message(FeedMessage::Event(event)) => {
-                    let mut evidence = event_evidence(event);
+            match wait_for_message(&receiver, &overflow, POLL_INTERVAL, should_stop) {
+                FeedWait::Message(FeedMessage::Change(mut evidence)) => {
                     loop {
-                        match wait_for_message(&receiver, DEBOUNCE, should_stop) {
-                            FeedWait::Message(FeedMessage::Event(event)) => {
-                                evidence
-                                    .merge(event_evidence(event))
-                                    .expect("Local watcher emitted a non-Local change");
+                        match wait_for_message(&receiver, &overflow, DEBOUNCE, should_stop) {
+                            FeedWait::Message(FeedMessage::Change(incoming)) => {
+                                evidence = evidence.merge(incoming);
                             }
                             FeedWait::Message(FeedMessage::Failed(error)) => {
                                 return Err(SourceError::Other(error));
@@ -155,7 +157,7 @@ impl LocalChangeFeed {
                 }
                 failed_roots = still_failed;
                 retry_failed_roots_at = Instant::now() + FAILED_ROOT_RETRY;
-                if recovered && !on_change(ObservedSourceChange::LocalRescan) {
+                if recovered && !on_change(LocalLiveChange::Rescan) {
                     return Ok(());
                 }
             }
@@ -177,7 +179,7 @@ fn wait_before_retry(delay: Duration, should_stop: &dyn Fn() -> bool) -> bool {
 }
 
 enum FeedMessage {
-    Event(Event),
+    Change(LocalLiveChange),
     Failed(String),
 }
 
@@ -188,8 +190,24 @@ enum FeedWait {
     Disconnected,
 }
 
+fn admit_feed_message(
+    messages: &mpsc::SyncSender<FeedMessage>,
+    overflow: &AtomicBool,
+    message: FeedMessage,
+) -> bool {
+    match messages.try_send(message) {
+        Ok(()) => true,
+        Err(mpsc::TrySendError::Full(_)) => {
+            overflow.store(true, Ordering::Release);
+            true
+        }
+        Err(mpsc::TrySendError::Disconnected(_)) => false,
+    }
+}
+
 fn wait_for_message(
     receiver: &mpsc::Receiver<FeedMessage>,
+    overflow: &AtomicBool,
     timeout: Duration,
     should_stop: &dyn Fn() -> bool,
 ) -> FeedWait {
@@ -197,6 +215,9 @@ fn wait_for_message(
     loop {
         if should_stop() {
             return FeedWait::Stopped;
+        }
+        if overflow.swap(false, Ordering::AcqRel) {
+            return FeedWait::Message(FeedMessage::Change(LocalLiveChange::Rescan));
         }
         match receiver.try_recv() {
             Ok(message) => return FeedWait::Message(message),
@@ -223,9 +244,10 @@ fn feed_error(error: notify::Error) -> SourceError {
     SourceError::Other(error.to_string())
 }
 
-fn event_evidence(event: Event) -> ObservedSourceChange {
+fn event_evidence(event: Event) -> LocalLiveChange {
     let complete_required = event.need_rescan()
         || event.paths.is_empty()
+        || event.paths.len() > LIVE_CHANGE_LIMIT
         || matches!(event.kind, EventKind::Other)
         || matches!(
             event.kind,
@@ -233,15 +255,21 @@ fn event_evidence(event: Event) -> ObservedSourceChange {
                 if mode != RenameMode::Both || event.paths.len() != 2
         );
     if complete_required {
-        return ObservedSourceChange::LocalRescan;
+        return LocalLiveChange::Rescan;
     }
-    ObservedSourceChange::LocalPaths(event.paths.into_iter().collect())
+    let rename = matches!(
+        event.kind,
+        EventKind::Modify(ModifyKind::Name(RenameMode::Both))
+    )
+    .then(|| (event.paths[0].clone(), event.paths[1].clone()));
+    LocalLiveChange::Paths {
+        paths: event.paths,
+        rename,
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use std::collections::BTreeSet;
-
     use notify::event::{CreateKind, Flag};
 
     use super::*;
@@ -254,7 +282,10 @@ mod tests {
         );
         assert_eq!(
             evidence,
-            ObservedSourceChange::LocalPaths(BTreeSet::from([PathBuf::from("/music/one.flac")]))
+            LocalLiveChange::Paths {
+                paths: vec![PathBuf::from("/music/one.flac")],
+                rename: None,
+            }
         );
     }
 
@@ -265,7 +296,77 @@ mod tests {
                 .add_path(PathBuf::from("/music/old.flac")),
         );
         let rescan = event_evidence(Event::new(EventKind::Any).set_flag(Flag::Rescan));
-        assert_eq!(rename, ObservedSourceChange::LocalRescan);
-        assert_eq!(rescan, ObservedSourceChange::LocalRescan);
+        assert_eq!(rename, LocalLiveChange::Rescan);
+        assert_eq!(rescan, LocalLiveChange::Rescan);
+    }
+
+    #[test]
+    fn complete_rename_keeps_explicit_old_and_new_evidence() {
+        let old = PathBuf::from("/music/old.flac");
+        let new = PathBuf::from("/music/new.flac");
+        let rename = event_evidence(
+            Event::new(EventKind::Modify(ModifyKind::Name(RenameMode::Both)))
+                .add_path(old.clone())
+                .add_path(new.clone()),
+        );
+        assert_eq!(
+            rename,
+            LocalLiveChange::Paths {
+                paths: vec![old.clone(), new.clone()],
+                rename: Some((old, new)),
+            }
+        );
+    }
+
+    #[test]
+    fn debounce_evidence_is_bounded_by_one_rescan() {
+        let current = LocalLiveChange::Paths {
+            paths: (0..LIVE_CHANGE_LIMIT)
+                .map(|index| PathBuf::from(format!("/music/{index}.flac")))
+                .collect(),
+            rename: None,
+        };
+        let merged = current.merge(LocalLiveChange::Paths {
+            paths: vec![PathBuf::from("/music/overflow.flac")],
+            rename: None,
+        });
+        assert_eq!(merged, LocalLiveChange::Rescan);
+    }
+
+    #[test]
+    fn one_notify_event_cannot_exceed_the_exact_path_bound() {
+        let mut event = Event::new(EventKind::Create(CreateKind::File));
+        for index in 0..=LIVE_CHANGE_LIMIT {
+            event = event.add_path(PathBuf::from(format!("/music/{index}.flac")));
+        }
+        assert_eq!(event_evidence(event), LocalLiveChange::Rescan);
+    }
+
+    #[test]
+    fn full_ingress_keeps_one_message_and_one_rescan_flag() {
+        let (sender, receiver) = mpsc::sync_channel(1);
+        let overflow = AtomicBool::new(false);
+        assert!(admit_feed_message(
+            &sender,
+            &overflow,
+            FeedMessage::Change(LocalLiveChange::Paths {
+                paths: vec![PathBuf::from("/music/one.flac")],
+                rename: None,
+            })
+        ));
+        assert!(admit_feed_message(
+            &sender,
+            &overflow,
+            FeedMessage::Change(LocalLiveChange::Paths {
+                paths: vec![PathBuf::from("/music/two.flac")],
+                rename: None,
+            })
+        ));
+        assert!(overflow.load(Ordering::Acquire));
+        assert!(matches!(receiver.try_recv(), Ok(FeedMessage::Change(_))));
+        assert!(matches!(
+            receiver.try_recv(),
+            Err(mpsc::TryRecvError::Empty)
+        ));
     }
 }

@@ -1,25 +1,149 @@
-use std::collections::BTreeSet;
+//! Connects configured providers to Library's concrete Scan and point operations.
+//! Provider acquisition remains here; accepted catalog identity and queries remain in Library.
+
 use std::path::PathBuf;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::sync::{Arc, Mutex};
 
-use async_channel::Sender;
-use library::{
-    CandidateBatch, CandidateFinish, CandidateHeader, FavoriteAcceptance, FavoriteItemId,
-    FolderContents, FolderId, HomeFacts, HomeSectionKind, ImageRef, Libraries, Library,
-    LibraryError, LocalAccessTarget, LocalArtworkRef, LocalComponentReplacement, MetadataDraft,
-    MetadataEdit, MetadataError, MetadataValues, MusicFolderId, PlaylistAcceptance, PlaylistEdit,
-    PlaylistId, PlaylistSnapshot, PreparedSourceCandidate, ProviderFreshness, RadioSeed,
-    RandomCriteria, ResolvedStream, SearchRequest, SearchResults, SourceHomeSection,
-    SourceHomeSectionKind, SourceId, StreamRequest, TrackId,
-};
-use playback::SourceReportFact;
+use async_channel::{Receiver, Sender};
+use library::{Database, Freshness, Scan, ScanOutcome};
+use playback::{ResolvedStream, SourceReportFact, StreamRequest};
+use serde::{Deserialize, Serialize};
 
+use crate::policy::raw_item_id;
 use crate::{
-    ImageBytes, LyricsSearch, NativeLyrics, SourceConfiguration, SourceError, SourceResult,
-    SourceSettingsInput, SourceSetupInput,
+    ImageBytes, SourceConfiguration, SourceError, SourceId, SourceResult, SourceSettingsInput,
+    SourceSetupInput,
 };
+
+const PROVIDER_PLAYLIST_PAGE: usize = 256;
+
+pub(crate) const LIVE_CHANGE_LIMIT: usize = 128;
+
+pub struct SelectedFeed {
+    source: Arc<Source>,
+    database: Arc<Database>,
+    source_key: library::SourceKey,
+    pending: Mutex<Option<SelectedFeedChange>>,
+    wake: Sender<()>,
+    cancelled: Arc<AtomicBool>,
+    receiver: Receiver<()>,
+}
+
+enum SelectedFeedChange {
+    Local(LocalLiveChange),
+    Jellyfin(JellyfinLiveChange),
+}
+
+impl SelectedFeed {
+    fn submit(&self, incoming: SelectedFeedChange) -> bool {
+        if self.cancelled.load(Ordering::Acquire) {
+            return false;
+        }
+        let mut pending = self
+            .pending
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        *pending = Some(match pending.take() {
+            Some(current) => current.merge(incoming),
+            None => incoming,
+        });
+        drop(pending);
+        let _ = self.wake.try_send(());
+        true
+    }
+}
+
+impl SelectedFeedChange {
+    fn merge(self, incoming: Self) -> Self {
+        match (self, incoming) {
+            (Self::Local(current), Self::Local(incoming)) => Self::Local(current.merge(incoming)),
+            (Self::Jellyfin(current), Self::Jellyfin(incoming)) => {
+                Self::Jellyfin(current.merge(incoming))
+            }
+            (_, incoming) => incoming,
+        }
+    }
+}
+
+impl SelectedFeed {
+    pub fn cancel(&self) {
+        self.cancelled.store(true, Ordering::Release);
+        let _ = self.wake.try_send(());
+    }
+
+    pub fn cancellation(&self) -> Arc<AtomicBool> {
+        Arc::clone(&self.cancelled)
+    }
+
+    pub async fn wait_for_change(&self) -> bool {
+        loop {
+            if self.receiver.recv().await.is_err() {
+                return false;
+            }
+            if self.cancelled.load(Ordering::Acquire) {
+                return false;
+            }
+            if self
+                .pending
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .is_some()
+            {
+                return true;
+            }
+        }
+    }
+
+    pub async fn apply_pending(&self) -> SourceResult<Option<ScanOutcome>> {
+        if self.cancelled.load(Ordering::Acquire) {
+            return Err(SourceError::Cancelled);
+        }
+        let change = self
+            .pending
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .take()
+            .ok_or(SourceError::InvalidRequest(
+                "Selected feed has no pending change",
+            ))?;
+        match (&self.source.implementation, change) {
+            (Implementation::Local(_), SelectedFeedChange::Local(LocalLiveChange::Rescan))
+            | (
+                Implementation::Jellyfin(_),
+                SelectedFeedChange::Jellyfin(JellyfinLiveChange::BoundaryLost),
+            ) => Ok(None),
+            (
+                Implementation::Local(local),
+                SelectedFeedChange::Local(LocalLiveChange::Paths { paths, rename }),
+            ) => local
+                .publish_paths(
+                    &self.database,
+                    self.source_key,
+                    self.source.source_id.as_str(),
+                    &paths,
+                    rename.as_ref(),
+                )
+                .await
+                .map(Some),
+            (
+                Implementation::Jellyfin(source),
+                SelectedFeedChange::Jellyfin(JellyfinLiveChange::Items { upserts, removals }),
+            ) => source
+                .apply_live_items(
+                    &self.database,
+                    self.source.source_id.as_str(),
+                    upserts,
+                    removals,
+                )
+                .await
+                .map(Some),
+            _ => Err(SourceError::InvalidRequest(
+                "Selected feed change belongs to another source",
+            )),
+        }
+    }
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum SourceReadStage {
@@ -42,9 +166,218 @@ pub struct SourceReadProgress {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub enum NativeSourceResult<T> {
-    Available(T),
-    Unavailable,
+pub struct SourceInputIdentity {
+    pub source_id: SourceId,
+    pub digest: [u8; 32],
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct NativeImageRef {
+    pub item_id: String,
+    pub tag: Option<String>,
+}
+
+impl NativeImageRef {
+    pub fn new(item_id: impl Into<String>, tag: impl Into<Option<String>>) -> Self {
+        Self {
+            item_id: item_id.into(),
+            tag: tag.into(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub enum LocalImageRef {
+    File {
+        path: String,
+        revision: String,
+    },
+    Embedded {
+        path: String,
+        picture_index: u32,
+        revision: String,
+    },
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum SourceImageRequest {
+    Native {
+        image_ref: NativeImageRef,
+        size: u32,
+    },
+    Local(LocalImageRef),
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct ExternalAlbumImageRef {
+    pub artist: String,
+    pub album: String,
+    pub musicbrainz_release_group_id: Option<String>,
+    pub musicbrainz_release_id: Option<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ArtworkPreparationProgress {
+    pub completed: usize,
+    pub next_album: Option<library::AlbumKey>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct LiveSearchTrack {
+    pub object_id: String,
+    pub title: String,
+    pub artist: String,
+    pub album: String,
+    pub artwork_binding: Option<Vec<u8>>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct LiveSearchAlbum {
+    pub object_id: String,
+    pub title: String,
+    pub artist: String,
+    pub artwork_binding: Option<Vec<u8>>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct LiveSearchArtist {
+    pub object_id: String,
+    pub name: String,
+    pub artwork_binding: Option<Vec<u8>>,
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct LiveSearchResults {
+    pub tracks: Vec<LiveSearchTrack>,
+    pub albums: Vec<LiveSearchAlbum>,
+    pub artists: Vec<LiveSearchArtist>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct LiveFolder {
+    pub object_id: String,
+    pub name: String,
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct LiveFolderPage {
+    pub folders: Vec<LiveFolder>,
+    pub tracks: Vec<String>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum SourceEntityKind {
+    Track,
+    Album,
+    Artist,
+}
+pub enum SourceRadioSeed {
+    Track(String),
+    Album(String),
+    Artist(String),
+    Playlist(String),
+    Genre(String),
+}
+
+pub enum SourceCollection {
+    Album(String),
+    Artist(String),
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum SourceHomeSection {
+    MostPlayed,
+    RecentlyPlayed,
+    RecentlyReleased,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) enum JellyfinLiveChange {
+    Items {
+        upserts: Vec<String>,
+        removals: Vec<String>,
+    },
+    BoundaryLost,
+}
+
+impl JellyfinLiveChange {
+    fn merge(self, incoming: Self) -> Self {
+        match (self, incoming) {
+            (Self::BoundaryLost, _) | (_, Self::BoundaryLost) => Self::BoundaryLost,
+            (
+                Self::Items {
+                    upserts: mut current_upserts,
+                    removals: mut current_removals,
+                },
+                Self::Items { upserts, removals },
+            ) => {
+                current_upserts.extend(upserts);
+                current_upserts.sort();
+                current_upserts.dedup();
+                current_removals.extend(removals);
+                current_removals.sort();
+                current_removals.dedup();
+                if current_upserts.len().saturating_add(current_removals.len()) > LIVE_CHANGE_LIMIT
+                    || current_upserts
+                        .iter()
+                        .any(|id| current_removals.binary_search(id).is_ok())
+                {
+                    Self::BoundaryLost
+                } else {
+                    Self::Items {
+                        upserts: current_upserts,
+                        removals: current_removals,
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum LocalLiveChange {
+    Paths {
+        paths: Vec<PathBuf>,
+        rename: Option<(PathBuf, PathBuf)>,
+    },
+    Rescan,
+}
+
+impl LocalLiveChange {
+    pub(crate) fn merge(self, incoming: Self) -> Self {
+        match (self, incoming) {
+            (Self::Rescan, _) | (_, Self::Rescan) => Self::Rescan,
+            (
+                Self::Paths {
+                    paths: mut current,
+                    rename: current_rename,
+                },
+                Self::Paths {
+                    paths: incoming,
+                    rename: incoming_rename,
+                },
+            ) => {
+                let rename = match (current_rename, incoming_rename) {
+                    (Some(current), Some(incoming)) if current != incoming => {
+                        return Self::Rescan;
+                    }
+                    (Some(rename), _) | (_, Some(rename)) => Some(rename),
+                    (None, None) => None,
+                };
+                current.extend(incoming);
+                current.sort();
+                current.dedup();
+                if current.len() > LIVE_CHANGE_LIMIT {
+                    Self::Rescan
+                } else {
+                    Self::Paths {
+                        paths: current,
+                        rename,
+                    }
+                }
+            }
+        }
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -64,123 +397,18 @@ impl ResolvedDownload {
     pub fn stream(&self) -> &ResolvedStream {
         &self.stream
     }
-
     pub fn into_stream(self) -> ResolvedStream {
         self.stream
     }
-
     pub fn transcoded_extension(&self) -> Option<&'static str> {
         self.transcoded_extension
     }
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum SourceImageRequest {
-    Native { image_ref: ImageRef, size: u32 },
-    Local(LocalArtworkRef),
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum SourceFreshness {
-    Unavailable,
-    Unchanged,
-    Busy,
-    Changed(ProviderFreshness),
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum ObservedSourceChange {
-    Full,
-    Jellyfin {
-        upserts: BTreeSet<String>,
-        removals: BTreeSet<String>,
-    },
-    LocalPaths(BTreeSet<PathBuf>),
-    LocalRescan,
-}
-
-impl ObservedSourceChange {
-    pub fn merge(&mut self, other: Self) -> Result<(), Self> {
-        match (&mut *self, other) {
-            (Self::Full, Self::Full | Self::Jellyfin { .. }) => {}
-            (current @ Self::Jellyfin { .. }, Self::Full) => {
-                *current = Self::Full;
-            }
-            (
-                Self::Jellyfin { upserts, removals },
-                Self::Jellyfin {
-                    upserts: incoming_upserts,
-                    removals: incoming_removals,
-                },
-            ) => {
-                upserts.retain(|id| !incoming_removals.contains(id));
-                removals.retain(|id| !incoming_upserts.contains(id));
-                upserts.extend(incoming_upserts);
-                removals.extend(incoming_removals);
-            }
-            (Self::LocalRescan, Self::LocalRescan | Self::LocalPaths(_)) => {}
-            (current @ Self::LocalPaths(_), Self::LocalRescan) => {
-                *current = Self::LocalRescan;
-            }
-            (Self::LocalPaths(current), Self::LocalPaths(incoming)) => current.extend(incoming),
-            (_, incoming) => return Err(incoming),
-        }
-        Ok(())
-    }
-
-    pub(crate) fn jellyfin(upserts: BTreeSet<String>, removals: BTreeSet<String>) -> Self {
-        Self::Jellyfin { upserts, removals }
-    }
-
-    pub fn full() -> Self {
-        Self::Full
-    }
-}
-
-#[derive(Debug)]
-pub enum PreparedSourceChange {
-    SourceUpdate(library::SourceLibraryUpdate),
-    LocalReplacement(LocalComponentReplacement),
-    Full,
-    Ignored,
 }
 
 pub struct ConnectedSource {
     configuration: SourceConfiguration,
     source: Source,
     credential: Option<String>,
-}
-
-pub enum SourceEditResult {
-    Unchanged,
-    ConfigurationOnly(SourceConfiguration),
-    Connected(Box<ConnectedSource>),
-}
-
-pub(crate) trait RemotePlaylistSource {
-    async fn create_playlist(&self, name: &str, track_ids: &[TrackId]) -> SourceResult<PlaylistId>;
-    async fn rename_playlist(&self, playlist_id: &PlaylistId, name: &str) -> SourceResult<()>;
-    async fn delete_playlist(&self, playlist_id: &PlaylistId) -> SourceResult<()>;
-    async fn add_playlist_tracks(
-        &self,
-        playlist_id: &PlaylistId,
-        track_ids: &[TrackId],
-    ) -> SourceResult<()>;
-    async fn remove_playlist_entries(
-        &self,
-        playlist_id: &PlaylistId,
-        occurrence_ids: &[String],
-    ) -> SourceResult<()>;
-    async fn move_playlist_entry(
-        &self,
-        playlist_id: &PlaylistId,
-        occurrence_id: &str,
-        new_index: usize,
-    ) -> SourceResult<()>;
-    async fn read_playlist_snapshot(
-        &self,
-        playlist_id: &PlaylistId,
-    ) -> SourceResult<PlaylistSnapshot>;
 }
 
 impl ConnectedSource {
@@ -233,73 +461,21 @@ impl ConnectedSource {
     }
 }
 
-#[derive(Debug, thiserror::Error)]
-pub enum SourceChangePreparationError {
-    #[error(transparent)]
-    Source(#[from] SourceError),
-    #[error(transparent)]
-    Library(#[from] library::LibraryError),
-    #[error("source change preparation task failed: {0}")]
-    Task(#[from] tokio::task::JoinError),
-}
-
-#[derive(Debug, thiserror::Error)]
-pub enum SourceCandidatePreparationError {
-    #[error(transparent)]
-    Source(#[from] SourceError),
-    #[error(transparent)]
-    Library(#[from] LibraryError),
-    #[error("source candidate task failed: {0}")]
-    Task(#[from] tokio::task::JoinError),
-}
-
-/// Inputs that determine the canonical facts emitted by one source.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct SourceInputIdentity {
-    pub source_id: SourceId,
-    pub digest: [u8; 32],
-}
-
-/// Direct bounded edge from a provider response to Library's candidate.
-pub(crate) struct BatchEmitter {
-    batches: Sender<CandidateBatch>,
-}
-
-impl BatchEmitter {
-    pub(crate) fn new(batches: Sender<CandidateBatch>) -> Self {
-        Self { batches }
-    }
-
-    pub(crate) fn emit(&self, batch: CandidateBatch) -> SourceResult<()> {
-        if batch.is_empty() {
-            return Ok(());
-        }
-        self.batches
-            .send_blocking(batch)
-            .map_err(|_| SourceError::Cancelled)
-    }
-
-    pub(crate) async fn emit_async(&self, batch: CandidateBatch) -> SourceResult<()> {
-        if batch.is_empty() {
-            return Ok(());
-        }
-        self.batches
-            .send(batch)
-            .await
-            .map_err(|_| SourceError::Cancelled)
-    }
-}
-
-/// One opened concrete source. Its provider enum remains private.
-pub struct Source {
-    source_id: SourceId,
-    implementation: Implementation,
+pub enum SourceEditResult {
+    Unchanged,
+    ConfigurationOnly(SourceConfiguration),
+    Connected(Box<ConnectedSource>),
 }
 
 enum Implementation {
     Local(crate::local::LocalSource),
     Jellyfin(crate::jellyfin::JellyfinSource),
     OpenSubsonic(crate::subsonic::SubsonicSource),
+}
+
+pub struct Source {
+    source_id: SourceId,
+    implementation: Implementation,
 }
 
 impl Source {
@@ -322,12 +498,6 @@ impl Source {
         }
     }
 
-    /// Apply an edit to one configured source without exposing provider payloads
-    /// outside Sources.
-    ///
-    /// The returned configuration carries the provider's canonical account
-    /// identity. Retaining the current SourceId means the account is unchanged;
-    /// a new SourceId means Rufin must replace the configured account.
     pub async fn edit(
         current: SourceConfiguration,
         current_credential: Option<String>,
@@ -349,11 +519,6 @@ impl Source {
         }
     }
 
-    /// Open a configured source without contacting it.
-    ///
-    /// Cache usability and source access are decided later. In particular, a
-    /// temporarily unavailable Local root does not erase or invalidate its
-    /// saved source.
     pub fn open(
         configuration: SourceConfiguration,
         credential: Option<String>,
@@ -383,616 +548,1826 @@ impl Source {
         &self.source_id
     }
 
-    pub fn metadata_editing_available(&self, item: &library::MetadataItem) -> bool {
-        match &self.implementation {
-            Implementation::Local(local) => local.metadata_entry_available(item),
-            Implementation::Jellyfin(source) => source.metadata_entry_available(item),
-            Implementation::OpenSubsonic(source) => {
-                source.metadata_editing_available()
-                    && crate::local::mapped_metadata_editing_available(item)
-            }
-        }
-    }
-
-    pub async fn read_metadata(
-        self: &Arc<Self>,
-        subject: library::MetadataSubject,
-        local_access: Option<Vec<LocalAccessTarget>>,
-    ) -> Result<MetadataDraft, MetadataError> {
-        match &self.implementation {
-            Implementation::Local(_) => {
-                let source = Arc::clone(self);
-                tokio::task::spawn_blocking(move || {
-                    let Implementation::Local(local) = &source.implementation else {
-                        unreachable!("source implementation changed")
-                    };
-                    local.read_metadata(&subject)
-                })
-                .await
-                .map_err(|error| MetadataError::Write(error.to_string()))?
-            }
-            Implementation::Jellyfin(source) => {
-                let editing = source
-                    .metadata_editing(subject.item())
-                    .await
-                    .ok_or(MetadataError::Unavailable)?;
-                source
-                    .read_metadata(subject.item(), editing)
-                    .await
-                    .map_err(|error| MetadataError::Write(error.to_string()))
-            }
-            Implementation::OpenSubsonic(source) => {
-                if !source.metadata_editing_available() {
-                    return Err(MetadataError::Unavailable);
-                }
-                let local_access =
-                    local_access.ok_or_else(|| MetadataError::LocalAccessRequired {
-                        source_path: String::new(),
-                    })?;
-                tokio::task::spawn_blocking(move || {
-                    crate::local::read_mapped_metadata(&subject, &local_access)
-                })
-                .await
-                .map_err(|error| MetadataError::Write(error.to_string()))?
-            }
-        }
-    }
-
-    pub async fn identify_metadata(
+    pub async fn refresh_if_needed(
         &self,
-        subject: &library::MetadataSubject,
-        values: &MetadataValues,
-    ) -> Result<Option<library::MetadataIdentification>, String> {
-        match &self.implementation {
-            Implementation::Jellyfin(source) => {
-                source.identify_metadata(subject.item(), values).await
-            }
-            Implementation::Local(_) | Implementation::OpenSubsonic(_) => Ok(None),
-        }
-    }
-
-    pub fn metadata_source_search(&self, subject: &library::MetadataSubject) -> bool {
-        match &self.implementation {
-            Implementation::Jellyfin(source) => source.metadata_source_search(subject.item()),
-            Implementation::Local(_) | Implementation::OpenSubsonic(_) => false,
-        }
-    }
-
-    pub fn needs_metadata_local_access(&self) -> bool {
-        match &self.implementation {
-            Implementation::OpenSubsonic(source) => source.metadata_editing_available(),
-            Implementation::Local(_) | Implementation::Jellyfin(_) => false,
-        }
-    }
-
-    pub async fn write_metadata(
-        self: &Arc<Self>,
-        library: Arc<Library>,
-        subject: library::MetadataSubject,
-        edit: MetadataEdit,
-        local_access: Option<Vec<LocalAccessTarget>>,
-        progress: Arc<dyn Fn(SourceReadProgress) + Send + Sync>,
+        database: &Database,
+        display_name: &str,
+        progress: &(dyn Fn(SourceReadProgress) + Send + Sync),
         cancelled: Arc<AtomicBool>,
-    ) -> Result<PreparedSourceChange, MetadataError> {
-        let (change, ignored_message) = match &self.implementation {
-            Implementation::Local(_) => {
-                let source = Arc::clone(self);
-                let paths = tokio::task::spawn_blocking(move || {
-                    let Implementation::Local(local) = &source.implementation else {
-                        unreachable!("source implementation changed")
-                    };
-                    local.write_metadata(&subject, &edit)
-                })
-                .await
-                .map_err(|error| MetadataError::Write(error.to_string()))??;
-                (
-                    ObservedSourceChange::LocalPaths(paths),
-                    "the written files were not accepted by the Local source",
-                )
-            }
-            Implementation::Jellyfin(source) => {
-                let raw_ids = source.write_metadata(subject.item(), &edit).await?;
-                (
-                    ObservedSourceChange::jellyfin(raw_ids.into_iter().collect(), BTreeSet::new()),
-                    "the source did not return the written item",
-                )
-            }
-            Implementation::OpenSubsonic(source) => {
-                if !source.metadata_editing_available() {
-                    return Err(MetadataError::Unavailable);
-                }
-                let local_access =
-                    local_access.ok_or_else(|| MetadataError::LocalAccessRequired {
-                        source_path: String::new(),
-                    })?;
-                source
-                    .require_metadata_scan_idle()
-                    .await
-                    .map_err(|error| MetadataError::Write(error.to_string()))?;
-                tokio::task::spawn_blocking(move || {
-                    crate::local::write_mapped_metadata(&subject, &local_access, &edit)
-                })
-                .await
-                .map_err(|error| MetadataError::Write(error.to_string()))??;
-                source
-                    .start_metadata_scan_and_wait()
-                    .await
-                    .map_err(|error| MetadataError::SavedRefreshFailed(error.to_string()))?;
-                (
-                    ObservedSourceChange::Full,
-                    "the source did not return the written item",
-                )
-            }
+    ) -> SourceResult<Option<ScanOutcome>> {
+        let Some(freshness) = self.freshness().await? else {
+            return Ok(None);
         };
-        let prepared = self
-            .prepare_change(library, change, progress, cancelled)
-            .await
-            .map_err(|error| MetadataError::SavedRefreshFailed(error.to_string()))?;
-        match prepared {
-            PreparedSourceChange::Ignored => Err(MetadataError::SavedRefreshFailed(
-                ignored_message.to_string(),
-            )),
-            prepared => Ok(prepared),
+        let cancellation = library::ReadCancellation::new();
+        if cancelled.load(Ordering::Relaxed) {
+            cancellation.cancel();
         }
-    }
-
-    pub fn listen_local_changes(
-        &self,
-        catch_up: bool,
-        on_change: impl FnMut(ObservedSourceChange) -> bool,
-        should_stop: impl Fn() -> bool,
-    ) -> SourceResult<()> {
-        let Implementation::Local(source) = &self.implementation else {
-            return Err(SourceError::InvalidRequest(
-                "the Local change feed belongs to another source",
-            ));
-        };
-        let on_change = std::cell::RefCell::new(on_change);
-        let mut on_ready = |reconnecting| {
-            let request = catch_up || reconnecting;
-            !request || on_change.borrow_mut()(ObservedSourceChange::LocalRescan)
-        };
-        let mut on_change = |change| on_change.borrow_mut()(change);
-        source.watch(&mut on_ready, &mut on_change, &should_stop)
-    }
-
-    pub async fn listen_jellyfin_changes(
-        self: Arc<Self>,
-        mut on_ready: impl FnMut() -> bool + Send + 'static,
-        mut on_gap: impl FnMut() -> bool + Send + 'static,
-        mut on_change: impl FnMut(ObservedSourceChange) -> bool + Send + 'static,
-    ) -> SourceResult<()> {
-        let Implementation::Jellyfin(source) = &self.implementation else {
-            return Err(SourceError::InvalidRequest(
-                "the change feed belongs to another source",
-            ));
-        };
-        source.refresh_metadata_editing().await;
-        source
-            .listen_library_changes(&mut on_ready, &mut on_gap, &mut on_change)
-            .await
-    }
-
-    pub async fn prepare_change(
-        self: &Arc<Self>,
-        library: Arc<Library>,
-        change: ObservedSourceChange,
-        progress: Arc<dyn Fn(SourceReadProgress) + Send + Sync>,
-        cancelled: Arc<AtomicBool>,
-    ) -> Result<PreparedSourceChange, SourceChangePreparationError> {
-        match change {
-            ObservedSourceChange::Full => Ok(PreparedSourceChange::Full),
-            ObservedSourceChange::Jellyfin { upserts, removals } => {
-                let Implementation::Jellyfin(source) = &self.implementation else {
-                    return Err(SourceError::InvalidRequest(
-                        "the library change belongs to another source",
-                    )
-                    .into());
-                };
-                source
-                    .prepare_change(&library, upserts, removals)
-                    .await
-                    .map_err(Into::into)
-            }
-            change @ (ObservedSourceChange::LocalPaths(_) | ObservedSourceChange::LocalRescan) => {
-                let source = Arc::clone(self);
-                tokio::task::spawn_blocking(move || {
-                    let Implementation::Local(local) = &source.implementation else {
-                        return Err(SourceError::InvalidRequest(
-                            "filesystem change preparation requires a Local source",
-                        )
-                        .into());
-                    };
-                    let should_stop = || cancelled.load(Ordering::Acquire);
-                    local
-                        .prepare_change(
-                            &library,
-                            change,
-                            unix_seconds(),
-                            progress.as_ref(),
-                            &should_stop,
-                        )
-                        .map(|replacement| {
-                            replacement.map_or(
-                                PreparedSourceChange::Ignored,
-                                PreparedSourceChange::LocalReplacement,
-                            )
-                        })
-                })
+        if let Some(publication) =
+            Scan::accept_freshness(database, self.source_id.as_str(), &freshness, &cancellation)
                 .await?
+        {
+            return Ok(Some(ScanOutcome::Identical(publication)));
+        }
+        self.refresh(
+            database,
+            display_name,
+            progress,
+            cancelled,
+            Some(freshness),
+            false,
+        )
+        .await
+        .map(Some)
+    }
+
+    pub async fn manual_refresh(
+        &self,
+        database: &Database,
+        display_name: &str,
+        progress: &(dyn Fn(SourceReadProgress) + Send + Sync),
+        cancelled: Arc<AtomicBool>,
+    ) -> SourceResult<ScanOutcome> {
+        let freshness = self.freshness().await?;
+        let reuse_local = matches!(&self.implementation, Implementation::Local(_));
+        self.refresh(
+            database,
+            display_name,
+            progress,
+            cancelled,
+            freshness,
+            reuse_local,
+        )
+        .await
+    }
+
+    async fn refresh(
+        &self,
+        database: &Database,
+        display_name: &str,
+        progress: &(dyn Fn(SourceReadProgress) + Send + Sync),
+        cancelled: Arc<AtomicBool>,
+        freshness: Option<Freshness>,
+        reuse_local: bool,
+    ) -> SourceResult<ScanOutcome> {
+        let mut scan = Scan::begin(
+            database,
+            self.source_id.as_str(),
+            display_name,
+            &display_name.to_lowercase(),
+            freshness,
+        )
+        .await?;
+        let cancelled_fn = || cancelled.load(Ordering::Relaxed);
+        match &self.implementation {
+            Implementation::Local(source) => {
+                source
+                    .stage_catalog(database, &mut scan, progress, &cancelled_fn, reuse_local)
+                    .await?
+            }
+            Implementation::Jellyfin(source) => {
+                source
+                    .stage_catalog(&mut scan, progress, &cancelled_fn)
+                    .await?
+            }
+            Implementation::OpenSubsonic(source) => {
+                source
+                    .stage_catalog(&mut scan, progress, &cancelled_fn)
+                    .await?
             }
         }
+        let outcome = scan.finish().await?;
+        Ok(outcome)
     }
 
-    pub async fn check_freshness(
+    pub async fn catch_up_local(
         &self,
-        accepted: Option<&ProviderFreshness>,
-    ) -> SourceResult<SourceFreshness> {
-        match &self.implementation {
-            Implementation::OpenSubsonic(source) => source.check_freshness(accepted).await,
-            Implementation::Local(_) | Implementation::Jellyfin(_) => {
-                Ok(SourceFreshness::Unavailable)
-            }
-        }
-    }
-
-    pub async fn folder(
-        &self,
-        folder_id: Option<&FolderId>,
-        music_folder_id: Option<&MusicFolderId>,
-    ) -> SourceResult<NativeSourceResult<FolderContents>> {
-        match &self.implementation {
-            Implementation::Local(_) => Ok(NativeSourceResult::Unavailable),
-            Implementation::Jellyfin(source) => source
-                .read_folder(folder_id, music_folder_id)
-                .await
-                .map(NativeSourceResult::Available),
-            Implementation::OpenSubsonic(source) => source
-                .read_folder(folder_id, music_folder_id)
-                .await
-                .map(NativeSourceResult::Available),
-        }
-    }
-
-    pub async fn search(
-        &self,
-        request: &SearchRequest,
-    ) -> SourceResult<NativeSourceResult<SearchResults>> {
-        match &self.implementation {
-            Implementation::Local(_) => Ok(NativeSourceResult::Unavailable),
-            Implementation::Jellyfin(source) => source
-                .search(request)
-                .await
-                .map(NativeSourceResult::Available),
-            Implementation::OpenSubsonic(source) => source
-                .search(request)
-                .await
-                .map(NativeSourceResult::Available),
-        }
-    }
-
-    /// Reads one provider-owned Home section.
-    ///
-    /// Local and Explore are composed from the accepted Library instead.
-    pub async fn home_section(
-        &self,
-        kind: HomeSectionKind,
-    ) -> SourceResult<NativeSourceResult<SourceHomeSection>> {
-        let kind = match kind {
-            HomeSectionKind::Explore => return Ok(NativeSourceResult::Unavailable),
-            HomeSectionKind::MostPlayed => SourceHomeSectionKind::MostPlayed,
-            HomeSectionKind::NewlyAdded => SourceHomeSectionKind::NewlyAdded,
-            HomeSectionKind::RecentlyPlayed => SourceHomeSectionKind::RecentlyPlayed,
-            HomeSectionKind::RecentlyReleased => SourceHomeSectionKind::RecentlyReleased,
+        database: &Database,
+        source: library::SourceKey,
+        progress: &(dyn Fn(SourceReadProgress) + Send + Sync),
+        cancelled: Arc<AtomicBool>,
+    ) -> SourceResult<ScanOutcome> {
+        let Implementation::Local(local) = &self.implementation else {
+            return Err(SourceError::InvalidRequest(
+                "Local catch-up belongs to another source",
+            ));
         };
+        local
+            .catch_up(database, source, self.source_id.as_str(), progress, &|| {
+                cancelled.load(Ordering::Relaxed)
+            })
+            .await
+    }
+
+    async fn freshness(&self) -> SourceResult<Option<Freshness>> {
         match &self.implementation {
-            Implementation::Local(_) => Ok(NativeSourceResult::Unavailable),
-            Implementation::Jellyfin(source) => source
-                .read_home_section(kind)
-                .await
-                .map(NativeSourceResult::Available),
-            Implementation::OpenSubsonic(source) => source
-                .read_home_section(kind)
-                .await
-                .map(NativeSourceResult::Available),
+            Implementation::Local(_) | Implementation::Jellyfin(_) => Ok(None),
+            Implementation::OpenSubsonic(source) => source.freshness().await,
         }
     }
 
-    pub async fn random_tracks(
-        &self,
-        criteria: &RandomCriteria,
-    ) -> SourceResult<NativeSourceResult<Vec<library::Track>>> {
+    pub async fn stream(&self, request: StreamRequest) -> SourceResult<ResolvedStream> {
+        if let Some(uri) = request.media_uri.as_deref() {
+            let mut stream = ResolvedStream::new(uri);
+            if let (Some(start), Some(end)) = (request.cue_start_millis, request.cue_end_millis) {
+                stream = stream.with_window(start, end);
+            }
+            return Ok(stream);
+        }
         match &self.implementation {
-            Implementation::Local(_) => Ok(NativeSourceResult::Unavailable),
-            Implementation::Jellyfin(source) => source
-                .random_tracks(criteria)
-                .await
-                .map(NativeSourceResult::Available),
-            Implementation::OpenSubsonic(source) => source
-                .random_tracks(criteria)
-                .await
-                .map(NativeSourceResult::Available),
+            Implementation::Local(_) => Err(SourceError::NotFound),
+            Implementation::Jellyfin(source) => source.resolve_stream(&request).await,
+            Implementation::OpenSubsonic(source) => source.resolve_stream(&request).await,
         }
     }
 
-    pub async fn generated_tracks(
-        &self,
-        seed: &RadioSeed,
-        limit: usize,
-    ) -> SourceResult<NativeSourceResult<Vec<library::Track>>> {
-        match &self.implementation {
-            Implementation::Local(_) => Ok(NativeSourceResult::Unavailable),
-            Implementation::Jellyfin(source) => source
-                .generated_tracks(seed, limit)
-                .await
-                .map(NativeSourceResult::Available),
-            Implementation::OpenSubsonic(source) => source
-                .generated_tracks(seed, limit)
-                .await
-                .map(NativeSourceResult::Available),
+    pub fn resolve_download(&self, request: &StreamRequest) -> SourceResult<ResolvedDownload> {
+        if let Some(uri) = request.media_uri.as_deref() {
+            let mut stream = ResolvedStream::new(uri);
+            if let (Some(start), Some(end)) = (request.cue_start_millis, request.cue_end_millis) {
+                stream = stream.with_window(start, end);
+            }
+            return Ok(ResolvedDownload::new(stream, None));
         }
-    }
-
-    pub async fn stream(
-        &self,
-        request: &StreamRequest,
-    ) -> SourceResult<NativeSourceResult<ResolvedStream>> {
         match &self.implementation {
-            Implementation::Local(_) => Ok(NativeSourceResult::Unavailable),
-            Implementation::Jellyfin(source) => source
-                .resolve_stream(request)
-                .await
-                .map(NativeSourceResult::Available),
-            Implementation::OpenSubsonic(source) => source
-                .resolve_stream(request)
-                .await
-                .map(NativeSourceResult::Available),
-        }
-    }
-
-    pub fn resolve_download(
-        &self,
-        request: &StreamRequest,
-    ) -> SourceResult<NativeSourceResult<ResolvedDownload>> {
-        match &self.implementation {
-            Implementation::Local(_) => Ok(NativeSourceResult::Unavailable),
-            Implementation::Jellyfin(source) => source
-                .resolve_download(request)
-                .map(NativeSourceResult::Available),
-            Implementation::OpenSubsonic(source) => source
-                .resolve_download(request)
-                .map(NativeSourceResult::Available),
+            Implementation::Local(_) => Err(SourceError::NotFound),
+            Implementation::Jellyfin(source) => source.resolve_download(request),
+            Implementation::OpenSubsonic(source) => source.resolve_download(request),
         }
     }
 
     pub async fn image(&self, request: SourceImageRequest) -> SourceResult<ImageBytes> {
-        match (&self.implementation, request) {
-            (Implementation::Local(source), SourceImageRequest::Local(reference)) => {
-                source.image_bytes(&reference)
-            }
-            (Implementation::Jellyfin(source), SourceImageRequest::Native { image_ref, size }) => {
-                source.image_bytes(&image_ref, size).await
-            }
-            (
-                Implementation::OpenSubsonic(source),
-                SourceImageRequest::Native { image_ref, size },
-            ) => source.image_bytes(&image_ref, size).await,
-            _ => Err(SourceError::InvalidRequest(
-                "artwork does not belong to the selected source",
+        match &self.implementation {
+            Implementation::Local(source) => source.image(request),
+            Implementation::Jellyfin(source) => match request {
+                SourceImageRequest::Native { image_ref, size } => {
+                    source.image_bytes(&image_ref, size).await
+                }
+                SourceImageRequest::Local(_) => Err(SourceError::NotFound),
+            },
+            Implementation::OpenSubsonic(source) => match request {
+                SourceImageRequest::Native { image_ref, size } => {
+                    source.image_bytes(&image_ref, size).await
+                }
+                SourceImageRequest::Local(_) => Err(SourceError::NotFound),
+            },
+        }
+    }
+
+    pub async fn live_search(&self, query: &str, limit: usize) -> SourceResult<LiveSearchResults> {
+        match &self.implementation {
+            Implementation::Local(_) => Err(SourceError::InvalidRequest(
+                "Local Search is Database-owned",
             )),
+            Implementation::Jellyfin(source) => source.live_search(query, limit).await,
+            Implementation::OpenSubsonic(source) => source.live_search(query, limit).await,
         }
     }
 
     pub async fn set_favorite(
         &self,
-        item: FavoriteItemId,
+        kind: SourceEntityKind,
+        object_id: &str,
         favorite: bool,
-    ) -> SourceResult<FavoriteAcceptance> {
+    ) -> SourceResult<()> {
         match &self.implementation {
-            Implementation::Local(_) => Ok(FavoriteAcceptance::RufinOwned { item, favorite }),
+            Implementation::Local(_) => Ok(()),
+            Implementation::Jellyfin(source) => source.set_favorite(object_id, favorite).await,
+            Implementation::OpenSubsonic(source) => {
+                source.set_favorite(kind, object_id, favorite).await
+            }
+        }
+    }
+
+    pub async fn set_rating(&self, object_id: &str, rating: Option<u8>) -> SourceResult<()> {
+        if rating.is_some_and(|rating| rating > 10) {
+            return Err(SourceError::InvalidRequest("rating outside 0..=10"));
+        }
+        match &self.implementation {
+            Implementation::Local(_) => Ok(()),
+            Implementation::Jellyfin(source) => source.set_rating(object_id, rating).await,
+            Implementation::OpenSubsonic(source) => source.set_rating(object_id, rating).await,
+        }
+    }
+
+    pub async fn write_local_track_rating(
+        &self,
+        database: &Database,
+        source: library::SourceKey,
+        track: library::TrackKey,
+        rating: Option<u8>,
+    ) -> SourceResult<()> {
+        let Implementation::Local(local) = &self.implementation else {
+            return Ok(());
+        };
+        let row = database
+            .track_rows(source, &[track], &library::ReadCancellation::new())
+            .await?
+            .pop()
+            .ok_or(SourceError::NotFound)?;
+        let Some((path, format)) = self.metadata_track_path(database, source, &row).await? else {
+            return Err(SourceError::NotFound);
+        };
+        crate::local::metadata::write_rating(&path, format.as_deref(), rating)
+            .map_err(|error| SourceError::Other(error.to_string()))?;
+        local
+            .publish_paths(database, source, self.source_id.as_str(), &[path], None)
+            .await?;
+        Ok(())
+    }
+
+    async fn mapped_metadata_ready(&self) -> bool {
+        let Implementation::OpenSubsonic(source) = &self.implementation else {
+            return false;
+        };
+        if !source.metadata_editing_available() {
+            source.refresh_metadata_editing().await;
+        }
+        source.metadata_editing_available()
+    }
+
+    async fn refresh_remote_metadata_index(&self) -> SourceResult<()> {
+        match &self.implementation {
+            Implementation::Local(_) | Implementation::Jellyfin(_) => Ok(()),
+            Implementation::OpenSubsonic(source) => {
+                source.require_metadata_scan_idle().await?;
+                source.start_metadata_scan_and_wait().await
+            }
+        }
+    }
+
+    pub async fn read_track_metadata(
+        &self,
+        database: &Database,
+        source: library::SourceKey,
+        track_key: library::TrackKey,
+    ) -> Result<crate::TrackMetadata, crate::SourceMetadataError> {
+        let cancellation = library::ReadCancellation::new();
+        let track = database
+            .track_rows(source, &[track_key], &cancellation)
+            .await
+            .map_err(|error| crate::SourceMetadataError::Write(error.to_string()))?
+            .pop()
+            .ok_or(crate::SourceMetadataError::Unavailable)?;
+        if let Implementation::Jellyfin(jellyfin) = &self.implementation {
+            return jellyfin.read_track_metadata(track).await;
+        }
+        let (path, format) = self
+            .metadata_track_path(database, source, &track)
+            .await
+            .map_err(|error| crate::SourceMetadataError::Write(error.to_string()))?
+            .ok_or(crate::SourceMetadataError::Unavailable)?;
+        let mut metadata = crate::local::read_track_metadata(track_key, &path, format.as_deref())?;
+        if metadata.values.musicbrainz_recording_id.is_none()
+            && track.musicbrainz_recording_id.is_some()
+        {
+            metadata.values.musicbrainz_recording_id = track.musicbrainz_recording_id;
+            metadata.rufin_filled.musicbrainz_recording_id = true;
+        }
+        if metadata.values.musicbrainz_release_track_id.is_none()
+            && track.musicbrainz_release_track_id.is_some()
+        {
+            metadata.values.musicbrainz_release_track_id = track.musicbrainz_release_track_id;
+            metadata.rufin_filled.musicbrainz_release_track_id = true;
+        }
+        Ok(metadata)
+    }
+
+    pub async fn read_album_metadata(
+        &self,
+        database: &Database,
+        source: library::SourceKey,
+        album_key: library::AlbumKey,
+    ) -> Result<crate::AlbumMetadata, crate::SourceMetadataError> {
+        let cancellation = library::ReadCancellation::new();
+        let album = database
+            .album_rows(source, &[album_key], None, &cancellation)
+            .await
+            .map_err(metadata_database_error)?
+            .pop()
+            .ok_or(crate::SourceMetadataError::Unavailable)?;
+        match &self.implementation {
+            Implementation::Jellyfin(jellyfin) => jellyfin.read_album_metadata(album).await,
+            Implementation::Local(_) => {
+                self.read_local_album_metadata(database, source, album)
+                    .await
+            }
+            Implementation::OpenSubsonic(_) => {
+                if !self.mapped_metadata_ready().await {
+                    return Err(crate::SourceMetadataError::Unavailable);
+                }
+                self.read_local_album_metadata(database, source, album)
+                    .await
+            }
+        }
+    }
+
+    pub async fn read_artist_metadata(
+        &self,
+        database: &Database,
+        source: library::SourceKey,
+        artist_key: library::ArtistKey,
+    ) -> Result<crate::ArtistMetadata, crate::SourceMetadataError> {
+        let cancellation = library::ReadCancellation::new();
+        let artist = database
+            .artist_rows(source, &[artist_key], false, None, &cancellation)
+            .await
+            .map_err(metadata_database_error)?
+            .pop()
+            .ok_or(crate::SourceMetadataError::Unavailable)?;
+        match &self.implementation {
+            Implementation::Jellyfin(jellyfin) => jellyfin.read_artist_metadata(artist).await,
+            Implementation::Local(_) => {
+                self.read_local_artist_metadata(database, source, artist)
+                    .await
+            }
+            Implementation::OpenSubsonic(_) => {
+                if !self.mapped_metadata_ready().await {
+                    return Err(crate::SourceMetadataError::Unavailable);
+                }
+                self.read_local_artist_metadata(database, source, artist)
+                    .await
+            }
+        }
+    }
+
+    pub async fn identify_album_metadata(
+        &self,
+        database: &Database,
+        source: library::SourceKey,
+        album_key: library::AlbumKey,
+        values: &crate::AlbumMetadataValues,
+    ) -> Result<Option<(crate::AlbumMetadataValues, String)>, String> {
+        let Implementation::Jellyfin(jellyfin) = &self.implementation else {
+            return Ok(None);
+        };
+        let cancellation = library::ReadCancellation::new();
+        let album = database
+            .album_rows(source, &[album_key], None, &cancellation)
+            .await
+            .map_err(|error| error.to_string())?
+            .pop()
+            .ok_or_else(|| "Album is no longer current".to_string())?;
+        jellyfin
+            .identify_album_metadata(&album.object_id, values)
+            .await
+    }
+
+    pub async fn identify_track_metadata(
+        &self,
+        database: &Database,
+        source: library::SourceKey,
+        track_key: library::TrackKey,
+        values: &crate::TrackMetadataValues,
+    ) -> Result<Option<(crate::TrackMetadataValues, String)>, String> {
+        let Implementation::Jellyfin(jellyfin) = &self.implementation else {
+            return Ok(None);
+        };
+        let cancellation = library::ReadCancellation::new();
+        let track = database
+            .track_rows(source, &[track_key], &cancellation)
+            .await
+            .map_err(|error| error.to_string())?
+            .pop()
+            .ok_or_else(|| "Track is no longer current".to_string())?;
+        jellyfin
+            .identify_track_metadata(&track.object_id, values)
+            .await
+    }
+
+    pub async fn identify_artist_metadata(
+        &self,
+        database: &Database,
+        source: library::SourceKey,
+        artist_key: library::ArtistKey,
+        values: &crate::ArtistMetadataValues,
+    ) -> Result<Option<(crate::ArtistMetadataValues, String)>, String> {
+        let Implementation::Jellyfin(jellyfin) = &self.implementation else {
+            return Ok(None);
+        };
+        let cancellation = library::ReadCancellation::new();
+        let artist = database
+            .artist_rows(source, &[artist_key], false, None, &cancellation)
+            .await
+            .map_err(|error| error.to_string())?
+            .pop()
+            .ok_or_else(|| "Artist is no longer current".to_string())?;
+        jellyfin
+            .identify_artist_metadata(&artist.object_id, values)
+            .await
+    }
+
+    pub async fn write_track_metadata(
+        &self,
+        database: &Database,
+        source: library::SourceKey,
+        track_key: library::TrackKey,
+        expected_revision: &str,
+        application: Option<&str>,
+        edit: crate::TrackMetadataEdit,
+    ) -> Result<library::TrackRow, crate::SourceMetadataError> {
+        let cancellation = library::ReadCancellation::new();
+        let track = database
+            .track_rows(source, &[track_key], &cancellation)
+            .await
+            .map_err(metadata_database_error)?
+            .pop()
+            .ok_or(crate::SourceMetadataError::Unavailable)?;
+        match &self.implementation {
+            Implementation::Jellyfin(jellyfin) => {
+                let raw = jellyfin
+                    .write_metadata_value(
+                        &track.object_id,
+                        "track",
+                        expected_revision,
+                        application,
+                        |item| super::jellyfin::metadata::apply_track_edit(item, &edit),
+                    )
+                    .await?;
+                self.publish_jellyfin_metadata(database, raw).await?;
+            }
+            Implementation::Local(_) | Implementation::OpenSubsonic(_) => {
+                self.write_file_track_metadata(database, source, &track, expected_revision, &edit)
+                    .await?;
+            }
+        }
+        database
+            .track_rows(source, &[track_key], &cancellation)
+            .await
+            .map_err(metadata_database_error)?
+            .pop()
+            .ok_or(crate::SourceMetadataError::Unavailable)
+    }
+
+    pub async fn write_album_metadata(
+        &self,
+        database: &Database,
+        source: library::SourceKey,
+        album_key: library::AlbumKey,
+        expected_revision: &str,
+        application: Option<&str>,
+        edit: crate::AlbumMetadataEdit,
+    ) -> Result<library::AlbumRow, crate::SourceMetadataError> {
+        let cancellation = library::ReadCancellation::new();
+        let album = database
+            .album_rows(source, &[album_key], None, &cancellation)
+            .await
+            .map_err(metadata_database_error)?
+            .pop()
+            .ok_or(crate::SourceMetadataError::Unavailable)?;
+        match &self.implementation {
+            Implementation::Jellyfin(jellyfin) => {
+                let raw = jellyfin
+                    .write_metadata_value(
+                        &album.object_id,
+                        "album",
+                        expected_revision,
+                        application,
+                        |item| super::jellyfin::metadata::apply_album_edit(item, &edit),
+                    )
+                    .await?;
+                self.publish_jellyfin_metadata(database, raw).await?;
+            }
+            Implementation::Local(_) | Implementation::OpenSubsonic(_) => {
+                self.write_file_album_metadata(database, source, &album, expected_revision, &edit)
+                    .await?;
+            }
+        }
+        database
+            .album_rows(source, &[album_key], None, &cancellation)
+            .await
+            .map_err(metadata_database_error)?
+            .pop()
+            .ok_or(crate::SourceMetadataError::Unavailable)
+    }
+
+    pub async fn write_artist_metadata(
+        &self,
+        database: &Database,
+        source: library::SourceKey,
+        artist_key: library::ArtistKey,
+        expected_revision: &str,
+        application: Option<&str>,
+        edit: crate::ArtistMetadataEdit,
+    ) -> Result<library::ArtistRow, crate::SourceMetadataError> {
+        let cancellation = library::ReadCancellation::new();
+        let artist = database
+            .artist_rows(source, &[artist_key], false, None, &cancellation)
+            .await
+            .map_err(metadata_database_error)?
+            .pop()
+            .ok_or(crate::SourceMetadataError::Unavailable)?;
+        match &self.implementation {
+            Implementation::Jellyfin(jellyfin) => {
+                let raw = jellyfin
+                    .write_metadata_value(
+                        &artist.object_id,
+                        "artist",
+                        expected_revision,
+                        application,
+                        |item| super::jellyfin::metadata::apply_artist_edit(item, &edit),
+                    )
+                    .await?;
+                self.publish_jellyfin_metadata(database, raw).await?;
+            }
+            Implementation::Local(_) | Implementation::OpenSubsonic(_) => {
+                self.write_file_artist_metadata(
+                    database,
+                    source,
+                    &artist,
+                    expected_revision,
+                    &edit,
+                )
+                .await?;
+            }
+        }
+        database
+            .artist_rows(source, &[artist_key], false, None, &cancellation)
+            .await
+            .map_err(metadata_database_error)?
+            .pop()
+            .ok_or(crate::SourceMetadataError::Unavailable)
+    }
+
+    async fn publish_jellyfin_metadata(
+        &self,
+        database: &Database,
+        raw: String,
+    ) -> Result<(), crate::SourceMetadataError> {
+        let Implementation::Jellyfin(jellyfin) = &self.implementation else {
+            return Err(crate::SourceMetadataError::Unavailable);
+        };
+        jellyfin
+            .apply_live_items(database, self.source_id.as_str(), vec![raw], Vec::new())
+            .await
+            .map_err(|error| crate::SourceMetadataError::SavedRefreshFailed(error.to_string()))?;
+        Ok(())
+    }
+
+    async fn read_local_album_metadata(
+        &self,
+        database: &Database,
+        source: library::SourceKey,
+        album: library::AlbumRow,
+    ) -> Result<crate::AlbumMetadata, crate::SourceMetadataError> {
+        let targets = self
+            .album_metadata_targets(database, source, album.album_key)
+            .await?;
+        album_metadata_from_targets(album, &targets)
+    }
+
+    async fn read_local_artist_metadata(
+        &self,
+        database: &Database,
+        source: library::SourceKey,
+        artist: library::ArtistRow,
+    ) -> Result<crate::ArtistMetadata, crate::SourceMetadataError> {
+        let targets = self
+            .artist_metadata_targets(database, source, artist.artist_key)
+            .await?;
+        artist_metadata_from_targets(artist, &targets)
+    }
+
+    async fn write_file_track_metadata(
+        &self,
+        database: &Database,
+        source: library::SourceKey,
+        track: &library::TrackRow,
+        expected_revision: &str,
+        edit: &crate::TrackMetadataEdit,
+    ) -> Result<(), crate::SourceMetadataError> {
+        let (path, format) = self
+            .metadata_track_path(database, source, track)
+            .await
+            .map_err(|error| crate::SourceMetadataError::Write(error.to_string()))?
+            .ok_or(crate::SourceMetadataError::Unavailable)?;
+        crate::local::metadata::write_track(&path, format.as_deref(), expected_revision, edit)?;
+        match &self.implementation {
+            Implementation::Local(local) => {
+                local
+                    .publish_metadata_paths(
+                        database,
+                        self.source_id.as_str(),
+                        std::slice::from_ref(&path),
+                        None,
+                        None,
+                    )
+                    .await
+                    .map_err(|error| {
+                        crate::SourceMetadataError::SavedRefreshFailed(error.to_string())
+                    })?;
+            }
+            Implementation::OpenSubsonic(_) => {
+                self.refresh_remote_metadata_index()
+                    .await
+                    .map_err(|error| {
+                        crate::SourceMetadataError::SavedRefreshFailed(error.to_string())
+                    })?;
+                database
+                    .update_track_metadata(
+                        source,
+                        track.track_key,
+                        track_write_from_values(track, &edit.values),
+                    )
+                    .await
+                    .map_err(metadata_database_error)?;
+            }
+            Implementation::Jellyfin(_) => unreachable!(),
+        }
+        Ok(())
+    }
+
+    async fn write_file_album_metadata(
+        &self,
+        database: &Database,
+        source: library::SourceKey,
+        album: &library::AlbumRow,
+        expected_revision: &str,
+        edit: &crate::AlbumMetadataEdit,
+    ) -> Result<(), crate::SourceMetadataError> {
+        let targets = self
+            .album_metadata_targets(database, source, album.album_key)
+            .await?;
+        let paths = targets
+            .iter()
+            .map(|target| target.path.clone())
+            .collect::<Vec<_>>();
+        let file_targets = targets
+            .iter()
+            .map(|target| (target.path.clone(), target.format.clone()))
+            .collect::<Vec<_>>();
+        crate::local::metadata::write_album_batch(&file_targets, expected_revision, edit)?;
+        match &self.implementation {
+            Implementation::Local(local) => {
+                local
+                    .publish_metadata_paths(
+                        database,
+                        self.source_id.as_str(),
+                        &paths,
+                        Some(&album.object_id),
+                        None,
+                    )
+                    .await
+                    .map_err(|error| {
+                        crate::SourceMetadataError::SavedRefreshFailed(error.to_string())
+                    })?;
+            }
+            Implementation::OpenSubsonic(_) => {
+                self.refresh_remote_metadata_index()
+                    .await
+                    .map_err(|error| {
+                        crate::SourceMetadataError::SavedRefreshFailed(error.to_string())
+                    })?;
+                database
+                    .update_album_metadata(
+                        source,
+                        album.album_key,
+                        library::AlbumMetadataWrite {
+                            title: edit.values.title.clone(),
+                            normalized_title: edit.values.title.to_lowercase(),
+                            display_artist: edit
+                                .values
+                                .album_artist
+                                .clone()
+                                .unwrap_or_else(|| album.display_artist.clone()),
+                            sort_text: edit
+                                .values
+                                .sort_title
+                                .clone()
+                                .unwrap_or_else(|| edit.values.title.to_lowercase()),
+                            year: edit.values.year.map(i64::from),
+                            release_date: album.release_date.clone(),
+                            date_added: album.date_added.clone(),
+                            musicbrainz_release_id: edit.values.musicbrainz_album_id.clone(),
+                            musicbrainz_release_group_id: edit
+                                .values
+                                .musicbrainz_release_group_id
+                                .clone(),
+                            is_compilation: album.is_compilation,
+                        },
+                    )
+                    .await
+                    .map_err(metadata_database_error)?;
+            }
+            Implementation::Jellyfin(_) => unreachable!(),
+        }
+        Ok(())
+    }
+
+    async fn write_file_artist_metadata(
+        &self,
+        database: &Database,
+        source: library::SourceKey,
+        artist: &library::ArtistRow,
+        expected_revision: &str,
+        edit: &crate::ArtistMetadataEdit,
+    ) -> Result<(), crate::SourceMetadataError> {
+        let targets = self
+            .artist_metadata_targets(database, source, artist.artist_key)
+            .await?;
+        let paths = targets
+            .iter()
+            .map(|target| target.path.clone())
+            .collect::<Vec<_>>();
+        let file_targets = targets
+            .iter()
+            .map(|target| (target.path.clone(), target.format.clone()))
+            .collect::<Vec<_>>();
+        crate::local::metadata::write_artist_batch(
+            &file_targets,
+            expected_revision,
+            &artist.name,
+            edit,
+        )?;
+        match &self.implementation {
+            Implementation::Local(local) => {
+                local
+                    .publish_metadata_paths(
+                        database,
+                        self.source_id.as_str(),
+                        &paths,
+                        None,
+                        Some(&artist.object_id),
+                    )
+                    .await
+                    .map_err(|error| {
+                        crate::SourceMetadataError::SavedRefreshFailed(error.to_string())
+                    })?;
+            }
+            Implementation::OpenSubsonic(_) => {
+                self.refresh_remote_metadata_index()
+                    .await
+                    .map_err(|error| {
+                        crate::SourceMetadataError::SavedRefreshFailed(error.to_string())
+                    })?;
+                database
+                    .update_artist_metadata(
+                        source,
+                        artist.artist_key,
+                        library::ArtistMetadataWrite {
+                            name: edit.values.name.clone(),
+                            normalized_name: edit.values.name.to_lowercase(),
+                            sort_text: edit
+                                .values
+                                .sort_name
+                                .clone()
+                                .unwrap_or_else(|| edit.values.name.to_lowercase()),
+                            musicbrainz_artist_id: edit.values.musicbrainz_artist_id.clone(),
+                        },
+                    )
+                    .await
+                    .map_err(metadata_database_error)?;
+            }
+            Implementation::Jellyfin(_) => unreachable!(),
+        }
+        Ok(())
+    }
+
+    async fn album_metadata_targets(
+        &self,
+        database: &Database,
+        source: library::SourceKey,
+        album: library::AlbumKey,
+    ) -> Result<Vec<MetadataFileTarget>, crate::SourceMetadataError> {
+        let cancel = library::ReadCancellation::new();
+        let keys = database
+            .album_track_order(
+                source,
+                album,
+                None,
+                "",
+                library::TrackSort::TrackNumber,
+                false,
+                &cancel,
+            )
+            .await
+            .map_err(metadata_database_error)?;
+        self.metadata_targets(database, source, &keys).await
+    }
+
+    async fn artist_metadata_targets(
+        &self,
+        database: &Database,
+        source: library::SourceKey,
+        artist: library::ArtistKey,
+    ) -> Result<Vec<MetadataFileTarget>, crate::SourceMetadataError> {
+        let cancel = library::ReadCancellation::new();
+        let keys = database
+            .artist_track_order(
+                source,
+                artist,
+                false,
+                None,
+                "",
+                library::TrackSort::Title,
+                false,
+                &cancel,
+            )
+            .await
+            .map_err(metadata_database_error)?;
+        self.metadata_targets(database, source, &keys).await
+    }
+
+    async fn metadata_targets(
+        &self,
+        database: &Database,
+        source: library::SourceKey,
+        keys: &[library::TrackKey],
+    ) -> Result<Vec<MetadataFileTarget>, crate::SourceMetadataError> {
+        if keys.is_empty() {
+            return Err(crate::SourceMetadataError::Unavailable);
+        }
+        let mut targets = Vec::with_capacity(keys.len());
+        for keys in keys.chunks(128) {
+            let rows = database
+                .track_rows(source, keys, &library::ReadCancellation::new())
+                .await
+                .map_err(metadata_database_error)?;
+            if rows.len() != keys.len() {
+                return Err(crate::SourceMetadataError::Unavailable);
+            }
+            for row in rows {
+                let (path, format) = self
+                    .metadata_track_path(database, source, &row)
+                    .await
+                    .map_err(|error| crate::SourceMetadataError::Write(error.to_string()))?
+                    .ok_or(crate::SourceMetadataError::Unavailable)?;
+                if !crate::local::metadata_file_available(&path, format.as_deref()) {
+                    return Err(crate::SourceMetadataError::Unavailable);
+                }
+                targets.push(MetadataFileTarget {
+                    track_key: row.track_key,
+                    path,
+                    format,
+                });
+            }
+        }
+        targets.sort_by(|left, right| left.path.cmp(&right.path));
+        targets.dedup_by(|left, right| left.path == right.path);
+        Ok(targets)
+    }
+
+    async fn metadata_track_path(
+        &self,
+        database: &Database,
+        source: library::SourceKey,
+        track: &library::TrackRow,
+    ) -> SourceResult<Option<(PathBuf, Option<String>)>> {
+        if track.cue_path.is_some() {
+            return Ok(None);
+        }
+        if let Some(path) = track
+            .media_uri
+            .as_deref()
+            .and_then(|uri| uri.strip_prefix("file://"))
+        {
+            return Ok(Some((PathBuf::from(path), track.source_format.clone())));
+        }
+        if matches!(&self.implementation, Implementation::OpenSubsonic(_))
+            && let Some(access) = database
+                .resolve_local_access(
+                    source,
+                    Some(&track.object_id),
+                    &track.title,
+                    &track.display_album,
+                    &track.display_artist,
+                    track.disc_number,
+                    track.track_number,
+                    track.duration_millis,
+                )
+                .await?
+        {
+            return Ok(Some((
+                PathBuf::from(access.path),
+                track.source_format.clone(),
+            )));
+        }
+        Ok(None)
+    }
+
+    pub async fn create_playlist(
+        &self,
+        database: &Database,
+        source: library::SourceKey,
+        name: &str,
+        tracks: &[library::TrackKey],
+    ) -> SourceResult<(bool, Option<ScanOutcome>)> {
+        if matches!(&self.implementation, Implementation::Local(_)) {
+            let changed = database
+                .create_playlist(source, name, tracks)
+                .await?
+                .is_some();
+            return Ok((changed, None));
+        }
+        let mut pages = tracks.chunks(PROVIDER_PLAYLIST_PAGE);
+        let first_ids = match pages.next() {
+            Some(page) => playlist_track_ids(database, source, None, page, false).await?,
+            None => Vec::new(),
+        };
+        let playlist = match &self.implementation {
+            Implementation::Jellyfin(provider) => {
+                provider.create_playlist(name, &first_ids).await?
+            }
+            Implementation::OpenSubsonic(provider) => {
+                provider.create_playlist(name, &first_ids).await?
+            }
+            Implementation::Local(_) => unreachable!(),
+        };
+        for page in pages {
+            let ids = playlist_track_ids(database, source, None, page, false).await?;
+            match &self.implementation {
+                Implementation::Jellyfin(provider) => {
+                    provider.add_playlist_tracks(&playlist, &ids).await?
+                }
+                Implementation::OpenSubsonic(provider) => {
+                    provider.add_playlist_tracks(&playlist, &ids).await?
+                }
+                Implementation::Local(_) => unreachable!(),
+            }
+        }
+        self.accept_playlist_change(database, Some(playlist), None)
+            .await
+            .map(|outcome| (true, Some(outcome)))
+    }
+
+    pub async fn rename_playlist(
+        &self,
+        database: &Database,
+        source: library::SourceKey,
+        playlist: library::PlaylistKey,
+        name: &str,
+    ) -> SourceResult<(bool, Option<ScanOutcome>)> {
+        if matches!(self.implementation, Implementation::Local(_)) {
+            return Ok((
+                database.rename_playlist(source, playlist, name).await?,
+                None,
+            ));
+        }
+        let id = source_playlist_id(database, source, playlist).await?;
+        match &self.implementation {
+            Implementation::Jellyfin(provider) => provider.rename_playlist(&id, name).await?,
+            Implementation::OpenSubsonic(provider) => provider.rename_playlist(&id, name).await?,
+            Implementation::Local(_) => unreachable!(),
+        }
+        self.accept_playlist_change(database, Some(id), None)
+            .await
+            .map(|outcome| (true, Some(outcome)))
+    }
+
+    pub async fn delete_playlist(
+        &self,
+        database: &Database,
+        source: library::SourceKey,
+        playlist: library::PlaylistKey,
+    ) -> SourceResult<(bool, Option<ScanOutcome>)> {
+        if matches!(self.implementation, Implementation::Local(_)) {
+            return Ok((database.delete_playlist(source, playlist).await?, None));
+        }
+        let id = source_playlist_id(database, source, playlist).await?;
+        match &self.implementation {
+            Implementation::Jellyfin(provider) => provider.delete_playlist(&id).await?,
+            Implementation::OpenSubsonic(provider) => provider.delete_playlist(&id).await?,
+            Implementation::Local(_) => unreachable!(),
+        }
+        self.accept_playlist_change(database, None, Some(id))
+            .await
+            .map(|outcome| (true, Some(outcome)))
+    }
+
+    pub async fn add_playlist_tracks(
+        &self,
+        database: &Database,
+        source: library::SourceKey,
+        playlist: library::PlaylistKey,
+        tracks: &[library::TrackKey],
+        skip_existing: bool,
+    ) -> SourceResult<(bool, Option<ScanOutcome>)> {
+        let skip_existing =
+            skip_existing || matches!(self.implementation, Implementation::Jellyfin(_));
+        if matches!(self.implementation, Implementation::Local(_)) {
+            let changed = database
+                .add_playlist_tracks(source, playlist, tracks, skip_existing)
+                .await?
+                != 0;
+            return Ok((changed, None));
+        }
+        let id = source_playlist_id(database, source, playlist).await?;
+        let mut changed = false;
+        for page in tracks.chunks(PROVIDER_PLAYLIST_PAGE) {
+            let ids =
+                playlist_track_ids(database, source, Some(playlist), page, skip_existing).await?;
+            if ids.is_empty() {
+                continue;
+            }
+            changed = true;
+            match &self.implementation {
+                Implementation::Jellyfin(provider) => {
+                    provider.add_playlist_tracks(&id, &ids).await?
+                }
+                Implementation::OpenSubsonic(provider) => {
+                    provider.add_playlist_tracks(&id, &ids).await?
+                }
+                Implementation::Local(_) => unreachable!(),
+            }
+        }
+        if !changed {
+            return Ok((false, None));
+        }
+        self.accept_playlist_change(database, Some(id), None)
+            .await
+            .map(|outcome| (true, Some(outcome)))
+    }
+
+    pub async fn remove_playlist_entries(
+        &self,
+        database: &Database,
+        source: library::SourceKey,
+        playlist: library::PlaylistKey,
+        entries: &[library::PlaylistEntryKey],
+    ) -> SourceResult<(bool, Option<ScanOutcome>)> {
+        if matches!(self.implementation, Implementation::Local(_)) {
+            let changed = database
+                .remove_playlist_entries(source, playlist, entries)
+                .await?
+                != 0;
+            return Ok((changed, None));
+        }
+        let id = source_playlist_id(database, source, playlist).await?;
+        for page in entries.chunks(PROVIDER_PLAYLIST_PAGE) {
+            let occurrences = database
+                .source_playlist_entry_object_ids(
+                    source,
+                    playlist,
+                    page,
+                    &library::ReadCancellation::new(),
+                )
+                .await?;
+            if occurrences.len() != page.len() {
+                return Err(SourceError::InvalidRequest(
+                    "Playlist entry is no longer current",
+                ));
+            }
+            match &self.implementation {
+                Implementation::Jellyfin(provider) => {
+                    provider.remove_playlist_entries(&id, &occurrences).await?
+                }
+                Implementation::OpenSubsonic(provider) => {
+                    provider.remove_playlist_entries(&id, &occurrences).await?
+                }
+                Implementation::Local(_) => unreachable!(),
+            }
+        }
+        self.accept_playlist_change(database, Some(id), None)
+            .await
+            .map(|outcome| (true, Some(outcome)))
+    }
+
+    pub async fn move_playlist_entry(
+        &self,
+        database: &Database,
+        source: library::SourceKey,
+        playlist: library::PlaylistKey,
+        entry: library::PlaylistEntryKey,
+        position: usize,
+    ) -> SourceResult<(bool, Option<ScanOutcome>)> {
+        if matches!(self.implementation, Implementation::Local(_)) {
+            let changed = database
+                .move_playlist_entry(source, playlist, entry, position)
+                .await?;
+            return Ok((changed, None));
+        }
+        let id = source_playlist_id(database, source, playlist).await?;
+        let occurrence = database
+            .source_playlist_entry_object_ids(
+                source,
+                playlist,
+                &[entry],
+                &library::ReadCancellation::new(),
+            )
+            .await?
+            .pop()
+            .ok_or(SourceError::InvalidRequest(
+                "Playlist entry is no longer current",
+            ))?;
+        match &self.implementation {
+            Implementation::Jellyfin(provider) => {
+                provider
+                    .move_playlist_entry(&id, &occurrence, position)
+                    .await?
+            }
+            Implementation::OpenSubsonic(provider) => {
+                provider
+                    .move_playlist_entry(&id, &occurrence, position)
+                    .await?
+            }
+            Implementation::Local(_) => unreachable!(),
+        }
+        self.accept_playlist_change(database, Some(id), None)
+            .await
+            .map(|outcome| (true, Some(outcome)))
+    }
+
+    async fn accept_playlist_change(
+        &self,
+        database: &Database,
+        affected: Option<String>,
+        deleted: Option<String>,
+    ) -> SourceResult<ScanOutcome> {
+        match &self.implementation {
             Implementation::Jellyfin(source) => {
-                source.set_favorite(item.clone(), favorite).await?;
-                Ok(FavoriteAcceptance::SourceAcknowledged { item, favorite })
+                source
+                    .apply_live_items(
+                        database,
+                        self.source_id.as_str(),
+                        affected
+                            .into_iter()
+                            .map(|id| raw_item_id(&id).to_string())
+                            .collect(),
+                        deleted
+                            .into_iter()
+                            .map(|id| raw_item_id(&id).to_string())
+                            .collect(),
+                    )
+                    .await
             }
             Implementation::OpenSubsonic(source) => {
-                source.set_favorite(item.clone(), favorite).await?;
-                Ok(FavoriteAcceptance::SourceAcknowledged { item, favorite })
+                let mut scan = Scan::begin_items(database, self.source_id.as_str()).await?;
+                if let Some(playlist) = affected {
+                    source.stage_playlist_snapshot(&mut scan, &playlist).await?;
+                } else if let Some(playlist) = deleted {
+                    scan.begin_batch().await?;
+                    scan.remove_playlist(&playlist).await?;
+                    scan.finish_batch().await?;
+                }
+                Ok(scan.finish().await?)
             }
-        }
-    }
-
-    pub async fn set_rating(
-        &self,
-        item: FavoriteItemId,
-        rating: Option<u8>,
-    ) -> SourceResult<NativeSourceResult<()>> {
-        match &self.implementation {
-            Implementation::Local(_) => Ok(NativeSourceResult::Unavailable),
-            Implementation::Jellyfin(source) => source
-                .set_rating(item, rating)
-                .await
-                .map(NativeSourceResult::Available),
-            Implementation::OpenSubsonic(source) => source
-                .set_rating(item, rating)
-                .await
-                .map(NativeSourceResult::Available),
-        }
-    }
-
-    pub fn set_local_rating(
-        &self,
-        track: &library::Track,
-        rating: Option<u8>,
-    ) -> SourceResult<NativeSourceResult<()>> {
-        match &self.implementation {
-            Implementation::Local(source) => source
-                .write_rating(track, rating)
-                .map(|written| {
-                    if written {
-                        NativeSourceResult::Available(())
-                    } else {
-                        NativeSourceResult::Unavailable
-                    }
-                })
-                .map_err(|error| SourceError::Other(error.to_string())),
-            Implementation::Jellyfin(_) | Implementation::OpenSubsonic(_) => {
-                Ok(NativeSourceResult::Unavailable)
-            }
-        }
-    }
-
-    pub async fn edit_playlist(&self, edit: PlaylistEdit) -> SourceResult<PlaylistAcceptance> {
-        match &self.implementation {
-            Implementation::Local(_) => Ok(PlaylistAcceptance::RufinOwned(edit)),
-            Implementation::Jellyfin(source) => edit_remote_playlist(source, edit).await,
-            Implementation::OpenSubsonic(source) => edit_remote_playlist(source, edit).await,
+            Implementation::Local(_) => Err(SourceError::InvalidRequest(
+                "Local playlists do not have provider changes",
+            )),
         }
     }
 
     pub async fn lyrics(
         &self,
-        track_id: &TrackId,
-        search: LyricsSearch,
-    ) -> SourceResult<NativeSourceResult<Option<NativeLyrics>>> {
+        track_object_id: &str,
+        search: crate::LyricsSearch,
+    ) -> SourceResult<Option<crate::NativeLyrics>> {
         match &self.implementation {
-            Implementation::Local(_) => Ok(NativeSourceResult::Unavailable),
-            Implementation::Jellyfin(source) => source
-                .lyrics(track_id, search)
-                .await
-                .map(NativeSourceResult::Available),
-            Implementation::OpenSubsonic(source) => source
-                .lyrics(track_id, search)
-                .await
-                .map(NativeSourceResult::Available),
+            Implementation::Local(_) => Ok(None),
+            Implementation::Jellyfin(source) => source.lyrics(track_object_id, search).await,
+            Implementation::OpenSubsonic(source) => source.lyrics(track_object_id, search).await,
         }
     }
 
-    pub async fn report_playback(
+    pub async fn browse_folder(
         &self,
-        report: SourceReportFact,
-    ) -> SourceResult<NativeSourceResult<()>> {
+        folder_object_id: Option<&str>,
+        music_folder_object_id: Option<&str>,
+    ) -> SourceResult<LiveFolderPage> {
         match &self.implementation {
-            Implementation::Local(_) => Ok(NativeSourceResult::Unavailable),
-            Implementation::Jellyfin(source) => source
-                .report_playback(report)
-                .await
-                .map(NativeSourceResult::Available),
-            Implementation::OpenSubsonic(source) => source
-                .report_playback(report)
-                .await
-                .map(NativeSourceResult::Available),
-        }
-    }
-
-    /// Reads one complete source snapshot into an invisible Library candidate.
-    ///
-    /// The bounded writer keeps provider acquisition backpressured. Library
-    /// remains the only owner of persistence, comparison, and later acceptance.
-    pub async fn prepare_library_candidate(
-        self: Arc<Self>,
-        libraries: Libraries,
-        identity: SourceInputIdentity,
-        current: Option<Arc<Library>>,
-        progress: Arc<dyn Fn(SourceReadProgress) + Send + Sync>,
-        cancelled: Arc<AtomicBool>,
-    ) -> Result<PreparedSourceCandidate, SourceCandidatePreparationError> {
-        let header = CandidateHeader {
-            source_id: identity.source_id,
-            input_digest: identity.digest,
-        };
-        let (batches, receiver) = async_channel::bounded(1);
-        let writer = tokio::task::spawn_blocking(move || {
-            let mut candidate = libraries.begin_source_candidate(header)?;
-            while let Ok(batch) = receiver.recv_blocking() {
-                candidate.write(batch)?;
-            }
-            Ok::<_, LibraryError>(candidate)
-        });
-
-        let facts = Arc::clone(&self)
-            .read_source_facts(batches, progress, Arc::clone(&cancelled))
-            .await;
-        let candidate = writer.await??;
-        let (freshness, home) = facts?;
-        if cancelled.load(Ordering::Acquire) {
-            return Err(SourceError::Cancelled.into());
-        }
-
-        tokio::task::spawn_blocking(move || {
-            candidate.finish(
-                CandidateFinish {
-                    freshness,
-                    home,
-                    accepted_at: unix_seconds(),
-                },
-                current.as_ref(),
-            )
-        })
-        .await?
-        .map_err(Into::into)
-    }
-
-    async fn read_source_facts(
-        self: Arc<Self>,
-        batches: Sender<CandidateBatch>,
-        progress: Arc<dyn Fn(SourceReadProgress) + Send + Sync>,
-        cancelled: Arc<AtomicBool>,
-    ) -> Result<(Option<ProviderFreshness>, HomeFacts), SourceCandidatePreparationError> {
-        let (freshness, home) = match &self.implementation {
-            Implementation::Local(_) => {
-                let source = Arc::clone(&self);
-                let is_cancelled = move || cancelled.load(Ordering::Acquire);
-                let completed = tokio::task::spawn_blocking(move || {
-                    let Implementation::Local(local) = &source.implementation else {
-                        unreachable!("source kind changed while reading Local facts");
-                    };
-                    let emitter = BatchEmitter::new(batches);
-                    local.read_facts(&emitter, &*progress, &is_cancelled)
-                })
-                .await??;
-                completed
-            }
+            Implementation::Local(_) => Err(SourceError::InvalidRequest(
+                "Local Folder browsing is Database-owned",
+            )),
             Implementation::Jellyfin(source) => {
-                let emitter = BatchEmitter::new(batches);
-                let is_cancelled = || cancelled.load(Ordering::Acquire);
                 source
-                    .read_facts(&emitter, &*progress, &is_cancelled)
-                    .await?
+                    .browse_folder(folder_object_id, music_folder_object_id)
+                    .await
             }
             Implementation::OpenSubsonic(source) => {
-                let emitter = BatchEmitter::new(batches);
-                let is_cancelled = || cancelled.load(Ordering::Acquire);
                 source
-                    .read_facts(&emitter, &*progress, &is_cancelled)
-                    .await?
+                    .browse_folder(folder_object_id, music_folder_object_id)
+                    .await
             }
-        };
-        Ok((freshness, home))
+        }
+    }
+
+    pub async fn generated_track_object_ids(
+        &self,
+        seed: &SourceRadioSeed,
+        limit: usize,
+    ) -> SourceResult<Vec<String>> {
+        match &self.implementation {
+            Implementation::Local(_) => Ok(Vec::new()),
+            Implementation::Jellyfin(source) => {
+                source.generated_track_object_ids(seed, limit).await
+            }
+            Implementation::OpenSubsonic(source) => {
+                source.generated_track_object_ids(seed, limit).await
+            }
+        }
+    }
+
+    pub async fn collection_track_object_ids(
+        &self,
+        collection: &SourceCollection,
+        limit: usize,
+    ) -> SourceResult<Vec<String>> {
+        match &self.implementation {
+            Implementation::Local(_) => Ok(Vec::new()),
+            Implementation::Jellyfin(source) => {
+                source.collection_track_object_ids(collection, limit).await
+            }
+            Implementation::OpenSubsonic(source) => {
+                source.collection_track_object_ids(collection, limit).await
+            }
+        }
+    }
+
+    pub async fn home_section(
+        &self,
+        section: SourceHomeSection,
+    ) -> SourceResult<Vec<library::HomeEntryInput>> {
+        match &self.implementation {
+            Implementation::Local(_) => Ok(Vec::new()),
+            Implementation::Jellyfin(source) => source.home_section(section).await,
+            Implementation::OpenSubsonic(source) => source.home_section(section).await,
+        }
+    }
+
+    pub fn start_selected_feed(
+        self: &Arc<Self>,
+        runtime: &tokio::runtime::Handle,
+        database: Arc<Database>,
+        source_key: library::SourceKey,
+    ) -> Option<Arc<SelectedFeed>> {
+        if matches!(self.implementation, Implementation::OpenSubsonic(_)) {
+            return None;
+        }
+        let (wake, receiver) = async_channel::bounded(1);
+        let feed = Arc::new(SelectedFeed {
+            source: Arc::clone(self),
+            database,
+            source_key,
+            pending: Mutex::new(None),
+            wake,
+            cancelled: Arc::new(AtomicBool::new(false)),
+            receiver,
+        });
+        match &self.implementation {
+            Implementation::Local(_) => {
+                let producer = Arc::clone(&feed);
+                let _ = std::thread::Builder::new()
+                    .name("rufin-local-watcher".to_string())
+                    .spawn(move || {
+                        let ready_feed = Arc::clone(&producer);
+                        let mut ready = move |recovered: bool| {
+                            (!recovered
+                                || ready_feed
+                                    .submit(SelectedFeedChange::Local(LocalLiveChange::Rescan)))
+                                && !ready_feed.cancelled.load(Ordering::Acquire)
+                        };
+                        let change_feed = Arc::clone(&producer);
+                        let mut changed =
+                            move |change| change_feed.submit(SelectedFeedChange::Local(change));
+                        let stop_feed = Arc::clone(&producer);
+                        if let Implementation::Local(local) = &producer.source.implementation {
+                            let _ = local.watch(&mut ready, &mut changed, &|| {
+                                stop_feed.cancelled.load(Ordering::Acquire)
+                            });
+                        }
+                    });
+            }
+            Implementation::Jellyfin(_) => {
+                let producer = Arc::clone(&feed);
+                runtime.spawn(async move {
+                    let ready_feed = Arc::clone(&producer);
+                    let mut ready = move || !ready_feed.cancelled.load(Ordering::Acquire);
+                    let gap_feed = Arc::clone(&producer);
+                    let mut gap = move || {
+                        gap_feed.submit(SelectedFeedChange::Jellyfin(
+                            JellyfinLiveChange::BoundaryLost,
+                        ))
+                    };
+                    let change_feed = Arc::clone(&producer);
+                    let mut changed =
+                        move |change| change_feed.submit(SelectedFeedChange::Jellyfin(change));
+                    let result = match &producer.source.implementation {
+                        Implementation::Jellyfin(provider) => {
+                            provider
+                                .listen_library_changes(&mut ready, &mut gap, &mut changed)
+                                .await
+                        }
+                        _ => return,
+                    };
+                    if producer.cancelled.load(Ordering::Acquire) {
+                        return;
+                    }
+                    if let Err(error) = result {
+                        tracing::warn!(%error, "Jellyfin library change feed stopped");
+                    }
+                    producer.submit(SelectedFeedChange::Jellyfin(
+                        JellyfinLiveChange::BoundaryLost,
+                    ));
+                });
+            }
+            Implementation::OpenSubsonic(_) => unreachable!(),
+        }
+        Some(feed)
+    }
+
+    #[cfg(test)]
+    pub(crate) async fn apply_local_change(
+        &self,
+        database: &Database,
+        source: library::SourceKey,
+        change: LocalLiveChange,
+    ) -> SourceResult<Option<ScanOutcome>> {
+        match (&self.implementation, change) {
+            (Implementation::Local(local), LocalLiveChange::Paths { paths, rename }) => local
+                .publish_paths(
+                    database,
+                    source,
+                    self.source_id.as_str(),
+                    &paths,
+                    rename.as_ref(),
+                )
+                .await
+                .map(Some),
+            (Implementation::Local(_), LocalLiveChange::Rescan) => Ok(None),
+            _ => Err(SourceError::InvalidRequest(
+                "Local change belongs to another source",
+            )),
+        }
+    }
+
+    pub async fn prepare_local_artwork_page(
+        &self,
+        database: &Database,
+        source: library::SourceKey,
+        after: Option<library::AlbumKey>,
+    ) -> SourceResult<ArtworkPreparationProgress> {
+        match &self.implementation {
+            Implementation::Local(local) => {
+                local.prepare_artwork_page(database, source, after).await
+            }
+            _ => Ok(ArtworkPreparationProgress {
+                completed: 0,
+                next_album: None,
+            }),
+        }
+    }
+
+    pub async fn report_playback(&self, report: &SourceReportFact) -> SourceResult<()> {
+        match &self.implementation {
+            Implementation::Local(_) => Ok(()),
+            Implementation::Jellyfin(source) => source.report_playback(report).await,
+            Implementation::OpenSubsonic(source) => source.report_playback(report).await,
+        }
+    }
+
+    pub async fn apply_local_mapping(
+        &self,
+        database: &Database,
+        source: library::SourceKey,
+        root: &std::path::Path,
+        server_prefix: Option<&str>,
+        local_prefix: Option<&str>,
+        sample_source_path: Option<&str>,
+        cancelled: Arc<AtomicBool>,
+    ) -> SourceResult<usize> {
+        let root =
+            std::fs::canonicalize(root).map_err(|error| SourceError::Other(error.to_string()))?;
+        if cancelled.load(Ordering::Acquire) {
+            return Err(SourceError::Cancelled);
+        }
+        let sample = database
+            .mapping_track_page(
+                source,
+                None,
+                sample_source_path,
+                1,
+                &library::ReadCancellation::new(),
+            )
+            .await?
+            .pop()
+            .ok_or(SourceError::InvalidRequest(
+                "No representative Track matches this mapping",
+            ))?;
+        let access = mapped_track_access(&root, server_prefix, local_prefix, sample)?.ok_or(
+            SourceError::InvalidRequest("The representative Track does not map to a local file"),
+        )?;
+        database.clear_mapping_access(source).await?;
+        database.upsert_local_access(source, &access).await?;
+        Ok(1)
+    }
+
+    pub async fn complete_local_mapping(
+        &self,
+        database: &Database,
+        source: library::SourceKey,
+        root: &std::path::Path,
+        server_prefix: Option<&str>,
+        local_prefix: Option<&str>,
+        cancelled: Arc<AtomicBool>,
+    ) -> SourceResult<usize> {
+        let root =
+            std::fs::canonicalize(root).map_err(|error| SourceError::Other(error.to_string()))?;
+        let mut after = None;
+        let mut accepted = 0;
+        loop {
+            if cancelled.load(Ordering::Acquire) {
+                return Err(SourceError::Cancelled);
+            }
+            let tracks = database
+                .mapping_track_page(source, after, None, 128, &library::ReadCancellation::new())
+                .await?;
+            if tracks.is_empty() {
+                break;
+            }
+            after = tracks.last().map(|track| track.track_key);
+            for track in tracks {
+                if cancelled.load(Ordering::Acquire) {
+                    return Err(SourceError::Cancelled);
+                }
+                if let Some(access) =
+                    mapped_track_access(&root, server_prefix, local_prefix, track)?
+                {
+                    database.upsert_local_access(source, &access).await?;
+                    accepted += 1;
+                }
+            }
+        }
+        accepted += crate::local::apply_metadata_mapping(database, source, &root, &|| {
+            cancelled.load(Ordering::Acquire)
+        })
+        .await?;
+        Ok(accepted)
     }
 }
 
-fn unix_seconds() -> i64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_secs().min(i64::MAX as u64) as i64)
-        .unwrap_or_default()
+fn mapped_track_access(
+    root: &std::path::Path,
+    server_prefix: Option<&str>,
+    local_prefix: Option<&str>,
+    track: library::MappingTrackRow,
+) -> SourceResult<Option<library::LocalAccessWrite>> {
+    let Some(path) = mapped_local_path(root, server_prefix, local_prefix, &track.source_path)
+    else {
+        return Ok(None);
+    };
+    let metadata =
+        std::fs::metadata(&path).map_err(|error| SourceError::Other(error.to_string()))?;
+    let mtime_ns = metadata
+        .modified()
+        .ok()
+        .and_then(|value| value.duration_since(std::time::UNIX_EPOCH).ok())
+        .and_then(|value| i64::try_from(value.as_nanos()).ok())
+        .unwrap_or_default();
+    #[cfg(unix)]
+    let (device_id, inode) = {
+        use std::os::unix::fs::MetadataExt;
+        (
+            i64::try_from(metadata.dev()).ok(),
+            i64::try_from(metadata.ino()).ok(),
+        )
+    };
+    #[cfg(not(unix))]
+    let (device_id, inode) = (None, None);
+    let media_uri = url::Url::from_file_path(&path)
+        .map_err(|()| SourceError::Other("could not create mapped file URI".to_string()))?
+        .to_string();
+    let mut hash = blake3::Hasher::new();
+    hash.update(path.to_string_lossy().as_bytes());
+    hash.update(&metadata.len().to_le_bytes());
+    hash.update(&mtime_ns.to_le_bytes());
+    Ok(Some(library::LocalAccessWrite {
+        track_object_id: Some(track.object_id),
+        origin: library::LocalAccessOrigin::Mapping,
+        path: path.to_string_lossy().into_owned(),
+        root: root.to_string_lossy().into_owned(),
+        relative_path: path
+            .strip_prefix(root)
+            .unwrap_or(&path)
+            .to_string_lossy()
+            .into_owned(),
+        size_bytes: i64::try_from(metadata.len()).unwrap_or(i64::MAX),
+        mtime_ns,
+        device_id,
+        inode,
+        parser_version: 1,
+        title: track.title,
+        album: track.album,
+        artist: track.artist,
+        disc_number: track.disc_number,
+        track_number: track.track_number,
+        duration_millis: track.duration_millis,
+        media_uri,
+        loudness_analysis_key: *hash.finalize().as_bytes(),
+    }))
+}
+
+fn mapped_local_path(
+    root: &std::path::Path,
+    server_prefix: Option<&str>,
+    local_prefix: Option<&str>,
+    source_path: &str,
+) -> Option<PathBuf> {
+    let mut base = root.to_path_buf();
+    if let Some(prefix) = local_prefix.filter(|prefix| !prefix.trim().is_empty()) {
+        base.push(prefix);
+    }
+    if let Some(prefix) = server_prefix {
+        let relative = source_path
+            .strip_prefix(prefix)?
+            .trim_start_matches(['/', '\\']);
+        return mapped_file(root, base.join(relative.replace('\\', "/")));
+    }
+    if let Some(path) = mapped_file(root, PathBuf::from(source_path)) {
+        return Some(path);
+    }
+    let components = std::path::Path::new(source_path)
+        .components()
+        .filter_map(|component| match component {
+            std::path::Component::Normal(value) => Some(value),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    (0..components.len()).find_map(|start| {
+        let path = components[start..]
+            .iter()
+            .fold(base.clone(), |mut path, part| {
+                path.push(part);
+                path
+            });
+        mapped_file(root, path)
+    })
+}
+
+fn mapped_file(root: &std::path::Path, candidate: PathBuf) -> Option<PathBuf> {
+    let path = std::fs::canonicalize(candidate).ok()?;
+    (path.starts_with(root) && path.is_file()).then_some(path)
+}
+
+struct MetadataFileTarget {
+    track_key: library::TrackKey,
+    path: PathBuf,
+    format: Option<String>,
+}
+
+fn album_metadata_from_targets(
+    album: library::AlbumRow,
+    targets: &[MetadataFileTarget],
+) -> Result<crate::AlbumMetadata, crate::SourceMetadataError> {
+    let first = targets
+        .first()
+        .ok_or(crate::SourceMetadataError::Unavailable)?;
+    let track =
+        crate::local::read_track_metadata(first.track_key, &first.path, first.format.as_deref())?;
+    let mut values =
+        crate::local::read_album_metadata_values(&first.path, first.format.as_deref())?;
+    if values.title.is_empty() {
+        values.title = album.title.clone();
+    }
+    if values.album_artist.is_none() {
+        values.album_artist = Some(album.display_artist.clone());
+    }
+    if values.artist.is_none() {
+        values.artist = Some(album.display_artist.clone());
+    }
+    let source_values = values.clone();
+    let mut rufin_filled = crate::AlbumMetadataWritable::default();
+    if values.musicbrainz_album_id.is_none() && album.musicbrainz_release_id.is_some() {
+        values.musicbrainz_album_id = album.musicbrainz_release_id.clone();
+        rufin_filled.musicbrainz_album_id = true;
+    }
+    if values.musicbrainz_release_group_id.is_none() && album.musicbrainz_release_group_id.is_some()
+    {
+        values.musicbrainz_release_group_id = album.musicbrainz_release_group_id.clone();
+        rufin_filled.musicbrainz_release_group_id = true;
+    }
+    let mut mixed = crate::AlbumMetadataMixed::default();
+    for target in &targets[1..] {
+        let observed =
+            crate::local::read_album_metadata_values(&target.path, target.format.as_deref())?;
+        mixed.title |= observed.title != source_values.title;
+        mixed.sort_title |= observed.sort_title != source_values.sort_title;
+        mixed.artist |= observed.artist != source_values.artist;
+        mixed.album_artist |= observed.album_artist != source_values.album_artist;
+        mixed.year |= observed.year != source_values.year;
+        mixed.genre |= observed.genre != source_values.genre;
+        mixed.comment |= observed.comment != source_values.comment;
+        mixed.musicbrainz_album_id |=
+            observed.musicbrainz_album_id != source_values.musicbrainz_album_id;
+        mixed.musicbrainz_release_group_id |=
+            observed.musicbrainz_release_group_id != source_values.musicbrainz_release_group_id;
+    }
+    let paths = targets
+        .iter()
+        .map(|target| target.path.clone())
+        .collect::<Vec<_>>();
+    Ok(crate::AlbumMetadata {
+        album_key: album.album_key,
+        writable: crate::AlbumMetadataWritable {
+            title: track.writable.album,
+            sort_title: track.writable.sort_title,
+            artist: track.writable.artist,
+            album_artist: track.writable.album_artist,
+            year: track.writable.year,
+            genre: track.writable.genre,
+            comment: track.writable.comment,
+            locked: false,
+            musicbrainz_album_id: track.writable.musicbrainz_album_id,
+            musicbrainz_release_group_id: track.writable.musicbrainz_release_group_id,
+        },
+        source_search: false,
+        revision: Some(crate::local::metadata::combined_revision(&paths)?),
+        source_values,
+        values,
+        rufin_filled,
+        track_count: targets.len(),
+        mixed,
+    })
+}
+
+fn artist_metadata_from_targets(
+    artist: library::ArtistRow,
+    targets: &[MetadataFileTarget],
+) -> Result<crate::ArtistMetadata, crate::SourceMetadataError> {
+    let first = targets
+        .first()
+        .ok_or(crate::SourceMetadataError::Unavailable)?;
+    let track =
+        crate::local::read_track_metadata(first.track_key, &first.path, first.format.as_deref())?;
+    let mut values = crate::local::read_artist_metadata_values(
+        &first.path,
+        first.format.as_deref(),
+        &artist.name,
+    )?;
+    let source_values = values.clone();
+    let mut rufin_filled = crate::ArtistMetadataWritable::default();
+    if values.musicbrainz_artist_id.is_none() && artist.musicbrainz_artist_id.is_some() {
+        values.musicbrainz_artist_id = artist.musicbrainz_artist_id.clone();
+        rufin_filled.musicbrainz_artist_id = true;
+    }
+    let mut mixed = crate::ArtistMetadataMixed::default();
+    for target in &targets[1..] {
+        let observed = crate::local::read_artist_metadata_values(
+            &target.path,
+            target.format.as_deref(),
+            &artist.name,
+        )?;
+        mixed.sort_name |= observed.sort_name != source_values.sort_name;
+        mixed.genre |= observed.genre != source_values.genre;
+        mixed.comment |= observed.comment != source_values.comment;
+        mixed.musicbrainz_artist_id |=
+            observed.musicbrainz_artist_id != source_values.musicbrainz_artist_id;
+    }
+    let paths = targets
+        .iter()
+        .map(|target| target.path.clone())
+        .collect::<Vec<_>>();
+    Ok(crate::ArtistMetadata {
+        artist_key: artist.artist_key,
+        writable: crate::ArtistMetadataWritable {
+            name: track.writable.artist,
+            sort_name: track.writable.sort_title,
+            genre: track.writable.genre,
+            comment: track.writable.comment,
+            locked: false,
+            musicbrainz_artist_id: track.writable.musicbrainz_artist_id,
+        },
+        source_search: false,
+        revision: Some(crate::local::metadata::combined_revision(&paths)?),
+        source_values,
+        values,
+        rufin_filled,
+        track_count: targets.len(),
+        mixed,
+    })
+}
+
+fn track_write_from_values(
+    track: &library::TrackRow,
+    values: &crate::TrackMetadataValues,
+) -> library::TrackMetadataWrite {
+    let title = values.title.trim().to_string();
+    let album = values
+        .album
+        .clone()
+        .unwrap_or_else(|| track.display_album.clone());
+    let artist = values
+        .artist
+        .clone()
+        .unwrap_or_else(|| track.display_artist.clone());
+    library::TrackMetadataWrite {
+        normalized_search: format!(
+            "{title} {album} {artist} {}",
+            values.comment.as_deref().unwrap_or_default()
+        )
+        .to_lowercase(),
+        sort_text: values
+            .sort_title
+            .clone()
+            .unwrap_or_else(|| title.to_lowercase()),
+        title,
+        display_album: album,
+        display_artist: artist,
+        duration_millis: track.duration_millis,
+        disc_number: values
+            .disc_number
+            .map(i64::from)
+            .unwrap_or(track.disc_number),
+        track_number: values
+            .track_number
+            .map(i64::from)
+            .unwrap_or(track.track_number),
+        year: values.year.map(i64::from),
+        release_date: track.release_date.clone(),
+        date_added: track.date_added.clone(),
+        media_uri: track.media_uri.clone(),
+        source_format: track.source_format.clone(),
+        comment: values.comment.clone(),
+        bpm: values.bpm.map(i64::from),
+        musicbrainz_recording_id: values.musicbrainz_recording_id.clone(),
+        musicbrainz_release_track_id: values.musicbrainz_release_track_id.clone(),
+        cue_path: track.cue_path.clone(),
+        cue_start_millis: track.cue_start_millis,
+        cue_end_millis: track.cue_end_millis,
+        loudness_analysis_key: track.loudness_analysis_key,
+    }
+}
+
+#[cfg(test)]
+mod live_acquisition_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn local_search_and_folder_are_unavailable_not_successfully_empty() {
+        let directory = tempfile::tempdir().unwrap();
+        let local =
+            crate::local::LocalSource::from_roots(vec![directory.path().to_path_buf()]).unwrap();
+        let source = Source::new(
+            SourceId::new(crate::local::LOCAL_LIBRARY_SOURCE_ID),
+            Implementation::Local(local),
+        );
+        assert!(matches!(
+            source.live_search("track", 20).await,
+            Err(SourceError::InvalidRequest(_))
+        ));
+        assert!(matches!(
+            source.browse_folder(None, None).await,
+            Err(SourceError::InvalidRequest(_))
+        ));
+    }
+}
+
+fn metadata_database_error(error: library::LibraryError) -> crate::SourceMetadataError {
+    crate::SourceMetadataError::Write(error.to_string())
+}
+
+async fn source_playlist_id(
+    database: &Database,
+    source: library::SourceKey,
+    playlist: library::PlaylistKey,
+) -> SourceResult<String> {
+    database
+        .source_playlist_object_id(source, playlist, &library::ReadCancellation::new())
+        .await?
+        .ok_or(SourceError::InvalidRequest("Playlist is no longer current"))
+}
+
+async fn playlist_track_ids(
+    database: &Database,
+    source: library::SourceKey,
+    playlist: Option<library::PlaylistKey>,
+    tracks: &[library::TrackKey],
+    skip_existing: bool,
+) -> SourceResult<Vec<String>> {
+    let ids = database
+        .source_playlist_track_object_ids(
+            source,
+            playlist,
+            tracks,
+            skip_existing,
+            &library::ReadCancellation::new(),
+        )
+        .await?;
+    if !skip_existing && ids.len() != tracks.len() {
+        return Err(SourceError::InvalidRequest(
+            "Playlist Track is no longer current",
+        ));
+    }
+    Ok(ids)
+}
+
+pub(crate) fn require_source_edit(
+    current: &SourceConfiguration,
+    expected_kind: &str,
+) -> SourceResult<()> {
+    if current.kind == expected_kind {
+        Ok(())
+    } else {
+        Err(SourceError::InvalidConfig(format!(
+            "expected {expected_kind}, found {}",
+            current.kind
+        )))
+    }
 }
 
 pub(crate) fn configured_source_name(configured: Option<String>, provider: String) -> String {
-    if let Some(name) = configured.filter(|name| !name.trim().is_empty()) {
-        name.trim().to_string()
-    } else {
-        provider
-    }
-}
-
-pub(crate) fn require_source_edit(current: &SourceConfiguration, kind: &str) -> SourceResult<()> {
-    if current.kind != kind {
-        return Err(SourceError::InvalidRequest(
-            "the source edit belongs to another provider",
-        ));
-    }
-    Ok(())
+    configured
+        .filter(|name| !name.trim().is_empty())
+        .map(|name| name.trim().to_string())
+        .unwrap_or(provider)
 }
 
 pub(crate) fn comparable_address(value: &str) -> &str {
@@ -1008,361 +2383,131 @@ pub(crate) fn edited_source_name(requested: &str, current: &str) -> String {
     }
 }
 
-async fn edit_remote_playlist(
-    source: &impl RemotePlaylistSource,
-    edit: PlaylistEdit,
-) -> SourceResult<PlaylistAcceptance> {
-    let playlist_id = match edit {
-        PlaylistEdit::Create { name, track_ids } => {
-            source.create_playlist(&name, &track_ids).await?
-        }
-        PlaylistEdit::Rename { playlist_id, name } => {
-            source.rename_playlist(&playlist_id, &name).await?;
-            playlist_id
-        }
-        PlaylistEdit::Delete { playlist_id } => {
-            source.delete_playlist(&playlist_id).await?;
-            return Ok(PlaylistAcceptance::SourceDeleted(playlist_id));
-        }
-        PlaylistEdit::AddTracks {
-            playlist_id,
-            track_ids,
-        } => {
-            source.add_playlist_tracks(&playlist_id, &track_ids).await?;
-            playlist_id
-        }
-        PlaylistEdit::RemoveEntries {
-            playlist_id,
-            occurrence_ids,
-        } => {
-            source
-                .remove_playlist_entries(&playlist_id, &occurrence_ids)
-                .await?;
-            playlist_id
-        }
-        PlaylistEdit::MoveEntry {
-            playlist_id,
-            occurrence_id,
-            new_index,
-        } => {
-            source
-                .move_playlist_entry(&playlist_id, &occurrence_id, new_index)
-                .await?;
-            playlist_id
-        }
-    };
-    source
-        .read_playlist_snapshot(&playlist_id)
-        .await
-        .map(PlaylistAcceptance::SourceSnapshot)
-}
-
 #[cfg(test)]
-mod input_identity_tests {
+mod refresh_laws {
     use super::*;
-    use crate::SourceCacheMatch;
-    use library::MusicFolder;
-
-    fn music_folder(name: &str) -> MusicFolder {
-        MusicFolder {
-            id: MusicFolderId::new(name),
-            name: name.to_string(),
-            image_ref: None,
-        }
-    }
-
-    #[test]
-    fn sync_batch_emitter_suppresses_empty_batches() {
-        let (batches, receiver) = async_channel::unbounded();
-        let emitter = BatchEmitter::new(batches);
-
-        emitter
-            .emit(CandidateBatch::MusicFolders(Vec::new()))
-            .expect("suppress empty batch");
-        emitter
-            .emit(CandidateBatch::MusicFolders(vec![music_folder("first")]))
-            .expect("send populated batch");
-        drop(emitter);
-
-        let emitted = std::iter::from_fn(|| receiver.try_recv().ok()).collect::<Vec<_>>();
-        assert_eq!(emitted.len(), 1);
-        assert!(matches!(
-            &emitted[0],
-            CandidateBatch::MusicFolders(folders) if folders == &[music_folder("first")]
-        ));
-    }
 
     #[tokio::test]
-    async fn closed_batch_channel_cancels_sync_and_async_senders() {
-        let (sync_batches, sync_receiver) = async_channel::unbounded();
-        let sync_emitter = BatchEmitter::new(sync_batches);
-        drop(sync_receiver);
-        assert!(matches!(
-            sync_emitter.emit(CandidateBatch::MusicFolders(vec![music_folder("sync")])),
-            Err(SourceError::Cancelled)
-        ));
-
-        let (async_batches, async_receiver) = async_channel::unbounded();
-        let async_emitter = BatchEmitter::new(async_batches);
-        drop(async_receiver);
-        assert!(matches!(
-            async_emitter
-                .emit_async(CandidateBatch::MusicFolders(vec![music_folder("async")]))
-                .await,
-            Err(SourceError::Cancelled)
-        ));
-    }
-
-    #[test]
-    fn jellyfin_change_merge_keeps_the_latest_action_and_full_dominates() {
-        let mut changed = ObservedSourceChange::jellyfin(
-            BTreeSet::from(["track-one".to_string(), "track-two".to_string()]),
-            BTreeSet::new(),
-        );
-        changed
-            .merge(ObservedSourceChange::jellyfin(
-                BTreeSet::from(["album-one".to_string()]),
-                BTreeSet::from(["track-one".to_string()]),
-            ))
-            .expect("merge Jellyfin change");
-        changed
-            .merge(ObservedSourceChange::jellyfin(
-                BTreeSet::from(["track-one".to_string()]),
-                BTreeSet::from(["track-two".to_string()]),
-            ))
-            .expect("merge Jellyfin change");
-        assert_eq!(
-            changed,
-            ObservedSourceChange::Jellyfin {
-                upserts: BTreeSet::from(["album-one".to_string(), "track-one".to_string(),]),
-                removals: BTreeSet::from(["track-two".to_string()]),
-            }
-        );
-
-        changed
-            .merge(ObservedSourceChange::full())
-            .expect("full change dominates");
-        changed
-            .merge(ObservedSourceChange::jellyfin(
-                BTreeSet::from(["track-three".to_string()]),
-                BTreeSet::new(),
-            ))
-            .expect("full change remains dominant");
-        assert_eq!(changed, ObservedSourceChange::full());
-    }
-
-    #[test]
-    fn local_file_changes_coalesce_without_losing_a_rescan() {
-        let mut changed =
-            ObservedSourceChange::LocalPaths(BTreeSet::from([PathBuf::from("/music/one.flac")]));
-        changed
-            .merge(ObservedSourceChange::LocalPaths(BTreeSet::from([
-                PathBuf::from("/music/one.flac"),
-                PathBuf::from("/music/two.flac"),
-            ])))
-            .expect("merge Local paths");
-        assert_eq!(
-            changed,
-            ObservedSourceChange::LocalPaths(BTreeSet::from([
-                PathBuf::from("/music/one.flac"),
-                PathBuf::from("/music/two.flac"),
-            ]))
-        );
-
-        changed
-            .merge(ObservedSourceChange::LocalRescan)
-            .expect("rescan dominates Local paths");
-        assert_eq!(changed, ObservedSourceChange::LocalRescan);
-    }
-
-    fn jellyfin(
-        base_url: &str,
-        user_id: &str,
-        trust_invalid_cert: bool,
-        instant_mix: bool,
-        name: &str,
-    ) -> SourceConfiguration {
-        crate::config::encode_provider_payload(
-            SourceId::new("configured:jellyfin"),
-            crate::jellyfin::JELLYFIN_SOURCE_ID,
-            name,
-            crate::jellyfin::JellyfinSourceConfig {
-                base_url: base_url.to_string(),
-                server_id: None,
-                user_id: user_id.to_string(),
-                username: "listener".to_string(),
-                trust_invalid_cert,
-                use_instant_mix: instant_mix,
-            }
-            .into_payload(),
-        )
-    }
-
-    fn subsonic(base_url: &str, username: &str, trust_invalid_cert: bool) -> SourceConfiguration {
-        navidrome(base_url, username, trust_invalid_cert, 0)
-    }
-
-    fn navidrome(
-        base_url: &str,
-        username: &str,
-        trust_invalid_cert: bool,
-        library_version: u32,
-    ) -> SourceConfiguration {
-        crate::config::encode_provider_payload(
-            SourceId::new("configured:subsonic"),
-            "navidrome",
-            "Server",
-            crate::subsonic::SubsonicSourceConfig {
-                base_url: base_url.to_string(),
-                username: username.to_string(),
-                trust_invalid_cert,
-                navidrome_library_version: library_version,
-                authentication: crate::subsonic::SubsonicAuthentication::Password,
-            }
-            .into_payload(),
-        )
-    }
-
-    fn input_digest(configuration: &SourceConfiguration) -> [u8; 32] {
-        configuration
-            .input_identity()
-            .expect("valid source input identity")
-            .digest
-    }
-
-    #[test]
-    fn remote_account_qualifies_cached_source_facts() {
-        let jellyfin_a = jellyfin("https://one.example", "account", false, false, "One");
-        let jellyfin_b = jellyfin("https://two.example", "account", false, false, "One");
-        let jellyfin_other_user =
-            jellyfin("https://one.example", "other-account", false, false, "One");
-        assert_eq!(input_digest(&jellyfin_a), input_digest(&jellyfin_b));
-        assert_ne!(
-            input_digest(&jellyfin_a),
-            input_digest(&jellyfin_other_user)
-        );
-        assert_eq!(
-            jellyfin_other_user
-                .cache_match(
-                    &jellyfin_a
-                        .input_identity()
-                        .expect("Jellyfin input identity")
-                )
-                .expect("classify another Jellyfin account's cache"),
-            SourceCacheMatch::Incompatible
-        );
-
-        let subsonic_a = subsonic("https://one.example", "listener", false);
-        let subsonic_b = subsonic("https://two.example", "listener", false);
-        let subsonic_other_user = subsonic("https://one.example", "other", false);
-        assert_eq!(input_digest(&subsonic_a), input_digest(&subsonic_b));
-        assert_ne!(
-            input_digest(&subsonic_a),
-            input_digest(&subsonic_other_user)
-        );
-    }
-
-    #[test]
-    fn presentation_and_transport_policy_do_not_invalidate_cached_facts() {
-        let baseline = jellyfin("https://music.example", "account", false, false, "Music");
-        let presentation = jellyfin("https://music.example/", "account", true, true, "Renamed");
-        assert_eq!(input_digest(&baseline), input_digest(&presentation));
-
-        let subsonic_baseline = subsonic("https://music.example", "listener", false);
-        let subsonic_trust = subsonic("https://music.example/", "listener", true);
-        assert_eq!(
-            input_digest(&subsonic_baseline),
-            input_digest(&subsonic_trust)
-        );
-    }
-
-    #[test]
-    fn navidrome_library_reader_qualifies_cached_source_facts() {
-        let generic = navidrome("https://music.example", "listener", false, 0);
-        let private_library = navidrome("https://music.example", "listener", false, 1);
-        let other_user = navidrome("https://music.example", "other", false, 0);
-
-        assert_ne!(input_digest(&generic), input_digest(&private_library));
-        assert_eq!(
-            private_library
-                .cache_match(&generic.input_identity().expect("generic input identity"))
-                .expect("classify generic Navidrome cache"),
-            SourceCacheMatch::ReaderUpgrade
-        );
-        assert_eq!(
-            private_library
-                .cache_match(
-                    &private_library
-                        .input_identity()
-                        .expect("native input identity")
-                )
-                .expect("classify native Navidrome cache"),
-            SourceCacheMatch::Exact
-        );
-        assert_eq!(
-            private_library
-                .cache_match(&other_user.input_identity().expect("other input identity"))
-                .expect("classify another account's cache"),
-            SourceCacheMatch::Incompatible
-        );
-    }
-
-    #[test]
-    fn local_roots_qualify_cached_source_facts() {
-        let directory = tempfile::tempdir().expect("temporary Local roots");
-        let first = SourceConfiguration::local(
-            SourceId::new(crate::local::LOCAL_LIBRARY_SOURCE_ID),
-            "Local",
-            vec![directory.path().join("one")],
-        )
-        .expect("first Local configuration");
-        let second = SourceConfiguration::local(
-            SourceId::new(crate::local::LOCAL_LIBRARY_SOURCE_ID),
-            "Local",
-            vec![directory.path().join("two")],
-        )
-        .expect("second Local configuration");
-        assert_ne!(input_digest(&first), input_digest(&second));
-        assert_eq!(
-            second
-                .cache_match(&first.input_identity().expect("first Local input identity"))
-                .expect("classify another Local root cache"),
-            SourceCacheMatch::Incompatible
-        );
-    }
-
-    #[tokio::test]
-    async fn local_home_refresh_stays_at_the_library_boundary() {
-        let directory = tempfile::tempdir().expect("temporary Local root parent");
+    async fn unsupported_freshness_never_widens_to_a_catalog_acquisition() {
+        let directory = tempfile::tempdir().expect("Store directory");
+        let database = Database::open(directory.path().join("library.sqlite"))
+            .await
+            .expect("Database");
         let source = Source::open(
-            crate::config::encode_provider_payload(
-                SourceId::new(crate::local::LOCAL_LIBRARY_SOURCE_ID),
-                crate::local::LOCAL_SOURCE_ID,
-                "Local",
-                crate::local::LocalSourceConfig {
-                    roots: vec![directory.path().join("unavailable")],
-                }
-                .into_payload(),
-            ),
-            None,
-            None,
+            SourceConfiguration {
+                source_id: SourceId::new("jellyfin:test"),
+                kind: "jellyfin".to_string(),
+                name: "Jellyfin".to_string(),
+                provider_payload: serde_json::json!({
+                    "version": 1,
+                    "base_url": "http://127.0.0.1:9",
+                    "server_id": "test",
+                    "user_id": "user",
+                    "username": "listener",
+                    "trust_invalid_cert": false,
+                    "use_jellyfin_instant_mix": false
+                })
+                .to_string(),
+            },
+            Some("token".to_string()),
+            Some("device".to_string()),
         )
-        .expect("open Local fixture");
+        .expect("open Jellyfin source");
 
-        for kind in [
-            HomeSectionKind::Explore,
-            HomeSectionKind::MostPlayed,
-            HomeSectionKind::NewlyAdded,
-            HomeSectionKind::RecentlyPlayed,
-            HomeSectionKind::RecentlyReleased,
-        ] {
-            assert!(matches!(
-                source
-                    .home_section(kind)
-                    .await
-                    .expect("Local Home boundary"),
-                NativeSourceResult::Unavailable
-            ));
-        }
+        assert_eq!(
+            source
+                .refresh_if_needed(
+                    &database,
+                    "Jellyfin",
+                    &|_| panic!("unsupported freshness started acquisition progress"),
+                    Arc::new(AtomicBool::new(false)),
+                )
+                .await
+                .expect("freshness check"),
+            None
+        );
+        assert!(
+            database
+                .cached_source("jellyfin:test", &library::ReadCancellation::new())
+                .await
+                .expect("cached source")
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn selected_feed_accumulates_exact_jellyfin_ids_with_one_bound() {
+        let merged = SelectedFeedChange::Jellyfin(JellyfinLiveChange::Items {
+            upserts: vec!["two".to_string(), "one".to_string()],
+            removals: Vec::new(),
+        })
+        .merge(SelectedFeedChange::Jellyfin(JellyfinLiveChange::Items {
+            upserts: vec!["one".to_string(), "three".to_string()],
+            removals: vec!["gone".to_string()],
+        }));
+        let SelectedFeedChange::Jellyfin(JellyfinLiveChange::Items { upserts, removals }) = merged
+        else {
+            panic!("exact evidence widened unexpectedly");
+        };
+        assert_eq!(upserts, ["one", "three", "two"]);
+        assert_eq!(removals, ["gone"]);
+    }
+
+    #[test]
+    fn selected_feed_overflow_coalesces_to_one_boundary_operation() {
+        let merged = SelectedFeedChange::Jellyfin(JellyfinLiveChange::Items {
+            upserts: (0..LIVE_CHANGE_LIMIT)
+                .map(|index| format!("item-{index}"))
+                .collect(),
+            removals: Vec::new(),
+        })
+        .merge(SelectedFeedChange::Jellyfin(JellyfinLiveChange::Items {
+            upserts: vec!["overflow".to_string()],
+            removals: Vec::new(),
+        }));
+        assert!(matches!(
+            merged,
+            SelectedFeedChange::Jellyfin(JellyfinLiveChange::BoundaryLost)
+        ));
+    }
+
+    #[test]
+    fn repeated_boundary_evidence_admits_one_recovery() {
+        let (wake, receiver) = async_channel::bounded(1);
+        let mut pending = Some(SelectedFeedChange::Jellyfin(
+            JellyfinLiveChange::BoundaryLost,
+        ));
+        pending = Some(pending.take().expect("first boundary").merge(
+            SelectedFeedChange::Jellyfin(JellyfinLiveChange::BoundaryLost),
+        ));
+        assert!(wake.try_send(()).is_ok());
+        let _ = wake.try_send(());
+        assert!(matches!(
+            pending.as_ref(),
+            Some(SelectedFeedChange::Jellyfin(
+                JellyfinLiveChange::BoundaryLost
+            ))
+        ));
+        assert!(receiver.try_recv().is_ok());
+        assert!(receiver.try_recv().is_err());
+    }
+
+    #[test]
+    fn representative_mapping_finds_the_existing_suffix_without_a_manual_server_prefix() {
+        let root = tempfile::tempdir().expect("local music root");
+        let track = root.path().join("Artist").join("Album").join("Track.flac");
+        std::fs::create_dir_all(track.parent().expect("Track parent")).expect("create Album");
+        std::fs::write(&track, b"media").expect("write Track");
+        let canonical_root = root.path().canonicalize().expect("canonical music root");
+
+        assert_eq!(
+            mapped_local_path(
+                &canonical_root,
+                None,
+                None,
+                "/srv/navidrome/music/Artist/Album/Track.flac",
+            ),
+            Some(track.canonicalize().expect("canonical Track"))
+        );
     }
 }

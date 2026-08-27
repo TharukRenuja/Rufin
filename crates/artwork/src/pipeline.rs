@@ -5,7 +5,7 @@ use std::sync::{Arc, Condvar, Mutex, MutexGuard, Weak};
 use std::thread;
 use std::time::Duration;
 
-use library::{SourceArtwork, SourceId};
+use sources::SourceId;
 use tokio::runtime::Handle;
 use tokio::sync::oneshot;
 use tracing::warn;
@@ -21,8 +21,9 @@ use crate::{
 };
 
 pub(crate) const WORKERS: usize = 4;
+pub(crate) const PREPARATION_WORKERS: usize = WORKERS - 1;
 // Keep every worker fed without mirroring the selected source in the job table.
-pub(crate) const PREPARATION_WINDOW: usize = WORKERS * 4;
+pub(crate) const PREPARATION_WINDOW: usize = PREPARATION_WORKERS * 4;
 const MAX_DECODED_INDEX_ENTRIES: usize = 4_096;
 const SOURCE_ARTWORK_SIZE: u32 = 256;
 
@@ -92,6 +93,7 @@ struct PreparationSubscriber {
 #[derive(Clone, Copy)]
 enum BackgroundResult {
     Ready,
+    Cached,
     Missing,
     Failed,
 }
@@ -150,6 +152,40 @@ enum Resolution {
 type LeaseCompletion = (oneshot::Sender<ArtworkOutcome>, ArtworkOutcome);
 
 impl Pipeline {
+    pub(crate) fn begin_source_manifest(
+        &self,
+        source_id: &SourceId,
+        revision: u64,
+    ) -> std::io::Result<std::path::PathBuf> {
+        self.shared.cache.begin_source_manifest(source_id, revision)
+    }
+
+    pub(crate) fn mark_source_manifest(
+        &self,
+        staging: &std::path::Path,
+        bindings: &[Vec<u8>],
+    ) -> std::io::Result<()> {
+        for binding in bindings {
+            if let Some(candidate) = ArtworkBinding::opaque(binding).candidates().first() {
+                self.shared
+                    .cache
+                    .mark_source_manifest_identity(staging, &candidate.stable_identity())?;
+            }
+        }
+        Ok(())
+    }
+
+    pub(crate) fn complete_source_manifest(
+        &self,
+        source_id: &SourceId,
+        revision: u64,
+        staging: &std::path::Path,
+    ) -> std::io::Result<()> {
+        let _commit = lock_cache_commit(&self.shared);
+        self.shared
+            .cache
+            .complete_source_manifest_staging(source_id, revision, staging)
+    }
     pub(crate) fn new(cache_root: &Path, runtime: Handle) -> Result<Self, ArtworkError> {
         let cache = FilesystemCache::new(cache_root.to_path_buf())?;
         let fetch = FetchContext::new().map_err(ArtworkError::FetchSetup)?;
@@ -169,7 +205,7 @@ impl Pipeline {
             let worker = Arc::clone(&shared);
             thread::Builder::new()
                 .name(format!("artwork-{index}"))
-                .spawn(move || run_worker(worker))
+                .spawn(move || run_worker(worker, index == 0))
                 .map_err(ArtworkError::Cache)?;
         }
         Ok(Self { shared })
@@ -183,14 +219,6 @@ impl Pipeline {
         self.request_with_priority(source, request, JobPriority::Foreground)
     }
 
-    pub(crate) fn warm(
-        self: &Arc<Self>,
-        source: SourceImages,
-        request: ArtworkRequest,
-    ) -> Result<ArtworkLoad, ArtworkError> {
-        self.request_with_priority(source, request, JobPriority::Preparation)
-    }
-
     fn request_with_priority(
         self: &Arc<Self>,
         source: SourceImages,
@@ -200,7 +228,7 @@ impl Pipeline {
         let mut state = lock_state(&self.shared);
         let request_id = RequestId(state.next_request);
         state.next_request = state.next_request.wrapping_add(1).max(1);
-        let (ready, _) = decoded_for_request(&mut state, &self.shared.cache, &source, &request);
+        let ready = decoded_from_memory(&mut state, &source, &request);
         if let Some(image) = ready {
             return Ok(ArtworkLoad::Ready(image));
         }
@@ -236,10 +264,31 @@ impl Pipeline {
         }))
     }
 
-    pub(crate) fn prepare_source_artwork(
+    pub(crate) fn source_preparation_complete(
+        &self,
+        source_id: &SourceId,
+        revision: u64,
+    ) -> Result<bool, ArtworkError> {
+        self.shared
+            .cache
+            .source_manifest_complete(source_id, revision)
+            .map_err(ArtworkError::Cache)
+    }
+
+    pub(crate) fn prefetch_source_artwork(
         &self,
         source: SourceImages,
-        artwork: Arc<[SourceArtwork]>,
+        artwork: Arc<[Vec<u8>]>,
+        progress: &(dyn Fn(usize, usize) + Send + Sync),
+        cancelled: &(dyn Fn() -> bool + Send + Sync),
+    ) -> Result<ArtworkPreparation, ArtworkError> {
+        self.prepare_source_artwork_jobs(source, artwork, progress, cancelled)
+    }
+
+    fn prepare_source_artwork_jobs(
+        &self,
+        source: SourceImages,
+        artwork: Arc<[Vec<u8>]>,
         progress: &(dyn Fn(usize, usize) + Send + Sync),
         cancelled: &(dyn Fn() -> bool + Send + Sync),
     ) -> Result<ArtworkPreparation, ArtworkError> {
@@ -276,15 +325,18 @@ impl Pipeline {
                 let mut state = lock_state(&self.shared);
                 for source_artwork in &artwork[admitted..end] {
                     let request = ArtworkRequest::new(
-                        ArtworkBinding::source_artwork(source_artwork),
+                        ArtworkBinding::opaque(source_artwork),
                         SOURCE_ARTWORK_SIZE,
                         SOURCE_ARTWORK_SIZE,
                     );
+                    if request.binding.candidates().is_empty() {
+                        let _ = completion.send(BackgroundResult::Missing);
+                        continue;
+                    }
                     if decoded_for_request(&mut state, &self.shared.cache, &source, &request)
-                        .0
                         .is_some()
                     {
-                        let _ = completion.send(BackgroundResult::Ready);
+                        let _ = completion.send(BackgroundResult::Cached);
                         continue;
                     }
                     enqueue_background(
@@ -304,6 +356,10 @@ impl Pipeline {
 
             match completed.recv_timeout(Duration::from_millis(25)) {
                 Ok(BackgroundResult::Ready) => summary.ready += 1,
+                Ok(BackgroundResult::Cached) => {
+                    summary.ready += 1;
+                    summary.cached += 1;
+                }
                 Ok(BackgroundResult::Missing) => summary.missing += 1,
                 Ok(BackgroundResult::Failed) => summary.failed += 1,
                 Err(RecvTimeoutError::Timeout) => continue,
@@ -316,17 +372,6 @@ impl Pipeline {
             progress(completed_count, total);
         }
         Ok(summary)
-    }
-
-    #[cfg(test)]
-    pub(crate) fn preparation_work(&self) -> (usize, usize) {
-        let state = lock_state(&self.shared);
-        let interests = state
-            .jobs
-            .values()
-            .map(|record| record.preparations.len())
-            .sum();
-        (interests, state.jobs.len())
     }
 
     pub(crate) fn cancel(&self, request_id: RequestId) {
@@ -363,17 +408,13 @@ impl Pipeline {
         None
     }
 
-    pub(crate) fn binding_identity_and_images(
+    pub(crate) fn binding_identity_and_image(
         &self,
         source: &SourceImages,
         request: &ArtworkRequest,
-    ) -> (
-        ArtworkBindingIdentity,
-        Option<Arc<DecodedImage>>,
-        Option<Arc<DecodedImage>>,
-    ) {
+    ) -> (ArtworkBindingIdentity, Option<Arc<DecodedImage>>) {
         let mut state = lock_state(&self.shared);
-        binding_identity_and_images_from_state(&mut state, &self.shared.cache, source, request)
+        binding_identity_and_image_from_state(&mut state, source, request)
     }
 
     pub(crate) fn retry_external(&self) -> Result<(), ArtworkError> {
@@ -458,19 +499,34 @@ fn binding_identity_from_state(
     }
 }
 
-fn binding_identity_and_images_from_state(
+fn binding_identity_and_image_from_state(
     state: &mut State,
-    cache: &FilesystemCache,
     source: &SourceImages,
     request: &ArtworkRequest,
-) -> (
-    ArtworkBindingIdentity,
-    Option<Arc<DecodedImage>>,
-    Option<Arc<DecodedImage>>,
-) {
+) -> (ArtworkBindingIdentity, Option<Arc<DecodedImage>>) {
     let identity = binding_identity_from_state(state, source, request);
-    let (ready, preview) = decoded_for_request(state, cache, source, request);
-    (identity, ready, preview)
+    let ready = decoded_from_memory(state, source, request);
+    (identity, ready)
+}
+
+fn decoded_from_memory(
+    state: &mut State,
+    source: &SourceImages,
+    request: &ArtworkRequest,
+) -> Option<Arc<DecodedImage>> {
+    let source_epoch = source_epoch(state, &source.source_id);
+    let candidate = request.binding.candidates().first()?;
+    let external = candidate.is_external();
+    if external && !request.external.allow_cached && !request.external.allow_network {
+        return None;
+    }
+    let external_epoch = if external { state.external_epoch } else { 0 };
+    let family =
+        decoded_candidate_family(&source.source_id, candidate, source_epoch, external_epoch);
+    let exact = decoded_key(&family, request.fetch_size, request.render_size);
+    state
+        .decoded_index
+        .get_for_request(&exact, &family, request.render_size)
 }
 
 fn artwork_visual_identity(
@@ -493,7 +549,7 @@ fn decoded_for_request(
     cache: &FilesystemCache,
     source: &SourceImages,
     request: &ArtworkRequest,
-) -> (Option<Arc<DecodedImage>>, Option<Arc<DecodedImage>>) {
+) -> Option<Arc<DecodedImage>> {
     let source_epoch = source_epoch(state, &source.source_id);
     for candidate in request.binding.candidates() {
         let external = candidate.is_external();
@@ -502,23 +558,19 @@ fn decoded_for_request(
         let family =
             decoded_candidate_family(&source.source_id, candidate, source_epoch, external_epoch);
         let exact = decoded_key(&family, request.fetch_size, request.render_size);
-        let mut preview = None;
         if may_read_cache {
             if let Some(image) =
                 state
                     .decoded_index
                     .get_for_request(&exact, &family, request.render_size)
             {
-                return (Some(image), None);
+                return Some(image);
             }
-            preview = state
-                .decoded_index
-                .get_preview(&family, request.render_size);
             if cache
                 .ready_entry(&source.source_id, candidate, request.fetch_size)
                 .is_some()
             {
-                return (None, preview);
+                return None;
             }
             if cache.is_missing(&source.source_id, candidate, request.fetch_size) {
                 continue;
@@ -528,10 +580,10 @@ fn decoded_for_request(
             continue;
         }
         if source.can_fetch() {
-            return (None, preview);
+            return None;
         }
     }
-    (None, None)
+    None
 }
 
 fn decoded_candidate_family(
@@ -592,23 +644,6 @@ impl DecodedIndex {
             .get(family)
             .into_iter()
             .flat_map(|sizes| sizes.range(render_size..))
-            .flat_map(|(_, keys)| keys.iter().cloned())
-            .collect::<Vec<_>>();
-        reusable
-            .into_iter()
-            .find_map(|reusable| self.get(&reusable))
-    }
-
-    fn get_preview(
-        &mut self,
-        family: &DecodedFamily,
-        render_size: u32,
-    ) -> Option<Arc<DecodedImage>> {
-        let reusable = self
-            .families
-            .get(family)
-            .into_iter()
-            .flat_map(|sizes| sizes.range(..render_size).rev())
             .flat_map(|(_, keys)| keys.iter().cloned())
             .collect::<Vec<_>>();
         reusable
@@ -986,21 +1021,22 @@ fn source_epoch(state: &State, source_id: &SourceId) -> u64 {
         .unwrap_or_default()
 }
 
-fn run_worker(shared: Arc<Shared>) {
+fn run_worker(shared: Arc<Shared>, foreground_reserved: bool) {
     loop {
-        let work = next_work(&shared);
+        let work = next_work(&shared, foreground_reserved);
         let resolution = resolve(&shared, &work);
         finish(&shared, work, resolution);
     }
 }
 
-fn next_work(shared: &Shared) -> Work {
+fn next_work(shared: &Shared, foreground_reserved: bool) -> Work {
     let mut state = lock_state(shared);
     loop {
-        let key = state
-            .foreground
-            .pop_front()
-            .or_else(|| state.preparations.pop_front());
+        let key = state.foreground.pop_front().or_else(|| {
+            (!foreground_reserved)
+                .then(|| state.preparations.pop_front())
+                .flatten()
+        });
         if let Some(key) = key {
             let eligible = state
                 .jobs
@@ -1303,7 +1339,8 @@ fn finish(shared: &Shared, work: Work, resolution: Resolution) {
         }
     }
     let background_result = match &resolution {
-        Resolution::Ready { .. } | Resolution::Cached => BackgroundResult::Ready,
+        Resolution::Ready { .. } => BackgroundResult::Ready,
+        Resolution::Cached => BackgroundResult::Cached,
         Resolution::Missing => BackgroundResult::Missing,
         Resolution::Failed(_) => BackgroundResult::Failed,
     };
@@ -1400,183 +1437,66 @@ fn lock_cache_commit(shared: &Shared) -> MutexGuard<'_, ()> {
         .unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
-fn send_completions(completions: Vec<LeaseCompletion>) {
-    for (completion, outcome) in completions {
-        let _ = completion.send(outcome);
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::decode::decoded_image_for_test;
+    use sources::NativeImageRef;
 
-    fn key(value: &str) -> ArtworkKey {
-        ArtworkKey(value.to_string())
-    }
-
-    fn image(key: &ArtworkKey, bytes: usize) -> Arc<DecodedImage> {
-        Arc::new(decoded_image_for_test(key.clone(), bytes))
-    }
-
-    fn family(value: &str) -> DecodedFamily {
-        DecodedFamily(value.to_string())
+    #[test]
+    fn durable_no_art_binding_completes_as_missing() {
+        let directory = tempfile::tempdir().expect("cache");
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .expect("runtime");
+        let pipeline = Pipeline::new(directory.path(), runtime.handle().clone()).expect("pipeline");
+        let summary = pipeline
+            .prefetch_source_artwork(
+                SourceImages::cache_only(SourceId::new("source")),
+                Arc::from([br#"{"no_art":true}"#.to_vec()]),
+                &|_, _| {},
+                &|| false,
+            )
+            .expect("prepare no-art");
+        assert_eq!(summary.missing, 1);
+        assert_eq!(summary.failed, 0);
     }
 
     #[test]
-    fn visible_request_promotes_matching_thumbnail_warm() {
-        let source = SourceImages::cache_only(SourceId::new("source"));
-        let binding = ArtworkBinding::source_artwork(&SourceArtwork::Native(
-            library::ImageRef::new("image", None),
-        ));
-        let request = ArtworkRequest::new(binding, 256, 48);
-        let candidate = candidate_request(
-            &request,
-            request
-                .binding
-                .candidates()
-                .first()
-                .cloned()
-                .expect("artwork candidate"),
-        );
+    fn identical_foreground_requests_share_one_fetch_job() {
         let mut state = State::default();
-
-        let warm = enqueue_projection(
+        let source = SourceImages::cache_only(SourceId::new("source"));
+        let request = CandidateRequest {
+            candidate: Candidate::Native(NativeImageRef::new("album", Some("tag".to_string()))),
+            fetch_size: 256,
+            render_size: 144,
+            external: ExternalPolicy::default(),
+        };
+        let first = enqueue_projection(
             &mut state,
             source.clone(),
-            candidate.clone(),
+            request.clone(),
             RequestId(1),
-            JobPriority::Preparation,
+            JobPriority::Foreground,
         );
-        assert!(state.foreground.is_empty());
-        assert_eq!(state.preparations.front(), Some(&warm));
-
-        let visible = enqueue_projection(
+        let second = enqueue_projection(
             &mut state,
             source,
-            candidate,
+            request,
             RequestId(2),
             JobPriority::Foreground,
         );
-        assert_eq!(visible, warm);
-        assert_eq!(state.foreground.front(), Some(&visible));
-        assert!(state.preparations.is_empty());
-        assert_eq!(
-            state.jobs.get(&visible).map(JobRecord::priority),
-            Some(JobPriority::Foreground)
-        );
+
+        assert_eq!(first, second);
+        assert_eq!(state.jobs.len(), 1);
+        assert_eq!(state.foreground.len(), 1);
+        let job = state.jobs.get(&first).expect("shared job");
+        assert_eq!(job.subscribers.len(), 2);
+        assert_eq!(job.foreground_subscribers.len(), 2);
     }
+}
 
-    #[test]
-    fn decoded_index_hits_stay_bounded_and_protect_the_recent_entry() {
-        let source_id = SourceId::new("source");
-        let first = key("first");
-        let second = key("second");
-        let third = key("third");
-        let first_image = image(&first, 4);
-        let second_image = image(&second, 4);
-        let third_image = image(&third, 4);
-        let mut index = DecodedIndex::default();
-
-        index.insert_with_limit(
-            first.clone(),
-            source_id.clone(),
-            family("first"),
-            96,
-            Arc::clone(&first_image),
-            2,
-        );
-        index.insert_with_limit(
-            second.clone(),
-            source_id.clone(),
-            family("second"),
-            96,
-            second_image,
-            2,
-        );
-        for _ in 0..10_000 {
-            assert!(index.get(&first).is_some());
-        }
-        assert_eq!(index.eviction_order.len(), index.entries.len());
-        index.insert_with_limit(
-            third.clone(),
-            source_id,
-            family("third"),
-            96,
-            third_image,
-            2,
-        );
-
-        assert!(index.entries.contains_key(&first));
-        assert!(!index.entries.contains_key(&second));
-        assert!(index.entries.contains_key(&third));
-    }
-
-    #[test]
-    fn decoded_index_drops_an_expired_result() {
-        let source_id = SourceId::new("source");
-        let first = key("first");
-        let first_image = image(&first, 8);
-        let mut index = DecodedIndex::default();
-
-        index.insert_with_limit(
-            first.clone(),
-            source_id,
-            family("first"),
-            96,
-            Arc::clone(&first_image),
-            10,
-        );
-        drop(first_image);
-
-        assert!(index.get(&first).is_none());
-        assert!(index.entries.is_empty());
-        assert!(index.families.is_empty());
-        assert!(index.eviction_order.is_empty());
-    }
-
-    #[test]
-    fn decoded_index_source_invalidation_preserves_other_sources() {
-        let first_source = SourceId::new("first-source");
-        let second_source = SourceId::new("second-source");
-        let first = key("first");
-        let another_first = key("another-first");
-        let second = key("second");
-        let first_image = image(&first, 8);
-        let another_first_image = image(&another_first, 16);
-        let second_image = image(&second, 12);
-        let mut index = DecodedIndex::default();
-
-        index.insert_with_limit(
-            first.clone(),
-            first_source.clone(),
-            family("first"),
-            96,
-            first_image,
-            10,
-        );
-        index.insert_with_limit(
-            another_first.clone(),
-            first_source.clone(),
-            family("another-first"),
-            256,
-            another_first_image,
-            10,
-        );
-        index.insert_with_limit(
-            second.clone(),
-            second_source,
-            family("second"),
-            96,
-            second_image,
-            10,
-        );
-        index.invalidate_source(&first_source);
-
-        assert!(!index.entries.contains_key(&first));
-        assert!(!index.entries.contains_key(&another_first));
-        assert!(index.entries.contains_key(&second));
-        assert_eq!(index.eviction_order.len(), 1);
-        assert_eq!(index.families.len(), 1);
+fn send_completions(completions: Vec<LeaseCompletion>) {
+    for (completion, outcome) in completions {
+        let _ = completion.send(outcome);
     }
 }

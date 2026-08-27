@@ -1,6 +1,6 @@
 use std::{cell::RefCell, rc::Rc};
 
-use ::library::Track;
+use ::library::TrackRow;
 use adw::prelude::*;
 
 use crate::localization::localized_column;
@@ -10,11 +10,12 @@ use crate::shell::Shell;
 use super::detail_links::{DetailLinkBinding, DetailLinks};
 use super::factory_cells::FactoryCells;
 use super::library_fields::item_at_from_item;
+use super::sparse_model::connect_sparse_bind;
 
 #[derive(Clone)]
 pub(crate) struct TrackLinkCell {
     links: DetailLinkBinding,
-    current_track: Rc<RefCell<Option<Track>>>,
+    current_track: Rc<RefCell<Option<TrackRow>>>,
 }
 
 pub(crate) fn track_link_column<F>(
@@ -24,7 +25,7 @@ pub(crate) fn track_link_column<F>(
     value: F,
 ) -> gtk::ColumnViewColumn
 where
-    F: Fn(&Track) -> DetailLinks + 'static,
+    F: Fn(&TrackRow) -> DetailLinks + 'static,
 {
     let factory = gtk::SignalListItemFactory::new();
     let cells = FactoryCells::new();
@@ -37,7 +38,7 @@ where
         let Some(list_item) = list_item.downcast_ref::<gtk::ListItem>() else {
             return;
         };
-        let current_track = Rc::new(RefCell::new(None::<Track>));
+        let current_track = Rc::new(RefCell::new(None::<TrackRow>));
 
         let root = gtk::Box::new(gtk::Orientation::Horizontal, 0);
         root.set_valign(gtk::Align::Center);
@@ -66,14 +67,16 @@ where
     });
 
     let bind_cells = cells.clone();
-    factory.connect_bind(move |_, list_item| {
+    connect_sparse_bind(&factory, move |list_item| {
         let Some(list_item) = list_item.downcast_ref::<gtk::ListItem>() else {
             return;
         };
         let Some(cell) = bind_cells.get(list_item) else {
             return;
         };
-        let Some(track) = item_at_from_item::<Track>(list_item) else {
+        let Some(track) = item_at_from_item::<TrackRow>(list_item) else {
+            cell.links.clear();
+            *cell.current_track.borrow_mut() = None;
             return;
         };
         let links = value(&track);

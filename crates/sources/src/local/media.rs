@@ -1,35 +1,70 @@
-//! One Local media candidate: GStreamer admission followed by optional Lofty enrichment.
+//! One Local media candidate: Lofty metadata with container-specific GStreamer admission.
 
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use library::{
-    AlbumId, ArtistCredit, ArtistId, GenreCredit, LocalArtworkRef, MoodCredit, Track, TrackData,
-    TrackId, TrackRelations,
-};
+use crate::LocalImageRef;
+use lofty::file::FileType;
 use lofty::file::TaggedFileExt;
 use lofty::prelude::*;
 use lofty::tag::{ItemKey, Tag};
 
 use crate::policy::stable_hash;
 
-use super::artwork;
 use super::discovery;
-use super::lofty_metadata::{read_lofty, source_format};
+use super::lofty_metadata::{read_lofty_file, source_format};
 
 #[derive(Clone, Debug)]
 pub(super) struct ScannedTrack {
-    pub(super) track: Track,
+    pub(super) id: String,
+    pub(super) album_id: String,
+    pub(super) title: String,
+    pub(super) artist: String,
+    pub(super) album: String,
+    pub(super) year: u16,
+    pub(super) duration_seconds: u32,
+    pub(super) disc_number: u16,
+    pub(super) track_number: u16,
+    pub(super) local_artwork: Option<LocalImageRef>,
+    pub(super) musicbrainz_recording_id: Option<String>,
+    pub(super) musicbrainz_release_track_id: Option<String>,
+    pub(super) source_path: String,
+    pub(super) cue_path: Option<String>,
+    pub(super) cue_start_millis: Option<i64>,
+    pub(super) cue_end_millis: Option<i64>,
+    pub(super) source_format: Option<String>,
+    pub(super) comment: Option<String>,
+    pub(super) bpm: Option<u16>,
+    pub(super) user_rating: Option<u8>,
+    pub(super) artists: Vec<ArtistCredit>,
+    pub(super) album_artists: Vec<ArtistCredit>,
+    pub(super) genres: Vec<NamedCredit>,
+    pub(super) moods: Vec<NamedCredit>,
     pub(super) album_artist: String,
     pub(super) release_types: Vec<String>,
     pub(super) is_compilation: Option<bool>,
     pub(super) musicbrainz_album_id: Option<String>,
     pub(super) musicbrainz_release_group_id: Option<String>,
+    pub(super) track_r128_lufs: Option<f64>,
+    pub(super) album_r128_lufs: Option<f64>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) struct ArtistCredit {
+    pub(super) id: String,
+    pub(super) name: String,
+    pub(super) musicbrainz_artist_id: Option<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) struct NamedCredit {
+    pub(super) id: String,
+    pub(super) name: String,
 }
 
 #[derive(Clone, Debug)]
 pub(super) enum MediaRead {
-    Accepted(ScannedTrack),
+    Accepted(Box<ScannedTrack>),
     Rejected,
     Unreadable,
 }
@@ -65,9 +100,11 @@ struct AudioMetadata {
     musicbrainz_release_track_id: Option<String>,
     release_types: Vec<String>,
     is_compilation: Option<bool>,
-    local_artwork: Option<LocalArtworkRef>,
+    local_artwork: Option<LocalImageRef>,
     source_format: Option<String>,
     user_rating: Option<u8>,
+    track_r128_lufs: Option<f64>,
+    album_r128_lufs: Option<f64>,
 }
 
 #[derive(Default)]
@@ -81,83 +118,89 @@ pub(super) struct Worker {
 /// relationships, and Rufin identities. A readable file with invalid metadata
 /// still has a useful filename-based match candidate.
 pub(super) fn read_basic_audio(worker: &mut Worker, path: PathBuf) -> Option<BasicAudioMetadata> {
-    fs::File::open(&path).ok()?;
-    let discovered = worker.discovery.read(&path)?;
-    let tagged_file = read_lofty(&path, false).ok().flatten();
-    if tagged_file.is_none() {
+    let file = fs::File::open(&path).ok()?;
+    let tagged_file = read_lofty_file(file, false).ok().flatten();
+    let topology_admitted = tagged_file
+        .as_ref()
+        .filter(|file| requires_topology_admission(file.file_type()))
+        .map(|_| worker.discovery.read(&path));
+    let tagged_file = tagged_file.filter(|file| {
+        if requires_topology_admission(file.file_type()) {
+            topology_admitted.as_ref().is_some_and(Option::is_some)
+        } else {
+            lofty_supplies_required_audio(file)
+        }
+    });
+    let discovered = tagged_file
+        .is_none()
+        .then(|| {
+            topology_admitted
+                .flatten()
+                .or_else(|| worker.discovery.read(&path))
+        })
+        .flatten();
+    let Some(tagged_file) = tagged_file.as_ref() else {
         return Some(basic_audio_metadata_from_discoverer(
             &path,
-            Some(&discovered),
+            discovered.as_ref(),
         ));
-    }
+    };
     let tag = tagged_file
-        .as_ref()
-        .and_then(|file| file.primary_tag().or_else(|| file.first_tag()));
-    let metadata_duration_seconds = tagged_file
-        .as_ref()
-        .map(|file| {
-            file.properties()
-                .duration()
-                .as_secs()
-                .min(u64::from(u32::MAX)) as u32
-        })
-        .unwrap_or_default();
-    let duration_seconds =
-        playback_duration_seconds(discovered.duration_seconds, metadata_duration_seconds);
+        .primary_tag()
+        .or_else(|| tagged_file.first_tag());
+    let duration_seconds = lofty_duration_seconds(&tagged_file);
     Some(basic_audio_metadata(&path, tag, duration_seconds))
 }
 
 pub(super) fn read_media(
     worker: &mut Worker,
     path: PathBuf,
-    sidecar: Option<LocalArtworkRef>,
-    revision: String,
+    sidecar: Option<LocalImageRef>,
 ) -> MediaRead {
-    if fs::File::open(&path).is_err() {
-        return MediaRead::Unreadable;
-    }
-
-    let Some(discovered) = worker.discovery.read(&path) else {
-        return MediaRead::Rejected;
+    let file = match fs::File::open(&path) {
+        Ok(file) => file,
+        Err(_) => return MediaRead::Unreadable,
     };
-    let tagged_file = read_lofty(&path, false).ok().flatten();
-    let local_artwork = sidecar
-        .or_else(|| embedded_artwork(&path, revision.clone()))
-        .or_else(|| {
-            discovered
-                .artwork_index
-                .map(|picture_index| artwork::embedded_reference(&path, picture_index, revision))
-        });
-    let metadata = if tagged_file.is_some() {
-        audio_metadata_from_lofty(
-            &path,
-            tagged_file.as_ref(),
-            discovered.duration_seconds,
-            local_artwork,
-        )
+    let tagged_file = read_lofty_file(file, false).ok().flatten();
+    let topology_admitted = tagged_file
+        .as_ref()
+        .filter(|file| requires_topology_admission(file.file_type()))
+        .map(|_| worker.discovery.read(&path));
+    let tagged_file = tagged_file.filter(|file| {
+        if requires_topology_admission(file.file_type()) {
+            topology_admitted.as_ref().is_some_and(Option::is_some)
+        } else {
+            lofty_supplies_required_audio(file)
+        }
+    });
+    let discovered = if tagged_file.is_none() {
+        if topology_admitted.is_some_and(|admitted| admitted.is_none()) {
+            return MediaRead::Rejected;
+        }
+        let Some(discovered) = worker.discovery.read(&path) else {
+            return MediaRead::Rejected;
+        };
+        Some(discovered)
     } else {
-        audio_metadata_from_discoverer(&path, Some(&discovered), local_artwork)
+        None
     };
-    MediaRead::Accepted(scanned_track(&path, metadata))
+    let metadata = if let Some(tagged_file) = tagged_file.as_ref() {
+        audio_metadata_from_lofty(&path, tagged_file, sidecar)
+    } else {
+        audio_metadata_from_discoverer(&path, discovered.as_ref(), sidecar)
+    };
+    MediaRead::Accepted(Box::new(scanned_track(&path, metadata)))
 }
 
 fn audio_metadata_from_lofty(
     path: &Path,
-    tagged_file: Option<&lofty::file::TaggedFile>,
-    discovered_duration_seconds: u32,
-    local_artwork: Option<LocalArtworkRef>,
+    tagged_file: &lofty::file::TaggedFile,
+    local_artwork: Option<LocalImageRef>,
 ) -> AudioMetadata {
-    let tag = tagged_file.and_then(|file| file.primary_tag().or_else(|| file.first_tag()));
-    let metadata_duration_seconds = tagged_file
-        .map(|file| {
-            file.properties()
-                .duration()
-                .as_secs()
-                .min(u64::from(u32::MAX)) as u32
-        })
-        .unwrap_or_default();
-    let duration_seconds =
-        playback_duration_seconds(discovered_duration_seconds, metadata_duration_seconds);
+    let tag = tagged_file
+        .primary_tag()
+        .or_else(|| tagged_file.first_tag());
+    let duration_seconds = lofty_duration_seconds(tagged_file);
     let basic = basic_audio_metadata(path, tag, duration_seconds);
     let artist = &basic.artist;
     let album_artist = tag
@@ -227,25 +270,45 @@ fn audio_metadata_from_lofty(
         release_types,
         is_compilation,
         local_artwork,
-        source_format: tagged_file.and_then(|file| source_format(path, file.file_type())),
+        source_format: source_format(path, tagged_file.file_type()),
         user_rating: tag
             .and_then(|tag| tag.ratings().next())
             .map(|rating| (rating.rating() as u8) * 2),
+        track_r128_lufs: r128_integrated_lufs(tag, ItemKey::R128TrackGain),
+        album_r128_lufs: r128_integrated_lufs(tag, ItemKey::R128AlbumGain),
     }
 }
 
-fn playback_duration_seconds(discovered: u32, metadata: u32) -> u32 {
-    if discovered == 0 {
-        metadata
-    } else {
-        discovered
-    }
+fn lofty_duration_seconds(tagged_file: &lofty::file::TaggedFile) -> u32 {
+    tagged_file
+        .properties()
+        .duration()
+        .as_secs()
+        .min(u64::from(u32::MAX)) as u32
+}
+
+fn lofty_supplies_required_audio(file: &lofty::file::TaggedFile) -> bool {
+    !file.properties().duration().is_zero()
+}
+
+fn requires_topology_admission(file_type: FileType) -> bool {
+    matches!(
+        file_type,
+        FileType::Mp4 | FileType::Opus | FileType::Vorbis | FileType::Speex
+    )
+}
+
+// Vorbis-style R128 gain is a signed Q7.8 dB adjustment to the -23 LUFS target.
+fn r128_integrated_lufs(tag: Option<&Tag>, key: ItemKey) -> Option<f64> {
+    let gain_q8 = tag?.get_string(key)?.trim().parse::<i32>().ok()?;
+    let integrated_lufs = -23.0 - f64::from(gain_q8) / 256.0;
+    integrated_lufs.is_finite().then_some(integrated_lufs)
 }
 
 fn audio_metadata_from_discoverer(
     path: &Path,
     metadata: Option<&discovery::Metadata>,
-    local_artwork: Option<LocalArtworkRef>,
+    local_artwork: Option<LocalImageRef>,
 ) -> AudioMetadata {
     let basic = basic_audio_metadata_from_discoverer(path, metadata);
     let artist = &basic.artist;
@@ -316,7 +379,7 @@ fn audio_metadata_from_discoverer(
         musicbrainz_release_track_id: metadata
             .and_then(|metadata| metadata.musicbrainz_release_track_id.as_deref())
             .and_then(clean_mbid),
-        release_types: library::normalize_release_types(
+        release_types: normalize_release_types(
             metadata
                 .map(|metadata| metadata.release_types.clone())
                 .unwrap_or_default(),
@@ -333,6 +396,8 @@ fn audio_metadata_from_discoverer(
                     .map(ToString::to_string)
             }),
         user_rating: None,
+        track_r128_lufs: None,
+        album_r128_lufs: None,
     }
 }
 
@@ -356,6 +421,8 @@ fn scanned_track(path: &Path, metadata: AudioMetadata) -> ScannedTrack {
         local_artwork,
         source_format,
         user_rating,
+        track_r128_lufs,
+        album_r128_lufs,
     } = metadata;
     let BasicAudioMetadata {
         title,
@@ -375,15 +442,15 @@ fn scanned_track(path: &Path, metadata: AudioMetadata) -> ScannedTrack {
         .collect::<Vec<_>>();
     let genres = genres
         .into_iter()
-        .map(|name| GenreCredit {
+        .map(|name| NamedCredit {
             id: local_id("genre", name.trim()),
             name,
         })
         .collect::<Vec<_>>();
     let moods = moods
         .into_iter()
-        .map(|name| MoodCredit {
-            id: library::MoodId::new(name.trim().to_string()),
+        .map(|name| NamedCredit {
+            id: local_id("mood", name.trim()),
             name,
         })
         .collect::<Vec<_>>();
@@ -395,46 +462,37 @@ fn scanned_track(path: &Path, metadata: AudioMetadata) -> ScannedTrack {
         None,
     );
     ScannedTrack {
-        track: Track::new(TrackData {
-            id: track_id(path),
-            album_id: Some(album_id),
-            title,
-            artist,
-            album,
-            album_artwork: None,
-            year,
-            release_date: None,
-            date_added: None,
-            last_played: None,
-            play_count: None,
-            user_rating,
-            duration_seconds,
-            favorite: false,
-            disc_number,
-            track_number,
-            image_ref: None,
-            local_artwork,
-            musicbrainz_recording_id,
-            musicbrainz_release_track_id,
-            source_path: Some(path_text),
-            cue: None,
-            source_format,
-            comment,
-            skip_count: None,
-            bpm,
-            relations: TrackRelations {
-                artists,
-                album_artists,
-                genres,
-                moods,
-                music_folders: Vec::new(),
-            },
-        }),
+        id: track_id(path),
+        album_id,
+        title,
+        artist,
+        album,
+        year,
+        duration_seconds,
+        disc_number,
+        track_number,
+        local_artwork,
+        musicbrainz_recording_id,
+        musicbrainz_release_track_id,
+        source_path: path_text,
+        cue_path: None,
+        cue_start_millis: None,
+        cue_end_millis: None,
+        source_format,
+        comment,
+        bpm,
+        user_rating,
+        artists,
+        album_artists,
+        genres,
+        moods,
         album_artist,
         release_types,
         is_compilation,
         musicbrainz_album_id,
         musicbrainz_release_group_id,
+        track_r128_lufs,
+        album_r128_lufs,
     }
 }
 
@@ -510,18 +568,11 @@ fn basic_audio_metadata_from_discoverer(
     }
 }
 
-fn embedded_artwork(path: &Path, revision: String) -> Option<LocalArtworkRef> {
-    let file = read_lofty(path, true).ok().flatten()?;
-    let tag = file.primary_tag().or_else(|| file.first_tag());
-    let picture_index = artwork::best_picture_index(&file, tag)?;
-    Some(artwork::embedded_reference(path, picture_index, revision))
-}
-
-pub(super) fn track_id(path: &Path) -> TrackId {
+pub(super) fn track_id(path: &Path) -> String {
     local_id("track", &path.to_string_lossy())
 }
 
-pub(super) fn cue_track_id(cue_path: &Path, track_number: u16) -> TrackId {
+pub(super) fn cue_track_id(cue_path: &Path, track_number: u16) -> String {
     local_id(
         "track",
         &format!("{}:{track_number}", cue_path.to_string_lossy()),
@@ -533,7 +584,7 @@ pub(super) fn album_id(
     album: &str,
     musicbrainz_album_id: Option<&str>,
     cue_path: Option<&Path>,
-) -> AlbumId {
+) -> String {
     let credits = album_artists
         .iter()
         .map(|credit| credit.id.as_str())
@@ -558,7 +609,7 @@ pub(super) fn artist_credit(name: &str, musicbrainz_artist_id: Option<&str>) -> 
     let musicbrainz_artist_id = musicbrainz_artist_id.and_then(clean_mbid);
     let id = musicbrainz_artist_id
         .as_deref()
-        .map(|mbid| ArtistId::new(format!("local:artist:musicbrainz:{mbid}")))
+        .map(|mbid| format!("local:artist:musicbrainz:{mbid}"))
         .unwrap_or_else(|| local_id("artist", &normalized_identity(name)));
     ArtistCredit {
         id,
@@ -579,11 +630,8 @@ pub(super) fn split_names(value: &str) -> Vec<String> {
     values
 }
 
-pub(super) fn local_id<T>(kind: &str, value: &str) -> T
-where
-    T: From<String>,
-{
-    T::from(format!("local:{kind}:{:016x}", stable_hash(value)))
+pub(super) fn local_id(kind: &str, value: &str) -> String {
+    format!("local:{kind}:{:016x}", stable_hash(value))
 }
 
 fn artist_names(tag: Option<&Tag>, fallback: &str) -> Vec<String> {
@@ -647,7 +695,18 @@ fn album_release_types(tag: Option<&Tag>) -> Vec<String> {
                 .map(ToString::to_string),
         );
     }
-    library::normalize_release_types(values)
+    normalize_release_types(values)
+}
+
+fn normalize_release_types(values: Vec<String>) -> Vec<String> {
+    let mut normalized = Vec::new();
+    for value in values {
+        let value = value.trim().to_lowercase();
+        if !value.is_empty() && !normalized.contains(&value) {
+            normalized.push(value);
+        }
+    }
+    normalized
 }
 
 fn album_compilation(tag: Option<&Tag>, release_types: &[String]) -> Option<bool> {
@@ -704,53 +763,4 @@ fn clean_mbid(value: &str) -> Option<String> {
             .bytes()
             .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-'))
     .then(|| value.to_string())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn gstreamer_duration_owns_the_playback_length() {
-        assert_eq!(playback_duration_seconds(190, 0), 190);
-        assert_eq!(playback_duration_seconds(190, 191), 190);
-        assert_eq!(playback_duration_seconds(0, 191), 191);
-    }
-
-    #[test]
-    fn discovered_metadata_preserves_its_embedded_artwork_locator() {
-        let metadata = discovery::Metadata {
-            title: Some("Track".to_string()),
-            artist: Some("Artist".to_string()),
-            artwork_index: Some(2),
-            ..discovery::Metadata::default()
-        };
-        let local_artwork = metadata.artwork_index.map(|picture_index| {
-            artwork::embedded_reference(
-                Path::new("/Music/Album/Track.wma"),
-                picture_index,
-                "file-revision".to_string(),
-            )
-        });
-        let read = MediaRead::Accepted(scanned_track(
-            Path::new("/Music/Album/Track.wma"),
-            audio_metadata_from_discoverer(
-                Path::new("/Music/Album/Track.wma"),
-                Some(&metadata),
-                local_artwork,
-            ),
-        ));
-
-        let MediaRead::Accepted(scanned) = read else {
-            panic!("accepted media")
-        };
-        assert_eq!(
-            scanned.track.local_artwork,
-            Some(LocalArtworkRef::Embedded {
-                path: "/Music/Album/Track.wma".to_string(),
-                picture_index: 2,
-                revision: "file-revision".to_string(),
-            })
-        );
-    }
 }

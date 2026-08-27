@@ -1,5 +1,4 @@
 use std::cell::{Cell, RefCell};
-use std::collections::HashMap;
 use std::rc::Rc;
 use std::sync::Arc;
 
@@ -25,7 +24,6 @@ use crate::preferences::dialogs::release_notes::{
     check_for_release_update, schedule_periodic_release_checks,
 };
 use crate::preferences::source::SourceState;
-use crate::routes::route::Route;
 use crate::runtime::RuntimeInputs;
 use crate::settings::SettingsState;
 use localization::{effective_language_preference, set_language_preference, tr};
@@ -48,7 +46,7 @@ use super::navigation::{
     build_compact_navigation, build_normal_navigation, install_normal_navigation_activation,
     normal_sidebar_header,
 };
-use super::route::{RouteStack, RouteViewport};
+use super::route::RouteViewport;
 use super::selected_ui::SelectedUiState;
 use super::startup::StartupState;
 use super::window_state::initial_window_size;
@@ -119,9 +117,7 @@ pub fn build(
         current: RefCell::new(settings.clone()),
         persistence: settings_handle,
     };
-    let navigation = NavigationState {
-        routes: RefCell::new(RouteStack::new(Route::Home)),
-    };
+    let navigation = NavigationState::new();
     let selected_ui = SelectedUiState::new();
     let source = SourceState {
         configured: RefCell::new(configured_sources),
@@ -132,6 +128,7 @@ pub fn build(
         discovery_started: Cell::new(false),
         add_server: RefCell::new(None),
         refresh_feedback_generation: Rc::new(Cell::new(0)),
+        artwork_preparation_revision: Cell::new(None),
     };
     let startup = StartupState {
         route_revealed: Cell::new(!defer_initial_route),
@@ -169,9 +166,6 @@ pub fn build(
     let desktop = DesktopState::new(app, products.playback.transport.clone());
     let artwork = ArtworkState {
         startup_prime: Default::default(),
-        thumbnail_warm: Default::default(),
-        live_bindings: RefCell::new(HashMap::new()),
-        route_interaction: Rc::new(Default::default()),
         textures: RefCell::new(Default::default()),
     };
     let (window_width, window_height) =
@@ -495,6 +489,11 @@ pub fn build(
 
     let shell = Rc::new(Shell {
         quitting,
+        home_variation: Cell::new(
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(0, |elapsed| elapsed.as_nanos() as i64),
+        ),
         diagnostics,
         appearance,
         settings: settings_state,
@@ -520,7 +519,6 @@ pub fn build(
     });
 
     shell.connect_operation_feedback();
-    shell.connect_artwork_scale_refresh();
     {
         let source = Arc::clone(&shell.products.source);
         let release_updates = Arc::clone(&shell.products.release_updates);

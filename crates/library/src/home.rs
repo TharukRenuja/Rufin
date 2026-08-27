@@ -1,1056 +1,619 @@
-//! Effective Home composition for one loaded source.
-//!
-//! Sources contribute only their ordered native sections. Library derives
-//! Explore from the complete loaded source and derives Rufin-defined sections
-//! from accepted imports and listening activity. A mounted route keeps its
-//! `Arc<HomeSnapshot>` while later work replaces only the next snapshot.
+//! Owns one bounded, consistent Home read over provider and Rufin-defined sections.
 
-use std::collections::{HashMap, HashSet};
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::collections::BTreeMap;
 
-use serde::{Deserialize, Serialize};
+use sqlx::{Connection, FromRow, SqliteConnection};
 
 use crate::{
-    AlbumId, AlbumSummary, FavoriteItemId, GenreSummary, Library, LibraryError, LibraryResult,
-    MusicFolderId, SourceId, Track, TrackId,
-    browse::{album_in_scope, album_summary, genre_summary, track_in_scope},
-    msgid,
+    AlbumKey, AlbumRow, Database, FolderKey, GenreKey, LibraryResult, ReadCancellation, SourceKey,
+    TrackKey, TrackRow,
 };
 
-#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
-pub enum HomeSectionKind {
-    Explore,
-    MostPlayed,
-    NewlyAdded,
-    RecentlyPlayed,
-    RecentlyReleased,
+const HOME_LIMIT: i64 = 24;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum HomeEntryKind {
+    Track,
+    Album,
+    Artist,
+    Playlist,
 }
 
-#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
-pub enum HomeBlockKind {
-    Showcase,
-    Explore,
-    MostPlayed,
-    NewlyAdded,
-    RecentlyPlayed,
-    RecentlyReleased,
-    Genres,
-}
-
-pub const HOME_SECTION_ITEM_LIMIT: usize = 24;
-const HOME_GENRE_LIMIT: usize = 12;
-
-impl HomeSectionKind {
-    pub fn title(self) -> &'static str {
+impl HomeEntryKind {
+    pub(crate) const fn as_str(self) -> &'static str {
         match self {
-            Self::Explore => msgid("Explore"),
-            Self::MostPlayed => msgid("Most played"),
-            Self::NewlyAdded => msgid("Newly added"),
-            Self::RecentlyPlayed => msgid("Recently played"),
-            Self::RecentlyReleased => msgid("Recently released"),
+            Self::Track => "track",
+            Self::Album => "album",
+            Self::Artist => "artist",
+            Self::Playlist => "playlist",
         }
     }
 }
 
-impl HomeBlockKind {
-    pub fn all() -> [Self; 7] {
-        [
-            Self::Showcase,
-            Self::Explore,
-            Self::MostPlayed,
-            Self::NewlyAdded,
-            Self::RecentlyPlayed,
-            Self::RecentlyReleased,
-            Self::Genres,
-        ]
-    }
-
-    pub fn title(self) -> &'static str {
-        match self {
-            Self::Showcase => msgid("Showcase"),
-            Self::Explore => HomeSectionKind::Explore.title(),
-            Self::MostPlayed => HomeSectionKind::MostPlayed.title(),
-            Self::NewlyAdded => HomeSectionKind::NewlyAdded.title(),
-            Self::RecentlyPlayed => HomeSectionKind::RecentlyPlayed.title(),
-            Self::RecentlyReleased => HomeSectionKind::RecentlyReleased.title(),
-            Self::Genres => msgid("Featured genres"),
-        }
-    }
-
-    pub fn section_kind(self) -> Option<HomeSectionKind> {
-        match self {
-            Self::Explore => Some(HomeSectionKind::Explore),
-            Self::MostPlayed => Some(HomeSectionKind::MostPlayed),
-            Self::NewlyAdded => Some(HomeSectionKind::NewlyAdded),
-            Self::RecentlyPlayed => Some(HomeSectionKind::RecentlyPlayed),
-            Self::RecentlyReleased => Some(HomeSectionKind::RecentlyReleased),
-            Self::Showcase | Self::Genres => None,
-        }
-    }
+#[derive(Clone, Debug, PartialEq)]
+pub struct HomeEntryInput {
+    pub section_id: String,
+    pub position: i64,
+    pub kind: HomeEntryKind,
+    pub entity_object_id: String,
+    pub title: String,
+    pub subtitle: String,
+    pub artwork_binding: Option<Vec<u8>>,
 }
 
-#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
-pub enum SourceHomeSectionKind {
-    MostPlayed,
-    NewlyAdded,
-    RecentlyPlayed,
-    RecentlyReleased,
+#[derive(Clone, Debug, PartialEq)]
+pub struct HomeTrackRow {
+    pub track: TrackRow,
+    pub title: String,
+    pub artwork_binding: Option<Vec<u8>>,
 }
 
-impl From<SourceHomeSectionKind> for HomeSectionKind {
-    fn from(value: SourceHomeSectionKind) -> Self {
-        match value {
-            SourceHomeSectionKind::MostPlayed => Self::MostPlayed,
-            SourceHomeSectionKind::NewlyAdded => Self::NewlyAdded,
-            SourceHomeSectionKind::RecentlyPlayed => Self::RecentlyPlayed,
-            SourceHomeSectionKind::RecentlyReleased => Self::RecentlyReleased,
-        }
-    }
+#[derive(Clone, Debug, PartialEq)]
+pub struct HomeAlbumRow {
+    pub album: AlbumRow,
+    pub title: String,
+    pub artwork_binding: Option<Vec<u8>>,
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
-#[serde(tag = "kind", content = "id", rename_all = "kebab-case")]
-pub enum HomeItemId {
-    Album(AlbumId),
-    Track(TrackId),
+#[derive(Clone, Debug, PartialEq)]
+#[expect(
+    clippy::large_enum_variant,
+    reason = "Home showcase reads are hard-bounded and keep final rows inline"
+)]
+pub enum HomeShowcaseRow {
+    Track(HomeTrackRow),
+    Album(HomeAlbumRow),
 }
 
-/// One ordered section returned by a concrete source.
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(deny_unknown_fields)]
-pub struct SourceHomeSection {
-    pub kind: SourceHomeSectionKind,
-    pub items: Vec<HomeItemId>,
+#[derive(Clone, Debug, FromRow)]
+struct HomeTrackFact {
+    track_key: TrackKey,
+    title: String,
+    artwork_binding: Option<Vec<u8>>,
 }
 
-/// The accepted input to Rufin's one Home composer.
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(tag = "kind", rename_all = "kebab-case")]
-pub enum HomeFacts {
-    RufinDefined,
-    Source {
-        #[serde(default, skip_serializing_if = "Vec::is_empty")]
-        sections: Vec<SourceHomeSection>,
-    },
+#[derive(Clone, Debug, FromRow)]
+struct HomeAlbumFact {
+    album_key: AlbumKey,
+    title: String,
+    artwork_binding: Option<Vec<u8>>,
 }
 
-impl HomeFacts {
-    pub const fn is_rufin_defined(&self) -> bool {
-        matches!(self, Self::RufinDefined)
-    }
+#[derive(Clone, Debug, FromRow, PartialEq)]
+pub struct HomeGenreRow {
+    pub genre_key: GenreKey,
+    pub name: String,
+    pub artwork_binding: Option<Vec<u8>>,
+    pub album_count: i64,
+    pub track_count: i64,
 }
 
-#[derive(Clone, Debug)]
-pub enum LoadedHomeItem {
-    Album(AlbumSummary),
-    Track(Track),
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct HomeSectionRows {
+    pub tracks: Vec<HomeTrackRow>,
+    pub albums: Vec<HomeAlbumRow>,
 }
 
-impl LoadedHomeItem {
-    pub fn id(&self) -> HomeItemId {
-        match self {
-            Self::Album(album) => HomeItemId::Album(album.album.id.clone()),
-            Self::Track(track) => HomeItemId::Track(track.id.clone()),
-        }
-    }
+#[derive(Default)]
+struct HomeSectionFacts {
+    tracks: Vec<HomeTrackFact>,
+    albums: Vec<HomeAlbumFact>,
 }
 
-#[derive(Clone, Debug)]
-pub struct LoadedHomeSection {
-    pub kind: HomeSectionKind,
-    pub items: Arc<[LoadedHomeItem]>,
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct HomeProviderSection {
+    pub section_id: String,
+    pub rows: HomeSectionRows,
 }
 
-#[derive(Clone, Debug)]
-pub enum ShowcaseItem {
-    Album(AlbumSummary),
-    Track(Track),
+struct HomeProviderFacts {
+    section_id: String,
+    rows: HomeSectionFacts,
 }
 
-impl ShowcaseItem {
-    pub fn id(&self) -> HomeItemId {
-        match self {
-            Self::Album(album) => HomeItemId::Album(album.album.id.clone()),
-            Self::Track(track) => HomeItemId::Track(track.id.clone()),
-        }
-    }
+struct HomePageFacts {
+    showcase: Option<HomeShowcaseFact>,
+    explore: Vec<HomeTrackFact>,
+    most_played: HomeSectionFacts,
+    newly_added: HomeSectionFacts,
+    recently_played: HomeSectionFacts,
+    recently_released: HomeSectionFacts,
+    genres: Vec<HomeGenreRow>,
+    provider_sections: Vec<HomeProviderFacts>,
 }
 
-#[derive(Clone, Debug, Default)]
-pub struct HomeSnapshot {
-    pub sections: Arc<[Arc<LoadedHomeSection>]>,
-    pub genres: Arc<[GenreSummary]>,
-    pub showcase: Option<ShowcaseItem>,
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct HomePage {
+    pub showcase: Option<HomeShowcaseRow>,
+    pub explore: Vec<HomeTrackRow>,
+    pub most_played: HomeSectionRows,
+    pub newly_added: HomeSectionRows,
+    pub recently_played: HomeSectionRows,
+    pub recently_released: HomeSectionRows,
+    pub genres: Vec<HomeGenreRow>,
+    pub provider_sections: Vec<HomeProviderSection>,
 }
 
-impl HomeSnapshot {
-    pub fn section(&self, kind: HomeSectionKind) -> Option<&Arc<LoadedHomeSection>> {
-        self.sections.iter().find(|section| section.kind == kind)
-    }
+enum HomeShowcaseFact {
+    Track(HomeTrackFact),
+    Album(HomeAlbumFact),
+}
 
-    /// Keeps every unaffected mounted section handle while replacing only the
-    /// section the user refreshed.
-    pub fn replacing_section(
+impl Database {
+    pub async fn replace_home_section(
         &self,
-        kind: HomeSectionKind,
-        next: Option<Arc<LoadedHomeSection>>,
-    ) -> HomeSnapshot {
-        let mut sections = self.sections.to_vec();
-        let current = sections.iter().position(|section| section.kind == kind);
-        match (current, next) {
-            (Some(position), Some(section)) => sections[position] = section,
-            (Some(position), None) => {
-                sections.remove(position);
-            }
-            (None, Some(section)) => {
-                let position = sections
-                    .iter()
-                    .position(|current| {
-                        home_section_position(current.kind) > home_section_position(kind)
-                    })
-                    .unwrap_or(sections.len());
-                sections.insert(position, section);
-            }
-            (None, None) => {}
-        }
-        HomeSnapshot {
-            sections: sections.into(),
-            genres: Arc::clone(&self.genres),
-            showcase: self.showcase.clone(),
-        }
-    }
-}
-
-#[derive(Clone, Debug)]
-pub(crate) struct LocalImport {
-    pub(crate) track_id: TrackId,
-    pub(crate) first_seen_at: i64,
-}
-
-#[derive(Clone, Debug)]
-struct HomeSessionState {
-    explore_variation: u64,
-    showcase: Option<HomeItemId>,
-}
-
-pub(crate) struct HomeSessions {
-    seed: u64,
-    sources: Mutex<HashMap<SourceId, HomeSessionState>>,
-}
-
-impl HomeSessions {
-    pub(crate) fn new() -> Self {
-        static SESSION_COUNTER: AtomicU64 = AtomicU64::new(0);
-        let counter = SESSION_COUNTER.fetch_add(1, Ordering::Relaxed);
-        let time = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map_or(0, |duration| duration.as_nanos() as u64);
-        Self {
-            seed: time.rotate_left(17) ^ counter.wrapping_mul(0x9e37_79b9_7f4a_7c15),
-            sources: Mutex::new(HashMap::new()),
-        }
-    }
-
-    fn state_for(&self, source_id: &SourceId) -> LibraryResult<HomeSessionState> {
-        let mut sources = self
-            .sources
-            .lock()
-            .map_err(|_| LibraryError::Persistence("Home session lock was poisoned".to_string()))?;
-        let state = sources
-            .entry(source_id.clone())
-            .or_insert_with(|| HomeSessionState {
-                explore_variation: 0,
-                showcase: None,
-            });
-        Ok(state.clone())
-    }
-
-    fn advance_explore(&self, source_id: &SourceId) -> LibraryResult<HomeSessionState> {
-        let mut sources = self
-            .sources
-            .lock()
-            .map_err(|_| LibraryError::Persistence("Home session lock was poisoned".to_string()))?;
-        let state = sources.get_mut(source_id).ok_or_else(|| {
-            LibraryError::Persistence(format!("Home session for {source_id} is not loaded"))
-        })?;
-        state.explore_variation = state.explore_variation.wrapping_add(1);
-        Ok(state.clone())
-    }
-
-    fn showcase_for(
-        &self,
-        source_id: &SourceId,
-        album_ids: &[AlbumId],
-        track_ids: &[TrackId],
-    ) -> LibraryResult<Option<HomeItemId>> {
-        let mut sources = self
-            .sources
-            .lock()
-            .map_err(|_| LibraryError::Persistence("Home session lock was poisoned".to_string()))?;
-        let state = sources
-            .entry(source_id.clone())
-            .or_insert_with(|| HomeSessionState {
-                explore_variation: 0,
-                showcase: None,
-            });
-        let still_eligible = state
-            .showcase
-            .as_ref()
-            .is_some_and(|showcase| match showcase {
-                HomeItemId::Album(id) => album_ids.contains(id),
-                HomeItemId::Track(id) => track_ids.contains(id),
-            });
-        if !still_eligible {
-            state.showcase = choose_showcase(self.seed, source_id, album_ids, track_ids);
-        }
-        Ok(state.showcase.clone())
-    }
-
-    pub(crate) fn remove_source(&self, source_id: &SourceId) -> LibraryResult<()> {
-        self.sources
-            .lock()
-            .map_err(|_| LibraryError::Persistence("Home session lock was poisoned".to_string()))?
-            .remove(source_id);
-        Ok(())
-    }
-}
-
-impl Library {
-    pub(crate) fn prepare_home(&self) -> LibraryResult<()> {
-        self.home_sessions.state_for(self.source_id())?;
-        Ok(())
-    }
-
-    pub(crate) fn replace_home_facts(&self, facts: HomeFacts) -> LibraryResult<()> {
-        let mut state = self.write_state()?;
-        state.home_facts = facts;
-        Ok(())
-    }
-
-    pub fn home(
-        &self,
-        music_folder_id: Option<&MusicFolderId>,
-    ) -> LibraryResult<Arc<HomeSnapshot>> {
-        let session = self.home_sessions.state_for(self.source_id())?;
-        self.compose_home(music_folder_id, session.explore_variation)
-    }
-
-    /// Applies the bounded Home projection named by one accepted Library operation.
-    pub fn home_after_accepted_change(
-        &self,
-        music_folder_id: Option<&MusicFolderId>,
-        current: &Arc<HomeSnapshot>,
-        change: &crate::AcceptedHomeChange,
-    ) -> LibraryResult<Option<Arc<HomeSnapshot>>> {
-        match change {
-            crate::AcceptedHomeChange::Keep => Ok(None),
-            crate::AcceptedHomeChange::Rebuild => self.home(music_folder_id).map(Some),
-            crate::AcceptedHomeChange::Favorite(item) => self
-                .home_after_favorite(music_folder_id, current, item)
-                .map(Some),
-            crate::AcceptedHomeChange::Played(track_id) => self
-                .home_after_play(music_folder_id, current, track_id)
-                .map(Some),
-        }
-    }
-
-    /// Updates one favorited item in the snapshot prepared for the next visit.
-    fn home_after_favorite(
-        &self,
-        music_folder_id: Option<&MusicFolderId>,
-        current: &Arc<HomeSnapshot>,
-        favorite: &FavoriteItemId,
-    ) -> LibraryResult<Arc<HomeSnapshot>> {
-        if matches!(favorite, FavoriteItemId::Artist(_)) {
-            return Ok(Arc::clone(current));
-        }
-        let state = self.read_state()?;
-        let track_id = match favorite {
-            FavoriteItemId::Track(id) => Some(id),
-            FavoriteItemId::Album(_) | FavoriteItemId::Artist(_) => None,
-        };
-        let album_id = match favorite {
-            FavoriteItemId::Album(id) => Some(id),
-            FavoriteItemId::Track(_) | FavoriteItemId::Artist(_) => None,
-        };
-        let mut changed = false;
-        let sections = current
-            .sections
-            .iter()
-            .map(|section| {
-                let touched = section.items.iter().any(|item| match item {
-                    LoadedHomeItem::Track(track) => track_id == Some(&track.id),
-                    LoadedHomeItem::Album(album) => album_id == Some(&album.album.id),
-                });
-                if !touched {
-                    return Arc::clone(section);
-                }
-                changed = true;
-                let items = section
-                    .items
-                    .iter()
-                    .filter_map(|item| match item {
-                        LoadedHomeItem::Track(track) if track_id == Some(&track.id) => state
-                            .tracks
-                            .get(&track.id)
-                            .filter(|track| track_in_scope(track, music_folder_id))
-                            .cloned()
-                            .map(LoadedHomeItem::Track),
-                        LoadedHomeItem::Album(album) if album_id == Some(&album.album.id) => {
-                            album_summary(
-                                &state,
-                                state.albums.get(&album.album.id)?,
-                                music_folder_id,
-                            )
-                            .map(LoadedHomeItem::Album)
-                        }
-                        item => Some(item.clone()),
-                    })
-                    .collect::<Vec<_>>();
-                Arc::new(LoadedHomeSection {
-                    kind: section.kind,
-                    items: items.into(),
-                })
-            })
-            .collect::<Vec<_>>();
-        let showcase = match current.showcase.as_ref() {
-            Some(ShowcaseItem::Track(track)) if track_id == Some(&track.id) => {
-                changed = true;
-                state
-                    .tracks
-                    .get(&track.id)
-                    .filter(|track| track_in_scope(track, music_folder_id))
-                    .cloned()
-                    .map(ShowcaseItem::Track)
-            }
-            Some(ShowcaseItem::Album(album)) if album_id == Some(&album.album.id) => {
-                changed = true;
-                state
-                    .albums
-                    .get(&album.album.id)
-                    .and_then(|album| album_summary(&state, album, music_folder_id))
-                    .map(ShowcaseItem::Album)
-            }
-            showcase => showcase.cloned(),
-        };
-        if !changed {
-            return Ok(Arc::clone(current));
-        }
-        Ok(Arc::new(HomeSnapshot {
-            sections: sections.into(),
-            genres: Arc::clone(&current.genres),
-            showcase,
-        }))
-    }
-
-    /// Prepares Most Played and Recently Played for the next Home visit.
-    ///
-    /// The mounted snapshot remains untouched, and work stays bounded by the
-    /// number of items already shown on Home.
-    fn home_after_play(
-        &self,
-        music_folder_id: Option<&MusicFolderId>,
-        current: &Arc<HomeSnapshot>,
-        track_id: &TrackId,
-    ) -> LibraryResult<Arc<HomeSnapshot>> {
-        let state = self.read_state()?;
-        if !state.home_facts.is_rufin_defined() {
-            return Ok(Arc::clone(current));
-        }
-        let Some(track) = state.tracks.get(track_id).cloned() else {
-            return Ok(Arc::clone(current));
-        };
-        let in_scope = track_in_scope(&track, music_folder_id);
-
-        let mut most_played = home_section_tracks(current, HomeSectionKind::MostPlayed);
-        most_played.retain(|current| current.id != track.id);
-        if in_scope && track.play_count.unwrap_or(0) > 0 {
-            most_played.push(track.clone());
-        }
-        most_played.sort_by(|left, right| {
-            right
-                .play_count
-                .cmp(&left.play_count)
-                .then_with(|| right.last_played.cmp(&left.last_played))
-                .then_with(|| left.id.cmp(&right.id))
-        });
-        most_played.truncate(HOME_SECTION_ITEM_LIMIT);
-
-        let mut recently_played = home_section_tracks(current, HomeSectionKind::RecentlyPlayed);
-        recently_played.retain(|current| current.id != track.id);
-        if in_scope {
-            recently_played.insert(0, track);
-        }
-        recently_played.truncate(HOME_SECTION_ITEM_LIMIT);
-
-        let mut sections = current
-            .sections
-            .iter()
-            .filter(|section| {
-                !matches!(
-                    section.kind,
-                    HomeSectionKind::MostPlayed | HomeSectionKind::RecentlyPlayed
-                )
-            })
-            .cloned()
-            .collect::<Vec<_>>();
-        push_nonempty(
-            &mut sections,
-            Arc::new(LoadedHomeSection {
-                kind: HomeSectionKind::MostPlayed,
-                items: most_played
-                    .into_iter()
-                    .map(LoadedHomeItem::Track)
-                    .collect::<Vec<_>>()
-                    .into(),
-            }),
-        );
-        push_nonempty(
-            &mut sections,
-            Arc::new(LoadedHomeSection {
-                kind: HomeSectionKind::RecentlyPlayed,
-                items: recently_played
-                    .into_iter()
-                    .map(LoadedHomeItem::Track)
-                    .collect::<Vec<_>>()
-                    .into(),
-            }),
-        );
-        sections.sort_by_key(|section| home_section_position(section.kind));
-        Ok(Arc::new(HomeSnapshot {
-            sections: sections.into(),
-            genres: Arc::clone(&current.genres),
-            showcase: current.showcase.clone(),
-        }))
-    }
-
-    fn compose_home(
-        &self,
-        music_folder_id: Option<&MusicFolderId>,
-        explore_variation: u64,
-    ) -> LibraryResult<Arc<HomeSnapshot>> {
-        let state = self.read_state()?;
-        let (album_ids, track_ids) = home_candidates(&state, music_folder_id);
-        let showcase = self
-            .home_sessions
-            .showcase_for(self.source_id(), &album_ids, &track_ids)?;
-        Ok(Arc::new(compose_home(
-            self.source_id(),
-            &state,
-            self.home_sessions.seed,
-            explore_variation,
-            music_folder_id,
-            showcase.as_ref(),
-        )))
-    }
-
-    /// Rebuilds one Rufin-defined section without changing the mounted Home.
-    pub fn refresh_rufin_home_section(
-        &self,
-        music_folder_id: Option<&MusicFolderId>,
-        current: &Arc<HomeSnapshot>,
-        kind: HomeSectionKind,
-    ) -> LibraryResult<Arc<HomeSnapshot>> {
-        let session = if kind == HomeSectionKind::Explore {
-            self.home_sessions.advance_explore(self.source_id())?
-        } else {
-            self.home_sessions.state_for(self.source_id())?
-        };
-        let state = self.read_state()?;
-        if kind != HomeSectionKind::Explore && !state.home_facts.is_rufin_defined() {
-            return Err(LibraryError::Persistence(format!(
-                "{} is supplied by this source",
-                kind.title()
-            )));
-        }
-        let section = if kind == HomeSectionKind::Explore {
-            compose_explore(
-                self.source_id(),
-                &state,
-                self.home_sessions.seed,
-                session.explore_variation,
-                music_folder_id,
-            )
-        } else {
-            compose_rufin_section(kind, &state, music_folder_id)
-        };
-        Ok(Arc::new(current.replacing_section(
-            kind,
-            (!section.items.is_empty()).then_some(section),
-        )))
-    }
-
-    /// Accepts one provider-owned Home section and returns a snapshot whose
-    /// unrelated section handles, showcase, and genres remain unchanged.
-    pub fn accept_home_section(
-        &self,
-        music_folder_id: Option<&MusicFolderId>,
-        current: &Arc<HomeSnapshot>,
-        section: SourceHomeSection,
-    ) -> LibraryResult<Arc<HomeSnapshot>> {
-        let kind = HomeSectionKind::from(section.kind);
-        let (home, next_section) = {
-            let state = self.read_state()?;
-            let HomeFacts::Source { sections } = &state.home_facts else {
-                return Err(LibraryError::Persistence(format!(
-                    "{} is provided by Rufin for this source",
-                    kind.title()
-                )));
-            };
-            let mut next = sections
-                .iter()
-                .filter(|current| current.kind != section.kind)
-                .cloned()
-                .collect::<Vec<_>>();
-            let next_section = if section.items.is_empty() {
-                None
-            } else {
-                let resolved = resolve_source_section(&section, &state, music_folder_id);
-                next.push(section);
-                (!resolved.items.is_empty()).then_some(resolved)
-            };
-            next.sort_by_key(|section| home_section_position(section.kind.into()));
-            (HomeFacts::Source { sections: next }, next_section)
-        };
-        self.store
-            .replace_home(self.source_id().clone(), self.library_id(), home.clone())?;
+        source: SourceKey,
+        section_id: &str,
+        entries: &[HomeEntryInput],
+    ) -> LibraryResult<()> {
+        if entries.len() > HOME_LIMIT as usize
+            || entries.iter().any(|entry| entry.section_id != section_id)
         {
-            let mut state = self.write_state()?;
-            state.home_facts = home;
+            return Err(crate::LibraryError::InvalidRequest(
+                "invalid Home section batch".to_string(),
+            ));
         }
-        Ok(Arc::new(current.replacing_section(kind, next_section)))
-    }
-}
-
-fn home_candidates(
-    state: &crate::loaded::LoadedState,
-    music_folder_id: Option<&MusicFolderId>,
-) -> (Vec<AlbumId>, Vec<TrackId>) {
-    let mut album_ids = state
-        .albums
-        .values()
-        .filter(|album| album_in_scope(state, album, music_folder_id))
-        .map(|album| album.id.clone())
-        .collect::<Vec<_>>();
-    album_ids.sort();
-    if !album_ids.is_empty() {
-        return (album_ids, Vec::new());
-    }
-    let mut track_ids = state
-        .tracks
-        .values()
-        .filter(|track| track_in_scope(track, music_folder_id))
-        .map(|track| track.id.clone())
-        .collect::<Vec<_>>();
-    track_ids.sort();
-    (album_ids, track_ids)
-}
-
-fn compose_home(
-    source_id: &SourceId,
-    state: &crate::loaded::LoadedState,
-    seed: u64,
-    explore_variation: u64,
-    music_folder_id: Option<&MusicFolderId>,
-    showcase_id: Option<&HomeItemId>,
-) -> HomeSnapshot {
-    let mut sections = Vec::new();
-    push_nonempty(
-        &mut sections,
-        compose_explore(source_id, state, seed, explore_variation, music_folder_id),
-    );
-    match &state.home_facts {
-        HomeFacts::RufinDefined => {
-            for kind in [
-                HomeSectionKind::MostPlayed,
-                HomeSectionKind::NewlyAdded,
-                HomeSectionKind::RecentlyPlayed,
-                HomeSectionKind::RecentlyReleased,
-            ] {
-                push_nonempty(
-                    &mut sections,
-                    compose_rufin_section(kind, state, music_folder_id),
-                );
+        let mut writer = self.writer().await?;
+        let connection = writer
+            .as_mut()
+            .ok_or(crate::LibraryError::WriterUnavailable)?;
+        let mut transaction = connection.begin().await?;
+        sqlx::query("DELETE FROM home_entries WHERE source_key=?1 AND section_id=?2")
+            .bind(source)
+            .bind(section_id)
+            .execute(&mut *transaction)
+            .await?;
+        for entry in entries {
+            let key =
+                match entry.kind {
+                    HomeEntryKind::Track => {
+                        sqlx::query_scalar::<_, i64>(
+                            "SELECT track_key FROM tracks WHERE source_key=?1 AND object_id=?2",
+                        )
+                        .bind(source)
+                        .bind(&entry.entity_object_id)
+                        .fetch_optional(&mut *transaction)
+                        .await?
+                    }
+                    HomeEntryKind::Album => {
+                        sqlx::query_scalar::<_, i64>(
+                            "SELECT album_key FROM albums WHERE source_key=?1 AND object_id=?2",
+                        )
+                        .bind(source)
+                        .bind(&entry.entity_object_id)
+                        .fetch_optional(&mut *transaction)
+                        .await?
+                    }
+                    HomeEntryKind::Artist => {
+                        sqlx::query_scalar::<_, i64>(
+                            "SELECT artist_key FROM artists WHERE source_key=?1 AND object_id=?2",
+                        )
+                        .bind(source)
+                        .bind(&entry.entity_object_id)
+                        .fetch_optional(&mut *transaction)
+                        .await?
+                    }
+                    HomeEntryKind::Playlist => sqlx::query_scalar::<_, i64>(
+                        "SELECT playlist_key FROM playlists WHERE source_key=?1 AND object_id=?2",
+                    )
+                    .bind(source)
+                    .bind(&entry.entity_object_id)
+                    .fetch_optional(&mut *transaction)
+                    .await?,
+                };
+            if let Some(key) = key {
+                sqlx::query("INSERT INTO home_entries(source_key,section_id,position,entity_kind,entity_key,title,subtitle,artwork_binding) VALUES(?1,?2,?3,?4,?5,?6,?7,?8)").bind(source).bind(section_id).bind(entry.position).bind(entry.kind.as_str()).bind(key).bind(&entry.title).bind(&entry.subtitle).bind(entry.artwork_binding.as_deref()).execute(&mut *transaction).await?;
             }
         }
-        HomeFacts::Source {
-            sections: source_sections,
-        } => {
-            for section in source_sections {
-                push_nonempty(
-                    &mut sections,
-                    resolve_source_section(section, state, music_folder_id),
-                );
-            }
-        }
+        transaction.commit().await?;
+        Ok(())
     }
-    let mut genre_ids = state
-        .genres
-        .keys()
-        .cloned()
-        .collect::<HashSet<_>>()
-        .into_iter()
-        .collect::<Vec<_>>();
-    genre_ids.sort_by(|left, right| {
-        let left = &state.genres[left];
-        let right = &state.genres[right];
-        text_cmp(&left.name, &right.name).then(left.id.cmp(&right.id))
-    });
-    let showcase = showcase_id.and_then(|item| resolve_showcase(item, state, music_folder_id));
-    HomeSnapshot {
-        sections: sections.into(),
-        genres: genre_ids
-            .into_iter()
-            .filter_map(|id| genre_summary(state, state.genres.get(&id)?, music_folder_id))
-            .take(HOME_GENRE_LIMIT)
-            .collect::<Vec<_>>()
-            .into(),
-        showcase,
+    pub async fn home_page(
+        &self,
+        source: SourceKey,
+        folder: Option<FolderKey>,
+        variation: i64,
+        cancellation: &ReadCancellation,
+    ) -> LibraryResult<HomePage> {
+        let (_permit, mut connection) = self.acquire_general(cancellation).await?;
+        let mut transaction = connection.begin().await?;
+
+        let album_count = sqlx::query_scalar::<_, i64>(
+            "SELECT count(*) FROM albums album
+             WHERE album.source_key=?1 AND (?2 IS NULL OR EXISTS (
+               SELECT 1 FROM tracks track JOIN track_folders scope USING(track_key)
+               WHERE track.album_key=album.album_key AND scope.folder_key=?2))",
+        )
+        .bind(source)
+        .bind(folder)
+        .fetch_one(&mut *transaction)
+        .await?;
+        let showcase_offset = if album_count == 0 {
+            0
+        } else {
+            variation.rem_euclid(album_count)
+        };
+        let album_showcase = sqlx::query_as::<_, HomeAlbumFact>(
+            "SELECT album_key,title,artwork_binding FROM albums
+             WHERE source_key=?1 AND (?3 IS NULL OR EXISTS (
+               SELECT 1 FROM tracks track JOIN track_folders scope USING(track_key)
+               WHERE track.album_key=albums.album_key AND scope.folder_key=?3))
+             ORDER BY album_key LIMIT 1 OFFSET ?2",
+        )
+        .bind(source)
+        .bind(showcase_offset)
+        .bind(folder)
+        .fetch_optional(&mut *transaction)
+        .await?;
+        let track_count = sqlx::query_scalar::<_, i64>(
+            "SELECT count(*) FROM tracks track WHERE track.source_key=?1 AND (?2 IS NULL OR EXISTS (SELECT 1 FROM track_folders scope WHERE scope.track_key=track.track_key AND scope.folder_key=?2))",
+        )
+        .bind(source)
+        .bind(folder)
+        .fetch_one(&mut *transaction)
+        .await?;
+        let track_showcase = if track_count == 0 {
+            None
+        } else {
+            sqlx::query_as::<_, HomeTrackFact>(
+                "SELECT track_key,title,artwork_binding FROM tracks WHERE source_key=?1 AND (?3 IS NULL OR EXISTS (SELECT 1 FROM track_folders scope WHERE scope.track_key=tracks.track_key AND scope.folder_key=?3)) ORDER BY track_key LIMIT 1 OFFSET ?2",
+            )
+            .bind(source)
+            .bind(variation.rem_euclid(track_count))
+            .bind(folder)
+            .fetch_optional(&mut *transaction)
+            .await?
+        };
+        let showcase = if variation.rem_euclid(2) == 1 {
+            track_showcase
+                .map(HomeShowcaseFact::Track)
+                .or_else(|| album_showcase.map(HomeShowcaseFact::Album))
+        } else {
+            album_showcase
+                .map(HomeShowcaseFact::Album)
+                .or_else(|| track_showcase.map(HomeShowcaseFact::Track))
+        };
+
+        let track_pivot = sqlx::query_scalar::<_, i64>(
+            "SELECT COALESCE(max(track.track_key),0) FROM tracks track
+             WHERE track.source_key=?1 AND (?2 IS NULL OR EXISTS (
+               SELECT 1 FROM track_folders scope
+               WHERE scope.track_key=track.track_key AND scope.folder_key=?2))",
+        )
+        .bind(source)
+        .bind(folder)
+        .fetch_one(&mut *transaction)
+        .await?;
+        let track_pivot = if track_pivot == 0 {
+            0
+        } else {
+            variation.rem_euclid(track_pivot + 1)
+        };
+        let mut explore = sqlx::query_as::<_, HomeTrackFact>(
+            "SELECT track_key,title,artwork_binding FROM tracks
+             WHERE source_key=?1 AND track_key>=?2 AND (?3 IS NULL OR EXISTS (
+               SELECT 1 FROM track_folders scope
+               WHERE scope.track_key=tracks.track_key AND scope.folder_key=?3))
+             ORDER BY track_key LIMIT 24",
+        )
+        .bind(source)
+        .bind(track_pivot)
+        .bind(folder)
+        .fetch_all(&mut *transaction)
+        .await?;
+        if explore.len() < HOME_LIMIT as usize {
+            let rest = sqlx::query_as::<_, HomeTrackFact>(
+                "SELECT track_key,title,artwork_binding FROM tracks
+                 WHERE source_key=?1 AND track_key<?2 AND (?4 IS NULL OR EXISTS (
+                   SELECT 1 FROM track_folders scope
+                   WHERE scope.track_key=tracks.track_key AND scope.folder_key=?4))
+                 ORDER BY track_key LIMIT ?3",
+            )
+            .bind(source)
+            .bind(track_pivot)
+            .bind(HOME_LIMIT - explore.len() as i64)
+            .bind(folder)
+            .fetch_all(&mut *transaction)
+            .await?;
+            explore.extend(rest);
+        }
+
+        let mut most_played =
+            provider_section(&mut transaction, source, folder, "most-played").await?;
+        if most_played.tracks.is_empty() && most_played.albums.is_empty() {
+            most_played.tracks = sqlx::query_as::<_, HomeTrackFact>(
+                "WITH listen_count AS (
+                   SELECT track_key,count(*) plays FROM listens
+                   WHERE source_key=?1 AND track_key IS NOT NULL GROUP BY track_key)
+                 SELECT track.track_key,track.title,track.artwork_binding
+                 FROM tracks track
+                 LEFT JOIN activity_baseline baseline ON baseline.source_key=track.source_key AND baseline.track_object_id=track.object_id AND baseline.period='lifetime' AND baseline.item_kind='track'
+                 LEFT JOIN listen_count listen USING(track_key)
+                 WHERE track.source_key=?1
+                   AND COALESCE(baseline.play_count,0)+COALESCE(listen.plays,0)>0
+                   AND (?2 IS NULL OR EXISTS (SELECT 1 FROM track_folders scope WHERE scope.track_key=track.track_key AND scope.folder_key=?2))
+                 ORDER BY COALESCE(baseline.play_count,0)+COALESCE(listen.plays,0) DESC,track.sort_text,track.track_key LIMIT 24",
+            )
+            .bind(source)
+            .bind(folder)
+            .fetch_all(&mut *transaction)
+            .await?;
+        }
+
+        let mut newly_added =
+            provider_section(&mut transaction, source, folder, "newly-added").await?;
+        if newly_added.tracks.is_empty() && newly_added.albums.is_empty() {
+            newly_added.albums = sqlx::query_as::<_, HomeAlbumFact>(
+                "SELECT album_key,title,artwork_binding FROM albums
+                 WHERE source_key=?1 AND (?2 IS NULL OR EXISTS (
+                   SELECT 1 FROM tracks track JOIN track_folders scope USING(track_key)
+                   WHERE track.album_key=albums.album_key AND scope.folder_key=?2))
+                 ORDER BY COALESCE(unixepoch(date_added),first_seen_at) DESC NULLS LAST,sort_text,album_key LIMIT 24",
+            )
+            .bind(source)
+            .bind(folder)
+            .fetch_all(&mut *transaction)
+            .await?;
+        }
+
+        let mut recently_played =
+            provider_section(&mut transaction, source, folder, "recently-played").await?;
+        if recently_played.tracks.is_empty() && recently_played.albums.is_empty() {
+            recently_played.tracks = sqlx::query_as::<_, HomeTrackFact>(
+                "WITH latest AS (
+                   SELECT track_key,max(started_at) played_at FROM listens
+                   WHERE source_key=?1 AND track_key IS NOT NULL GROUP BY track_key)
+                 SELECT track.track_key,track.title,track.artwork_binding
+                 FROM latest JOIN tracks track USING(track_key)
+                 WHERE (?2 IS NULL OR EXISTS (SELECT 1 FROM track_folders scope WHERE scope.track_key=track.track_key AND scope.folder_key=?2))
+                 ORDER BY latest.played_at DESC,track.track_key LIMIT 24",
+            )
+            .bind(source)
+            .bind(folder)
+            .fetch_all(&mut *transaction)
+            .await?;
+        }
+
+        let mut recently_released =
+            provider_section(&mut transaction, source, folder, "recently-released").await?;
+        if recently_released.tracks.is_empty() && recently_released.albums.is_empty() {
+            recently_released.albums = sqlx::query_as::<_, HomeAlbumFact>(
+                "SELECT album_key,title,artwork_binding FROM albums
+                 WHERE source_key=?1 AND (release_date IS NOT NULL OR COALESCE(year,0)<>0)
+                   AND (?2 IS NULL OR EXISTS (
+                     SELECT 1 FROM tracks track JOIN track_folders scope USING(track_key)
+                     WHERE track.album_key=albums.album_key AND scope.folder_key=?2))
+                 ORDER BY release_date DESC NULLS LAST,year DESC NULLS LAST,sort_text,album_key LIMIT 24",
+            )
+            .bind(source)
+            .bind(folder)
+            .fetch_all(&mut *transaction)
+            .await?;
+        }
+
+        let genres = sqlx::query_as::<_, HomeGenreRow>(
+            "SELECT genre.genre_key,genre.name,genre.artwork_binding,
+                    count(DISTINCT track.album_key) album_count,
+                    count(DISTINCT relation.track_key) track_count
+             FROM genres genre
+             LEFT JOIN track_genres relation USING(genre_key)
+             LEFT JOIN tracks track ON track.track_key=relation.track_key
+             WHERE genre.source_key=?1 AND (?2 IS NULL OR EXISTS (
+               SELECT 1 FROM track_genres credit JOIN track_folders scope USING(track_key)
+               WHERE credit.genre_key=genre.genre_key AND scope.folder_key=?2))
+             GROUP BY genre.genre_key
+             ORDER BY count(relation.track_key) DESC,genre.sort_text,genre.genre_key LIMIT 12",
+        )
+        .bind(source)
+        .bind(folder)
+        .fetch_all(&mut *transaction)
+        .await?;
+
+        let provider_section_ids = sqlx::query_scalar::<_, String>(
+            "SELECT DISTINCT section_id FROM home_entries
+             WHERE source_key=?1 AND section_id NOT IN ('most-played','newly-added','recently-played','recently-released')
+             ORDER BY section_id LIMIT 12",
+        )
+        .bind(source)
+        .fetch_all(&mut *transaction)
+        .await?;
+        let mut provider_sections = Vec::with_capacity(provider_section_ids.len());
+        for section_id in provider_section_ids {
+            let rows = provider_section(&mut transaction, source, folder, &section_id).await?;
+            provider_sections.push(HomeProviderFacts { section_id, rows });
+        }
+
+        transaction.commit().await?;
+        Database::clear_progress(&mut connection).await?;
+        drop(connection);
+        drop(_permit);
+        enrich_home_page(
+            self,
+            source,
+            folder,
+            HomePageFacts {
+                showcase,
+                explore,
+                most_played,
+                newly_added,
+                recently_played,
+                recently_released,
+                genres,
+                provider_sections,
+            },
+            cancellation,
+        )
+        .await
     }
 }
 
-fn compose_explore(
-    source_id: &SourceId,
-    state: &crate::loaded::LoadedState,
-    seed: u64,
-    variation: u64,
-    music_folder_id: Option<&MusicFolderId>,
-) -> Arc<LoadedHomeSection> {
-    let mut albums = state
-        .albums
-        .values()
-        .filter(|album| album_in_scope(state, album, music_folder_id))
-        .cloned()
-        .collect::<Vec<_>>();
-    let items = if albums.is_empty() {
-        let mut tracks = state.tracks.values().cloned().collect::<Vec<_>>();
-        tracks.retain(|track| track_in_scope(track, music_folder_id));
-        tracks.sort_by(|left, right| left.id.cmp(&right.id));
-        sampled_indexes(tracks.len(), seed, source_id, variation)
-            .filter_map(|index| tracks.get(index).cloned())
-            .map(LoadedHomeItem::Track)
-            .collect()
-    } else {
-        albums.sort_by(|left, right| left.id.cmp(&right.id));
-        sampled_indexes(albums.len(), seed, source_id, variation)
-            .filter_map(|index| album_summary(state, albums.get(index)?, music_folder_id))
-            .map(LoadedHomeItem::Album)
-            .collect()
-    };
-    Arc::new(LoadedHomeSection {
-        kind: HomeSectionKind::Explore,
-        items,
-    })
-}
-
-fn compose_rufin_section(
-    kind: HomeSectionKind,
-    state: &crate::loaded::LoadedState,
-    music_folder_id: Option<&MusicFolderId>,
-) -> Arc<LoadedHomeSection> {
-    let items = match kind {
-        HomeSectionKind::Explore => Vec::new(),
-        HomeSectionKind::MostPlayed => {
-            let mut tracks = state
-                .tracks
-                .values()
-                .filter(|track| track.play_count.unwrap_or(0) > 0)
-                .filter(|track| track_in_scope(track, music_folder_id))
-                .cloned()
-                .collect::<Vec<_>>();
-            tracks.sort_by(|left, right| {
-                right
-                    .play_count
-                    .cmp(&left.play_count)
-                    .then_with(|| right.last_played.cmp(&left.last_played))
-                    .then_with(|| left.id.cmp(&right.id))
-            });
-            tracks
-                .into_iter()
-                .take(HOME_SECTION_ITEM_LIMIT)
-                .map(LoadedHomeItem::Track)
-                .collect()
-        }
-        HomeSectionKind::RecentlyPlayed => {
-            let mut seen = HashSet::new();
-            state
-                .recent_plays
-                .iter()
-                .map(|play| &play.track_id)
-                .filter(|id| seen.insert((*id).clone()))
-                .filter_map(|id| state.tracks.get(id).cloned())
-                .filter(|track| track_in_scope(track, music_folder_id))
-                .take(HOME_SECTION_ITEM_LIMIT)
-                .map(LoadedHomeItem::Track)
-                .collect()
-        }
-        HomeSectionKind::NewlyAdded => {
-            let mut albums = state
-                .albums
-                .values()
-                .filter_map(|album| {
-                    let first_seen_at = state
-                        .albums
-                        .get(&album.id)?
-                        .tracks
-                        .iter()
-                        .filter(|slot| {
-                            state
-                                .tracks
-                                .get_slot(**slot)
-                                .is_some_and(|track| track_in_scope(track, music_folder_id))
-                        })
-                        .filter_map(|slot| state.local_imports.get(slot))
-                        .copied()
-                        .max()?;
-                    Some((first_seen_at, album.id.clone()))
-                })
-                .collect::<Vec<_>>();
-            albums.sort_by(|(left_seen, left), (right_seen, right)| {
-                right_seen.cmp(left_seen).then_with(|| left.cmp(right))
-            });
-            albums
-                .into_iter()
-                .take(HOME_SECTION_ITEM_LIMIT)
-                .filter_map(|(_, album_id)| {
-                    album_summary(state, state.albums.get(&album_id)?, music_folder_id)
-                        .map(LoadedHomeItem::Album)
-                })
-                .collect()
-        }
-        HomeSectionKind::RecentlyReleased => {
-            let mut albums = state
-                .albums
-                .values()
-                .filter(|album| album.release_date.is_some() || album.year > 0)
-                .filter(|album| album_in_scope(state, album, music_folder_id))
-                .collect::<Vec<_>>();
-            albums.sort_by(|left, right| {
-                right
-                    .release_date
-                    .cmp(&left.release_date)
-                    .then_with(|| right.year.cmp(&left.year))
-                    .then_with(|| left.id.cmp(&right.id))
-            });
-            albums
-                .into_iter()
-                .take(HOME_SECTION_ITEM_LIMIT)
-                .filter_map(|album| {
-                    album_summary(state, &album, music_folder_id).map(LoadedHomeItem::Album)
-                })
-                .collect()
-        }
-    };
-    Arc::new(LoadedHomeSection {
-        kind,
-        items: items.into(),
-    })
-}
-
-fn resolve_source_section(
-    section: &SourceHomeSection,
-    state: &crate::loaded::LoadedState,
-    music_folder_id: Option<&MusicFolderId>,
-) -> Arc<LoadedHomeSection> {
-    let mut seen = HashSet::new();
-    let items = section
-        .items
+async fn enrich_home_page(
+    database: &Database,
+    source: SourceKey,
+    folder: Option<FolderKey>,
+    facts: HomePageFacts,
+    cancellation: &ReadCancellation,
+) -> LibraryResult<HomePage> {
+    let mut track_keys = facts
+        .explore
         .iter()
-        .filter(|item| seen.insert((*item).clone()))
-        .filter_map(|item| match item {
-            HomeItemId::Album(id) => album_summary(state, state.albums.get(id)?, music_folder_id)
-                .map(LoadedHomeItem::Album),
-            HomeItemId::Track(id) => state
-                .tracks
-                .get(id)
-                .filter(|track| track_in_scope(track, music_folder_id))
-                .cloned()
-                .map(LoadedHomeItem::Track),
+        .map(|row| row.track_key)
+        .collect::<Vec<_>>();
+    if let Some(HomeShowcaseFact::Track(row)) = facts.showcase.as_ref() {
+        track_keys.push(row.track_key);
+    }
+    let mut album_keys = facts
+        .showcase
+        .iter()
+        .filter_map(|row| match row {
+            HomeShowcaseFact::Album(row) => Some(row.album_key),
+            HomeShowcaseFact::Track(_) => None,
         })
-        .take(HOME_SECTION_ITEM_LIMIT)
-        .collect();
-    Arc::new(LoadedHomeSection {
-        kind: section.kind.into(),
-        items,
+        .collect::<Vec<_>>();
+    for section in [
+        &facts.most_played,
+        &facts.newly_added,
+        &facts.recently_played,
+        &facts.recently_released,
+    ] {
+        track_keys.extend(section.tracks.iter().map(|row| row.track_key));
+        album_keys.extend(section.albums.iter().map(|row| row.album_key));
+    }
+    for section in &facts.provider_sections {
+        track_keys.extend(section.rows.tracks.iter().map(|row| row.track_key));
+        album_keys.extend(section.rows.albums.iter().map(|row| row.album_key));
+    }
+    track_keys.sort_unstable();
+    track_keys.dedup();
+    album_keys.sort_unstable();
+    album_keys.dedup();
+
+    let mut tracks = BTreeMap::new();
+    for keys in track_keys.chunks(128) {
+        for row in database.track_rows(source, keys, cancellation).await? {
+            tracks.insert(row.track_key, row);
+        }
+    }
+    let mut albums = BTreeMap::new();
+    for keys in album_keys.chunks(128) {
+        for row in database
+            .album_rows(source, keys, folder, cancellation)
+            .await?
+        {
+            albums.insert(row.album_key, row);
+        }
+    }
+
+    let section = |facts: HomeSectionFacts| HomeSectionRows {
+        tracks: facts
+            .tracks
+            .into_iter()
+            .filter_map(|fact| {
+                tracks
+                    .get(&fact.track_key)
+                    .cloned()
+                    .map(|track| HomeTrackRow {
+                        track,
+                        title: fact.title,
+                        artwork_binding: fact.artwork_binding,
+                    })
+            })
+            .collect(),
+        albums: facts
+            .albums
+            .into_iter()
+            .filter_map(|fact| {
+                albums
+                    .get(&fact.album_key)
+                    .cloned()
+                    .map(|album| HomeAlbumRow {
+                        album,
+                        title: fact.title,
+                        artwork_binding: fact.artwork_binding,
+                    })
+            })
+            .collect(),
+    };
+    Ok(HomePage {
+        showcase: facts.showcase.and_then(|fact| match fact {
+            HomeShowcaseFact::Track(fact) => tracks.get(&fact.track_key).cloned().map(|track| {
+                HomeShowcaseRow::Track(HomeTrackRow {
+                    track,
+                    title: fact.title,
+                    artwork_binding: fact.artwork_binding,
+                })
+            }),
+            HomeShowcaseFact::Album(fact) => albums.get(&fact.album_key).cloned().map(|album| {
+                HomeShowcaseRow::Album(HomeAlbumRow {
+                    album,
+                    title: fact.title,
+                    artwork_binding: fact.artwork_binding,
+                })
+            }),
+        }),
+        explore: facts
+            .explore
+            .into_iter()
+            .filter_map(|fact| {
+                tracks
+                    .get(&fact.track_key)
+                    .cloned()
+                    .map(|track| HomeTrackRow {
+                        track,
+                        title: fact.title,
+                        artwork_binding: fact.artwork_binding,
+                    })
+            })
+            .collect(),
+        most_played: section(facts.most_played),
+        newly_added: section(facts.newly_added),
+        recently_played: section(facts.recently_played),
+        recently_released: section(facts.recently_released),
+        genres: facts.genres,
+        provider_sections: facts
+            .provider_sections
+            .into_iter()
+            .map(|provider| HomeProviderSection {
+                section_id: provider.section_id,
+                rows: section(provider.rows),
+            })
+            .collect(),
     })
 }
 
-fn resolve_showcase(
-    item: &HomeItemId,
-    state: &crate::loaded::LoadedState,
-    music_folder_id: Option<&MusicFolderId>,
-) -> Option<ShowcaseItem> {
-    match item {
-        HomeItemId::Album(id) => {
-            album_summary(state, state.albums.get(id)?, music_folder_id).map(ShowcaseItem::Album)
-        }
-        HomeItemId::Track(id) => state
-            .tracks
-            .get(id)
-            .filter(|track| track_in_scope(track, music_folder_id))
-            .cloned()
-            .map(ShowcaseItem::Track),
-    }
-}
-
-fn push_nonempty(sections: &mut Vec<Arc<LoadedHomeSection>>, section: Arc<LoadedHomeSection>) {
-    if !section.items.is_empty() {
-        sections.retain(|current| current.kind != section.kind);
-        sections.push(section);
-    }
-}
-
-fn home_section_tracks(current: &HomeSnapshot, kind: HomeSectionKind) -> Vec<Track> {
-    current
-        .section(kind)
-        .into_iter()
-        .flat_map(|section| section.items.iter())
-        .filter_map(|item| match item {
-            LoadedHomeItem::Track(track) => Some(track.clone()),
-            LoadedHomeItem::Album(_) => None,
-        })
-        .collect()
-}
-
-fn home_section_position(kind: HomeSectionKind) -> u8 {
-    match kind {
-        HomeSectionKind::Explore => 0,
-        HomeSectionKind::MostPlayed => 1,
-        HomeSectionKind::NewlyAdded => 2,
-        HomeSectionKind::RecentlyPlayed => 3,
-        HomeSectionKind::RecentlyReleased => 4,
-    }
-}
-
-fn sampled_indexes(
-    len: usize,
-    seed: u64,
-    source_id: &SourceId,
-    variation: u64,
-) -> impl Iterator<Item = usize> {
-    let start = (home_hash(
-        seed ^ variation.rotate_left(23),
-        source_id.as_str(),
-        "explore-start",
-    ) as usize)
-        .checked_rem(len)
-        .unwrap_or(0);
-    let mut step = (home_hash(
-        seed ^ variation.rotate_left(41),
-        source_id.as_str(),
-        "explore-step",
-    ) as usize)
-        .checked_rem(len)
-        .unwrap_or(0)
-        .max(1);
-    while len > 1 && greatest_common_divisor(step, len) != 1 {
-        step = (step + 1) % len;
-        if step == 0 {
-            step = 1;
-        }
-    }
-    (0..len.min(HOME_SECTION_ITEM_LIMIT))
-        .map(move |offset| (start + offset.wrapping_mul(step)) % len.max(1))
-}
-
-fn greatest_common_divisor(mut left: usize, mut right: usize) -> usize {
-    while right != 0 {
-        (left, right) = (right, left % right);
-    }
-    left
-}
-
-fn choose_showcase(
-    seed: u64,
-    source_id: &SourceId,
-    album_ids: &[AlbumId],
-    track_ids: &[TrackId],
-) -> Option<HomeItemId> {
-    if !album_ids.is_empty() {
-        let index = home_hash(seed, source_id.as_str(), "showcase") as usize % album_ids.len();
-        return Some(HomeItemId::Album(album_ids[index].clone()));
-    }
-    if !track_ids.is_empty() {
-        let index = home_hash(seed, source_id.as_str(), "showcase") as usize % track_ids.len();
-        return Some(HomeItemId::Track(track_ids[index].clone()));
-    }
-    None
-}
-
-fn text_cmp(left: &str, right: &str) -> std::cmp::Ordering {
-    left.bytes()
-        .map(|byte| byte.to_ascii_lowercase())
-        .cmp(right.bytes().map(|byte| byte.to_ascii_lowercase()))
-}
-
-fn home_hash(seed: u64, source: &str, value: &str) -> u64 {
-    const OFFSET: u64 = 14_695_981_039_346_656_037;
-    const PRIME: u64 = 1_099_511_628_211;
-    source
-        .bytes()
-        .chain(seed.to_le_bytes())
-        .chain([0xff])
-        .chain(value.bytes())
-        .fold(OFFSET, |hash, byte| {
-            (hash ^ u64::from(byte)).wrapping_mul(PRIME)
-        })
-}
-
-#[cfg(test)]
-mod tests {
-    use std::sync::Arc;
-
-    use super::{HomeSectionKind, HomeSnapshot, LoadedHomeSection};
-
-    fn section(kind: HomeSectionKind) -> Arc<LoadedHomeSection> {
-        Arc::new(LoadedHomeSection {
-            kind,
-            items: Vec::new().into(),
-        })
-    }
-
-    #[test]
-    fn replacing_one_home_section_preserves_every_other_mounted_section() {
-        let explore = section(HomeSectionKind::Explore);
-        let old_recent = section(HomeSectionKind::RecentlyPlayed);
-        let most_played = section(HomeSectionKind::MostPlayed);
-        let genres = Vec::new().into();
-        let current = HomeSnapshot {
-            sections: vec![
-                Arc::clone(&explore),
-                Arc::clone(&old_recent),
-                Arc::clone(&most_played),
-            ]
-            .into(),
-            genres,
-            showcase: None,
-        };
-        let next_recent = section(HomeSectionKind::RecentlyPlayed);
-        let replaced = current.replacing_section(
-            HomeSectionKind::RecentlyPlayed,
-            Some(Arc::clone(&next_recent)),
-        );
-
-        assert!(Arc::ptr_eq(&replaced.sections[0], &explore));
-        assert!(Arc::ptr_eq(&replaced.sections[1], &next_recent));
-        assert!(Arc::ptr_eq(&replaced.sections[2], &most_played));
-        assert!(Arc::ptr_eq(&replaced.genres, &current.genres));
-    }
-
-    #[test]
-    fn replacing_one_home_section_can_remove_only_that_section() {
-        let explore = section(HomeSectionKind::Explore);
-        let recent = section(HomeSectionKind::RecentlyPlayed);
-        let current = HomeSnapshot {
-            sections: vec![Arc::clone(&explore), recent].into(),
-            ..HomeSnapshot::default()
-        };
-
-        let replaced = current.replacing_section(HomeSectionKind::RecentlyPlayed, None);
-
-        assert_eq!(replaced.sections.len(), 1);
-        assert!(Arc::ptr_eq(&replaced.sections[0], &explore));
-    }
+async fn provider_section(
+    connection: &mut SqliteConnection,
+    source: SourceKey,
+    folder: Option<FolderKey>,
+    section_id: &str,
+) -> LibraryResult<HomeSectionFacts> {
+    let tracks = sqlx::query_as::<_, HomeTrackFact>(
+        "SELECT track.track_key,entry.title,
+                COALESCE(entry.artwork_binding,track.artwork_binding) artwork_binding
+         FROM home_entries entry JOIN tracks track ON track.track_key=entry.entity_key
+         WHERE entry.source_key=?1 AND entry.section_id=?2 AND entry.entity_kind='track'
+           AND (?3 IS NULL OR EXISTS (SELECT 1 FROM track_folders scope WHERE scope.track_key=track.track_key AND scope.folder_key=?3))
+         ORDER BY entry.position LIMIT 24",
+    )
+    .bind(source)
+    .bind(section_id)
+    .bind(folder)
+    .fetch_all(&mut *connection)
+    .await?;
+    let albums = sqlx::query_as::<_, HomeAlbumFact>(
+        "SELECT album.album_key,entry.title,
+                COALESCE(entry.artwork_binding,album.artwork_binding) artwork_binding
+         FROM home_entries entry JOIN albums album ON album.album_key=entry.entity_key
+         WHERE entry.source_key=?1 AND entry.section_id=?2 AND entry.entity_kind='album'
+           AND (?3 IS NULL OR EXISTS (
+             SELECT 1 FROM tracks track JOIN track_folders scope USING(track_key)
+             WHERE track.album_key=album.album_key AND scope.folder_key=?3))
+         ORDER BY entry.position LIMIT 24",
+    )
+    .bind(source)
+    .bind(section_id)
+    .bind(folder)
+    .fetch_all(&mut *connection)
+    .await?;
+    Ok(HomeSectionFacts { tracks, albums })
 }
