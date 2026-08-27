@@ -44,6 +44,11 @@ msgid ""
 msgstr ""
 
 msgid ""
+"Rufin will calculate the missing EBU R128 metadata for the whole library. "
+"This can use significant CPU, battery, and network bandwidth for a long time."
+msgstr ""
+
+msgid ""
 "Saved mapping. {direct} direct, {prefix} prefix, {metadata} metadata, "
 "{unmatched} unmatched of {total} track"
 msgid_plural ""
@@ -133,6 +138,9 @@ msgstr ""
 msgid "Accent color"
 msgstr ""
 
+msgid "Activity"
+msgstr ""
+
 msgid "Add Rule"
 msgstr ""
 
@@ -208,7 +216,13 @@ msgstr ""
 msgid "All tracks"
 msgstr ""
 
+msgid "All"
+msgstr ""
+
 msgid "Any genre"
+msgstr ""
+
+msgid "Any"
 msgstr ""
 
 msgid "App settings"
@@ -271,6 +285,9 @@ msgstr ""
 msgid "Automatic updates"
 msgstr ""
 
+msgid "Automatic"
+msgstr ""
+
 msgid "BPM"
 msgstr ""
 
@@ -296,6 +313,9 @@ msgid "Cancel download"
 msgstr ""
 
 msgid "Cancel"
+msgstr ""
+
+msgid "Casting network"
 msgstr ""
 
 msgid "Casting"
@@ -546,10 +566,19 @@ msgstr ""
 msgid "Duration"
 msgstr ""
 
+msgid "EBU R128 reference level"
+msgstr ""
+
+msgid "EBU R128"
+msgstr ""
+
 msgid "EP"
 msgstr ""
 
 msgid "EPs"
+msgstr ""
+
+msgid "Edit Smart Playlist"
 msgstr ""
 
 msgid "Edit metadata"
@@ -558,10 +587,16 @@ msgstr ""
 msgid "Edit"
 msgstr ""
 
+msgid "Enable EBU R128 Analysis?"
+msgstr ""
+
 msgid "Enable equalizer"
 msgstr ""
 
 msgid "Enable private mode"
+msgstr ""
+
+msgid "Enable"
 msgstr ""
 
 msgid "Enter API credentials first"
@@ -933,6 +968,15 @@ msgstr ""
 msgid "More actions"
 msgstr ""
 
+msgid "Most Played (Monthly)"
+msgstr ""
+
+msgid "Most Played (Weekly)"
+msgstr ""
+
+msgid "Most Played (Yearly)"
+msgstr ""
+
 msgid "Most Played"
 msgstr ""
 
@@ -1012,6 +1056,9 @@ msgid "Needs attention"
 msgstr ""
 
 msgid "NetEase"
+msgstr ""
+
+msgid "Network used to send local and proxied media to casting devices"
 msgstr ""
 
 msgid "Never Played"
@@ -1104,6 +1151,9 @@ msgstr ""
 msgid "None"
 msgstr ""
 
+msgid "Normalization scope"
+msgstr ""
+
 msgid "Not connected"
 msgstr ""
 
@@ -1179,7 +1229,7 @@ msgstr ""
 msgid "Original"
 msgstr ""
 
-msgid "Other"
+msgid "Other releases"
 msgstr ""
 
 msgid "Overview"
@@ -1246,9 +1296,6 @@ msgid "Play random (play next)"
 msgstr ""
 
 msgid "Play random"
-msgstr ""
-
-msgid "Play smart playlist"
 msgstr ""
 
 msgid "Play track"
@@ -1458,9 +1505,6 @@ msgstr ""
 msgid "Remove from Queue"
 msgstr ""
 
-msgid "Remove from playlist"
-msgstr ""
-
 msgid "Remove prefix"
 msgstr ""
 
@@ -1491,6 +1535,9 @@ msgstr ""
 msgid "Repeat"
 msgstr ""
 
+msgid "ReplayGain"
+msgstr ""
+
 msgid "Requires OpenSubsonic songLyrics v2"
 msgstr ""
 
@@ -1501,12 +1548,6 @@ msgid "Reset to defaults"
 msgstr ""
 
 msgid "Reset"
-msgstr ""
-
-msgid "Restore Default"
-msgstr ""
-
-msgid "Restore"
 msgstr ""
 
 msgid "Resume"
@@ -1570,6 +1611,12 @@ msgid "Search Again"
 msgstr ""
 
 msgid "Search Lyrics"
+msgstr ""
+
+msgid "Search current folder"
+msgstr ""
+
+msgid "Search is unavailable"
 msgstr ""
 
 msgid "Search lyrics"
@@ -1794,6 +1841,9 @@ msgstr ""
 msgid "Status display"
 msgstr ""
 
+msgid "Store calculated loudness in supported Local music files"
+msgstr ""
+
 msgid "Stream quality"
 msgstr ""
 
@@ -1812,10 +1862,16 @@ msgstr ""
 msgid "System"
 msgstr ""
 
+msgid "Target loudness"
+msgstr ""
+
 msgid "Teal"
 msgstr ""
 
 msgid "Techno"
+msgstr ""
+
+msgid "Template"
 msgstr ""
 
 msgid "Text"
@@ -1908,6 +1964,9 @@ msgstr ""
 msgid "Use Rufin data folder"
 msgstr ""
 
+msgid "Use Template"
+msgstr ""
+
 msgid "Use a number above zero"
 msgstr ""
 
@@ -1960,6 +2019,9 @@ msgid "Waveform seekbar"
 msgstr ""
 
 msgid "Window"
+msgstr ""
+
+msgid "Write EBU R128 tags to files"
 msgstr ""
 
 msgid "Year"
