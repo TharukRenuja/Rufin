@@ -7,7 +7,7 @@ msgstr ""
 "Project-Id-Version: Rufin\n"
 "Report-Msgid-Bugs-To: https://github.com/screwys/Rufin/issues\n"
 "POT-Creation-Date: YEAR-MO-DA HO:MI+ZONE\n"
-"PO-Revision-Date: 2026-08-26 05:51+0000\n"
+"PO-Revision-Date: 2026-08-28 16:54+0000\n"
 "Last-Translator: Sebastian <sevachka@users.noreply.hosted.weblate.org>\n"
 "Language-Team: German <https://hosted.weblate.org/projects/rufin/app/de/>\n"
 "Language: de\n"
@@ -52,6 +52,9 @@ msgid ""
 "Rufin will calculate the missing EBU R128 metadata for the whole library. "
 "This can use significant CPU, battery, and network bandwidth for a long time."
 msgstr ""
+"Rufin berechnet die fehlenden EBU-R128-Metadaten für die gesamte Bibliothek. "
+"Dies kann über längere Zeit erhebliche CPU-, Akku- und Netzwerkressourcen "
+"beanspruchen."
 
 msgid ""
 "Saved mapping. {direct} direct, {prefix} prefix, {metadata} metadata, "
@@ -92,6 +95,9 @@ msgid ""
 "This is not supported natively by this source, but Rufin can show partial "
 "stars and then round them up for the source"
 msgstr ""
+"Diese Quelle unterstützt dies nicht direkt, aber Rufin kann Zwischenwerte "
+"bei der Sternebewertung anzeigen und diese anschließend für die Quelle "
+"aufrunden"
 
 msgid ""
 "This removes the server, cached library metadata, queue snapshot, and saved "
@@ -168,7 +174,7 @@ msgid "Accent color"
 msgstr "Akzentfarbe"
 
 msgid "Activity"
-msgstr ""
+msgstr "Aktivität"
 
 msgid "Add Rule"
 msgstr "Regel hinzufügen"
@@ -314,10 +320,8 @@ msgstr "Auto DJ"
 msgid "Automatic updates"
 msgstr "Automatische Updates"
 
-#, fuzzy
-#| msgid "Automatic updates"
 msgid "Automatic"
-msgstr "Automatische Updates"
+msgstr "Automatisch"
 
 msgid "BPM"
 msgstr "BPM"
@@ -346,10 +350,8 @@ msgstr "Download abbrechen"
 msgid "Cancel"
 msgstr "Abbrechen"
 
-#, fuzzy
-#| msgid "Casting"
 msgid "Casting network"
-msgstr "Übertragen"
+msgstr "Übertragungsnetzwerk"
 
 msgid "Casting"
 msgstr "Übertragen"
@@ -425,7 +427,7 @@ msgid "Collections"
 msgstr "Sammlungen"
 
 msgid "Color for the active word during playback"
-msgstr ""
+msgstr "Farbe des aktuellen Wortes während der Wiedergabe"
 
 msgid "Color scheme"
 msgstr "Farbschema"
@@ -608,10 +610,10 @@ msgid "Duration"
 msgstr "Dauer"
 
 msgid "EBU R128 reference level"
-msgstr ""
+msgstr "EBU-R128-Referenzpegel"
 
 msgid "EBU R128"
-msgstr ""
+msgstr "EBU R128"
 
 msgid "EP"
 msgstr "EP"
@@ -619,18 +621,14 @@ msgstr "EP"
 msgid "EPs"
 msgstr "EPs"
 
-#, fuzzy
-#| msgid "Lyrics"
 msgid "Edit Lyrics"
-msgstr "Songtexte"
+msgstr "Liedtexte bearbeiten"
 
 msgid "Edit Smart Playlist"
 msgstr "Smart-Playlist bearbeiten"
 
-#, fuzzy
-#| msgid "Hide lyrics"
 msgid "Edit lyrics"
-msgstr "Songtexte ausblenden"
+msgstr "Liedtexte bearbeiten"
 
 msgid "Edit metadata"
 msgstr "Metadaten bearbeiten"
@@ -639,19 +637,19 @@ msgid "Edit"
 msgstr "Bearbeiten"
 
 msgid "Enable EBU R128 Analysis?"
-msgstr ""
+msgstr "EBU-R128-Analyse aktivieren?"
 
 msgid "Enable equalizer"
 msgstr "Equalizer einschalten"
 
 msgid "Enable partial star ratings"
-msgstr ""
+msgstr "Teilbewertungen mit Sternen aktivieren"
 
 msgid "Enable private mode"
 msgstr "Privaten Modus aktivieren"
 
 msgid "Enable"
-msgstr ""
+msgstr "Aktivieren"
 
 msgid "Enter API credentials first"
 msgstr "Geben Sie zuerst die API-Zugangsdaten ein"
@@ -734,10 +732,10 @@ msgid "Folders"
 msgstr "Ordner"
 
 msgid "Font family"
-msgstr ""
+msgstr "Schriftart"
 
 msgid "Font size (px)"
-msgstr ""
+msgstr "Schriftgröße (px)"
 
 msgid "Forget Server"
 msgstr "Server entfernen"
@@ -875,13 +873,11 @@ msgstr "Jellyfin"
 msgid "Jellyfin, Navidrome, or OpenSubsonic"
 msgstr "Jellyfin, Navidrome oder OpenSubsonic"
 
-#, fuzzy
-#| msgid "Playback"
 msgid "Karaoke Playback"
-msgstr "Wiedergabe"
+msgstr "Karaoke-Wiedergabe"
 
 msgid "Karaoke highlight color"
-msgstr ""
+msgstr "Karaoke-Hervorhebungsfarbe"
 
 msgid "Karaoke mode"
 msgstr "Karaoke-Modus"
@@ -1044,20 +1040,14 @@ msgstr "Stimmungen"
 msgid "More actions"
 msgstr "Weitere Aktionen"
 
-#, fuzzy
-#| msgid "Most Played"
 msgid "Most Played (Monthly)"
-msgstr "Am häufigsten gespielt"
+msgstr "Meistgespielt (monatlich)"
 
-#, fuzzy
-#| msgid "Most Played"
 msgid "Most Played (Weekly)"
-msgstr "Am häufigsten gespielt"
+msgstr "Meistgespielt (wöchentlich)"
 
-#, fuzzy
-#| msgid "Most Played"
 msgid "Most Played (Yearly)"
-msgstr "Am häufigsten gespielt"
+msgstr "Meistgespielt (jährlich)"
 
 msgid "Most Played"
 msgstr "Am häufigsten gespielt"
@@ -1131,6 +1121,11 @@ msgstr "Navidrome"
 msgid "Navigate page items"
 msgstr "Seitenelemente navigieren"
 
+#, fuzzy
+#| msgid "Type to search"
+msgid "Navigate to Search"
+msgstr "Tippen zum Suchen"
+
 msgid "Navigation"
 msgstr "Navigation"
 
@@ -1142,6 +1137,8 @@ msgstr "NetEase"
 
 msgid "Network used to send local and proxied media to casting devices"
 msgstr ""
+"Netzwerk zum Senden lokaler und über einen Proxy übertragener Medien an "
+"Übertragungsgeräte"
 
 msgid "Never Played"
 msgstr "Nie gespielt"
@@ -1178,6 +1175,16 @@ msgstr "Noch keine Alben von diesem Künstler"
 
 msgid "No cached server path yet"
 msgstr "Kein Server-Pfad zwischengespeichert"
+
+#, fuzzy
+#| msgid "No favorites yet"
+msgid "No favorite albums yet"
+msgstr "Noch keine Favoriten"
+
+#, fuzzy
+#| msgid "No favorites yet"
+msgid "No favorite artists yet"
+msgstr "Noch keine Favoriten"
 
 msgid "No favorites yet"
 msgstr "Noch keine Favoriten"
@@ -1236,7 +1243,7 @@ msgid "None"
 msgstr "Keines"
 
 msgid "Normalization scope"
-msgstr ""
+msgstr "Normalisierungsbereich"
 
 msgid "Not connected"
 msgstr "Nicht verbunden"
@@ -1313,10 +1320,8 @@ msgstr "Orange"
 msgid "Original"
 msgstr "Original"
 
-#, fuzzy
-#| msgid "Open release notes"
 msgid "Other releases"
-msgstr "Versionshinweise öffnen"
+msgstr "Andere Veröffentlichungen"
 
 msgid "Overview"
 msgstr "Übersicht"
@@ -1691,7 +1696,7 @@ msgid "Saved, sync to preview matches"
 msgstr "Gespeichert, mit den Übereinstimmungen der Vorschau synchronisieren"
 
 msgid "Saves lyrics to your source"
-msgstr ""
+msgstr "Speichert Liedtexte in deiner Quelle"
 
 msgid "Saving..."
 msgstr "Wird gespeichert …"
@@ -1705,10 +1710,8 @@ msgstr "Songtext-Suche"
 msgid "Search current folder"
 msgstr "Aktuellen Ordner durchsuchen"
 
-#, fuzzy
-#| msgid "This isn't available"
 msgid "Search is unavailable"
-msgstr "Dies ist nicht verfügbar"
+msgstr "Suche ist nicht verfügbar"
 
 msgid "Search lyrics"
 msgstr "Songtexte durchsuchen"
@@ -1836,10 +1839,8 @@ msgstr "Songtexte einblenden"
 msgid "Show paused status"
 msgstr "Pausierten Status anzeigen"
 
-#, fuzzy
-#| msgid "Show lyrics in the right panel"
 msgid "Show ratings in the bottom bar"
-msgstr "Liedtexte im rechten Bereich anzeigen"
+msgstr "Bewertungen in der unteren Leiste anzeigen"
 
 msgid "Show sidebar"
 msgstr "Seitenleiste einblenden"
@@ -1938,13 +1939,19 @@ msgid "Status display"
 msgstr "Statusanzeige"
 
 msgid "Store calculated loudness in supported Local music files"
-msgstr ""
+msgstr "Berechnete Lautheit in unterstützten lokalen Musikdateien speichern"
 
 msgid "Stream quality"
 msgstr "Streaming-Qualität"
 
 msgid "Support"
 msgstr "Support"
+
+msgid "Switch Search/Favorites tabs"
+msgstr ""
+
+msgid "Switch between layouts"
+msgstr ""
 
 msgid "Switching library..."
 msgstr "Bibliothek wird gewechselt..."
@@ -1959,7 +1966,7 @@ msgid "System"
 msgstr "System"
 
 msgid "Target loudness"
-msgstr ""
+msgstr "Ziellautheit"
 
 msgid "Teal"
 msgstr "Türkis"
@@ -1967,10 +1974,8 @@ msgstr "Türkis"
 msgid "Techno"
 msgstr "Techno"
 
-#, fuzzy
-#| msgid "Slate"
 msgid "Template"
-msgstr "Schiefergrau"
+msgstr "Vorlage"
 
 msgid "Text"
 msgstr "Text"
@@ -2038,10 +2043,8 @@ msgstr "Tippen, um zu suchen oder eine neue Playlist zu erstellen"
 msgid "Type to search"
 msgstr "Tippen zum Suchen"
 
-#, fuzzy
-#| msgid "Discography"
 msgid "Typography"
-msgstr "Diskografie"
+msgstr "Typografie"
 
 msgid "UPnP"
 msgstr "UPnP"
@@ -2068,7 +2071,7 @@ msgid "Use Rufin data folder"
 msgstr "Rufin-Datenordner verwenden"
 
 msgid "Use Template"
-msgstr ""
+msgstr "Vorlage verwenden"
 
 msgid "Use a number above zero"
 msgstr "Verwende eine Zahl größer als null"
@@ -2095,6 +2098,7 @@ msgstr "Benutzername"
 
 msgid "Uses available karaoke lyrics or fetches them from the internet"
 msgstr ""
+"Verwendet verfügbare Karaoke-Liedtexte oder ruft sie aus dem Internet ab"
 
 msgid "Verify server certificate"
 msgstr "Serverzertifikat überprüfen"
@@ -2130,7 +2134,7 @@ msgid "Window"
 msgstr "Fenster"
 
 msgid "Write EBU R128 tags to files"
-msgstr ""
+msgstr "EBU-R128-Tags in Dateien schreiben"
 
 msgid "Year"
 msgstr "Jahr"

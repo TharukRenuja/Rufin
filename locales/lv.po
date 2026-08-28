@@ -1128,6 +1128,11 @@ msgstr "Navidrome"
 msgid "Navigate page items"
 msgstr "Pārvietoties pa lapas elementiem"
 
+#, fuzzy
+#| msgid "Type to search"
+msgid "Navigate to Search"
+msgstr "Ierakstiet, lai meklētu"
+
 msgid "Navigation"
 msgstr "Navigācija"
 
@@ -1177,6 +1182,16 @@ msgstr "Šim izpildītājam vēl nav pieejami albumi"
 
 msgid "No cached server path yet"
 msgstr "Vēl nav kešota servera ceļa"
+
+#, fuzzy
+#| msgid "No favorites yet"
+msgid "No favorite albums yet"
+msgstr "Vēl nav pievienots nevienas dziesmas izlasē"
+
+#, fuzzy
+#| msgid "No favorites yet"
+msgid "No favorite artists yet"
+msgstr "Vēl nav pievienots nevienas dziesmas izlasē"
 
 msgid "No favorites yet"
 msgstr "Vēl nav pievienots nevienas dziesmas izlasē"
@@ -1935,6 +1950,12 @@ msgstr "Straumes kvalitāte"
 
 msgid "Support"
 msgstr "Atbalsts"
+
+msgid "Switch Search/Favorites tabs"
+msgstr ""
+
+msgid "Switch between layouts"
+msgstr ""
 
 msgid "Switching library..."
 msgstr "Pārslēdz bibliotēku…"

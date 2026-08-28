@@ -1118,6 +1118,11 @@ msgstr "Navidrome"
 msgid "Navigate page items"
 msgstr "Lehe elementide vahel liikumine"
 
+#, fuzzy
+#| msgid "Type to search"
+msgid "Navigate to Search"
+msgstr "Otsimiseks sisesta midagi"
+
 msgid "Navigation"
 msgstr "Rakenduses liikumine"
 
@@ -1167,6 +1172,16 @@ msgstr "Sellelt esitajalt pole veel albumeid"
 
 msgid "No cached server path yet"
 msgstr "Serveri puhverdatud asukoht pole veel saadaval"
+
+#, fuzzy
+#| msgid "No favorites yet"
+msgid "No favorite albums yet"
+msgstr "Lemmikuid veel pole"
+
+#, fuzzy
+#| msgid "No favorites yet"
+msgid "No favorite artists yet"
+msgstr "Lemmikuid veel pole"
 
 msgid "No favorites yet"
 msgstr "Lemmikuid veel pole"
@@ -1928,6 +1943,12 @@ msgstr "Voogedastuse kvaliteet"
 
 msgid "Support"
 msgstr "Kasutajatugi"
+
+msgid "Switch Search/Favorites tabs"
+msgstr ""
+
+msgid "Switch between layouts"
+msgstr ""
 
 msgid "Switching library..."
 msgstr "Vahetan muusikakogu…"

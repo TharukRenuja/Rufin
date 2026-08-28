@@ -1137,6 +1137,11 @@ msgstr "Navidrome"
 msgid "Navigate page items"
 msgstr "Procházení položek stránky"
 
+#, fuzzy
+#| msgid "Type to search"
+msgid "Navigate to Search"
+msgstr "Zadejte text pro vyhledání"
+
 msgid "Navigation"
 msgstr "Navigace"
 
@@ -1184,6 +1189,16 @@ msgstr "Tento interpret zatím nemá žádná alba"
 
 msgid "No cached server path yet"
 msgstr "Cesta k serveru zatím není uložena v mezipaměti"
+
+#, fuzzy
+#| msgid "No favorites yet"
+msgid "No favorite albums yet"
+msgstr "Zatím žádné oblíbené položky"
+
+#, fuzzy
+#| msgid "No favorites yet"
+msgid "No favorite artists yet"
+msgstr "Zatím žádné oblíbené položky"
 
 msgid "No favorites yet"
 msgstr "Zatím žádné oblíbené položky"
@@ -1953,6 +1968,12 @@ msgstr "Kvalita streamu"
 
 msgid "Support"
 msgstr "Uživatelská podpora"
+
+msgid "Switch Search/Favorites tabs"
+msgstr ""
+
+msgid "Switch between layouts"
+msgstr ""
 
 msgid "Switching library..."
 msgstr "Přepínání knihovny..."

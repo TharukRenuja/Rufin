@@ -7,7 +7,7 @@ msgstr ""
 "Project-Id-Version: Rufin 0.6.0\n"
 "Report-Msgid-Bugs-To: https://github.com/screwys/Rufin/issues\n"
 "POT-Creation-Date: YEAR-MO-DA HO:MI+ZONE\n"
-"PO-Revision-Date: 2026-08-27 22:40+0000\n"
+"PO-Revision-Date: 2026-08-28 16:54+0000\n"
 "Last-Translator: Александр Стельмах <aguhadug@gmail.com>\n"
 "Language-Team: Russian <https://hosted.weblate.org/projects/rufin/app/ru/>\n"
 "Language: ru\n"
@@ -435,7 +435,7 @@ msgid "Collections"
 msgstr "Коллекции"
 
 msgid "Color for the active word during playback"
-msgstr ""
+msgstr "Цвет для активного слова во время воспроизведения"
 
 msgid "Color scheme"
 msgstr "Цветовая схема"
@@ -629,18 +629,14 @@ msgstr "EP"
 msgid "EPs"
 msgstr "EP-альбомы"
 
-#, fuzzy
-#| msgid "Lyrics"
 msgid "Edit Lyrics"
-msgstr "Текст песни"
+msgstr "Редактировать текст песни"
 
 msgid "Edit Smart Playlist"
 msgstr "Редактировать умный плейлист"
 
-#, fuzzy
-#| msgid "Hide lyrics"
 msgid "Edit lyrics"
-msgstr "Скрыть текст песни"
+msgstr "Редактировать текст песни"
 
 msgid "Edit metadata"
 msgstr "Редактировать метаданные"
@@ -743,10 +739,10 @@ msgid "Folders"
 msgstr "Папки"
 
 msgid "Font family"
-msgstr ""
+msgstr "Семейство шрифтов"
 
 msgid "Font size (px)"
-msgstr ""
+msgstr "Размер шрифта (в пикселях)"
 
 msgid "Forget Server"
 msgstr "Забыть сервер"
@@ -885,13 +881,11 @@ msgstr "Jellyfin"
 msgid "Jellyfin, Navidrome, or OpenSubsonic"
 msgstr "Jellyfin, Navidrome или OpenSubsonic"
 
-#, fuzzy
-#| msgid "Playback"
 msgid "Karaoke Playback"
-msgstr "Плеер"
+msgstr "Воспроизведение караоке"
 
 msgid "Karaoke highlight color"
-msgstr ""
+msgstr "Цвет выделения в режиме караоке"
 
 msgid "Karaoke mode"
 msgstr "Режим караоке"
@@ -1135,6 +1129,11 @@ msgstr "Navidrome"
 msgid "Navigate page items"
 msgstr "Перемещаться по элементам страницы"
 
+#, fuzzy
+#| msgid "Type to search"
+msgid "Navigate to Search"
+msgstr "Введите текст для поиска"
+
 msgid "Navigation"
 msgstr "Навигация"
 
@@ -1184,6 +1183,16 @@ msgstr "Пока нет альбомов этого исполнителя"
 
 msgid "No cached server path yet"
 msgstr "Пока нет кэшированных путей к серверу"
+
+#, fuzzy
+#| msgid "No favorites yet"
+msgid "No favorite albums yet"
+msgstr "Пока нет избранных"
+
+#, fuzzy
+#| msgid "No favorites yet"
+msgid "No favorite artists yet"
+msgstr "Пока нет избранных"
 
 msgid "No favorites yet"
 msgstr "Пока нет избранных"
@@ -1694,7 +1703,7 @@ msgid "Saved, sync to preview matches"
 msgstr "Сохранено, синхронизируйте для предварительного просмотра соответствий"
 
 msgid "Saves lyrics to your source"
-msgstr ""
+msgstr "Сохраняет текст песни в источнике"
 
 msgid "Saving..."
 msgstr "Сохранение..."
@@ -1948,6 +1957,12 @@ msgstr "Качество потока"
 msgid "Support"
 msgstr "Поддержка"
 
+msgid "Switch Search/Favorites tabs"
+msgstr ""
+
+msgid "Switch between layouts"
+msgstr ""
+
 msgid "Switching library..."
 msgstr "Переключение библиотеки…"
 
@@ -2038,10 +2053,8 @@ msgstr "Введите текст для поиска или создания н
 msgid "Type to search"
 msgstr "Введите текст для поиска"
 
-#, fuzzy
-#| msgid "Discography"
 msgid "Typography"
-msgstr "Дискография"
+msgstr "Оформление"
 
 msgid "UPnP"
 msgstr "UPnP"
@@ -2096,7 +2109,7 @@ msgid "Username"
 msgstr "Имя пользователя"
 
 msgid "Uses available karaoke lyrics or fetches them from the internet"
-msgstr ""
+msgstr "Использует доступные тексты караоке или загружает их из интернета"
 
 msgid "Verify server certificate"
 msgstr "Проверить сертификат сервера"

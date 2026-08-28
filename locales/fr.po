@@ -1081,6 +1081,9 @@ msgstr ""
 msgid "Navigate page items"
 msgstr ""
 
+msgid "Navigate to Search"
+msgstr ""
+
 msgid "Navigation"
 msgstr ""
 
@@ -1127,6 +1130,12 @@ msgid "No albums from this artist yet"
 msgstr ""
 
 msgid "No cached server path yet"
+msgstr ""
+
+msgid "No favorite albums yet"
+msgstr ""
+
+msgid "No favorite artists yet"
 msgstr ""
 
 msgid "No favorites yet"
@@ -1883,6 +1892,12 @@ msgid "Stream quality"
 msgstr ""
 
 msgid "Support"
+msgstr ""
+
+msgid "Switch Search/Favorites tabs"
+msgstr ""
+
+msgid "Switch between layouts"
 msgstr ""
 
 msgid "Switching library..."
