@@ -424,6 +424,9 @@ msgstr "Sammlung"
 msgid "Collections"
 msgstr "Sammlungen"
 
+msgid "Color for the active word during playback"
+msgstr ""
+
 msgid "Color scheme"
 msgstr "Farbschema"
 
@@ -529,6 +532,9 @@ msgstr "Standard-Seitenleiste links"
 msgid "Default right sidebar"
 msgstr "Standard-Seitenleiste rechts"
 
+msgid "Default"
+msgstr "Standard"
+
 msgid "Delete Playlist"
 msgstr "Playlist löschen"
 
@@ -613,8 +619,18 @@ msgstr "EP"
 msgid "EPs"
 msgstr "EPs"
 
+#, fuzzy
+#| msgid "Lyrics"
+msgid "Edit Lyrics"
+msgstr "Songtexte"
+
 msgid "Edit Smart Playlist"
 msgstr "Smart-Playlist bearbeiten"
+
+#, fuzzy
+#| msgid "Hide lyrics"
+msgid "Edit lyrics"
+msgstr "Songtexte ausblenden"
 
 msgid "Edit metadata"
 msgstr "Metadaten bearbeiten"
@@ -716,6 +732,12 @@ msgstr "Ordner"
 
 msgid "Folders"
 msgstr "Ordner"
+
+msgid "Font family"
+msgstr ""
+
+msgid "Font size (px)"
+msgstr ""
 
 msgid "Forget Server"
 msgstr "Server entfernen"
@@ -852,6 +874,14 @@ msgstr "Jellyfin"
 
 msgid "Jellyfin, Navidrome, or OpenSubsonic"
 msgstr "Jellyfin, Navidrome oder OpenSubsonic"
+
+#, fuzzy
+#| msgid "Playback"
+msgid "Karaoke Playback"
+msgstr "Wiedergabe"
+
+msgid "Karaoke highlight color"
+msgstr ""
 
 msgid "Karaoke mode"
 msgstr "Karaoke-Modus"
@@ -1597,9 +1627,6 @@ msgstr "Wiederholen"
 msgid "ReplayGain"
 msgstr "ReplayGain"
 
-msgid "Requires OpenSubsonic songLyrics v2"
-msgstr "Erfordert OpenSubsonic songLyrics v2"
-
 msgid "Reset equalizer"
 msgstr "Equalizer zurücksetzen"
 
@@ -1662,6 +1689,9 @@ msgstr "Gespeichert"
 
 msgid "Saved, sync to preview matches"
 msgstr "Gespeichert, mit den Übereinstimmungen der Vorschau synchronisieren"
+
+msgid "Saves lyrics to your source"
+msgstr ""
 
 msgid "Saving..."
 msgstr "Wird gespeichert …"
@@ -2008,6 +2038,11 @@ msgstr "Tippen, um zu suchen oder eine neue Playlist zu erstellen"
 msgid "Type to search"
 msgstr "Tippen zum Suchen"
 
+#, fuzzy
+#| msgid "Discography"
+msgid "Typography"
+msgstr "Diskografie"
+
 msgid "UPnP"
 msgstr "UPnP"
 
@@ -2057,6 +2092,9 @@ msgstr "Benutzer"
 
 msgid "Username"
 msgstr "Benutzername"
+
+msgid "Uses available karaoke lyrics or fetches them from the internet"
+msgstr ""
 
 msgid "Verify server certificate"
 msgstr "Serverzertifikat überprüfen"
@@ -2200,6 +2238,9 @@ msgid_plural "{count} years ago"
 msgstr[0] "vor {count} Jahr"
 msgstr[1] "vor {count} Jahren"
 
+#~ msgid "Requires OpenSubsonic songLyrics v2"
+#~ msgstr "Erfordert OpenSubsonic songLyrics v2"
+
 #~ msgid "Other"
 #~ msgstr "Sonstige"
 
@@ -2248,14 +2289,8 @@ msgstr[1] "vor {count} Jahren"
 #~ msgid "Scrobbling"
 #~ msgstr "Scrobbling"
 
-#~ msgid "Hide lyrics"
-#~ msgstr "Songtexte ausblenden"
-
 #~ msgid "Seconds"
 #~ msgstr "Sekunden"
-
-#~ msgid "Default"
-#~ msgstr "Standard"
 
 #~ msgid "Interface"
 #~ msgstr "Benutzeroberfläche"

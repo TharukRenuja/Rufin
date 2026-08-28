@@ -419,6 +419,9 @@ msgstr "Kogu"
 msgid "Collections"
 msgstr "Kogud"
 
+msgid "Color for the active word during playback"
+msgstr ""
+
 msgid "Color scheme"
 msgstr "Kasutatavad värvid"
 
@@ -524,6 +527,9 @@ msgstr "Vaikimisi vasak külgpaan"
 msgid "Default right sidebar"
 msgstr "Vaikimisi parem külgpaan"
 
+msgid "Default"
+msgstr "Vaikimisi"
+
 msgid "Delete Playlist"
 msgstr "Kustuta esitusloend"
 
@@ -608,8 +614,18 @@ msgstr "EP"
 msgid "EPs"
 msgstr "EP-plaadid"
 
+#, fuzzy
+#| msgid "Lyrics"
+msgid "Edit Lyrics"
+msgstr "Laulusõnad"
+
 msgid "Edit Smart Playlist"
 msgstr "Muuda nutikat esitusloendit"
+
+#, fuzzy
+#| msgid "Hide lyrics"
+msgid "Edit lyrics"
+msgstr "Peida laulusõnad"
 
 msgid "Edit metadata"
 msgstr "Muuda metateavet"
@@ -708,6 +724,12 @@ msgstr "Kaust"
 
 msgid "Folders"
 msgstr "Kaustad"
+
+msgid "Font family"
+msgstr ""
+
+msgid "Font size (px)"
+msgstr ""
 
 msgid "Forget Server"
 msgstr "Unusta server"
@@ -845,6 +867,14 @@ msgstr "Jellyfin"
 
 msgid "Jellyfin, Navidrome, or OpenSubsonic"
 msgstr "Jellyfin, Navidrome või OpenSubsonic"
+
+#, fuzzy
+#| msgid "Playback"
+msgid "Karaoke Playback"
+msgstr "Taasesitus"
+
+msgid "Karaoke highlight color"
+msgstr ""
 
 msgid "Karaoke mode"
 msgstr "Karaoke-režiim"
@@ -1581,9 +1611,6 @@ msgstr "Korda"
 msgid "ReplayGain"
 msgstr "Esitusvaljuse tundlikkus"
 
-msgid "Requires OpenSubsonic songLyrics v2"
-msgstr "Eeldab, et kasutusel on OpenSubsonic songLyrics v2"
-
 msgid "Reset equalizer"
 msgstr "Lähtesta ekvalaiser"
 
@@ -1646,6 +1673,9 @@ msgstr "Salvestatud"
 
 msgid "Saved, sync to preview matches"
 msgstr "Salvestatud, vastenduse eelvaateks sünkrooni"
+
+msgid "Saves lyrics to your source"
+msgstr ""
 
 msgid "Saving..."
 msgstr "Salvestan…"
@@ -1989,6 +2019,11 @@ msgstr "Sisesta otsimiseks või uue esitusloendi loomiseks"
 msgid "Type to search"
 msgstr "Otsimiseks sisesta midagi"
 
+#, fuzzy
+#| msgid "Discography"
+msgid "Typography"
+msgstr "Diskograafia"
+
 msgid "UPnP"
 msgstr "UPnP"
 
@@ -2039,6 +2074,9 @@ msgstr "Kasutaja"
 
 msgid "Username"
 msgstr "Kasutajanimi"
+
+msgid "Uses available karaoke lyrics or fetches them from the internet"
+msgstr ""
 
 msgid "Verify server certificate"
 msgstr "Kontrolli serveri sertifikaati"
@@ -2182,6 +2220,9 @@ msgid_plural "{count} years ago"
 msgstr[0] "{count} aasta tagasi"
 msgstr[1] "{count} aastat tagasi"
 
+#~ msgid "Requires OpenSubsonic songLyrics v2"
+#~ msgstr "Eeldab, et kasutusel on OpenSubsonic songLyrics v2"
+
 #~ msgid "Other"
 #~ msgstr "Muu"
 
@@ -2233,14 +2274,8 @@ msgstr[1] "{count} aastat tagasi"
 #~ msgid "Scrobbling"
 #~ msgstr "Kraasimine"
 
-#~ msgid "Hide lyrics"
-#~ msgstr "Peida laulusõnad"
-
 #~ msgid "Seconds"
 #~ msgstr "Sekundites"
-
-#~ msgid "Default"
-#~ msgstr "Vaikimisi"
 
 #~ msgid "Interface"
 #~ msgstr "Kasutajaliides"
