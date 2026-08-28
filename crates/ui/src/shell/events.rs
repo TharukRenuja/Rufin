@@ -195,6 +195,7 @@ fn apply_configured_sources(
         selected: previous.selected.clone(),
     };
     *shell.source.configured.borrow_mut() = configured;
+    shell.products.lyrics.refresh_write_access();
     finish_source_assignment(shell, previous, next);
     shell.update_bottom_player();
 }
@@ -961,6 +962,19 @@ fn apply_lyrics_event(shell: &Rc<Shell>, event: lyrics::LyricsEvent) {
                 == Some(&media_id)
             {
                 shell.apply_lyrics_saved(media_id, path);
+            }
+        }
+        lyrics::LyricsEvent::SourceSaveFailed { media_id, error } => {
+            if current_playback_media_id(shell.selected_playback().as_deref()).as_ref()
+                == Some(&media_id)
+            {
+                shell.show_feedback_toast(match error {
+                    sources::SourceMetadataError::Unavailable
+                    | sources::SourceMetadataError::LocalAccessRequired { .. } => {
+                        tr("Metadata editing is no longer available")
+                    }
+                    error => error.to_string(),
+                });
             }
         }
     }

@@ -35,7 +35,7 @@ pub use config::{
 pub use operations::{
     AlbumMetadata, AlbumMetadataEdit, AlbumMetadataMixed, AlbumMetadataValues,
     AlbumMetadataWritable, ArtistMetadata, ArtistMetadataEdit, ArtistMetadataMixed,
-    ArtistMetadataValues, ArtistMetadataWritable, ImageBytes, LyricsSearch, NativeLyricAgent,
+    ArtistMetadataValues, ArtistMetadataWritable, ImageBytes, NativeLyricAgent,
     NativeLyricAgentRole, NativeLyricCue, NativeLyricCueLine, NativeLyricLine, NativeLyrics,
     NativeLyricsDocument, NativeLyricsRole, SourceMetadataError, TrackMetadata, TrackMetadataEdit,
     TrackMetadataValues, TrackMetadataWritable,
@@ -43,7 +43,9 @@ pub use operations::{
 pub use source::*;
 
 pub use jellyfin::{DiscoveredJellyfinServer, discover_jellyfin_servers};
-pub use local::{LOCAL_LIBRARY_SOURCE_ID, LOCAL_SOURCE_ID, verify_local_media_file};
+pub use local::{
+    LOCAL_LIBRARY_SOURCE_ID, LOCAL_SOURCE_ID, read_embedded_lyrics, verify_local_media_file,
+};
 pub use subsonic::{SubsonicAuthentication, SubsonicFlavor};
 
 use thiserror::Error;

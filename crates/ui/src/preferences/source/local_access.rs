@@ -21,7 +21,6 @@ use super::login::{
     source_settings_group,
 };
 use crate::layout::large_popup_content_width;
-use crate::player::state::current_playback_track;
 use crate::shell::Shell;
 use crate::shell::actions::text_button;
 
@@ -127,7 +126,6 @@ impl LocalAccessEditor {
             }
             if let (Some(source_path), Some(server_prefix)) =
                 (source_path.as_deref(), editor.server_prefix.upgrade())
-                && server_prefix.text().trim().is_empty()
                 && let Some(suggested) = infer_server_prefix_for_root(source_path, &path)
             {
                 server_prefix.set_text(&suggested);
@@ -233,27 +231,7 @@ fn manage_server_content(
         let selected = configured.selected_source_id.as_ref() == Some(&server.id);
         (access, status, selected)
     };
-    let current_sample = {
-        let player = shell.selected_playback();
-        let source_id = shell.selected_library().as_deref().and_then(|selected| {
-            player
-                .as_ref()
-                .is_some_and(|player| player.transport.source_id == selected.source_key)
-                .then(|| selected.artwork.source_id.clone())
-        });
-        let source_path = current_playback_track(player.as_deref())
-            .and_then(|track| track.media_uri)
-            .and_then(|uri| gio::File::for_uri(&uri).path())
-            .map(|path| path.to_string_lossy().into_owned());
-        source_id.zip(source_path)
-    };
-    let sample_source_path = preferred_server_sample(
-        &server.id,
-        current_sample
-            .as_ref()
-            .map(|(source_id, source_path)| (source_id, source_path.as_str())),
-        access_status.sample_source_path.as_deref(),
-    );
+    let sample_source_path = access_status.sample_source_path.clone();
     let scroller = gtk::ScrolledWindow::new();
     scroller.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
     scroller.set_vexpand(true);
@@ -1048,17 +1026,6 @@ fn local_access_recovery_view(
     }
 }
 
-fn preferred_server_sample(
-    source_id: &SourceId,
-    current: Option<(&SourceId, &str)>,
-    cached: Option<&str>,
-) -> Option<String> {
-    current
-        .filter(|(current_source_id, _)| *current_source_id == source_id)
-        .map(|(_, source_path)| source_path.to_string())
-        .or_else(|| cached.map(str::to_string))
-}
-
 fn local_access_replacement_state(
     source_path: &str,
     server_prefix: &str,
@@ -1248,7 +1215,7 @@ fn infer_server_prefix_for_root(source_path: &str, root: &Path) -> Option<String
             .fold(root.to_path_buf(), |path, part| path.join(part.value));
         if candidate.is_file() {
             let suffix_len = parts.len().checked_sub(suffix_start)?;
-            return prefix_before_suffix(source_path, &parts, suffix_len);
+            return Some(prefix_before_suffix(source_path, &parts, suffix_len).unwrap_or_default());
         }
     }
     None
@@ -1387,35 +1354,6 @@ mod tests {
     }
 
     #[test]
-    fn current_track_from_the_managed_source_is_the_server_sample() {
-        let managed = SourceId::new("navidrome:server:managed");
-        let other = SourceId::new("jellyfin:server:other");
-
-        assert_eq!(
-            preferred_server_sample(
-                &managed,
-                Some((&managed, "/music/Current.flac")),
-                Some("/music/Cached.flac"),
-            )
-            .as_deref(),
-            Some("/music/Current.flac")
-        );
-        assert_eq!(
-            preferred_server_sample(
-                &managed,
-                Some((&other, "/other/Current.flac")),
-                Some("/music/Cached.flac"),
-            )
-            .as_deref(),
-            Some("/music/Cached.flac")
-        );
-        assert_eq!(
-            preferred_server_sample(&managed, Some((&other, "/other/Current.flac")), None),
-            None
-        );
-    }
-
-    #[test]
     fn chosen_music_folder_is_not_duplicated_as_a_local_prefix() {
         let root = PathBuf::from("/local/music");
         let input = source_local_access(
@@ -1469,6 +1407,10 @@ mod tests {
         assert_eq!(
             infer_server_prefix_for_root("/music/Artist/Album/Track.flac", directory.path()),
             Some("/music".to_string())
+        );
+        assert_eq!(
+            infer_server_prefix_for_root("Artist/Album/Track.flac", directory.path()),
+            Some(String::new())
         );
         assert_eq!(
             infer_server_prefix_for_root("/music/Artist/Album/Missing.flac", directory.path()),

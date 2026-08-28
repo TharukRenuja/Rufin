@@ -49,7 +49,7 @@ impl JellyfinSource {
         Ok(TrackMetadata {
             track_key: track.track_key,
             writable: track_writable(&editor),
-            source_search: true,
+            source_search: false,
             revision: Some(revision(&item)?),
             source_values,
             values,
@@ -182,22 +182,27 @@ impl JellyfinSource {
         values: &AlbumMetadataValues,
     ) -> Result<Option<(AlbumMetadataValues, String)>, String> {
         let raw = raw_id(object_id, "album").map_err(|error| error.to_string())?;
-        let results = self
-            .remote_search(raw, "MusicAlbum", &values.title, values.year)
-            .await?;
+        let mut search_info = json!({
+            "Name": values.title,
+            "Year": values.year,
+            "ProviderIds": identification_provider_ids([
+                ("MusicBrainzAlbum", values.musicbrainz_album_id.as_deref()),
+                (
+                    "MusicBrainzReleaseGroup",
+                    values.musicbrainz_release_group_id.as_deref(),
+                ),
+            ]),
+        });
+        let album_artists =
+            split_values(values.album_artist.as_deref().or(values.artist.as_deref()));
+        if !album_artists.is_empty() {
+            search_info
+                .as_object_mut()
+                .expect("Jellyfin search info object")
+                .insert("AlbumArtists".to_string(), json!(album_artists));
+        }
+        let results = self.remote_search(raw, "MusicAlbum", search_info).await?;
         Ok(select_album_identification(values, &results))
-    }
-
-    pub(crate) async fn identify_track_metadata(
-        &self,
-        object_id: &str,
-        values: &TrackMetadataValues,
-    ) -> Result<Option<(TrackMetadataValues, String)>, String> {
-        let raw = raw_id(object_id, "track").map_err(|error| error.to_string())?;
-        let results = self
-            .remote_search(raw, "Audio", &values.title, values.year)
-            .await?;
-        Ok(select_track_identification(values, &results))
     }
 
     pub(crate) async fn identify_artist_metadata(
@@ -206,9 +211,13 @@ impl JellyfinSource {
         values: &ArtistMetadataValues,
     ) -> Result<Option<(ArtistMetadataValues, String)>, String> {
         let raw = raw_id(object_id, "artist").map_err(|error| error.to_string())?;
-        let results = self
-            .remote_search(raw, "MusicArtist", &values.name, None)
-            .await?;
+        let search_info = json!({
+            "Name": values.name,
+            "ProviderIds": identification_provider_ids([
+                ("MusicBrainzArtist", values.musicbrainz_artist_id.as_deref()),
+            ]),
+        });
+        let results = self.remote_search(raw, "MusicArtist", search_info).await?;
         Ok(select_artist_identification(values, &results))
     }
 
@@ -216,21 +225,45 @@ impl JellyfinSource {
         &self,
         raw: &str,
         item_type: &str,
-        name: &str,
-        year: Option<u16>,
+        search_info: Value,
     ) -> Result<Vec<Value>, String> {
-        if name.trim().is_empty() {
+        if search_info
+            .get("Name")
+            .and_then(Value::as_str)
+            .is_none_or(|name| name.trim().is_empty())
+            && search_info
+                .get("ProviderIds")
+                .and_then(Value::as_object)
+                .is_none_or(Map::is_empty)
+        {
             return Ok(Vec::new());
         }
         let url = endpoint(&self.base_url, &format!("Items/RemoteSearch/{item_type}"))
             .map_err(|error| error.to_string())?;
         self.send_json(self.client.post(url).json(&json!({
             "ItemId": raw,
-            "SearchInfo": { "Name": name, "Year": year }
+            "SearchInfo": search_info,
         })))
         .await
         .map_err(|error| error.to_string())
     }
+}
+
+fn identification_provider_ids<'a>(
+    values: impl IntoIterator<Item = (&'a str, Option<&'a str>)>,
+) -> Map<String, Value> {
+    values
+        .into_iter()
+        .filter_map(|(key, value)| Some((key.to_string(), Value::String(clean(value?)?))))
+        .collect()
+}
+
+fn split_values(value: Option<&str>) -> Vec<String> {
+    value
+        .into_iter()
+        .flat_map(|value| value.split(';'))
+        .filter_map(clean)
+        .collect()
 }
 
 pub(crate) fn apply_track_edit(item: &mut Map<String, Value>, edit: &crate::TrackMetadataEdit) {
@@ -520,47 +553,6 @@ fn select_album_identification(
     Some((values, serde_json::to_string(selected).ok()?))
 }
 
-fn select_track_identification(
-    previous: &TrackMetadataValues,
-    results: &[Value],
-) -> Option<(TrackMetadataValues, String)> {
-    let exact = results
-        .iter()
-        .filter(|value| {
-            previous
-                .musicbrainz_recording_id
-                .as_deref()
-                .is_some_and(|id| provider(value, "MusicBrainzRecording").as_deref() == Some(id))
-                || previous
-                    .musicbrainz_release_track_id
-                    .as_deref()
-                    .is_some_and(|id| provider(value, "MusicBrainzTrack").as_deref() == Some(id))
-        })
-        .collect::<Vec<_>>();
-    let selected = match exact.as_slice() {
-        [one] => *one,
-        [] => select_result(&previous.title, previous.year, results)?,
-        _ => return None,
-    };
-    let mut values = previous.clone();
-    values.title = string(selected, "Name").unwrap_or_else(|| values.title.clone());
-    values.year = number(selected, "ProductionYear").or(values.year);
-    values.artist = named(selected, "ArtistItems")
-        .or_else(|| string_array(selected, "Artists"))
-        .or(values.artist);
-    values.album = string(selected, "Album").or(values.album);
-    values.album_artist = named(selected, "AlbumArtists").or(values.album_artist);
-    values.musicbrainz_recording_id =
-        provider(selected, "MusicBrainzRecording").or(values.musicbrainz_recording_id);
-    values.musicbrainz_release_track_id =
-        provider(selected, "MusicBrainzTrack").or(values.musicbrainz_release_track_id);
-    values.musicbrainz_album_id =
-        provider(selected, "MusicBrainzAlbum").or(values.musicbrainz_album_id);
-    values.musicbrainz_release_group_id =
-        provider(selected, "MusicBrainzReleaseGroup").or(values.musicbrainz_release_group_id);
-    Some((values, serde_json::to_string(selected).ok()?))
-}
-
 fn select_artist_identification(
     previous: &ArtistMetadataValues,
     results: &[Value],
@@ -750,7 +742,7 @@ fn preserve_complete_artist_items(item: &mut Map<String, Value>) {
 #[cfg(test)]
 mod tests {
 
-    use wiremock::matchers::{method, path};
+    use wiremock::matchers::{body_json, method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
     use super::*;
@@ -773,19 +765,7 @@ mod tests {
             })))
             .mount(&server)
             .await;
-        let source = JellyfinSource::open(
-            super::super::JellyfinSourceConfig {
-                base_url: server.uri(),
-                server_id: None,
-                user_id: "user".to_string(),
-                username: "listener".to_string(),
-                trust_invalid_cert: false,
-                use_instant_mix: false,
-            },
-            "token".to_string(),
-            "device".to_string(),
-        )
-        .expect("open Jellyfin");
+        let source = test_source(&server);
         let mut row = track_row();
         row.musicbrainz_release_track_id = Some("rufin-release-track".to_string());
         let metadata = source
@@ -794,6 +774,7 @@ mod tests {
             .expect("read Track metadata");
         assert!(metadata.writable.title);
         assert!(metadata.writable.musicbrainz_recording_id);
+        assert!(!metadata.source_search);
         assert_eq!(metadata.revision.as_deref(), Some("etag:revision"));
         assert_eq!(metadata.values.title, "Provider title");
         assert_eq!(
@@ -806,6 +787,46 @@ mod tests {
             Some("rufin-release-track")
         );
         assert!(metadata.rufin_filled.musicbrainz_release_track_id);
+    }
+
+    #[tokio::test]
+    async fn jellyfin_album_identification_keeps_exact_ids_and_artist_credits() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/Items/RemoteSearch/MusicAlbum"))
+            .and(body_json(json!({
+                "ItemId": "album",
+                "SearchInfo": {
+                    "Name": "Album",
+                    "Year": 2024,
+                    "ProviderIds": {
+                        "MusicBrainzAlbum": "release",
+                        "MusicBrainzReleaseGroup": "release-group",
+                    },
+                    "AlbumArtists": ["Artist", "Guest"],
+                },
+            })))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!([])))
+            .mount(&server)
+            .await;
+        let source = test_source(&server);
+
+        let result = source
+            .identify_album_metadata(
+                "jellyfin:album:album",
+                &AlbumMetadataValues {
+                    title: "Album".to_string(),
+                    album_artist: Some("Artist; Guest".to_string()),
+                    year: Some(2024),
+                    musicbrainz_album_id: Some("release".to_string()),
+                    musicbrainz_release_group_id: Some("release-group".to_string()),
+                    ..AlbumMetadataValues::default()
+                },
+            )
+            .await
+            .expect("identify Jellyfin Album");
+
+        assert!(result.is_none());
     }
 
     #[test]
@@ -832,30 +853,6 @@ mod tests {
             },
         );
         assert_eq!(item["ArtistItems"], original);
-    }
-
-    #[test]
-    fn track_identification_prefers_the_exact_recording_identity() {
-        let previous = TrackMetadataValues {
-            title: "Current title".to_string(),
-            musicbrainz_recording_id: Some("recording".to_string()),
-            ..TrackMetadataValues::default()
-        };
-        let results = vec![
-            json!({"Name":"Wrong", "ProviderIds":{"MusicBrainzRecording":"other"}}),
-            json!({
-                "Name":"Identified title",
-                "Artists":["Identified artist"],
-                "Album":"Identified album",
-                "ProviderIds":{"MusicBrainzRecording":"recording"}
-            }),
-        ];
-
-        let (identified, _) =
-            select_track_identification(&previous, &results).expect("exact identification");
-        assert_eq!(identified.title, "Identified title");
-        assert_eq!(identified.artist.as_deref(), Some("Identified artist"));
-        assert_eq!(identified.album.as_deref(), Some("Identified album"));
     }
 
     fn track_row() -> library::TrackRow {
@@ -895,5 +892,21 @@ mod tests {
             album_artists: Vec::new(),
             genres: Vec::new(),
         }
+    }
+
+    fn test_source(server: &MockServer) -> JellyfinSource {
+        JellyfinSource::open(
+            super::super::JellyfinSourceConfig {
+                base_url: server.uri(),
+                server_id: None,
+                user_id: "user".to_string(),
+                username: "listener".to_string(),
+                trust_invalid_cert: false,
+                use_instant_mix: false,
+            },
+            "token".to_string(),
+            "device".to_string(),
+        )
+        .expect("open Jellyfin")
     }
 }

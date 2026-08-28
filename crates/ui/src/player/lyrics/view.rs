@@ -6,7 +6,7 @@ use gtk::glib;
 use gtk::prelude::*;
 use localization::{msgid, tr};
 use lyrics::{
-    JapaneseReadingSegment, LyricsAgentRole, LyricsCue, LyricsDocument, LyricsLine,
+    JapaneseReadingSegment, LyricsAgentRole, LyricsCue, LyricsCueLine, LyricsDocument, LyricsLine,
     japanese_reading_for_language_options,
 };
 
@@ -20,6 +20,145 @@ const LYRICS_SCROLL_MS: u64 = 200;
 const LYRICS_USER_SCROLL_PAUSE_MS: u64 = 3_000;
 const LYRICS_SCROLL_READY_RETRY_MS: u64 = 32;
 const LYRICS_SCROLL_READY_RETRIES: u8 = 12;
+const KARAOKE_FRAME_MILLIS: u64 = 16;
+
+mod karaoke_text {
+    use std::cell::{Cell, RefCell};
+
+    use gtk::glib;
+    use gtk::prelude::*;
+    use gtk::subclass::prelude::*;
+
+    mod imp {
+        use super::*;
+
+        #[derive(Default)]
+        pub struct KaraokeText {
+            pub(super) labels: RefCell<Option<(gtk::Label, gtk::Label)>>,
+            pub(super) progress: Cell<f64>,
+        }
+
+        #[glib::object_subclass]
+        impl ObjectSubclass for KaraokeText {
+            const NAME: &'static str = "RufinLyricsKaraokeText";
+            type Type = super::KaraokeText;
+            type ParentType = gtk::Widget;
+        }
+
+        impl ObjectImpl for KaraokeText {
+            fn dispose(&self) {
+                if let Some((base, highlight)) = self.labels.take() {
+                    base.unparent();
+                    highlight.unparent();
+                }
+            }
+        }
+
+        impl WidgetImpl for KaraokeText {
+            fn request_mode(&self) -> gtk::SizeRequestMode {
+                self.labels
+                    .borrow()
+                    .as_ref()
+                    .map_or(gtk::SizeRequestMode::ConstantSize, |(base, _)| {
+                        base.request_mode()
+                    })
+            }
+
+            fn measure(
+                &self,
+                orientation: gtk::Orientation,
+                for_size: i32,
+            ) -> (i32, i32, i32, i32) {
+                self.labels
+                    .borrow()
+                    .as_ref()
+                    .map_or((0, 0, -1, -1), |(base, _)| {
+                        base.measure(orientation, for_size)
+                    })
+            }
+
+            fn size_allocate(&self, width: i32, height: i32, baseline: i32) {
+                if let Some((base, highlight)) = self.labels.borrow().as_ref() {
+                    base.allocate(width, height, baseline, None);
+                    highlight.allocate(width, height, baseline, None);
+                }
+            }
+
+            fn snapshot(&self, snapshot: &gtk::Snapshot) {
+                let labels = self.labels.borrow();
+                let Some((base, highlight)) = labels.as_ref() else {
+                    return;
+                };
+                self.obj().snapshot_child(base, snapshot);
+                let progress = self.progress.get().clamp(0.0, 1.0);
+                if progress <= 0.0 {
+                    return;
+                }
+                let width = self.obj().width() as f32;
+                let clip_width = width * progress as f32;
+                let clip_x = if self.obj().direction() == gtk::TextDirection::Rtl {
+                    width - clip_width
+                } else {
+                    0.0
+                };
+                snapshot.push_clip(&gtk::graphene::Rect::new(
+                    clip_x,
+                    0.0,
+                    clip_width,
+                    self.obj().height() as f32,
+                ));
+                self.obj().snapshot_child(highlight, snapshot);
+                snapshot.pop();
+            }
+        }
+    }
+
+    glib::wrapper! {
+        pub struct KaraokeText(ObjectSubclass<imp::KaraokeText>)
+            @extends gtk::Widget,
+            @implements gtk::Accessible, gtk::Buildable, gtk::ConstraintTarget;
+    }
+
+    impl KaraokeText {
+        pub(super) fn new(text: &str) -> Self {
+            let widget: Self = glib::Object::new();
+            let base = gtk::Label::new(Some(text));
+            let highlight = gtk::Label::new(Some(text));
+            highlight.add_css_class("lyrics-cue-sung");
+            highlight.set_accessible_role(gtk::AccessibleRole::Presentation);
+            base.set_parent(&widget);
+            highlight.set_parent(&widget);
+            widget.imp().labels.replace(Some((base, highlight)));
+            widget.set_accessible_role(gtk::AccessibleRole::Presentation);
+            widget
+        }
+
+        pub(super) fn add_text_class(&self, class: &str) {
+            self.add_css_class(class);
+            if let Some((base, highlight)) = self.imp().labels.borrow().as_ref() {
+                base.add_css_class(class);
+                highlight.add_css_class(class);
+            }
+        }
+
+        pub(super) fn set_progress(&self, progress: f64) {
+            let progress = progress.clamp(0.0, 1.0);
+            if (self.imp().progress.replace(progress) - progress).abs() > f64::EPSILON {
+                self.queue_draw();
+            }
+        }
+
+        pub(super) fn characters(&self) -> usize {
+            self.imp()
+                .labels
+                .borrow()
+                .as_ref()
+                .map_or(0, |(base, _)| base.text().chars().count())
+        }
+    }
+}
+
+use karaoke_text::KaraokeText;
 
 #[derive(Clone)]
 pub(crate) struct LyricsPane {
@@ -29,6 +168,7 @@ pub(crate) struct LyricsPane {
     save_button: gtk::Button,
     clear_auto_search_button: gtk::Button,
     search_button: gtk::Button,
+    edit_button: gtk::Button,
     settings_button: gtk::Button,
     offset_decrease_button: gtk::Button,
     offset_entry: gtk::Entry,
@@ -56,7 +196,14 @@ enum LyricsRowTrack {
 #[derive(Clone)]
 struct LyricsCueHighlight {
     cue: LyricsCue,
-    widget: gtk::Widget,
+    units: Vec<KaraokeUnit>,
+    parallels: Vec<KaraokeText>,
+}
+
+#[derive(Clone)]
+struct KaraokeUnit {
+    characters: usize,
+    texts: Vec<KaraokeText>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -93,6 +240,14 @@ impl LyricsPane {
         search_button.add_css_class("icon-button");
         search_button.add_css_class("flat");
         search_button.add_css_class("circular");
+        let edit_button = gtk::Button::from_icon_name("rufin-edit-symbolic");
+        edit_button.add_css_class("icon-button");
+        edit_button.add_css_class("flat");
+        edit_button.add_css_class("circular");
+        edit_button.set_focus_on_click(false);
+        let edit_label = tr("Edit lyrics");
+        edit_button.set_tooltip_text(Some(&edit_label));
+        edit_button.update_property(&[gtk::accessible::Property::Label(&edit_label)]);
         let settings_button = gtk::Button::from_icon_name("rufin-applications-system-symbolic");
         settings_button.add_css_class("icon-button");
         settings_button.add_css_class("flat");
@@ -108,6 +263,7 @@ impl LyricsPane {
         top_controls.set_valign(gtk::Align::Start);
         top_controls.append(&search_button);
         top_controls.append(&settings_button);
+        top_controls.append(&edit_button);
 
         let offset_decrease_button = lyrics_control_button("rufin-value-decrease-symbolic");
         let offset_entry = gtk::Entry::new();
@@ -155,6 +311,7 @@ impl LyricsPane {
             save_button,
             clear_auto_search_button,
             search_button,
+            edit_button,
             settings_button,
             offset_decrease_button,
             offset_entry,
@@ -178,6 +335,10 @@ impl LyricsPane {
 
     pub fn connect_settings_clicked(&self, open: impl Fn() + 'static) {
         self.settings_button.connect_clicked(move |_| open());
+    }
+
+    pub fn connect_edit_clicked(&self, edit: impl Fn() + 'static) {
+        self.edit_button.connect_clicked(move |_| edit());
     }
 
     pub fn connect_save_clicked(&self, save: impl Fn() + 'static) {
@@ -212,6 +373,11 @@ impl LyricsPane {
             .update_property(&[gtk::accessible::Property::Label(label)]);
         self.save_button.set_visible(enabled);
         self.save_button.set_sensitive(enabled);
+    }
+
+    pub fn set_edit_action(&self, enabled: bool) {
+        self.edit_button.set_visible(enabled);
+        self.edit_button.set_sensitive(enabled);
     }
 
     pub fn set_clear_auto_search_action(&self, label: &str, enabled: bool, visible: bool) {
@@ -412,6 +578,12 @@ impl LyricsPane {
                     }
                     let cue_line_widget = WrappingLine::new();
                     cue_line_widget.add_css_class("lyrics-line");
+                    let romanization_line = show_romanization.then(|| {
+                        let line = WrappingLine::new();
+                        line.add_css_class("lyrics-line");
+                        line.add_css_class("lyrics-romanization");
+                        line
+                    });
                     if cue_line.cues.is_empty() {
                         cue_line_widget.append(&lyrics_reading_unit(
                             &cue_line.text,
@@ -420,7 +592,7 @@ impl LyricsPane {
                         ));
                     } else {
                         let mut byte_cursor = 0;
-                        for cue in &cue_line.cues {
+                        for (cue_index, cue) in cue_line.cues.iter().enumerate() {
                             if cue.byte_start >= byte_cursor
                                 && let Some(gap) = cue_line.text.get(byte_cursor..cue.byte_start)
                                 && !gap.is_empty()
@@ -430,19 +602,37 @@ impl LyricsPane {
                                     show_furigana,
                                     reading_language,
                                 ));
+                                if let Some(line) = romanization_line.as_ref() {
+                                    line.append(&gtk::Label::new(Some(gap)));
+                                }
                             }
                             let text = cue_line
                                 .text
                                 .get(cue.byte_start..cue.byte_end_exclusive)
                                 .unwrap_or(&cue.text);
-                            let widget = lyrics_reading_unit(text, show_furigana, reading_language);
+                            let (widget, romanization) = lyrics_karaoke_unit(
+                                text,
+                                show_furigana,
+                                show_romanization,
+                                reading_language,
+                            );
                             widget.add_css_class("lyrics-cue");
                             cue_line_widget.append(&widget);
-                            cue_highlights.push(LyricsCueHighlight {
-                                cue: cue.clone(),
-                                widget,
+                            let romanization = romanization_line.as_ref().map(|line| {
+                                let label =
+                                    KaraokeText::new(romanization.as_deref().unwrap_or(text));
+                                line.append(&label);
+                                label
                             });
+                            let mut cue = cue.clone();
+                            cue.end_millis =
+                                effective_cue_end(&document.lines, line_index, cue_line, cue_index);
                             byte_cursor = byte_cursor.max(cue.byte_end_exclusive);
+                            cue_highlights.push(LyricsCueHighlight {
+                                cue,
+                                units: lyrics_reading_units(&widget),
+                                parallels: romanization.into_iter().collect(),
+                            });
                         }
                         if let Some(tail) = cue_line.text.get(byte_cursor..)
                             && !tail.is_empty()
@@ -452,9 +642,15 @@ impl LyricsPane {
                                 show_furigana,
                                 reading_language,
                             ));
+                            if let Some(line) = romanization_line.as_ref() {
+                                line.append(&gtk::Label::new(Some(tail)));
+                            }
                         }
                     }
                     cue_part.append(&cue_line_widget);
+                    if let Some(line) = romanization_line {
+                        cue_part.append(&line);
+                    }
                     content.append(&cue_part);
                 }
             } else if show_furigana && let Some(reading) = reading.as_ref() {
@@ -465,7 +661,10 @@ impl LyricsPane {
                 content.append(&label);
             }
 
-            if show_romanization && let Some(reading) = reading {
+            if show_romanization
+                && cue_highlights.is_empty()
+                && let Some(reading) = reading
+            {
                 let label = lyrics_label(&reading.romanization);
                 label.add_css_class("lyrics-romanization");
                 content.append(&label);
@@ -511,10 +710,17 @@ impl LyricsPane {
         let highlight_all_lines =
             lyrics.is_some_and(|lyrics| should_highlight_all_lyrics_lines(lyrics.lines.as_slice()));
         let previous_index = self.active_index.replace(active_index);
+        let full_row_sync = karaoke_rows_need_full_sync(previous_index, active_index);
         let follow_pause = self.follow_scroll_pause();
         let scroll_target = {
             let rows = self.rows.borrow();
             for row in rows.iter() {
+                if !full_row_sync
+                    && Some(row.line_index) != previous_index
+                    && Some(row.line_index) != active_index
+                {
+                    continue;
+                }
                 let active = row.track == LyricsRowTrack::Primary
                     && (highlight_all_lines || Some(row.line_index) == active_index);
                 if active {
@@ -522,29 +728,11 @@ impl LyricsPane {
                 } else {
                     row.row.remove_css_class("lyrics-row-active");
                 }
-                let latest_started_cue = row
-                    .cues
-                    .iter()
-                    .filter(|cue| position_millis >= i128::from(cue.cue.start_millis))
-                    .map(|cue| cue.cue.start_millis)
-                    .max();
                 for cue in &row.cues {
-                    if position_millis >= i128::from(cue.cue.start_millis) {
-                        cue.widget.add_css_class("lyrics-cue-sung");
-                    } else {
-                        cue.widget.remove_css_class("lyrics-cue-sung");
-                    }
-                    let cue_active = match cue.cue.end_millis {
-                        Some(end) => {
-                            position_millis >= i128::from(cue.cue.start_millis)
-                                && position_millis < i128::from(end)
-                        }
-                        None => latest_started_cue == Some(cue.cue.start_millis),
-                    };
-                    if cue_active {
-                        cue.widget.add_css_class("lyrics-cue-active");
-                    } else {
-                        cue.widget.remove_css_class("lyrics-cue-active");
+                    let progress = karaoke_cue_progress(&cue.cue, position_millis);
+                    set_karaoke_unit_progress(&cue.units, progress);
+                    for text in &cue.parallels {
+                        text.set_progress(progress);
                     }
                 }
             }
@@ -642,6 +830,15 @@ impl LyricsPane {
     }
 }
 
+fn karaoke_rows_need_full_sync(previous: Option<usize>, current: Option<usize>) -> bool {
+    match (previous, current) {
+        (Some(previous), Some(current)) => {
+            current < previous || current > previous.saturating_add(1)
+        }
+        (Some(_), None) | (None, _) => true,
+    }
+}
+
 fn lyrics_label(text: &str) -> gtk::Label {
     let label = gtk::Label::new(Some(text));
     label.set_wrap(true);
@@ -663,17 +860,95 @@ fn ruby_line(segments: &[JapaneseReadingSegment]) -> WrappingLine {
 }
 
 fn lyrics_reading_unit(text: &str, show_furigana: bool, language: Option<&str>) -> gtk::Widget {
-    if show_furigana
-        && let Some(reading) = japanese_reading_for_language_options(text, language, true, false)
-    {
+    lyrics_karaoke_unit(text, show_furigana, false, language).0
+}
+
+fn lyrics_karaoke_unit(
+    text: &str,
+    show_furigana: bool,
+    show_romanization: bool,
+    language: Option<&str>,
+) -> (gtk::Widget, Option<String>) {
+    let reading = (show_furigana || show_romanization)
+        .then(|| {
+            japanese_reading_for_language_options(text, language, show_furigana, show_romanization)
+        })
+        .flatten();
+    let widget = if show_furigana && let Some(reading) = reading.as_ref() {
         let phrase = gtk::Box::new(gtk::Orientation::Horizontal, 0);
         phrase.set_valign(gtk::Align::Baseline);
         for segment in &reading.segments {
             phrase.append(&ruby_segment(segment));
         }
-        return phrase.upcast();
+        phrase.upcast()
+    } else {
+        reading_surface_label(text).upcast()
+    };
+    let romanization = show_romanization
+        .then(|| reading.map(|reading| reading.romanization))
+        .flatten();
+    (widget, romanization)
+}
+
+fn lyrics_reading_units(widget: &gtk::Widget) -> Vec<KaraokeUnit> {
+    let mut furigana = Vec::new();
+    let mut units = Vec::new();
+    for text in karaoke_texts(widget) {
+        if text.has_css_class("lyrics-furigana") {
+            furigana.push(text);
+            continue;
+        }
+        if !text.has_css_class("lyrics-reading-surface") {
+            continue;
+        }
+        let characters = text.characters();
+        furigana.push(text);
+        units.push(KaraokeUnit {
+            characters,
+            texts: std::mem::take(&mut furigana),
+        });
     }
-    reading_surface_label(text).upcast()
+    units
+}
+
+fn karaoke_texts(widget: &gtk::Widget) -> Vec<KaraokeText> {
+    if let Ok(text) = widget.clone().downcast::<KaraokeText>() {
+        return vec![text];
+    }
+    std::iter::successors(widget.first_child(), gtk::Widget::next_sibling)
+        .flat_map(|child| karaoke_texts(&child))
+        .collect()
+}
+
+fn karaoke_cue_progress(cue: &LyricsCue, position_millis: i128) -> f64 {
+    let start = i128::from(cue.start_millis);
+    if position_millis <= start {
+        return 0.0;
+    }
+    let Some(end) = cue.end_millis.map(i128::from) else {
+        return 1.0;
+    };
+    if end <= start {
+        return 1.0;
+    }
+    ((position_millis - start) as f64 / (end - start) as f64).clamp(0.0, 1.0)
+}
+
+fn set_karaoke_unit_progress(units: &[KaraokeUnit], progress: f64) {
+    let progress = progress.clamp(0.0, 1.0);
+    let mut highlighted = units.iter().map(|unit| unit.characters).sum::<usize>() as f64 * progress;
+    for unit in units {
+        let characters = unit.characters as f64;
+        let unit_progress = if characters == 0.0 {
+            progress
+        } else {
+            (highlighted / characters).clamp(0.0, 1.0)
+        };
+        highlighted = (highlighted - characters).max(0.0);
+        for text in &unit.texts {
+            text.set_progress(unit_progress);
+        }
+    }
 }
 
 fn ruby_segment(segment: &JapaneseReadingSegment) -> gtk::Box {
@@ -685,18 +960,18 @@ fn ruby_segment(segment: &JapaneseReadingSegment) -> gtk::Box {
         segment_box.add_css_class("lyrics-ruby-annotated");
     }
 
-    let furigana = gtk::Label::new(Some(segment.furigana.as_deref().unwrap_or(" ")));
-    furigana.add_css_class("lyrics-furigana");
+    let furigana = KaraokeText::new(segment.furigana.as_deref().unwrap_or(" "));
+    furigana.add_text_class("lyrics-furigana");
     furigana.set_halign(gtk::Align::Center);
     segment_box.append(&furigana);
     segment_box.append(&reading_surface_label(&segment.surface));
     segment_box
 }
 
-fn reading_surface_label(text: &str) -> gtk::Label {
-    let label = gtk::Label::new(Some(text));
-    label.add_css_class("lyrics-reading-surface");
-    label.add_css_class("lyrics-scroll-anchor");
+fn reading_surface_label(text: &str) -> KaraokeText {
+    let label = KaraokeText::new(text);
+    label.add_text_class("lyrics-reading-surface");
+    label.add_text_class("lyrics-scroll-anchor");
     label.set_halign(gtk::Align::Center);
     label
 }
@@ -848,6 +1123,53 @@ pub(crate) fn next_lyrics_line_start_after(
         .min()
 }
 
+pub(crate) fn next_lyrics_highlight_after(
+    lines: &[LyricsLine],
+    position_millis: i128,
+) -> Option<u64> {
+    let active_end = lines
+        .iter()
+        .enumerate()
+        .flat_map(|(line_index, line)| {
+            line.cue_lines.iter().flat_map(move |cue_line| {
+                cue_line
+                    .cues
+                    .iter()
+                    .enumerate()
+                    .filter_map(move |(cue_index, cue)| {
+                        let end = effective_cue_end(lines, line_index, cue_line, cue_index)?;
+                        (i128::from(cue.start_millis) <= position_millis
+                            && position_millis < i128::from(end))
+                        .then_some(end)
+                    })
+            })
+        })
+        .min();
+    if let Some(end) = active_end {
+        return Some(
+            u64::try_from(position_millis.max(0))
+                .unwrap_or_default()
+                .saturating_add(KARAOKE_FRAME_MILLIS)
+                .min(end),
+        );
+    }
+    next_lyrics_line_start_after(lines, position_millis)
+}
+
+fn effective_cue_end(
+    lines: &[LyricsLine],
+    line_index: usize,
+    cue_line: &LyricsCueLine,
+    cue_index: usize,
+) -> Option<u64> {
+    cue_line.cues[cue_index]
+        .end_millis
+        .or_else(|| cue_line.cues.get(cue_index + 1).map(|cue| cue.start_millis))
+        .or(cue_line.end_millis)
+        .or(lines[line_index].end_millis)
+        .or_else(|| lines.get(line_index + 1).and_then(|line| line.start_millis))
+}
+
 pub(crate) fn lyrics_follow_scroll_pause_state(
     paused_until: Option<Instant>,
     now: Instant,
@@ -914,12 +1236,22 @@ fn lyrics_control_button(icon_name: &str) -> gtk::Button {
 mod tests {
     use super::{
         LyricsFollowScrollPause, active_lyrics_line_index, centered_scroll_target,
-        lyrics_follow_scroll_pause_state, lyrics_follow_scroll_target,
-        lyrics_scroll_animation_millis, next_lyrics_line_start_after,
-        should_highlight_all_lyrics_lines,
+        karaoke_cue_progress, karaoke_rows_need_full_sync, lyrics_follow_scroll_pause_state,
+        lyrics_follow_scroll_target, lyrics_scroll_animation_millis, next_lyrics_highlight_after,
+        next_lyrics_line_start_after, should_highlight_all_lyrics_lines,
     };
     use lyrics::{LyricsCue, LyricsCueLine, LyricsLine as LyricLine};
     use std::time::{Duration, Instant};
+
+    #[test]
+    fn karaoke_frames_resync_only_after_nonsequential_transitions() {
+        assert!(karaoke_rows_need_full_sync(None, Some(4)));
+        assert!(!karaoke_rows_need_full_sync(Some(4), Some(4)));
+        assert!(!karaoke_rows_need_full_sync(Some(4), Some(5)));
+        assert!(karaoke_rows_need_full_sync(Some(4), Some(7)));
+        assert!(karaoke_rows_need_full_sync(Some(4), Some(2)));
+        assert!(karaoke_rows_need_full_sync(Some(4), None));
+    }
 
     #[test]
     fn sync_lyrics_started() {
@@ -1037,6 +1369,29 @@ mod tests {
         }];
 
         assert_eq!(next_lyrics_line_start_after(&[karaoke], 1_000), Some(1_400));
+    }
+
+    #[test]
+    fn karaoke_cues_advance_continuously_through_the_word() {
+        let cue = LyricsCue {
+            text: "word".to_string(),
+            start_millis: 1_000,
+            end_millis: Some(1_400),
+            byte_start: 0,
+            byte_end_exclusive: 4,
+        };
+        assert_eq!(karaoke_cue_progress(&cue, 1_000), 0.0);
+        assert_eq!(karaoke_cue_progress(&cue, 1_200), 0.5);
+        assert_eq!(karaoke_cue_progress(&cue, 1_400), 1.0);
+        let mut line = line("word", Some(1_000));
+        line.cue_lines = vec![LyricsCueLine {
+            text: line.text.clone(),
+            start_millis: Some(1_000),
+            end_millis: Some(1_400),
+            agent_id: None,
+            cues: vec![cue],
+        }];
+        assert_eq!(next_lyrics_highlight_after(&[line], 1_000), Some(1_016));
     }
 
     #[test]

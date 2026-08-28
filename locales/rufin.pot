@@ -387,6 +387,9 @@ msgstr ""
 msgid "Collections"
 msgstr ""
 
+msgid "Color for the active word during playback"
+msgstr ""
+
 msgid "Color scheme"
 msgstr ""
 
@@ -495,6 +498,9 @@ msgstr ""
 msgid "Default right sidebar"
 msgstr ""
 
+msgid "Default"
+msgstr ""
+
 msgid "Delete Playlist"
 msgstr ""
 
@@ -579,7 +585,13 @@ msgstr ""
 msgid "EPs"
 msgstr ""
 
+msgid "Edit Lyrics"
+msgstr ""
+
 msgid "Edit Smart Playlist"
+msgstr ""
+
+msgid "Edit lyrics"
 msgstr ""
 
 msgid "Edit metadata"
@@ -676,6 +688,12 @@ msgid "Folder"
 msgstr ""
 
 msgid "Folders"
+msgstr ""
+
+msgid "Font family"
+msgstr ""
+
+msgid "Font size (px)"
 msgstr ""
 
 msgid "Forget Server"
@@ -811,6 +829,12 @@ msgid "Jellyfin"
 msgstr ""
 
 msgid "Jellyfin, Navidrome, or OpenSubsonic"
+msgstr ""
+
+msgid "Karaoke Playback"
+msgstr ""
+
+msgid "Karaoke highlight color"
 msgstr ""
 
 msgid "Karaoke mode"
@@ -1543,9 +1567,6 @@ msgstr ""
 msgid "ReplayGain"
 msgstr ""
 
-msgid "Requires OpenSubsonic songLyrics v2"
-msgstr ""
-
 msgid "Reset equalizer"
 msgstr ""
 
@@ -1607,6 +1628,9 @@ msgid "Saved"
 msgstr ""
 
 msgid "Saved, sync to preview matches"
+msgstr ""
+
+msgid "Saves lyrics to your source"
 msgstr ""
 
 msgid "Saving..."
@@ -1950,6 +1974,9 @@ msgstr ""
 msgid "Type to search"
 msgstr ""
 
+msgid "Typography"
+msgstr ""
+
 msgid "UPnP"
 msgstr ""
 
@@ -1996,6 +2023,9 @@ msgid "User"
 msgstr ""
 
 msgid "Username"
+msgstr ""
+
+msgid "Uses available karaoke lyrics or fetches them from the internet"
 msgstr ""
 
 msgid "Verify server certificate"

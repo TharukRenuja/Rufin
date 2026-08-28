@@ -1,4 +1,4 @@
-use super::view::next_lyrics_line_start_after;
+use super::view::next_lyrics_highlight_after;
 use crate::shell::Shell;
 use gtk::glib;
 use playback::{PlaybackOutput, TransportStatus};
@@ -29,10 +29,7 @@ impl Shell {
         }
 
         let Some(next_position_millis) = self.visible_lyrics().as_ref().and_then(|lyrics| {
-            next_lyrics_line_start_after(
-                &lyrics.lines,
-                self.lyrics_position_millis(position_millis),
-            )
+            next_lyrics_highlight_after(&lyrics.lines, self.lyrics_position_millis(position_millis))
         }) else {
             return;
         };

@@ -12,8 +12,8 @@ use adw::prelude::*;
 use gtk::glib;
 use localization::result_count_text;
 use localization::tr;
-use lyrics::{LyricsSearchResult, release_japanese_reader};
-use std::cell::RefCell;
+use lyrics::{CurrentLyrics, CurrentLyricsContent, LyricsSearchResult, release_japanese_reader};
+use std::cell::{Cell, RefCell};
 use std::path::PathBuf;
 use std::rc::Rc;
 use std::time::Duration;
@@ -23,6 +23,41 @@ const LYRICS_SEARCH_DEBOUNCE_MILLIS: u64 = 600;
 
 fn take_dirty_lyrics_pane(dirty: &std::cell::Cell<bool>, visible: bool) -> bool {
     visible && dirty.replace(false)
+}
+
+fn highlight_lrc_timestamps(buffer: &gtk::TextBuffer) {
+    let Some(line_time) = buffer.tag_table().lookup("line-time") else {
+        return;
+    };
+    let Some(word_time) = buffer.tag_table().lookup("word-time") else {
+        return;
+    };
+    let (start, end) = buffer.bounds();
+    buffer.remove_tag(&line_time, &start, &end);
+    buffer.remove_tag(&word_time, &start, &end);
+    let mut cursor = start;
+    while !cursor.is_end() {
+        let open = cursor.char();
+        if !matches!(open, '[' | '<') {
+            cursor.forward_char();
+            continue;
+        }
+        let tag_start = cursor;
+        cursor.forward_char();
+        let close = if open == '[' { ']' } else { '>' };
+        while !cursor.is_end() {
+            let character = cursor.char();
+            cursor.forward_char();
+            if matches!(character, '\n') || character == close {
+                break;
+            }
+        }
+        buffer.apply_tag(
+            if open == '[' { &line_time } else { &word_time },
+            &tag_start,
+            &cursor,
+        );
+    }
 }
 
 impl Shell {
@@ -100,11 +135,16 @@ impl Shell {
                 .can_suppress_auto_lyrics(settings.private_mode, track_id, lyrics_origin)
         });
         let lyrics_available = lyrics.is_some();
+        let lyrics_editable = lyrics_available
+            && current_media
+                .as_ref()
+                .is_some_and(|media_id| self.products.lyrics.current_writable(media_id));
         let show_furigana = settings.lyrics.show_furigana;
         let show_romanization = settings.lyrics.show_romanization;
-        let word_by_word_highlighting = settings.lyrics.word_by_word_highlighting;
+        let word_by_word_highlighting = settings.lyrics.karaoke_mode;
         drop(settings);
         pane.set_save_action(&tr("Save Lyrics"), lyrics_available);
+        pane.set_edit_action(lyrics_editable);
         pane.set_search_action(&search_label, search_enabled);
         pane.set_clear_auto_search_action(
             &tr("Clear fetched lyrics for this track"),
@@ -183,6 +223,186 @@ impl Shell {
                 .lyrics
                 .save_current(media_id, offset_millis, path);
         });
+    }
+
+    pub(crate) fn present_lyrics_edit_dialog(self: &Rc<Self>) {
+        let Some(media_id) = current_playback_media_id(self.selected_playback().as_deref()) else {
+            return;
+        };
+        let Some(lyrics) = self.selected_lyrics() else {
+            return;
+        };
+        let projection = lyrics.projection.borrow();
+        let CurrentLyrics::Ready {
+            content: Some(CurrentLyricsContent::Document { document, .. }),
+            ..
+        } = &*projection
+        else {
+            return;
+        };
+        let offset_millis = lyrics.offset_millis.get();
+        let content = lyrics::lyrics_to_lrc_text(document, offset_millis);
+        drop(projection);
+        drop(lyrics);
+
+        let dialog = adw::Dialog::builder()
+            .title(tr("Edit Lyrics"))
+            .content_width(560)
+            .content_height(600)
+            .build();
+        let toolbar = adw::ToolbarView::new();
+        toolbar.add_top_bar(&adw::HeaderBar::new());
+        let body = gtk::Box::new(gtk::Orientation::Vertical, 12);
+        body.set_margin_top(16);
+        body.set_margin_bottom(16);
+        body.set_margin_start(16);
+        body.set_margin_end(16);
+        let editor = gtk::TextView::new();
+        editor.set_monospace(true);
+        editor.set_wrap_mode(gtk::WrapMode::WordChar);
+        let buffer = editor.buffer();
+        buffer.create_tag(Some("line-time"), &[("foreground", &"#e8962c")]);
+        buffer.create_tag(Some("word-time"), &[("foreground", &"#8ab4f8")]);
+        buffer.set_text(&content);
+        highlight_lrc_timestamps(&buffer);
+
+        let offset = Rc::new(Cell::new(offset_millis));
+        let offset_controls = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+        offset_controls.set_halign(gtk::Align::Center);
+        let offset_decrease_100 = gtk::Button::with_label("-100 ms");
+        let offset_decrease_50 = gtk::Button::with_label("-50 ms");
+        let offset_entry = gtk::Entry::new();
+        offset_entry.set_text(&format!("{offset_millis} ms"));
+        gtk::prelude::EditableExt::set_alignment(&offset_entry, 0.5);
+        offset_entry.set_width_chars(6);
+        offset_entry.set_max_width_chars(9);
+        offset_entry.set_max_length(24);
+        offset_entry.set_tooltip_text(Some(&tr("Lyrics offset (ms)")));
+        let offset_increase_50 = gtk::Button::with_label("+50 ms");
+        let offset_increase_100 = gtk::Button::with_label("+100 ms");
+        offset_controls.append(&offset_decrease_100);
+        offset_controls.append(&offset_decrease_50);
+        offset_controls.append(&offset_entry);
+        offset_controls.append(&offset_increase_50);
+        offset_controls.append(&offset_increase_100);
+        body.append(&offset_controls);
+
+        let apply_offset: Rc<dyn Fn(i64)> = Rc::new({
+            let offset = Rc::clone(&offset);
+            let entry = offset_entry.downgrade();
+            let buffer = buffer.clone();
+            let shell = Rc::downgrade(self);
+            move |value| {
+                let previous = offset.replace(value);
+                let delta = value.saturating_sub(previous);
+                if delta != 0 {
+                    let (start, end) = buffer.bounds();
+                    let text = buffer.text(&start, &end, false);
+                    buffer.set_text(&lyrics::shift_lrc_text_timestamps(&text, delta));
+                    if let Some(shell) = shell.upgrade() {
+                        shell.set_lyrics_offset_from_text(&value.to_string());
+                    }
+                }
+                if let Some(entry) = entry.upgrade() {
+                    entry.set_text(&format!("{value} ms"));
+                }
+            }
+        });
+        let commit_offset: Rc<dyn Fn()> = Rc::new({
+            let offset = Rc::clone(&offset);
+            let entry = offset_entry.downgrade();
+            let apply_offset = Rc::clone(&apply_offset);
+            move || {
+                let Some(entry) = entry.upgrade() else {
+                    return;
+                };
+                match super::state::parse_lyrics_offset_millis(&entry.text()) {
+                    Some(value) => apply_offset(value),
+                    None => entry.set_text(&format!("{} ms", offset.get())),
+                }
+            }
+        });
+        for (button, delta) in [
+            (&offset_decrease_100, -100),
+            (&offset_decrease_50, -50),
+            (&offset_increase_50, 50),
+            (&offset_increase_100, 100),
+        ] {
+            button.connect_clicked({
+                let offset = Rc::clone(&offset);
+                let apply_offset = Rc::clone(&apply_offset);
+                let commit_offset = Rc::clone(&commit_offset);
+                move |_| {
+                    commit_offset();
+                    apply_offset(offset.get().saturating_add(delta));
+                }
+            });
+        }
+        offset_entry.connect_activate({
+            let commit_offset = Rc::clone(&commit_offset);
+            move |_| commit_offset()
+        });
+        let offset_focus = gtk::EventControllerFocus::new();
+        offset_focus.connect_leave({
+            let commit_offset = Rc::clone(&commit_offset);
+            move |_| commit_offset()
+        });
+        offset_entry.add_controller(offset_focus);
+
+        let scroller = gtk::ScrolledWindow::builder()
+            .child(&editor)
+            .vexpand(true)
+            .build();
+        body.append(&scroller);
+
+        let actions = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+        actions.set_halign(gtk::Align::End);
+        let cancel = gtk::Button::with_label(&tr("Cancel"));
+        let save = gtk::Button::with_label(&tr("Save"));
+        save.add_css_class("suggested-action");
+        actions.append(&cancel);
+        actions.append(&save);
+        body.append(&actions);
+        toolbar.set_content(Some(&body));
+        dialog.set_child(Some(&toolbar));
+
+        let committed = Rc::new(Cell::new(false));
+        let close = dialog.clone();
+        cancel.connect_clicked(move |_| {
+            close.close();
+        });
+        let restore_shell = Rc::downgrade(self);
+        let restore_committed = Rc::clone(&committed);
+        let restore_media = media_id.clone();
+        dialog.connect_closed(move |_| {
+            if !restore_committed.get()
+                && let Some(shell) = restore_shell.upgrade()
+                && current_playback_media_id(shell.selected_playback().as_deref())
+                    == Some(restore_media.clone())
+            {
+                shell.set_lyrics_offset_from_text(&offset_millis.to_string());
+            }
+        });
+        let save_for_text = save.clone();
+        buffer.connect_changed(move |buffer| {
+            highlight_lrc_timestamps(buffer);
+            let (start, end) = buffer.bounds();
+            save_for_text.set_sensitive(!buffer.text(&start, &end, false).trim().is_empty());
+        });
+        let shell = Rc::clone(self);
+        let close = dialog.clone();
+        save.connect_clicked(move |_| {
+            commit_offset();
+            let (start, end) = buffer.bounds();
+            let text = buffer.text(&start, &end, false).to_string();
+            committed.set(true);
+            shell
+                .products
+                .lyrics
+                .update_lyrics_text(media_id.clone(), text);
+            close.close();
+        });
+        present_light_dismiss_dialog(&dialog, &self.chrome.window);
     }
     pub(crate) fn present_lyrics_search_dialog(self: &Rc<Self>) {
         let Some(lyrics) = self.selected_lyrics() else {

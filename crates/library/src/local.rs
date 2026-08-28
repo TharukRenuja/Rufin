@@ -247,6 +247,25 @@ impl Database {
         Ok(rows?)
     }
 
+    pub async fn mapping_track_source_path(
+        &self,
+        source: SourceKey,
+        track: TrackKey,
+        cancellation: &ReadCancellation,
+    ) -> LibraryResult<Option<String>> {
+        let (_permit, mut connection) = self.acquire_general(cancellation).await?;
+        let path = sqlx::query_scalar(
+            "SELECT source_path FROM tracks
+             WHERE source_key=?1 AND track_key=?2 AND source_path IS NOT NULL",
+        )
+        .bind(source)
+        .bind(track)
+        .fetch_optional(&mut *connection)
+        .await;
+        Database::clear_progress(&mut connection).await?;
+        Ok(path?)
+    }
+
     pub async fn mapping_track_object(
         &self,
         source: SourceKey,

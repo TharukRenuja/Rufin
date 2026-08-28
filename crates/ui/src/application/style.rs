@@ -111,6 +111,7 @@ impl ApplicationAppearance {
             .load_from_string(&appearance_override_css(
                 settings.theme_preference,
                 settings.accent_preference,
+                &settings.lyrics,
             ));
     }
 }
@@ -123,17 +124,17 @@ fn color_scheme(preference: ThemePreference) -> adw::ColorScheme {
     }
 }
 
-fn appearance_override_css(theme: ThemePreference, accent: AccentPreference) -> String {
+fn appearance_override_css(
+    theme: ThemePreference,
+    accent: AccentPreference,
+    lyrics: &lyrics::Settings,
+) -> String {
     let surface_tokens = match theme {
         ThemePreference::System => "",
         ThemePreference::Light => LIGHT_SURFACE_TOKENS,
         ThemePreference::Dark => DARK_SURFACE_TOKENS,
     };
     let accent_color = accent_color(accent);
-    if surface_tokens.is_empty() && accent_color.is_none() {
-        return String::new();
-    }
-
     let mut css = String::from(":root {\n");
     css.push_str(surface_tokens);
     if let Some(color) = accent_color {
@@ -144,7 +145,24 @@ fn appearance_override_css(theme: ThemePreference, accent: AccentPreference) -> 
             "  --accent-color: oklab(from var(--accent-bg-color) var(--standalone-color-oklab));\n",
         );
     }
+    if let Some(color) = lyrics.lyrics_highlight_color.as_deref() {
+        css.push_str("  --lyrics-highlight-color: ");
+        css.push_str(color);
+        css.push_str(";\n");
+    }
     css.push_str("}\n");
+    let selectors = ".lyrics-line, .lyrics-furigana, .lyrics-romanization, .lyrics-reading-surface, .lyrics-cue";
+    if let Some(family) = lyrics.lyrics_font_family.as_deref() {
+        css.push_str(selectors);
+        css.push_str(" {\n");
+        css.push_str("  font-family: '");
+        css.push_str(&family.replace('\\', "\\\\").replace('\'', "\\'"));
+        css.push_str("', sans-serif;\n");
+        css.push_str("}\n");
+    }
+    if let Some(size) = lyrics.lyrics_font_size {
+        css.push_str(&format!(".lyrics-line {{ font-size: {size}px; }}\n"));
+    }
     css
 }
 
@@ -167,6 +185,10 @@ fn accent_color(preference: AccentPreference) -> Option<&'static str> {
 mod tests {
     use super::*;
 
+    fn css(theme: ThemePreference, accent: AccentPreference) -> String {
+        appearance_override_css(theme, accent, &lyrics::Settings::default())
+    }
+
     #[test]
     fn theme_preferences_map_to_explicit_application_color_schemes() {
         assert_eq!(
@@ -184,21 +206,21 @@ mod tests {
     }
 
     #[test]
-    fn system_appearance_does_not_override_user_theme_tokens() {
-        assert_eq!(
-            appearance_override_css(ThemePreference::System, AccentPreference::System),
-            ""
-        );
+    fn system_appearance_only_overrides_lyrics_tokens() {
+        let css = css(ThemePreference::System, AccentPreference::System);
+        assert!(!css.contains("--lyrics-highlight-color"));
+        assert!(!css.contains("--window-bg-color"));
+        assert!(!css.contains("--accent-bg-color"));
     }
 
     #[test]
     fn explicit_color_schemes_override_surface_tokens_only() {
-        let light = appearance_override_css(ThemePreference::Light, AccentPreference::System);
+        let light = css(ThemePreference::Light, AccentPreference::System);
         assert!(light.contains("--window-bg-color: #fafafb"));
         assert!(light.contains("--view-bg-color: #ffffff"));
         assert!(!light.contains("--accent-bg-color"));
 
-        let dark = appearance_override_css(ThemePreference::Dark, AccentPreference::System);
+        let dark = css(ThemePreference::Dark, AccentPreference::System);
         assert!(dark.contains("--window-bg-color: #222226"));
         assert!(dark.contains("--view-bg-color: #1d1d20"));
         assert!(!dark.contains("--accent-bg-color"));
@@ -218,7 +240,7 @@ mod tests {
             (AccentPreference::Slate, "#6f8396"),
         ];
         for (preference, color) in expected {
-            let css = appearance_override_css(ThemePreference::System, preference);
+            let css = css(ThemePreference::System, preference);
             assert!(css.contains(&format!("--accent-bg-color: {color}")));
             assert!(css.contains("--accent-fg-color: #ffffff"));
             assert!(css.contains("--accent-color: oklab("));

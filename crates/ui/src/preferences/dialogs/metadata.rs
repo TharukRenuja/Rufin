@@ -111,13 +111,65 @@ pub(crate) fn present_metadata_dialog(shell: &Rc<Shell>, item: MetadataItemId) {
         match draft {
             Ok(draft) => build_dialog(&shell, selected, item, draft),
             Err(SourceMetadataError::LocalAccessRequired { source_path }) => {
-                present_local_access_recovery(&shell, selected, item, &source_path)
+                let retry_shell = Rc::downgrade(&shell);
+                present_local_access_recovery(
+                    &shell,
+                    selected,
+                    &source_path,
+                    Rc::new(move || {
+                        if let Some(shell) = retry_shell.upgrade() {
+                            present_metadata_dialog(&shell, item);
+                        }
+                    }),
+                );
             }
-            Err(SourceMetadataError::Unavailable) => present_metadata_error(
-                &shell,
-                &tr(msgid("Metadata editing is no longer available")),
-            ),
+            Err(SourceMetadataError::Unavailable) => {
+                shell.show_feedback_toast(tr(msgid("Metadata editing is no longer available")))
+            }
             Err(error) => present_metadata_error(&shell, &error.to_string()),
+        }
+    });
+}
+
+pub(crate) fn ensure_track_metadata_available(
+    shell: &Rc<Shell>,
+    track: library::TrackKey,
+    on_ready: Rc<dyn Fn()>,
+) {
+    let Some(selected) = shell.selected_library().as_deref().cloned() else {
+        return;
+    };
+    let receiver = selected.operations.track_metadata(track);
+    let shell = Rc::downgrade(shell);
+    gtk::glib::spawn_future_local(async move {
+        let result = receiver
+            .recv()
+            .await
+            .unwrap_or(Err(SourceMetadataError::Unavailable));
+        let Some(shell) = shell.upgrade() else { return };
+        if !selected_metadata_source_is_current(&shell, &selected) {
+            return;
+        }
+        match result {
+            Ok(_) => on_ready(),
+            Err(SourceMetadataError::LocalAccessRequired { source_path }) => {
+                let retry_shell = Rc::downgrade(&shell);
+                let retry_ready = Rc::clone(&on_ready);
+                present_local_access_recovery(
+                    &shell,
+                    selected,
+                    &source_path,
+                    Rc::new(move || {
+                        if let Some(shell) = retry_shell.upgrade() {
+                            ensure_track_metadata_available(&shell, track, Rc::clone(&retry_ready));
+                        }
+                    }),
+                );
+            }
+            Err(SourceMetadataError::Unavailable) => {
+                shell.show_feedback_toast(tr(msgid("Metadata editing is no longer available")))
+            }
+            Err(error) => shell.show_feedback_toast(error.to_string()),
         }
     });
 }
@@ -178,8 +230,8 @@ impl MetadataReceiver {
 fn present_local_access_recovery(
     shell: &Rc<Shell>,
     selected: crate::runtime::SelectedLibrary,
-    item: MetadataItemId,
     source_path: &str,
+    on_success: Rc<dyn Fn()>,
 ) {
     let dialog = adw::Dialog::builder()
         .title(tr(msgid("Edit metadata")))
@@ -192,11 +244,12 @@ fn present_local_access_recovery(
     header.set_title_widget(Some(&adw::WindowTitle::new(&tr("Edit metadata"), "")));
     let toolbar = adw::ToolbarView::new();
     toolbar.add_top_bar(&header);
-    let shell_for_retry = Rc::downgrade(shell);
+    let close = dialog.downgrade();
     let retry: Rc<dyn Fn()> = Rc::new(move || {
-        if let Some(shell) = shell_for_retry.upgrade() {
-            present_metadata_dialog(&shell, item);
+        if let Some(dialog) = close.upgrade() {
+            dialog.close();
         }
+        on_success();
     });
     let form = crate::preferences::source::local_access::metadata_local_access_recovery_form(
         shell,
@@ -241,9 +294,7 @@ fn build_dialog(
     save.add_css_class("suggested-action");
     save.set_sensitive(false);
     let bottom_actions = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-    bottom_actions.set_halign(gtk::Align::End);
-    bottom_actions.append(&cancel);
-    bottom_actions.append(&save);
+    bottom_actions.set_hexpand(true);
 
     let staging = gtk::Box::new(gtk::Orientation::Vertical, 0);
     let mut entries = Vec::new();
@@ -270,18 +321,23 @@ fn build_dialog(
 
     let status = gtk::Label::new(None);
     status.set_halign(gtk::Align::Start);
-    status.set_wrap(true);
+    status.set_valign(gtk::Align::Center);
+    status.set_hexpand(true);
+    status.set_ellipsize(gtk::pango::EllipsizeMode::End);
     status.add_css_class("error");
     status.set_visible(false);
-    let footer = gtk::Box::new(gtk::Orientation::Vertical, 12);
-    footer.append(&status);
-    footer.append(&bottom_actions);
+    let status_slot = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+    status_slot.set_hexpand(true);
+    status_slot.append(&status);
+    bottom_actions.append(&status_slot);
+    bottom_actions.append(&cancel);
+    bottom_actions.append(&save);
     let footer_clamp = adw::Clamp::new();
     footer_clamp.set_maximum_size(EDITOR_WIDTH);
     footer_clamp.set_margin_start(24);
     footer_clamp.set_margin_end(24);
     footer_clamp.set_margin_bottom(14);
-    footer_clamp.set_child(Some(&footer));
+    footer_clamp.set_child(Some(&bottom_actions));
 
     let body = gtk::Box::new(gtk::Orientation::Vertical, 12);
     body.append(&scroller);
@@ -1176,6 +1232,7 @@ impl Editor {
     }
     fn show_error(&self, message: &str) {
         self.status.set_label(message);
+        self.status.set_tooltip_text(Some(message));
         self.status.set_visible(true);
     }
 

@@ -61,6 +61,7 @@ pub(crate) struct SelectedSourceState {
     pub(crate) album_count: usize,
     pub(crate) track_count: usize,
     pub(crate) mapped_count: usize,
+    pub(crate) sample_source_path: Option<String>,
 }
 
 impl SelectedSourceState {
@@ -611,6 +612,14 @@ impl SourceOwner {
             .mapping_access_count(publication.source, &cancellation)
             .await
             .map_err(string_error)?;
+        let sample_source_path = self
+            .shared
+            .database
+            .mapping_track_page(publication.source, None, None, 1, &cancellation)
+            .await
+            .map_err(string_error)?
+            .pop()
+            .map(|track| track.source_path);
         let selected = Arc::new(SelectedSourceState {
             configuration: configured.configuration.clone(),
             source,
@@ -627,6 +636,7 @@ impl SourceOwner {
             album_count,
             track_count,
             mapped_count,
+            sample_source_path,
         });
         let session = ActiveSource::new(&self.shared, &selected);
         let playback = self.shared.playback()?;
@@ -2149,26 +2159,14 @@ impl SelectedSourcePort for ActiveSource {
 
     fn identify_track_metadata(
         &self,
-        track: TrackKey,
+        _track: TrackKey,
         values: TrackMetadataValues,
     ) -> Receiver<Result<Option<(TrackMetadataValues, Option<String>)>, String>> {
         let external = self
             .shared
             .upgrade()
             .is_some_and(|shared| shared.settings.load().ui.allows_external_metadata_lookup());
-        self.spawn_reply(move |selected| async move {
-            if let Some(source) = selected.source.clone()
-                && let Some((values, token)) = source
-                    .identify_track_metadata(
-                        &selected.database,
-                        selected.source_key,
-                        track,
-                        &values,
-                    )
-                    .await?
-            {
-                return Ok(Some((values, Some(token))));
-            }
+        self.spawn_reply(move |_| async move {
             if !external {
                 return Ok(None);
             }
@@ -2189,6 +2187,27 @@ impl SelectedSourcePort for ActiveSource {
             .upgrade()
             .is_some_and(|shared| shared.settings.load().ui.allows_external_metadata_lookup());
         self.spawn_reply(move |selected| async move {
+            let exact_external = external
+                && (values
+                    .musicbrainz_album_id
+                    .as_deref()
+                    .is_some_and(|id| !id.trim().is_empty())
+                    || values
+                        .musicbrainz_release_group_id
+                        .as_deref()
+                        .is_some_and(|id| !id.trim().is_empty()));
+            if exact_external {
+                let external_values = values.clone();
+                match tokio::task::spawn_blocking(move || {
+                    metadata_lookup::identify_album_metadata(&external_values)
+                })
+                .await
+                .map_err(string_error)??
+                {
+                    Some(values) => return Ok(Some((values, None))),
+                    None => {}
+                }
+            }
             if let Some(source) = selected.source.clone()
                 && let Some((values, token)) = source
                     .identify_album_metadata(
@@ -2221,6 +2240,23 @@ impl SelectedSourcePort for ActiveSource {
             .upgrade()
             .is_some_and(|shared| shared.settings.load().ui.allows_external_metadata_lookup());
         self.spawn_reply(move |selected| async move {
+            let exact_external = external
+                && values
+                    .musicbrainz_artist_id
+                    .as_deref()
+                    .is_some_and(|id| !id.trim().is_empty());
+            if exact_external {
+                let external_values = values.clone();
+                match tokio::task::spawn_blocking(move || {
+                    metadata_lookup::identify_artist_metadata(&external_values)
+                })
+                .await
+                .map_err(string_error)??
+                {
+                    Some(values) => return Ok(Some((values, None))),
+                    None => {}
+                }
+            }
             if let Some(source) = selected.source.clone()
                 && let Some((values, token)) = source
                     .identify_artist_metadata(
@@ -2586,7 +2622,7 @@ fn configured_sources(
                             unmatched_count: selected
                                 .track_count
                                 .saturating_sub(selected.mapped_count),
-                            sample_source_path: None,
+                            sample_source_path: selected.sample_source_path.clone(),
                             sample_local_path: None,
                         }
                     })
