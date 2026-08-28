@@ -428,6 +428,9 @@ msgstr "Sbírka"
 msgid "Collections"
 msgstr "Sbírky"
 
+msgid "Color for the active word during playback"
+msgstr ""
+
 msgid "Color scheme"
 msgstr "Schéma barev"
 
@@ -533,6 +536,11 @@ msgstr "Výchozí levý postranní panel"
 msgid "Default right sidebar"
 msgstr "Výchozí pravý postranní panel"
 
+#, fuzzy
+#| msgid "Restore Default"
+msgid "Default"
+msgstr "Obnovit výchozí"
+
 msgid "Delete Playlist"
 msgstr "Smazat playlist"
 
@@ -618,9 +626,19 @@ msgid "EPs"
 msgstr "EP"
 
 #, fuzzy
+#| msgid "Lyrics"
+msgid "Edit Lyrics"
+msgstr "Text skladby"
+
+#, fuzzy
 #| msgid "Smart Playlist"
 msgid "Edit Smart Playlist"
 msgstr "Chytrý Playlist"
+
+#, fuzzy
+#| msgid "Hide lyrics"
+msgid "Edit lyrics"
+msgstr "Skrýt text skladby"
 
 msgid "Edit metadata"
 msgstr "Upravit metadata"
@@ -719,6 +737,12 @@ msgstr "Složka"
 
 msgid "Folders"
 msgstr "Složky"
+
+msgid "Font family"
+msgstr ""
+
+msgid "Font size (px)"
+msgstr ""
 
 msgid "Forget Server"
 msgstr "Zapomenout server"
@@ -856,6 +880,14 @@ msgstr "Jellyfin"
 
 msgid "Jellyfin, Navidrome, or OpenSubsonic"
 msgstr "Jellyfin, Navidrome, nebo OpenSubsonic"
+
+#, fuzzy
+#| msgid "Playback"
+msgid "Karaoke Playback"
+msgstr "Přehrávání"
+
+msgid "Karaoke highlight color"
+msgstr ""
 
 msgid "Karaoke mode"
 msgstr "Režim Karaoke"
@@ -1601,9 +1633,6 @@ msgstr "Opakovat"
 msgid "ReplayGain"
 msgstr ""
 
-msgid "Requires OpenSubsonic songLyrics v2"
-msgstr "Vyžaduje OpenSubsonic songLyrics v2"
-
 msgid "Reset equalizer"
 msgstr "Resetovat equalizer"
 
@@ -1666,6 +1695,9 @@ msgstr "Uloženo"
 
 msgid "Saved, sync to preview matches"
 msgstr "Uloženo, synchronizuje se s náhledem pro nalezení shod"
+
+msgid "Saves lyrics to your source"
+msgstr ""
 
 msgid "Saving..."
 msgstr "Ukládání..."
@@ -2014,6 +2046,11 @@ msgstr "Zadejte text pro vyhledání nebo vytvořte nový playlist"
 msgid "Type to search"
 msgstr "Zadejte text pro vyhledání"
 
+#, fuzzy
+#| msgid "Discography"
+msgid "Typography"
+msgstr "Diskografie"
+
 msgid "UPnP"
 msgstr "UPnP"
 
@@ -2063,6 +2100,9 @@ msgstr "Uživatel"
 
 msgid "Username"
 msgstr "Uživatelské jméno"
+
+msgid "Uses available karaoke lyrics or fetches them from the internet"
+msgstr ""
 
 msgid "Verify server certificate"
 msgstr "Ověřit certifikát serveru"
@@ -2214,6 +2254,9 @@ msgstr[0] "Před {count} rokem"
 msgstr[1] "Před {count} roky"
 msgstr[2] "Před {count} roky"
 
+#~ msgid "Requires OpenSubsonic songLyrics v2"
+#~ msgstr "Vyžaduje OpenSubsonic songLyrics v2"
+
 #~ msgid "Other"
 #~ msgstr "Ostatní"
 
@@ -2222,9 +2265,6 @@ msgstr[2] "Před {count} roky"
 
 #~ msgid "Remove from playlist"
 #~ msgstr "Odebrat z playlistu"
-
-#~ msgid "Restore Default"
-#~ msgstr "Obnovit výchozí"
 
 #~ msgid "Restore"
 #~ msgstr "Obnovit"
@@ -2263,9 +2303,6 @@ msgstr[2] "Před {count} roky"
 
 #~ msgid "Scrobbling"
 #~ msgstr "Scrobblování"
-
-#~ msgid "Hide lyrics"
-#~ msgstr "Skrýt text skladby"
 
 #~ msgid "Seconds"
 #~ msgstr "Sekundy"

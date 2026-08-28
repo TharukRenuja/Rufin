@@ -385,6 +385,9 @@ msgstr "收藏"
 msgid "Collections"
 msgstr "收藏"
 
+msgid "Color for the active word during playback"
+msgstr ""
+
 msgid "Color scheme"
 msgstr "色彩配置"
 
@@ -490,6 +493,11 @@ msgstr "預設左側邊欄"
 msgid "Default right sidebar"
 msgstr "預設右側邊欄"
 
+#, fuzzy
+#| msgid "Restore Default"
+msgid "Default"
+msgstr "回復預設值"
+
 msgid "Delete Playlist"
 msgstr "刪除播放清單"
 
@@ -575,9 +583,19 @@ msgid "EPs"
 msgstr ""
 
 #, fuzzy
+#| msgid "Lyrics"
+msgid "Edit Lyrics"
+msgstr "歌詞"
+
+#, fuzzy
 #| msgid "Smart Playlist"
 msgid "Edit Smart Playlist"
 msgstr "智慧播放清單"
+
+#, fuzzy
+#| msgid "No lyrics"
+msgid "Edit lyrics"
+msgstr "無歌詞"
 
 msgid "Edit metadata"
 msgstr "編輯元資料"
@@ -674,6 +692,12 @@ msgstr "資料夾"
 
 msgid "Folders"
 msgstr "資料夾"
+
+msgid "Font family"
+msgstr ""
+
+msgid "Font size (px)"
+msgstr ""
 
 msgid "Forget Server"
 msgstr "遺忘伺服器"
@@ -809,6 +833,14 @@ msgstr "Jellyfin"
 
 msgid "Jellyfin, Navidrome, or OpenSubsonic"
 msgstr "Jellyfin、Navidrome 或 OpenSubsonic"
+
+#, fuzzy
+#| msgid "Playback"
+msgid "Karaoke Playback"
+msgstr "播放"
+
+msgid "Karaoke highlight color"
+msgstr ""
 
 msgid "Karaoke mode"
 msgstr ""
@@ -1547,9 +1579,6 @@ msgstr "重複播放"
 msgid "ReplayGain"
 msgstr ""
 
-msgid "Requires OpenSubsonic songLyrics v2"
-msgstr ""
-
 msgid "Reset equalizer"
 msgstr "重置等化器"
 
@@ -1611,6 +1640,9 @@ msgid "Saved"
 msgstr "已儲存"
 
 msgid "Saved, sync to preview matches"
+msgstr ""
+
+msgid "Saves lyrics to your source"
 msgstr ""
 
 msgid "Saving..."
@@ -1956,6 +1988,9 @@ msgstr ""
 msgid "Type to search"
 msgstr ""
 
+msgid "Typography"
+msgstr ""
+
 msgid "UPnP"
 msgstr "UPnP"
 
@@ -2003,6 +2038,9 @@ msgstr "使用者"
 
 msgid "Username"
 msgstr "使用者名稱"
+
+msgid "Uses available karaoke lyrics or fetches them from the internet"
+msgstr ""
 
 msgid "Verify server certificate"
 msgstr "驗證伺服器的憑證"
@@ -2146,9 +2184,6 @@ msgstr[0] "{count} 年之前"
 
 #~ msgid "Remove from playlist"
 #~ msgstr "從播放清單中移除"
-
-#~ msgid "Restore Default"
-#~ msgstr "回復預設值"
 
 #~ msgid "Restore"
 #~ msgstr "復原"

@@ -429,6 +429,9 @@ msgstr "Kolekcija"
 msgid "Collections"
 msgstr "Kolekcijas"
 
+msgid "Color for the active word during playback"
+msgstr ""
+
 msgid "Color scheme"
 msgstr "Krāsu shēma"
 
@@ -534,6 +537,9 @@ msgstr "Noklusējuma kreisais sānu panelis"
 msgid "Default right sidebar"
 msgstr "Noklusējuma labais sānu panelis"
 
+msgid "Default"
+msgstr "Noklusējums"
+
 msgid "Delete Playlist"
 msgstr "Dzēst atskaņošanas sarakstu"
 
@@ -618,8 +624,18 @@ msgstr "EP"
 msgid "EPs"
 msgstr "EP"
 
+#, fuzzy
+#| msgid "Lyrics"
+msgid "Edit Lyrics"
+msgstr "Teksti"
+
 msgid "Edit Smart Playlist"
 msgstr "Rediģēt viedo atskaņošanas sarakstu"
+
+#, fuzzy
+#| msgid "Hide lyrics"
+msgid "Edit lyrics"
+msgstr "Paslēpt tekstus"
 
 msgid "Edit metadata"
 msgstr "Rediģēt metadatus"
@@ -720,6 +736,12 @@ msgstr "Mape"
 
 msgid "Folders"
 msgstr "Mapes"
+
+msgid "Font family"
+msgstr ""
+
+msgid "Font size (px)"
+msgstr ""
 
 msgid "Forget Server"
 msgstr "Aizmirst serveri"
@@ -855,6 +877,14 @@ msgstr "Jellyfin"
 
 msgid "Jellyfin, Navidrome, or OpenSubsonic"
 msgstr "Jellyfin, Navidrome vai OpenSubsonic"
+
+#, fuzzy
+#| msgid "Playback"
+msgid "Karaoke Playback"
+msgstr "Atskaņošana"
+
+msgid "Karaoke highlight color"
+msgstr ""
 
 msgid "Karaoke mode"
 msgstr "Karaoke režīms"
@@ -1591,9 +1621,6 @@ msgstr "Atkārtot"
 msgid "ReplayGain"
 msgstr "ReplayGain"
 
-msgid "Requires OpenSubsonic songLyrics v2"
-msgstr "Nepieciešams OpenSubsonic dziesmu tekstu atbalsts, versija v2"
-
 msgid "Reset equalizer"
 msgstr "Atiestatīt ekvalaizeru"
 
@@ -1656,6 +1683,9 @@ msgstr "Saglabāts"
 
 msgid "Saved, sync to preview matches"
 msgstr "Saglabāts, sinhronizē ar priekšskatījumu, lai atrastu atbilstības"
+
+msgid "Saves lyrics to your source"
+msgstr ""
 
 msgid "Saving..."
 msgstr "Saglabāšana..."
@@ -1996,6 +2026,11 @@ msgstr "Ierakstiet, lai meklētu vai izveidotu jaunu atskaņošanas sarakstu"
 msgid "Type to search"
 msgstr "Ierakstiet, lai meklētu"
 
+#, fuzzy
+#| msgid "Discography"
+msgid "Typography"
+msgstr "Diskogrāfija"
+
 msgid "UPnP"
 msgstr "UPnP"
 
@@ -2045,6 +2080,9 @@ msgstr "Lietotājs"
 
 msgid "Username"
 msgstr "Lietotājvārds"
+
+msgid "Uses available karaoke lyrics or fetches them from the internet"
+msgstr ""
 
 msgid "Verify server certificate"
 msgstr "Pārbaudīt servera sertifikātu"
@@ -2196,6 +2234,9 @@ msgstr[0] "pirms {count} gadiem"
 msgstr[1] "pirms {count} gada"
 msgstr[2] "pirms {count} gadiem"
 
+#~ msgid "Requires OpenSubsonic songLyrics v2"
+#~ msgstr "Nepieciešams OpenSubsonic dziesmu tekstu atbalsts, versija v2"
+
 #~ msgid "Other"
 #~ msgstr "Cits"
 
@@ -2246,14 +2287,8 @@ msgstr[2] "pirms {count} gadiem"
 #~ msgid "Scrobbling"
 #~ msgstr "Skroblēšana"
 
-#~ msgid "Hide lyrics"
-#~ msgstr "Paslēpt tekstus"
-
 #~ msgid "Seconds"
 #~ msgstr "Sekundes"
-
-#~ msgid "Default"
-#~ msgstr "Noklusējums"
 
 #~ msgid "Interface"
 #~ msgstr "Saskarne"
