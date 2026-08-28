@@ -12,8 +12,8 @@ mod lyrics;
 pub use current::{LyricsContext, LyricsHandle, LyricsService};
 pub use events::{CurrentLyrics, CurrentLyricsContent, LyricsEvent};
 pub use lyrics::{
-    LocalLyricsInput, lyrics_from_search_result, save_current_lyrics, save_lyrics_search_result,
-    search_lyrics,
+    LocalLyricsInput, lyrics_from_search_result, lyrics_to_lrc_text, save_current_lyrics,
+    save_lyrics_search_result, search_lyrics, shift_lrc_text_timestamps,
 };
 
 pub const LYRICS_PROVIDER_SETTINGS_VERSION: u8 = 1;
@@ -79,6 +79,8 @@ pub struct Settings {
     #[serde(default = "default_true")]
     pub prefer_server_lyrics: bool,
     #[serde(default)]
+    pub save_fetched_lyrics: bool,
+    #[serde(default)]
     pub lyrics_provider_settings_version: u8,
     #[serde(default)]
     pub suppressed_auto_lyrics_track_ids: Vec<String>,
@@ -90,8 +92,14 @@ pub struct Settings {
     pub show_furigana: bool,
     #[serde(default)]
     pub show_romanization: bool,
-    #[serde(default = "default_true")]
-    pub word_by_word_highlighting: bool,
+    #[serde(default)]
+    pub karaoke_mode: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lyrics_font_family: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lyrics_font_size: Option<u16>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lyrics_highlight_color: Option<String>,
 }
 
 impl Default for Settings {
@@ -100,13 +108,17 @@ impl Default for Settings {
             external_lyrics_enabled: true,
             external_lyrics_providers: default_external_lyrics_providers(),
             prefer_server_lyrics: true,
+            save_fetched_lyrics: false,
             lyrics_provider_settings_version: LYRICS_PROVIDER_SETTINGS_VERSION,
             suppressed_auto_lyrics_track_ids: Vec::new(),
             prefer_translations: false,
             preferred_translation_language: default_translation_language(),
             show_furigana: false,
             show_romanization: false,
-            word_by_word_highlighting: true,
+            karaoke_mode: false,
+            lyrics_font_family: None,
+            lyrics_font_size: None,
+            lyrics_highlight_color: None,
         }
     }
 }
@@ -129,6 +141,19 @@ impl Settings {
         self.preferred_translation_language =
             normalize_language_tag(&self.preferred_translation_language)
                 .unwrap_or_else(default_translation_language);
+        self.lyrics_font_family = self
+            .lyrics_font_family
+            .take()
+            .map(|family| family.trim().chars().take(128).collect::<String>())
+            .filter(|family| !family.is_empty());
+        self.lyrics_font_size = self.lyrics_font_size.map(|size| size.clamp(12, 28));
+        if self
+            .lyrics_highlight_color
+            .as_deref()
+            .is_some_and(|color| !valid_lyrics_color(color))
+        {
+            self.lyrics_highlight_color = None;
+        }
     }
 
     pub(crate) const fn external_lyrics_network_allowed(&self, private_mode: bool) -> bool {
@@ -783,6 +808,15 @@ fn default_translation_language() -> String {
     "en".to_string()
 }
 
+fn valid_lyrics_color(color: &str) -> bool {
+    color.strip_prefix('#').is_some_and(|digits| {
+        matches!(digits.len(), 6 | 8)
+            && digits
+                .chars()
+                .all(|character| character.is_ascii_hexdigit())
+    })
+}
+
 pub fn normalize_language_tag(value: &str) -> Option<String> {
     let value = value.trim().replace('_', "-").to_ascii_lowercase();
     if value.is_empty() || matches!(value.as_str(), "und" | "xxx") {
@@ -833,12 +867,13 @@ mod tests {
     #[test]
     fn sparse_settings_preserve_flat_defaults_and_provider_order() {
         let mut settings = serde_json::from_str::<Settings>(
-            r#"{"external_lyrics_enabled":false,"external_lyrics_providers":["genius","genius","lrclib"]}"#,
+            r#"{"external_lyrics_enabled":false,"external_lyrics_providers":["genius","genius","lrclib"],"word_by_word_highlighting":true}"#,
         )
         .expect("settings");
         settings.sanitize();
 
         assert!(!settings.external_lyrics_enabled);
+        assert!(!settings.karaoke_mode);
         assert!(settings.prefer_server_lyrics);
         assert_eq!(
             settings.external_lyrics_providers,
@@ -847,6 +882,25 @@ mod tests {
                 ExternalLyricsProvider::Lrclib
             ]
         );
+    }
+
+    #[test]
+    fn lyrics_appearance_settings_are_bounded_and_css_safe() {
+        let mut settings = Settings {
+            lyrics_font_family: Some(format!("  {}  ", "x".repeat(200))),
+            lyrics_font_size: Some(100),
+            lyrics_highlight_color: Some("red; } * { color: red".to_string()),
+            ..Settings::default()
+        };
+
+        settings.sanitize();
+
+        assert_eq!(
+            settings.lyrics_font_family.as_deref().map(str::len),
+            Some(128)
+        );
+        assert_eq!(settings.lyrics_font_size, Some(28));
+        assert_eq!(settings.lyrics_highlight_color, None);
     }
 
     #[test]

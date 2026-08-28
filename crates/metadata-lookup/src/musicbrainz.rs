@@ -8,7 +8,7 @@ use reqwest::blocking::Client;
 use serde_json::Value;
 use sources::{AlbumMetadataValues, ArtistMetadataValues, TrackMetadataValues};
 
-use crate::http::{client, fetch_json, fetch_optional_json};
+use crate::http::{fetch_json, fetch_optional_json, ipv4_client as client};
 
 const MUSICBRAINZ_RELEASE_SEARCH_URL: &str = "https://musicbrainz.org/ws/2/release/";
 const MUSICBRAINZ_RELEASE_GROUP_SEARCH_URL: &str = "https://musicbrainz.org/ws/2/release-group/";

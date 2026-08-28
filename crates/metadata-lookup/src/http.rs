@@ -1,4 +1,5 @@
 use std::io::Read;
+use std::net::{IpAddr, Ipv4Addr};
 use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 
@@ -21,6 +22,21 @@ pub(crate) fn client() -> Result<&'static Client, String> {
     CLIENT
         .get_or_init(|| {
             Client::builder()
+                .timeout(Duration::from_secs(8))
+                .user_agent(USER_AGENT)
+                .build()
+                .map_err(|error| error.to_string())
+        })
+        .as_ref()
+        .map_err(Clone::clone)
+}
+
+pub(crate) fn ipv4_client() -> Result<&'static Client, String> {
+    static CLIENT: OnceLock<Result<Client, String>> = OnceLock::new();
+    CLIENT
+        .get_or_init(|| {
+            Client::builder()
+                .local_address(IpAddr::V4(Ipv4Addr::UNSPECIFIED))
                 .timeout(Duration::from_secs(8))
                 .user_agent(USER_AGENT)
                 .build()

@@ -449,11 +449,7 @@ impl SubsonicSource {
 }
 
 impl SubsonicSource {
-    pub(crate) async fn lyrics(
-        &self,
-        track_id: &str,
-        _search: LyricsSearch,
-    ) -> SourceResult<Option<NativeLyrics>> {
+    pub(crate) async fn lyrics(&self, track_id: &str) -> SourceResult<Option<NativeLyrics>> {
         let extensions: OpenSubsonicExtensionsBody = self
             .get_json("getOpenSubsonicExtensions", &[])
             .await

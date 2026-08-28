@@ -2,6 +2,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use playback::CurrentMediaId;
+use sources::SourceMetadataError;
 
 use crate::{LyricsDocument, LyricsOrigin, LyricsQuery, LyricsSearchResult};
 
@@ -44,5 +45,9 @@ pub enum LyricsEvent {
     Saved {
         media_id: CurrentMediaId,
         path: PathBuf,
+    },
+    SourceSaveFailed {
+        media_id: CurrentMediaId,
+        error: SourceMetadataError,
     },
 }

@@ -55,6 +55,7 @@ impl Database {
         language: &str,
         script: &str,
         cache_input_digest: [u8; 32],
+        prefer_source: bool,
         cancellation: &ReadCancellation,
     ) -> LibraryResult<Option<LyricsCacheRow>> {
         let (_permit, mut connection) = self.acquire_general(cancellation).await?;
@@ -62,7 +63,7 @@ impl Database {
             "SELECT authority,role,language,script,cache_input_digest,lyrics,updated_at
              FROM lyrics_cache WHERE source_key=?1 AND track_key=?2 AND role=?3
                AND language=?4 AND script=?5 AND cache_input_digest=?6
-             ORDER BY CASE authority WHEN 'source' THEN 0 ELSE 1 END,updated_at DESC LIMIT 1",
+             ORDER BY CASE authority WHEN CASE WHEN ?7 THEN 'source' ELSE 'external' END THEN 0 ELSE 1 END,updated_at DESC LIMIT 1",
         )
         .bind(source)
         .bind(track)
@@ -70,6 +71,7 @@ impl Database {
         .bind(language)
         .bind(script)
         .bind(cache_input_digest.as_slice())
+        .bind(prefer_source)
         .fetch_optional(&mut *connection)
         .await;
         Database::clear_progress(&mut connection).await?;

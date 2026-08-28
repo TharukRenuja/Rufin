@@ -138,11 +138,6 @@ impl Shell {
         )
     }
 
-    pub(crate) fn visible_lyrics_have_word_timing(&self) -> bool {
-        self.visible_lyrics()
-            .is_some_and(|document| document.has_word_timing())
-    }
-
     pub(crate) fn visible_lyrics_origin(&self) -> Option<LyricsOrigin> {
         let current_media = current_playback_media_id(self.selected_playback().as_deref());
         let lyrics = self.selected_lyrics()?;
@@ -219,7 +214,6 @@ impl Shell {
             lyrics.offset_millis.set(0);
         }
         *lyrics.projection.borrow_mut() = projection;
-        crate::player::lyrics::settings::refresh_word_highlighting_availability(self);
         self.render_lyrics_panel();
         if let Some(media_id) = media_id
             && let Some(dialog) = lyrics.search_dialog.borrow().as_ref()
@@ -442,7 +436,7 @@ fn playback_position_for_lyrics_position(position_millis: u64, offset_millis: i6
     }
 }
 
-fn parse_lyrics_offset_millis(value: &str) -> Option<i64> {
+pub(crate) fn parse_lyrics_offset_millis(value: &str) -> Option<i64> {
     let value = value.trim();
     let number = ["ms", "MS", "Ms", "mS"]
         .into_iter()

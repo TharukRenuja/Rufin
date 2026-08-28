@@ -504,26 +504,8 @@ impl JellyfinSource {
 }
 
 impl JellyfinSource {
-    pub(crate) async fn lyrics(
-        &self,
-        track_id: &str,
-        search: LyricsSearch,
-    ) -> SourceResult<Option<NativeLyrics>> {
-        match search {
-            LyricsSearch::ServerOnly => self.server_lyrics(track_id).await,
-            LyricsSearch::ServerThenRemote => {
-                if let Some(lyrics) = self.server_lyrics(track_id).await? {
-                    return Ok(Some(lyrics));
-                }
-                self.remote_lyrics(track_id).await
-            }
-            LyricsSearch::RemoteThenServer => {
-                if let Some(lyrics) = self.remote_lyrics(track_id).await? {
-                    return Ok(Some(lyrics));
-                }
-                self.server_lyrics(track_id).await
-            }
-        }
+    pub(crate) async fn lyrics(&self, track_id: &str) -> SourceResult<Option<NativeLyrics>> {
+        self.server_lyrics(track_id).await
     }
 }
 
@@ -827,35 +809,24 @@ impl JellyfinSource {
         send_unit(request.header(header::AUTHORIZATION, self.authorization.clone())).await
     }
 
+    pub(crate) async fn write_lyrics(&self, track_id: &str, lyrics: &str) -> SourceResult<()> {
+        let raw_track_id = raw_item_id(track_id);
+        let mut url = endpoint(&self.base_url, &format!("Audio/{raw_track_id}/Lyrics"))?;
+        url.query_pairs_mut().append_pair("fileName", "lyrics.lrc");
+        self.send_json::<LyricDto>(
+            self.client
+                .post(url)
+                .header(header::CONTENT_TYPE, "text/plain; charset=utf-8")
+                .body(lyrics.to_string()),
+        )
+        .await
+        .map(|_| ())
+    }
+
     async fn server_lyrics(&self, track_id: &str) -> SourceResult<Option<NativeLyrics>> {
         let raw_track_id = raw_item_id(track_id);
         let local_url = endpoint(&self.base_url, &format!("Audio/{raw_track_id}/Lyrics"))?;
         match self.send_json::<LyricDto>(self.client.get(local_url)).await {
-            Ok(dto) => Ok(Some(lyrics_from_dto(dto))),
-            Err(SourceError::NotFound) => Ok(None),
-            Err(error) => Err(error),
-        }
-    }
-
-    async fn remote_lyrics(&self, track_id: &str) -> SourceResult<Option<NativeLyrics>> {
-        let raw_track_id = raw_item_id(track_id);
-        let remote_url = endpoint(
-            &self.base_url,
-            &format!("Audio/{raw_track_id}/RemoteSearch/Lyrics"),
-        )?;
-        let results = match self
-            .send_json::<Vec<RemoteLyricInfoDto>>(self.client.get(remote_url))
-            .await
-        {
-            Ok(results) => results,
-            Err(SourceError::NotFound) => return Ok(None),
-            Err(error) => return Err(error),
-        };
-        let Some(first) = results.into_iter().find(|result| !result.id.is_empty()) else {
-            return Ok(None);
-        };
-        let lyric_url = endpoint(&self.base_url, &format!("Providers/Lyrics/{}", first.id))?;
-        match self.send_json::<LyricDto>(self.client.get(lyric_url)).await {
             Ok(dto) => Ok(Some(lyrics_from_dto(dto))),
             Err(SourceError::NotFound) => Ok(None),
             Err(error) => Err(error),
@@ -953,12 +924,6 @@ pub(super) struct LyricLineDto {
     pub(super) start: Option<i64>,
 }
 
-#[derive(Clone, Debug, Deserialize)]
-#[serde(rename_all = "PascalCase")]
-pub(super) struct RemoteLyricInfoDto {
-    pub(super) id: String,
-}
-
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "PascalCase")]
 pub(super) struct PlaybackReportDto {
@@ -1003,7 +968,7 @@ mod tests {
         JellyfinItem, album_from_item, stage_album, stage_track, track_from_item,
     };
     use crate::jellyfin::{JellyfinSource, JellyfinSourceConfig};
-    use wiremock::matchers::{method, path};
+    use wiremock::matchers::{body_string, method, path, query_param};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
     #[test]
@@ -1060,6 +1025,39 @@ mod tests {
         assert!(stream.uri().contains("secret-token"));
         assert!(!stream.redacted_uri().contains("secret-token"));
         assert!(stream.redacted_uri().contains("api_key=%3Credacted%3E"));
+    }
+
+    #[tokio::test]
+    async fn jellyfin_lyrics_write_uses_the_managed_upload_endpoint() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/Audio/track-one/Lyrics"))
+            .and(query_param("fileName", "lyrics.lrc"))
+            .and(body_string("[00:01.000]Line"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "Lyrics": []
+            })))
+            .expect(1)
+            .mount(&server)
+            .await;
+        let source = JellyfinSource::open(
+            JellyfinSourceConfig {
+                base_url: server.uri(),
+                server_id: Some("server-one".to_string()),
+                user_id: "user-one".to_string(),
+                username: "listener".to_string(),
+                trust_invalid_cert: false,
+                use_instant_mix: false,
+            },
+            "secret-token".to_string(),
+            "device-one".to_string(),
+        )
+        .expect("Jellyfin source");
+
+        source
+            .write_lyrics("jellyfin:track:track-one", "[00:01.000]Line")
+            .await
+            .expect("upload lyrics");
     }
 
     #[tokio::test]

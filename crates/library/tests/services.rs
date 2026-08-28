@@ -654,22 +654,14 @@ async fn local_mapping_selects_one_exact_or_representative_track_without_a_libra
         .expect("representative mapping Track")
         .pop()
         .expect("mapping Track");
-    let exact = fixture
+    let exact_path = fixture
         .database
-        .mapping_track_page(
-            fixture.source,
-            None,
-            Some(&representative.source_path),
-            1,
-            &cancel,
-        )
+        .mapping_track_source_path(fixture.source, representative.track_key, &cancel)
         .await
         .expect("exact mapping Track")
-        .pop()
         .expect("exact mapping Track");
 
-    assert_eq!(exact.track_key, representative.track_key);
-    assert_eq!(exact.object_id, representative.object_id);
+    assert_eq!(exact_path, representative.source_path);
 }
 
 #[tokio::test]
@@ -692,6 +684,21 @@ async fn lyrics_cache_identity_includes_input_digest_and_evicts_bounded_rows() {
         )
         .await
         .expect("write lyrics");
+    fixture
+        .database
+        .write_lyrics_cache(
+            fixture.source,
+            fixture.tracks[0],
+            "external",
+            "lyrics",
+            "en",
+            "Latn",
+            [1; 32],
+            "External",
+            20,
+        )
+        .await
+        .expect("write external lyrics");
     let row = fixture
         .database
         .lyrics_cache_for_role(
@@ -701,12 +708,29 @@ async fn lyrics_cache_identity_includes_input_digest_and_evicts_bounded_rows() {
             "en",
             "Latn",
             [1; 32],
+            true,
             &cancel,
         )
         .await
         .expect("read lyrics")
         .unwrap();
     assert_eq!(row.lyrics, "First");
+    let external = fixture
+        .database
+        .lyrics_cache_for_role(
+            fixture.source,
+            fixture.tracks[0],
+            "lyrics",
+            "en",
+            "Latn",
+            [1; 32],
+            false,
+            &cancel,
+        )
+        .await
+        .expect("read preferred external lyrics")
+        .unwrap();
+    assert_eq!(external.lyrics, "External");
     assert!(
         fixture
             .database
@@ -717,6 +741,7 @@ async fn lyrics_cache_identity_includes_input_digest_and_evicts_bounded_rows() {
                 "en",
                 "Latn",
                 [2; 32],
+                true,
                 &cancel
             )
             .await
@@ -748,6 +773,7 @@ async fn lyrics_cache_identity_includes_input_digest_and_evicts_bounded_rows() {
                 "",
                 "",
                 [2; 32],
+                true,
                 &cancel
             )
             .await

@@ -6,13 +6,13 @@ use localization::{
 };
 use lyrics::ExternalLyricsProvider;
 
+use crate::player::state::current_playback_track;
 use crate::preferences::dialogs::popup::present_light_dismiss_dialog;
 use crate::shell::Shell;
 
 #[derive(Clone)]
 pub(crate) struct LyricsSettingsDialog {
     pub(crate) dialog: adw::PreferencesDialog,
-    word_by_word_highlighting: adw::SwitchRow,
 }
 
 pub(crate) fn connect_lyrics_settings_controls(shell: &Rc<Shell>) {
@@ -39,7 +39,7 @@ fn present_lyrics_settings_dialog(shell: &Rc<Shell>) {
     }
     drop(lyrics);
 
-    let (page, word_by_word_highlighting) = build_lyrics_settings(shell);
+    let page = build_lyrics_settings(shell);
     let dialog = adw::PreferencesDialog::builder()
         .title(tr("Lyrics settings"))
         .search_enabled(false)
@@ -49,7 +49,6 @@ fn present_lyrics_settings_dialog(shell: &Rc<Shell>) {
     dialog.add(&page);
     let settings_dialog = LyricsSettingsDialog {
         dialog: dialog.clone(),
-        word_by_word_highlighting,
     };
     if let Some(lyrics) = shell.selected_lyrics() {
         lyrics.settings_dialog.replace(Some(settings_dialog));
@@ -64,18 +63,7 @@ fn present_lyrics_settings_dialog(shell: &Rc<Shell>) {
     present_light_dismiss_dialog(&dialog, &shell.chrome.window);
 }
 
-pub(crate) fn refresh_word_highlighting_availability(shell: &Rc<Shell>) {
-    let Some(lyrics) = shell.selected_lyrics() else {
-        return;
-    };
-    if let Some(settings_dialog) = lyrics.settings_dialog.borrow().as_ref() {
-        settings_dialog
-            .word_by_word_highlighting
-            .set_sensitive(shell.visible_lyrics_have_word_timing());
-    }
-}
-
-fn build_lyrics_settings(shell: &Rc<Shell>) -> (adw::PreferencesPage, adw::SwitchRow) {
+fn build_lyrics_settings(shell: &Rc<Shell>) -> adw::PreferencesPage {
     let settings = shell.settings.current.borrow().lyrics.clone();
     let page = adw::PreferencesPage::builder()
         .title(tr("Lyrics settings"))
@@ -99,17 +87,48 @@ fn build_lyrics_settings(shell: &Rc<Shell>) -> (adw::PreferencesPage, adw::Switc
     });
     sources.add(&prefer_server);
 
+    let save_fetched = switch_row(msgid("Save Lyrics"), settings.save_fetched_lyrics);
+    save_fetched.set_subtitle(&tr(msgid("Saves lyrics to your source")));
+    save_fetched.set_sensitive(settings.external_lyrics_enabled);
+    let save_shell = Rc::clone(shell);
+    save_fetched.connect_active_notify(move |row| {
+        let enabled = row.is_active();
+        if !save_shell.set_save_fetched_lyrics(enabled) {
+            return;
+        }
+        if !enabled
+            || !selected_source_uses_mapped_metadata(&save_shell)
+            || selected_source_has_local_mapping(&save_shell)
+        {
+            return;
+        }
+        let Some(track) = current_playback_track(save_shell.selected_playback().as_deref())
+            .and_then(|track| track.track_key)
+        else {
+            save_shell.show_feedback_toast(tr(msgid("Metadata editing is no longer available")));
+            return;
+        };
+        crate::preferences::dialogs::metadata::ensure_track_metadata_available(
+            &save_shell,
+            track,
+            Rc::new(|| {}),
+        );
+    });
+    sources.add(&save_fetched);
+
     let provider_rows = Rc::new(RefCell::new(Vec::new()));
     populate_provider_rows(shell, &sources, &provider_rows);
     let external_shell = Rc::clone(shell);
     let external_sources = sources.downgrade();
     let external_provider_rows = Rc::clone(&provider_rows);
     let external_prefer_server = prefer_server.clone();
+    let external_save_fetched = save_fetched.clone();
     external.connect_active_notify(move |row| {
         if !external_shell.set_external_lyrics_enabled(row.is_active()) {
             return;
         }
         external_prefer_server.set_sensitive(row.is_active());
+        external_save_fetched.set_sensitive(row.is_active());
         let Some(sources) = external_sources.upgrade() else {
             return;
         };
@@ -176,21 +195,155 @@ fn build_lyrics_settings(shell: &Rc<Shell>) -> (adw::PreferencesPage, adw::Switc
     page.add(&language_and_readings);
 
     let playback = adw::PreferencesGroup::builder()
-        .title(tr("Playback"))
+        .title(tr("Karaoke Playback"))
         .build();
     let karaoke = adw::SwitchRow::builder()
         .title(tr(msgid("Karaoke mode")))
-        .subtitle(tr(msgid("Requires OpenSubsonic songLyrics v2")))
-        .active(settings.word_by_word_highlighting)
+        .subtitle(tr(msgid(
+            "Uses available karaoke lyrics or fetches them from the internet",
+        )))
+        .active(settings.karaoke_mode)
         .build();
-    karaoke.set_sensitive(shell.visible_lyrics_have_word_timing());
     let karaoke_shell = Rc::clone(shell);
     karaoke.connect_active_notify(move |row| {
-        karaoke_shell.set_lyrics_word_highlighting(row.is_active());
+        karaoke_shell.set_lyrics_karaoke_mode(row.is_active());
     });
     playback.add(&karaoke);
+    let highlight_color = adw::ActionRow::builder()
+        .title(tr("Karaoke highlight color"))
+        .subtitle(tr("Color for the active word during playback"))
+        .build();
+    let theme_accent = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+    theme_accent.add_css_class("lyrics-theme-accent-probe");
+    theme_accent.set_opacity(0.0);
+    theme_accent.set_can_target(false);
+    let preview = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+    preview.add_css_class("lyrics-highlight-swatch");
+    let color_button = gtk::Button::builder()
+        .child(&preview)
+        .css_classes(["flat"])
+        .width_request(32)
+        .height_request(32)
+        .valign(gtk::Align::Center)
+        .build();
+    let color_shell = Rc::clone(shell);
+    let default_accent = theme_accent.clone();
+    color_button.connect_clicked(move |_| {
+        let default_color = default_accent.color();
+        let initial = color_shell
+            .settings
+            .current
+            .borrow()
+            .lyrics
+            .lyrics_highlight_color
+            .as_deref()
+            .and_then(|color| gtk::gdk::RGBA::parse(color).ok())
+            .unwrap_or(default_color);
+        present_lyrics_color_chooser(
+            &color_shell,
+            &color_shell.chrome.window,
+            initial,
+            default_accent.clone().upcast(),
+        );
+    });
+    highlight_color.add_suffix(&theme_accent);
+    highlight_color.add_suffix(&color_button);
+    highlight_color.set_activatable_widget(Some(&color_button));
+    playback.add(&highlight_color);
     page.add(&playback);
-    (page, karaoke)
+
+    let typography = adw::PreferencesGroup::builder()
+        .title(tr("Typography"))
+        .build();
+    let font_families = Rc::new(system_font_families(&shell.chrome.window));
+    let mut font_titles = vec![tr("Default")];
+    font_titles.extend(font_families.iter().cloned());
+    let font_title_refs = font_titles.iter().map(String::as_str).collect::<Vec<_>>();
+    let font = adw::ComboRow::builder()
+        .title(tr("Font family"))
+        .enable_search(true)
+        .model(&gtk::StringList::new(&font_title_refs))
+        .selected(
+            settings
+                .lyrics_font_family
+                .as_ref()
+                .and_then(|selected| font_families.iter().position(|family| family == selected))
+                .map_or(0, |index| index as u32 + 1),
+        )
+        .build();
+    let font_shell = Rc::clone(shell);
+    let selected_families = Rc::clone(&font_families);
+    font.connect_selected_notify(move |row| {
+        let family = row
+            .selected()
+            .checked_sub(1)
+            .and_then(|index| selected_families.get(index as usize))
+            .cloned();
+        font_shell.set_lyrics_font_family(family);
+    });
+    typography.add(&font);
+    let size = adw::SpinRow::builder()
+        .title(tr("Font size (px)"))
+        .adjustment(
+            &gtk::Adjustment::builder()
+                .lower(12.0)
+                .upper(28.0)
+                .step_increment(1.0)
+                .value(f64::from(settings.lyrics_font_size.unwrap_or(19)))
+                .build(),
+        )
+        .digits(0)
+        .build();
+    let size_shell = Rc::clone(shell);
+    size.connect_value_notify(move |row| {
+        let size = row.value().round() as u16;
+        size_shell.set_lyrics_font_size((size != 19).then_some(size));
+    });
+    typography.add(&size);
+    page.add(&typography);
+    page
+}
+
+fn selected_source_uses_mapped_metadata(shell: &Shell) -> bool {
+    let Some(source_id) = shell
+        .selected_library()
+        .as_deref()
+        .map(|selected| selected.artwork.source_id.clone())
+    else {
+        return false;
+    };
+    shell
+        .source
+        .configured
+        .borrow()
+        .sources
+        .iter()
+        .any(|source| {
+            source.id == source_id && matches!(source.kind.as_str(), "navidrome" | "subsonic")
+        })
+}
+
+fn selected_source_has_local_mapping(shell: &Shell) -> bool {
+    let Some(source_id) = shell
+        .selected_library()
+        .as_deref()
+        .map(|selected| selected.artwork.source_id.clone())
+    else {
+        return false;
+    };
+    shell
+        .source
+        .configured
+        .borrow()
+        .local_access
+        .iter()
+        .find(|summary| summary.source_id == source_id)
+        .is_some_and(|summary| {
+            summary.status.direct_match_count
+                + summary.status.prefix_match_count
+                + summary.status.metadata_match_count
+                > 0
+        })
 }
 
 fn populate_provider_rows(
@@ -332,6 +485,100 @@ fn reading_switch_row(title: &str, active: bool) -> adw::SwitchRow {
         .build()
 }
 
+fn system_font_families(widget: &impl IsA<gtk::Widget>) -> Vec<String> {
+    let Some(font_map) = widget.pango_context().font_map() else {
+        return Vec::new();
+    };
+    let mut families = font_map
+        .list_families()
+        .into_iter()
+        .map(|family| family.name().to_string())
+        .collect::<Vec<_>>();
+    families.sort_unstable();
+    families.dedup();
+    families
+}
+
+#[allow(deprecated)]
+fn present_lyrics_color_chooser(
+    shell: &Rc<Shell>,
+    parent: &impl IsA<gtk::Window>,
+    initial: gtk::gdk::RGBA,
+    default_probe: gtk::Widget,
+) {
+    let chooser = Rc::new(RefCell::new(lyrics_color_chooser(&initial)));
+
+    let cancel = gtk::Button::with_label(&tr("Cancel"));
+    let default = gtk::Button::with_label(&tr("Default"));
+    let select = gtk::Button::with_label(&tr("Save"));
+    select.add_css_class("suggested-action");
+    let header = adw::HeaderBar::new();
+    header.set_show_start_title_buttons(false);
+    header.set_show_end_title_buttons(false);
+    header.set_title_widget(Some(&adw::WindowTitle::new(
+        &tr("Karaoke highlight color"),
+        "",
+    )));
+    header.pack_start(&cancel);
+    header.pack_end(&select);
+    header.pack_end(&default);
+
+    let body = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    body.set_vexpand(true);
+    body.append(&*chooser.borrow());
+    let toolbar = adw::ToolbarView::new();
+    toolbar.add_top_bar(&header);
+    toolbar.set_content(Some(&body));
+    let dialog = adw::Window::builder()
+        .title(tr("Karaoke highlight color"))
+        .default_width(520)
+        .default_height(420)
+        .modal(true)
+        .resizable(false)
+        .transient_for(parent)
+        .content(&toolbar)
+        .build();
+
+    let close = dialog.clone();
+    cancel.connect_clicked(move |_| close.close());
+    let default_chooser = Rc::clone(&chooser);
+    let default_body = body.clone();
+    default.connect_clicked(move |_| {
+        let replacement = lyrics_color_chooser(&default_probe.color());
+        default_body.remove(&*default_chooser.borrow());
+        default_body.append(&replacement);
+        default_chooser.replace(replacement);
+    });
+    let shell = Rc::clone(shell);
+    let close = dialog.clone();
+    select.connect_clicked(move |_| {
+        let color = chooser.borrow().rgba();
+        shell.set_lyrics_highlight_color(Some(rgba_hex(&color)));
+        close.close();
+    });
+    dialog.present();
+}
+
+#[allow(deprecated)]
+fn lyrics_color_chooser(color: &gtk::gdk::RGBA) -> gtk::ColorChooserWidget {
+    let chooser = gtk::ColorChooserWidget::new();
+    chooser.set_show_editor(true);
+    chooser.set_use_alpha(false);
+    chooser.set_rgba(color);
+    chooser.set_hexpand(true);
+    chooser.set_vexpand(true);
+    chooser
+}
+
+fn rgba_hex(color: &gtk::gdk::RGBA) -> String {
+    format!(
+        "#{:02x}{:02x}{:02x}",
+        (color.red() * 255.0).round() as u8,
+        (color.green() * 255.0).round() as u8,
+        (color.blue() * 255.0).round() as u8,
+    )
+}
+
 fn small_icon_button(icon: &str, label: &str) -> gtk::Button {
     let button = gtk::Button::from_icon_name(icon);
     button.add_css_class("flat");
@@ -359,6 +606,16 @@ impl Shell {
             settings.prefer_server_lyrics = enabled;
             true
         });
+    }
+
+    pub(crate) fn set_save_fetched_lyrics(self: &Rc<Self>, enabled: bool) -> bool {
+        self.update_lyrics_settings("save fetched lyrics setting", false, |settings| {
+            if settings.save_fetched_lyrics == enabled {
+                return false;
+            }
+            settings.save_fetched_lyrics = enabled;
+            true
+        })
     }
 
     pub(crate) fn set_external_lyrics_provider_enabled(
@@ -444,14 +701,54 @@ impl Shell {
         });
     }
 
-    pub(crate) fn set_lyrics_word_highlighting(self: &Rc<Self>, enabled: bool) {
+    pub(crate) fn set_lyrics_karaoke_mode(self: &Rc<Self>, enabled: bool) {
         self.update_lyrics_settings("lyrics karaoke setting", true, |settings| {
-            if settings.word_by_word_highlighting == enabled {
+            if settings.karaoke_mode == enabled {
                 return false;
             }
-            settings.word_by_word_highlighting = enabled;
+            settings.karaoke_mode = enabled;
             true
         });
+    }
+
+    pub(crate) fn set_lyrics_highlight_color(self: &Rc<Self>, color: Option<String>) {
+        if self.update_lyrics_settings("lyrics highlight color", true, |settings| {
+            if settings.lyrics_highlight_color == color {
+                return false;
+            }
+            settings.lyrics_highlight_color = color;
+            true
+        }) {
+            self.apply_lyrics_appearance();
+        }
+    }
+
+    pub(crate) fn set_lyrics_font_family(self: &Rc<Self>, family: Option<String>) {
+        if self.update_lyrics_settings("lyrics font family", false, |settings| {
+            if settings.lyrics_font_family == family {
+                return false;
+            }
+            settings.lyrics_font_family = family;
+            true
+        }) {
+            self.apply_lyrics_appearance();
+        }
+    }
+
+    pub(crate) fn set_lyrics_font_size(self: &Rc<Self>, size: Option<u16>) {
+        if self.update_lyrics_settings("lyrics font size", false, |settings| {
+            if settings.lyrics_font_size == size {
+                return false;
+            }
+            settings.lyrics_font_size = size;
+            true
+        }) {
+            self.apply_lyrics_appearance();
+        }
+    }
+
+    fn apply_lyrics_appearance(&self) {
+        self.appearance.apply(&self.settings.current.borrow());
     }
 
     fn update_lyrics_settings(

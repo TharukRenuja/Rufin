@@ -1504,6 +1504,13 @@ popover.slider-value-popover label {
     transform 360ms cubic-bezier(0.16, 1, 0.3, 1);
 }
 
+.lyrics-line,
+.lyrics-line .lyrics-reading-surface,
+.lyrics-line .lyrics-furigana,
+.lyrics-line .lyrics-romanization {
+  text-shadow: 0 0 4px var(--window-bg-color);
+}
+
 .lyrics-row-active .lyrics-line {
   color: var(--window-fg-color);
   font-weight: 800;
@@ -2045,16 +2052,20 @@ listview.queue-list row {
   font-size: 15px;
 }
 
-.lyrics-cue {
-  transition: color 80ms linear, opacity 80ms linear;
+.lyrics-highlight-swatch {
+  min-width: 28px;
+  min-height: 28px;
+  border-radius: 6px;
+  color: var(--lyrics-highlight-color, var(--accent-color));
+  background-color: var(--lyrics-highlight-color, var(--accent-color));
 }
 
-.lyrics-cue-sung {
+.lyrics-theme-accent-probe {
   color: var(--accent-color);
 }
 
-.lyrics-cue-active {
-  font-weight: 700;
+.lyrics-cue-sung {
+  color: var(--lyrics-highlight-color, var(--accent-color));
 }
 
 .lyrics-agent-name {

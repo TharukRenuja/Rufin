@@ -10,7 +10,7 @@ use lofty::prelude::{Accessor, TagExt};
 use lofty::tag::items::popularimeter::{Popularimeter, StarRating};
 use lofty::tag::{ItemKey, Tag};
 
-use super::lofty_metadata::{MetadataWriter, bpm_key, read_lofty_for_edit};
+use super::lofty_metadata::{MetadataWriter, bpm_key, read_lofty, read_lofty_for_edit};
 use crate::{AlbumMetadataEdit, ArtistMetadataEdit, SourceMetadataError, TrackMetadataEdit};
 
 pub(crate) fn revision(path: &Path) -> Result<String, SourceMetadataError> {
@@ -44,7 +44,7 @@ pub(crate) fn write_track(
     }
     let values = &edit.values;
     let changed = &edit.changed;
-    let prepared = prepare_file(path, source_format, |tag, writer| {
+    let prepared = prepare_file(path, source_format, None, |tag, writer| {
         if changed.title {
             tag.set_title(values.title.trim().to_string());
         }
@@ -132,7 +132,7 @@ pub(crate) fn write_rating(
     source_format: Option<&str>,
     rating: Option<u8>,
 ) -> Result<(), SourceMetadataError> {
-    let prepared = prepare_file(path, source_format, |tag, _| {
+    let prepared = prepare_file(path, source_format, None, |tag, _| {
         tag.remove_key(ItemKey::Popularimeter);
         if let Some(rating) = rating.filter(|rating| *rating > 0) {
             let stars = rating.div_ceil(2).clamp(1, 5);
@@ -152,6 +152,42 @@ pub(crate) fn write_rating(
     commit_batch(vec![prepared])
 }
 
+pub(super) fn read_embedded_lyrics(path: &Path) -> Result<Option<String>, SourceMetadataError> {
+    let tagged = read_lofty(path, false)
+        .map_err(write_error)?
+        .ok_or(SourceMetadataError::Unavailable)?;
+    Ok(tagged.tags().iter().find_map(|tag| {
+        [ItemKey::UnsyncLyrics, ItemKey::Lyrics]
+            .into_iter()
+            .find_map(|key| tag.get_string(key))
+            .map(ToString::to_string)
+            .filter(|lyrics| !lyrics.trim().is_empty())
+    }))
+}
+
+pub(super) fn write_embedded_lyrics(path: &Path, lyrics: &str) -> Result<(), SourceMetadataError> {
+    let writer = MetadataWriter::for_path(path).ok_or(SourceMetadataError::Unavailable)?;
+    if matches!(
+        writer.file_type(),
+        lofty::file::FileType::Wav | lofty::file::FileType::Aiff
+    ) {
+        return Err(SourceMetadataError::Unavailable);
+    }
+    let (tag_type, key) = writer
+        .lyrics_target()
+        .ok_or(SourceMetadataError::Unavailable)?;
+    let prepared = prepare_file(path, None, Some(tag_type), |tag, _| {
+        set_embedded_lyrics(tag, key, lyrics);
+    })?;
+    commit_batch(vec![prepared])
+}
+
+fn set_embedded_lyrics(tag: &mut Tag, key: ItemKey, lyrics: &str) {
+    tag.remove_key(ItemKey::UnsyncLyrics);
+    tag.remove_key(ItemKey::Lyrics);
+    tag.insert_text(key, lyrics.to_string());
+}
+
 pub(crate) fn write_r128(
     path: &Path,
     source_format: Option<&str>,
@@ -167,7 +203,7 @@ pub(crate) fn write_r128(
     {
         return Err(SourceMetadataError::Unavailable);
     }
-    let prepared = prepare_file(path, source_format, |tag, _| {
+    let prepared = prepare_file(path, source_format, None, |tag, _| {
         if let Some(lufs) = track_lufs {
             set_text(tag, ItemKey::R128TrackGain, Some(&r128_gain_text(lufs)));
         }
@@ -199,7 +235,7 @@ pub(crate) fn write_album_batch(
     let changed = &edit.changed;
     let mut prepared = Vec::with_capacity(targets.len());
     for (path, format) in targets {
-        prepared.push(prepare_file(path, format.as_deref(), |tag, _| {
+        prepared.push(prepare_file(path, format.as_deref(), None, |tag, _| {
             if changed.title {
                 set_text(tag, ItemKey::AlbumTitle, Some(&values.title));
             }
@@ -261,7 +297,7 @@ pub(crate) fn write_artist_batch(
     let changed = &edit.changed;
     let mut prepared = Vec::with_capacity(targets.len());
     for (path, format) in targets {
-        prepared.push(prepare_file(path, format.as_deref(), |tag, _| {
+        prepared.push(prepare_file(path, format.as_deref(), None, |tag, _| {
             if changed.name {
                 let artists = tag
                     .artist()
@@ -302,6 +338,7 @@ struct PreparedFile {
 fn prepare_file(
     path: &Path,
     source_format: Option<&str>,
+    tag_type: Option<lofty::tag::TagType>,
     mutate: impl FnOnce(&mut Tag, MetadataWriter),
 ) -> Result<PreparedFile, SourceMetadataError> {
     let writer = source_format
@@ -319,7 +356,16 @@ fn prepare_file(
     let tagged = read_lofty_for_edit(temp.path(), writer.file_type())
         .map_err(write_error)?
         .ok_or(SourceMetadataError::Unavailable)?;
-    let mut tag = writable_tag(&tagged);
+    let mut tag = tag_type
+        .map(|tag_type| {
+            tagged
+                .tags()
+                .iter()
+                .find(|tag| tag.tag_type() == tag_type)
+                .cloned()
+                .unwrap_or_else(|| Tag::new(tag_type))
+        })
+        .unwrap_or_else(|| writable_tag(&tagged));
     mutate(&mut tag, writer);
     save_tag(&tag, temp.path())?;
     temp.as_file().sync_all().map_err(write_error)?;
@@ -503,6 +549,42 @@ mod tests {
     }
 
     #[test]
+    fn embedded_lyrics_replace_id3_values_and_refuse_unsafe_wav_writes() {
+        let directory = tempfile::tempdir().expect("metadata directory");
+        let path = directory.path().join("track.wav");
+        fs::write(&path, silent_wav()).expect("write WAV");
+        let before = revision(&path).expect("file revision");
+        write_track(
+            &path,
+            Some("wav"),
+            &before,
+            &track_edit(TrackMetadataValues {
+                title: "Track title".to_string(),
+                ..TrackMetadataValues::default()
+            }),
+        )
+        .expect("seed metadata");
+
+        assert_eq!(
+            write_embedded_lyrics(&path, "[00:01.000]A line"),
+            Err(SourceMetadataError::Unavailable)
+        );
+        assert!(!super::super::embedded_lyrics_writable(&path));
+        assert_eq!(
+            super::super::read_track_metadata(library::TrackKey::from_raw(1), &path, Some("wav"))
+                .expect("read metadata")
+                .values
+                .title,
+            "Track title"
+        );
+
+        let mut id3 = Tag::new(lofty::tag::TagType::Id3v2);
+        set_embedded_lyrics(&mut id3, ItemKey::UnsyncLyrics, "first");
+        set_embedded_lyrics(&mut id3, ItemKey::UnsyncLyrics, "updated");
+        assert_eq!(id3.get_string(ItemKey::UnsyncLyrics), Some("updated"));
+    }
+
+    #[test]
     fn local_album_metadata_updates_each_backing_track_as_one_batch() {
         let directory = tempfile::tempdir().expect("metadata directory");
         let paths = [
@@ -603,7 +685,7 @@ mod tests {
         let second_original = directory.path().join("second.original");
         let prepared = [&first, &second]
             .into_iter()
-            .map(|path| prepare_file(path, Some("wav"), |_, _| {}))
+            .map(|path| prepare_file(path, Some("wav"), None, |_, _| {}))
             .collect::<Result<Vec<_>, _>>()
             .expect("prepared metadata files");
         fs::rename(&second, &second_original).expect("make second replacement fail");

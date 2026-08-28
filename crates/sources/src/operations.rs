@@ -168,7 +168,7 @@ pub struct ArtistMetadataMixed {
     pub musicbrainz_artist_id: bool,
 }
 
-#[derive(Debug, Error, Eq, PartialEq)]
+#[derive(Clone, Debug, Error, Eq, PartialEq)]
 pub enum SourceMetadataError {
     #[error("metadata editing is unavailable")]
     Unavailable,
@@ -180,13 +180,6 @@ pub enum SourceMetadataError {
     SavedRefreshFailed(String),
     #[error("metadata failed: {0}")]
     Write(String),
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum LyricsSearch {
-    ServerOnly,
-    ServerThenRemote,
-    RemoteThenServer,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

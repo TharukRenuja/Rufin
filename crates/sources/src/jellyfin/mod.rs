@@ -2,8 +2,8 @@ use crate::config::{decode_provider_payload, require_payload_version};
 use crate::policy::{raw_item_id, stable_hash};
 use crate::{
     ConnectedSource, CredentialHostInput, ImageBytes, JellyfinSettingsInput, JellyfinSetupInput,
-    LyricsSearch, NativeLyricLine, NativeLyrics, NativeLyricsDocument, NativeLyricsRole,
-    SourceConfiguration, SourceEditResult, SourceError, SourceId, SourceResult,
+    NativeLyricLine, NativeLyrics, NativeLyricsDocument, NativeLyricsRole, SourceConfiguration,
+    SourceEditResult, SourceError, SourceId, SourceResult,
 };
 pub use discovery::{DiscoveredJellyfinServer, discover_jellyfin_servers};
 use item::{

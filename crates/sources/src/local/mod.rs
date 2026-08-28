@@ -31,6 +31,26 @@ pub const LOCAL_SOURCE_ID: &str = "local";
 pub const LOCAL_LIBRARY_SOURCE_ID: &str = "local:server:library";
 const SOURCE_CONFIG_VERSION: u32 = 1;
 
+pub fn read_embedded_lyrics(path: &Path) -> Result<Option<String>, crate::SourceMetadataError> {
+    metadata::read_embedded_lyrics(path)
+}
+
+pub(super) fn write_embedded_lyrics(
+    path: &Path,
+    lyrics: &str,
+) -> Result<(), crate::SourceMetadataError> {
+    metadata::write_embedded_lyrics(path, lyrics)
+}
+
+pub(super) fn embedded_lyrics_writable(path: &Path) -> bool {
+    lofty_metadata::MetadataWriter::for_path(path).is_some_and(|writer| {
+        !matches!(
+            writer.file_type(),
+            lofty::file::FileType::Wav | lofty::file::FileType::Aiff
+        ) && writer.lyrics_target().is_some()
+    })
+}
+
 #[derive(Deserialize)]
 struct LocalSourcePayload {
     version: u32,
