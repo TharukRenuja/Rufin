@@ -1129,6 +1129,11 @@ msgstr "Navidrome"
 msgid "Navigate page items"
 msgstr "Перемещаться по элементам страницы"
 
+#, fuzzy
+#| msgid "Type to search"
+msgid "Navigate to Search"
+msgstr "Введите текст для поиска"
+
 msgid "Navigation"
 msgstr "Навигация"
 
@@ -1178,6 +1183,16 @@ msgstr "Пока нет альбомов этого исполнителя"
 
 msgid "No cached server path yet"
 msgstr "Пока нет кэшированных путей к серверу"
+
+#, fuzzy
+#| msgid "No favorites yet"
+msgid "No favorite albums yet"
+msgstr "Пока нет избранных"
+
+#, fuzzy
+#| msgid "No favorites yet"
+msgid "No favorite artists yet"
+msgstr "Пока нет избранных"
 
 msgid "No favorites yet"
 msgstr "Пока нет избранных"
@@ -1941,6 +1956,12 @@ msgstr "Качество потока"
 
 msgid "Support"
 msgstr "Поддержка"
+
+msgid "Switch Search/Favorites tabs"
+msgstr ""
+
+msgid "Switch between layouts"
+msgstr ""
 
 msgid "Switching library..."
 msgstr "Переключение библиотеки…"

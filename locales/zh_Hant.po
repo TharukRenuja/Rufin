@@ -1088,6 +1088,9 @@ msgstr "Navidrome"
 msgid "Navigate page items"
 msgstr ""
 
+msgid "Navigate to Search"
+msgstr ""
+
 msgid "Navigation"
 msgstr "導覽"
 
@@ -1135,6 +1138,16 @@ msgstr "暫無此藝人的專輯"
 
 msgid "No cached server path yet"
 msgstr "暫無快取伺服器路徑"
+
+#, fuzzy
+#| msgid "No favorites yet"
+msgid "No favorite albums yet"
+msgstr "暫無最愛"
+
+#, fuzzy
+#| msgid "No favorites yet"
+msgid "No favorite artists yet"
+msgstr "暫無最愛"
 
 msgid "No favorites yet"
 msgstr "暫無最愛"
@@ -1896,6 +1909,12 @@ msgid "Stream quality"
 msgstr "串流品質"
 
 msgid "Support"
+msgstr ""
+
+msgid "Switch Search/Favorites tabs"
+msgstr ""
+
+msgid "Switch between layouts"
 msgstr ""
 
 msgid "Switching library..."

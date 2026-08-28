@@ -1121,6 +1121,11 @@ msgstr "Navidrome"
 msgid "Navigate page items"
 msgstr "Seitenelemente navigieren"
 
+#, fuzzy
+#| msgid "Type to search"
+msgid "Navigate to Search"
+msgstr "Tippen zum Suchen"
+
 msgid "Navigation"
 msgstr "Navigation"
 
@@ -1170,6 +1175,16 @@ msgstr "Noch keine Alben von diesem Künstler"
 
 msgid "No cached server path yet"
 msgstr "Kein Server-Pfad zwischengespeichert"
+
+#, fuzzy
+#| msgid "No favorites yet"
+msgid "No favorite albums yet"
+msgstr "Noch keine Favoriten"
+
+#, fuzzy
+#| msgid "No favorites yet"
+msgid "No favorite artists yet"
+msgstr "Noch keine Favoriten"
 
 msgid "No favorites yet"
 msgstr "Noch keine Favoriten"
@@ -1931,6 +1946,12 @@ msgstr "Streaming-Qualität"
 
 msgid "Support"
 msgstr "Support"
+
+msgid "Switch Search/Favorites tabs"
+msgstr ""
+
+msgid "Switch between layouts"
+msgstr ""
 
 msgid "Switching library..."
 msgstr "Bibliothek wird gewechselt..."
