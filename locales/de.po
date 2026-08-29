@@ -986,6 +986,9 @@ msgstr "Ordner auswählen"
 msgid "Lock metadata"
 msgstr "Metadaten sperren"
 
+msgid "Logs are copied"
+msgstr ""
+
 msgid "Loudness normalization"
 msgstr "Lautstärkenormalisierung"
 

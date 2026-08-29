@@ -979,6 +979,9 @@ msgstr "Tuvasta kausta asukoht"
 msgid "Lock metadata"
 msgstr "Lukusta metateave"
 
+msgid "Logs are copied"
+msgstr ""
+
 msgid "Loudness normalization"
 msgstr "Helivaljuse normaliseerimine"
 

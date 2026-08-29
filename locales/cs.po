@@ -996,6 +996,9 @@ msgstr "Vyhledat složku"
 msgid "Lock metadata"
 msgstr "Uzamknout metadata"
 
+msgid "Logs are copied"
+msgstr ""
+
 msgid "Loudness normalization"
 msgstr "Normalizace hlasitosti"
 

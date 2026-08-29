@@ -947,6 +947,9 @@ msgstr "定位資料夾"
 msgid "Lock metadata"
 msgstr "鎖定元資料"
 
+msgid "Logs are copied"
+msgstr ""
+
 msgid "Loudness normalization"
 msgstr "響度正規化"
 
