@@ -93,10 +93,7 @@
   <releases>
     <release version="0.14.0" date="2026-08-29">
       <description>
-        <p>Been a while! Even though we added several features just after the previous release, this release had to wait because of a some pretty important changes. We now use sqlx instead of rustqlite, and this migration also made us do a partial library rewrite. There are a lot of exciting features and bug fixes in this release but first, let's thank @Commenter25 for providing Rufin a new icon! We also got a lot of new contributors; I'm thankful to them and to the people who tested our new features before the new release. The most time on this release was spent on app performance and UX: I also made some pragmatic choices for the sake of performance, one of them being removing row columns to be resizeable. This is definitely the biggest release ever, even the highlights list is quite big:</p>
-        <ul>
-          <li>Onboarding is made faster. Artwork is now cached in background and local folder scan is made 3x~ times faster.</li>
-        </ul>
+        <p>Been a while! Even though we added several features just after the previous release, this release had to wait because of a some pretty important changes. We now use sqlx instead of rustqlite, and this migration also made us do a partial library rewrite. There are a lot of exciting features and bug fixes in this release but first, let's thank @Commenter25 for providing Rufin a new icon! We also got a lot of new contributors; I'm thankful to them and to the people who tested our new features before the new release. The most time on this release was spent on app performance and UX: I also made some pragmatic choices for the sake of performance, one of them being removing row columns to be resizeable. This is definitely the biggest release ever, even the highlights list is quite big: - Onboarding is made faster. Artwork is now cached in background and local folder scan is made 3x~ times faster.</p>
         <ul>
           <li>You can now drag songs or select multiple of them; move them into a playlist in the pins, download, or play them all!</li>
         </ul>
