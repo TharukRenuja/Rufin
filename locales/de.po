@@ -1611,6 +1611,11 @@ msgstr "Entfernen"
 msgid "Removed from favorites"
 msgstr "Aus Favoriten entfernt"
 
+#, fuzzy
+#| msgid "Remove from Pins"
+msgid "Removed from"
+msgstr "Aus den angehefteten Elementen entfernen"
+
 msgid "Rename Playlist"
 msgstr "Playlist umbenennen"
 

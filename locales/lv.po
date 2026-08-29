@@ -1613,6 +1613,11 @@ msgstr "Noņemt"
 msgid "Removed from favorites"
 msgstr "Noņemts no izlases"
 
+#, fuzzy
+#| msgid "Remove from Pins"
+msgid "Removed from"
+msgstr "Noņemt no izlases"
+
 msgid "Rename Playlist"
 msgstr "Pārdēvēt atskaņošanas sarakstu"
 

@@ -1637,6 +1637,11 @@ msgstr "Odebrat"
 msgid "Removed from favorites"
 msgstr "Odebrat z oblíbených"
 
+#, fuzzy
+#| msgid "Remove from Pins"
+msgid "Removed from"
+msgstr "Odepnout"
+
 msgid "Rename Playlist"
 msgstr "Přejmenovat Playlist"
 

@@ -1581,6 +1581,11 @@ msgstr "移除"
 msgid "Removed from favorites"
 msgstr "從最愛中移除"
 
+#, fuzzy
+#| msgid "Remove from Pins"
+msgid "Removed from"
+msgstr "從釘選中移除"
+
 msgid "Rename Playlist"
 msgstr "重新命名播放清單"
 

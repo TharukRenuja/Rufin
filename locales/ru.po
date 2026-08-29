@@ -1622,6 +1622,11 @@ msgstr "Удалить"
 msgid "Removed from favorites"
 msgstr "Удалено из избранного"
 
+#, fuzzy
+#| msgid "Remove from Pins"
+msgid "Removed from"
+msgstr "Удалить из закрепленных"
+
 msgid "Rename Playlist"
 msgstr "Переименовать плейлист"
 
