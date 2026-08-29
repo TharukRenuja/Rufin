@@ -408,6 +408,9 @@ msgstr "Kustuta see loo jaoks laaditud laulusõnad"
 msgid "Clear queue"
 msgstr "Tühjenda esitusjärjekord"
 
+msgid "Clearing queue also clears the current song"
+msgstr ""
+
 msgid "Close Window"
 msgstr "Sulge aken"
 
@@ -424,6 +427,11 @@ msgid "Club"
 msgstr "Klubimuusika"
 
 msgid "Collapse sidebar"
+msgstr "Ahenda külgriba"
+
+#, fuzzy
+#| msgid "Collapse sidebar"
+msgid "Collapse/expand sidebar"
 msgstr "Ahenda külgriba"
 
 msgid "Collection"
@@ -1741,6 +1749,11 @@ msgstr "Otsi laulusõnu"
 
 msgid "Search current folder"
 msgstr "Otsi sellest kaustas"
+
+#, fuzzy
+#| msgid "Search Again"
+msgid "Search in page"
+msgstr "Otsi uuesti"
 
 msgid "Search is unavailable"
 msgstr "Otsing pole saadaval"

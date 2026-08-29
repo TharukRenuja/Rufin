@@ -414,6 +414,9 @@ msgstr "Notīrīt ielādētos tekstus šai dziesmai"
 msgid "Clear queue"
 msgstr "Notīrīt rindu"
 
+msgid "Clearing queue also clears the current song"
+msgstr ""
+
 msgid "Close Window"
 msgstr "Aizvērt logu"
 
@@ -430,6 +433,11 @@ msgid "Club"
 msgstr "Klubs"
 
 msgid "Collapse sidebar"
+msgstr "Sakļaut sānu paneli"
+
+#, fuzzy
+#| msgid "Collapse sidebar"
+msgid "Collapse/expand sidebar"
 msgstr "Sakļaut sānu paneli"
 
 msgid "Collection"
@@ -1745,6 +1753,11 @@ msgstr "Meklēt tekstus"
 
 msgid "Search current folder"
 msgstr "Meklēt pašreizējā mapē"
+
+#, fuzzy
+#| msgid "Search Again"
+msgid "Search in page"
+msgstr "Meklēt vēlreiz"
 
 msgid "Search is unavailable"
 msgstr "Meklēšana nav pieejama"

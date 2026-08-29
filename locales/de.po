@@ -413,6 +413,9 @@ msgstr "Abgerufene Songtexte für diesen Titel löschen"
 msgid "Clear queue"
 msgstr "Warteschlange leeren"
 
+msgid "Clearing queue also clears the current song"
+msgstr ""
+
 msgid "Close Window"
 msgstr "Fenster schließen"
 
@@ -429,6 +432,11 @@ msgid "Club"
 msgstr "Klub"
 
 msgid "Collapse sidebar"
+msgstr "Seitenleiste einklappen"
+
+#, fuzzy
+#| msgid "Collapse sidebar"
+msgid "Collapse/expand sidebar"
 msgstr "Seitenleiste einklappen"
 
 msgid "Collection"
@@ -1753,6 +1761,11 @@ msgstr "Songtext-Suche"
 
 msgid "Search current folder"
 msgstr "Aktuellen Ordner durchsuchen"
+
+#, fuzzy
+#| msgid "Search Again"
+msgid "Search in page"
+msgstr "Erneut suchen"
 
 msgid "Search is unavailable"
 msgstr "Suche ist nicht verfügbar"

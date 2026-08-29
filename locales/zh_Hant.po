@@ -370,6 +370,9 @@ msgstr "清除此曲目已抓取的歌詞"
 msgid "Clear queue"
 msgstr "清除播放佇列"
 
+msgid "Clearing queue also clears the current song"
+msgstr ""
+
 msgid "Close Window"
 msgstr "關閉視窗"
 
@@ -386,6 +389,11 @@ msgid "Club"
 msgstr ""
 
 msgid "Collapse sidebar"
+msgstr "折疊側邊欄"
+
+#, fuzzy
+#| msgid "Collapse sidebar"
+msgid "Collapse/expand sidebar"
 msgstr "折疊側邊欄"
 
 msgid "Collection"
@@ -1719,6 +1727,11 @@ msgstr "搜尋歌詞"
 #| msgid "Search preferences"
 msgid "Search current folder"
 msgstr "搜尋偏好設定"
+
+#, fuzzy
+#| msgid "Search Again"
+msgid "Search in page"
+msgstr "重新搜尋"
 
 msgid "Search is unavailable"
 msgstr ""

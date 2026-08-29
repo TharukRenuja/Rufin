@@ -419,6 +419,9 @@ msgstr "Удалить загруженные тексты песен для э�
 msgid "Clear queue"
 msgstr "Очистить очередь"
 
+msgid "Clearing queue also clears the current song"
+msgstr ""
+
 msgid "Close Window"
 msgstr "Закрыть окно"
 
@@ -435,6 +438,11 @@ msgid "Club"
 msgstr "Клубная"
 
 msgid "Collapse sidebar"
+msgstr "Свернуть боковую панель"
+
+#, fuzzy
+#| msgid "Collapse sidebar"
+msgid "Collapse/expand sidebar"
 msgstr "Свернуть боковую панель"
 
 msgid "Collection"
@@ -1754,6 +1762,11 @@ msgstr "Поиск текстов песен"
 
 msgid "Search current folder"
 msgstr "Поиск в текущей папке"
+
+#, fuzzy
+#| msgid "Search Again"
+msgid "Search in page"
+msgstr "Повторить поиск"
 
 msgid "Search is unavailable"
 msgstr "Поиск недоступен"

@@ -415,6 +415,9 @@ msgstr "Vymazat načtený text pro tuto skladbu"
 msgid "Clear queue"
 msgstr "Vymazat frontu"
 
+msgid "Clearing queue also clears the current song"
+msgstr ""
+
 msgid "Close Window"
 msgstr "Zavřít okno"
 
@@ -431,6 +434,11 @@ msgid "Club"
 msgstr "Klubová hudba"
 
 msgid "Collapse sidebar"
+msgstr "Sbalit postranní panel"
+
+#, fuzzy
+#| msgid "Collapse sidebar"
+msgid "Collapse/expand sidebar"
 msgstr "Sbalit postranní panel"
 
 msgid "Collection"
@@ -1779,6 +1787,11 @@ msgstr "Hledat Texty"
 #| msgid "Search preferences"
 msgid "Search current folder"
 msgstr "Možnosti vyhledávání"
+
+#, fuzzy
+#| msgid "Search Again"
+msgid "Search in page"
+msgstr "Hledat znovu"
 
 #, fuzzy
 #| msgid "This isn't available"

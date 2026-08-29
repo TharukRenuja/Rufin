@@ -379,6 +379,9 @@ msgstr ""
 msgid "Clear queue"
 msgstr ""
 
+msgid "Clearing queue also clears the current song"
+msgstr ""
+
 msgid "Close Window"
 msgstr ""
 
@@ -395,6 +398,9 @@ msgid "Club"
 msgstr ""
 
 msgid "Collapse sidebar"
+msgstr ""
+
+msgid "Collapse/expand sidebar"
 msgstr ""
 
 msgid "Collection"
@@ -1691,6 +1697,9 @@ msgid "Search Lyrics"
 msgstr ""
 
 msgid "Search current folder"
+msgstr ""
+
+msgid "Search in page"
 msgstr ""
 
 msgid "Search is unavailable"
