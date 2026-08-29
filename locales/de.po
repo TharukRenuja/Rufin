@@ -791,9 +791,6 @@ msgstr "Token abrufen"
 msgid "Go to Album"
 msgstr "Zum Album gehen"
 
-msgid "Go to Artist"
-msgstr "Zum Künstler springen"
-
 msgid "Go to"
 msgstr "Gehe zu"
 
@@ -1069,6 +1066,11 @@ msgstr "Anbieter nach oben verschieben"
 
 msgid "Move up"
 msgstr "Nach oben verschieben"
+
+#, fuzzy
+#| msgid "Selection"
+msgid "Multi-selection"
+msgstr "Auswahl"
 
 msgid "Multiple values"
 msgstr "Mehrere Werte"
@@ -1518,6 +1520,11 @@ msgstr "Rufin beenden"
 msgid "Quit"
 msgstr "Beenden"
 
+#, fuzzy
+#| msgid "Selection"
+msgid "Range selection"
+msgstr "Auswahl"
+
 msgid "Rating"
 msgstr "Bewertung"
 
@@ -1769,6 +1776,11 @@ msgstr "Musikordner auswählen"
 
 msgid "Select Source"
 msgstr "Quelle auswählen"
+
+#, fuzzy
+#| msgid "Select All"
+msgid "Select all"
+msgstr "Alle auswählen"
 
 msgid "Selection"
 msgstr "Auswahl"
@@ -2241,6 +2253,9 @@ msgid "{count} year ago"
 msgid_plural "{count} years ago"
 msgstr[0] "vor {count} Jahr"
 msgstr[1] "vor {count} Jahren"
+
+#~ msgid "Go to Artist"
+#~ msgstr "Zum Künstler springen"
 
 #~ msgid "Requires OpenSubsonic songLyrics v2"
 #~ msgstr "Erfordert OpenSubsonic songLyrics v2"

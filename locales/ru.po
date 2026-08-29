@@ -798,9 +798,6 @@ msgstr "Получить токен"
 msgid "Go to Album"
 msgstr "Перейти к альбому"
 
-msgid "Go to Artist"
-msgstr "Перейти к исполнителю"
-
 msgid "Go to"
 msgstr "Перейти к"
 
@@ -1077,6 +1074,11 @@ msgstr "Переместить провайдера вверх"
 
 msgid "Move up"
 msgstr "Переместить вверх"
+
+#, fuzzy
+#| msgid "Selection"
+msgid "Multi-selection"
+msgstr "Выбор"
 
 msgid "Multiple values"
 msgstr "Несколько значений"
@@ -1519,6 +1521,11 @@ msgstr "Закрыть Rufin"
 msgid "Quit"
 msgstr "Выход"
 
+#, fuzzy
+#| msgid "Selection"
+msgid "Range selection"
+msgstr "Выбор"
+
 msgid "Rating"
 msgstr "Оценка"
 
@@ -1770,6 +1777,11 @@ msgstr "Выбрать папку с музыкой"
 
 msgid "Select Source"
 msgstr "Выбрать Источник"
+
+#, fuzzy
+#| msgid "Select All"
+msgid "Select all"
+msgstr "Выбрать всё"
 
 msgid "Selection"
 msgstr "Выбор"
@@ -2254,6 +2266,9 @@ msgid_plural "{count} years ago"
 msgstr[0] "{count} год назад"
 msgstr[1] "{count} года назад"
 msgstr[2] "{count} лет назад"
+
+#~ msgid "Go to Artist"
+#~ msgstr "Перейти к исполнителю"
 
 #~ msgid "Requires OpenSubsonic songLyrics v2"
 #~ msgstr "Требуется OpenSubsonic songLyrics V2"

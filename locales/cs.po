@@ -798,9 +798,6 @@ msgstr "Získat token"
 msgid "Go to Album"
 msgstr "Přejít do alba"
 
-msgid "Go to Artist"
-msgstr "Přejít na interpreta"
-
 msgid "Go to"
 msgstr "Přejít do"
 
@@ -1085,6 +1082,11 @@ msgstr "Posunout poskytovatele nahoru"
 
 msgid "Move up"
 msgstr "Posunout nahoru"
+
+#, fuzzy
+#| msgid "Selection"
+msgid "Multi-selection"
+msgstr "Výběr"
 
 msgid "Multiple values"
 msgstr "Více hodnot"
@@ -1534,6 +1536,11 @@ msgstr "Ukončit Rufin"
 msgid "Quit"
 msgstr "Ukončit"
 
+#, fuzzy
+#| msgid "Selection"
+msgid "Range selection"
+msgstr "Výběr"
+
 msgid "Rating"
 msgstr "Hodnocení"
 
@@ -1789,6 +1796,11 @@ msgstr "Vybrat složku s hudbou"
 
 msgid "Select Source"
 msgstr "Vyberte Zdroj"
+
+#, fuzzy
+#| msgid "Select All"
+msgid "Select all"
+msgstr "Vybrat vše"
 
 msgid "Selection"
 msgstr "Výběr"
@@ -2274,6 +2286,9 @@ msgid_plural "{count} years ago"
 msgstr[0] "Před {count} rokem"
 msgstr[1] "Před {count} roky"
 msgstr[2] "Před {count} roky"
+
+#~ msgid "Go to Artist"
+#~ msgstr "Přejít na interpreta"
 
 #~ msgid "Requires OpenSubsonic songLyrics v2"
 #~ msgstr "Vyžaduje OpenSubsonic songLyrics v2"

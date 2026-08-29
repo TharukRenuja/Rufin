@@ -793,9 +793,6 @@ msgstr "Iegūt žetonu"
 msgid "Go to Album"
 msgstr "Pāriet uz albumu"
 
-msgid "Go to Artist"
-msgstr "Pāriet uz Izpildītāju"
-
 msgid "Go to"
 msgstr "Pāriet uz"
 
@@ -1070,6 +1067,11 @@ msgstr "Pārvietot pakalpojumu uz augšu"
 
 msgid "Move up"
 msgstr "Pārvietot augšup"
+
+#, fuzzy
+#| msgid "Selection"
+msgid "Multi-selection"
+msgstr "Atlasīšana"
 
 msgid "Multiple values"
 msgstr "Vairākas vērtības"
@@ -1510,6 +1512,11 @@ msgstr "Iziet no Rufin"
 msgid "Quit"
 msgstr "Iziet"
 
+#, fuzzy
+#| msgid "Selection"
+msgid "Range selection"
+msgstr "Atlasīšana"
+
 msgid "Rating"
 msgstr "Vērtējums"
 
@@ -1761,6 +1768,11 @@ msgstr "Izvēlēties mūzikas mapi"
 
 msgid "Select Source"
 msgstr "Izvēlēties avotu"
+
+#, fuzzy
+#| msgid "Select All"
+msgid "Select all"
+msgstr "Atlasīt visu"
 
 msgid "Selection"
 msgstr "Atlasīšana"
@@ -2240,6 +2252,9 @@ msgid_plural "{count} years ago"
 msgstr[0] "pirms {count} gadiem"
 msgstr[1] "pirms {count} gada"
 msgstr[2] "pirms {count} gadiem"
+
+#~ msgid "Go to Artist"
+#~ msgstr "Pāriet uz Izpildītāju"
 
 #~ msgid "Requires OpenSubsonic songLyrics v2"
 #~ msgstr "Nepieciešams OpenSubsonic dziesmu tekstu atbalsts, versija v2"

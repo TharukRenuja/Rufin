@@ -753,9 +753,6 @@ msgstr "取得登入授權"
 msgid "Go to Album"
 msgstr "前往專輯"
 
-msgid "Go to Artist"
-msgstr "前往藝人"
-
 msgid "Go to"
 msgstr "前往"
 
@@ -1036,6 +1033,11 @@ msgstr ""
 
 msgid "Move up"
 msgstr "上移"
+
+#, fuzzy
+#| msgid "Selection"
+msgid "Multi-selection"
+msgstr "選擇"
 
 msgid "Multiple values"
 msgstr ""
@@ -1478,6 +1480,11 @@ msgstr "離開 Rufin"
 msgid "Quit"
 msgstr "離開"
 
+#, fuzzy
+#| msgid "Selection"
+msgid "Range selection"
+msgstr "選擇"
+
 msgid "Rating"
 msgstr "評分"
 
@@ -1731,6 +1738,11 @@ msgstr "選擇音樂資料夾"
 
 msgid "Select Source"
 msgstr "選擇來源"
+
+#, fuzzy
+#| msgid "Select All"
+msgid "Select all"
+msgstr "全選"
 
 msgid "Selection"
 msgstr "選擇"
@@ -2194,6 +2206,9 @@ msgstr[0] "{count} 週之前"
 msgid "{count} year ago"
 msgid_plural "{count} years ago"
 msgstr[0] "{count} 年之前"
+
+#~ msgid "Go to Artist"
+#~ msgstr "前往藝人"
 
 #~ msgid "Other"
 #~ msgstr "其他"

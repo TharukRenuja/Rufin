@@ -783,9 +783,6 @@ msgstr "Vormista endale tunnusluba"
 msgid "Go to Album"
 msgstr "Vaata albumit"
 
-msgid "Go to Artist"
-msgstr "Suundu esitaja juurde"
-
 msgid "Go to"
 msgstr "Mine asukohta"
 
@@ -1062,6 +1059,11 @@ msgstr "Liiguta teenusepakkuja ülespoole"
 
 msgid "Move up"
 msgstr "Liiguta ülespoole"
+
+#, fuzzy
+#| msgid "Selection"
+msgid "Multi-selection"
+msgstr "Valik"
 
 msgid "Multiple values"
 msgstr "Mitu väärtust"
@@ -1502,6 +1504,11 @@ msgstr "Välju Rufinist"
 msgid "Quit"
 msgstr "Välju"
 
+#, fuzzy
+#| msgid "Selection"
+msgid "Range selection"
+msgstr "Valik"
+
 msgid "Rating"
 msgstr "Hinnang"
 
@@ -1753,6 +1760,11 @@ msgstr "Vali muusikakaust"
 
 msgid "Select Source"
 msgstr "Vali allikas"
+
+#, fuzzy
+#| msgid "Select All"
+msgid "Select all"
+msgstr "Vali kõik"
 
 msgid "Selection"
 msgstr "Valik"
@@ -2227,6 +2239,9 @@ msgid "{count} year ago"
 msgid_plural "{count} years ago"
 msgstr[0] "{count} aasta tagasi"
 msgstr[1] "{count} aastat tagasi"
+
+#~ msgid "Go to Artist"
+#~ msgstr "Suundu esitaja juurde"
 
 #~ msgid "Requires OpenSubsonic songLyrics v2"
 #~ msgstr "Eeldab, et kasutusel on OpenSubsonic songLyrics v2"
