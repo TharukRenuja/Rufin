@@ -778,9 +778,6 @@ msgstr ""
 msgid "Go to Album"
 msgstr ""
 
-msgid "Go to Artist"
-msgstr ""
-
 msgid "Go to"
 msgstr ""
 
@@ -1054,6 +1051,9 @@ msgid "Move provider up"
 msgstr ""
 
 msgid "Move up"
+msgstr ""
+
+msgid "Multi-selection"
 msgstr ""
 
 msgid "Multiple values"
@@ -1491,6 +1491,9 @@ msgstr ""
 msgid "Quit"
 msgstr ""
 
+msgid "Range selection"
+msgstr ""
+
 msgid "Rating"
 msgstr ""
 
@@ -1741,6 +1744,9 @@ msgid "Select Music Folder"
 msgstr ""
 
 msgid "Select Source"
+msgstr ""
+
+msgid "Select all"
 msgstr ""
 
 msgid "Selection"

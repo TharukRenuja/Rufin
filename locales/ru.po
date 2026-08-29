@@ -7,7 +7,7 @@ msgstr ""
 "Project-Id-Version: Rufin 0.6.0\n"
 "Report-Msgid-Bugs-To: https://github.com/screwys/Rufin/issues\n"
 "POT-Creation-Date: YEAR-MO-DA HO:MI+ZONE\n"
-"PO-Revision-Date: 2026-08-28 16:54+0000\n"
+"PO-Revision-Date: 2026-08-29 00:23+0000\n"
 "Last-Translator: Александр Стельмах <aguhadug@gmail.com>\n"
 "Language-Team: Russian <https://hosted.weblate.org/projects/rufin/app/ru/>\n"
 "Language: ru\n"
@@ -798,9 +798,6 @@ msgstr "Получить токен"
 msgid "Go to Album"
 msgstr "Перейти к альбому"
 
-msgid "Go to Artist"
-msgstr "Перейти к исполнителю"
-
 msgid "Go to"
 msgstr "Перейти к"
 
@@ -1078,6 +1075,11 @@ msgstr "Переместить провайдера вверх"
 msgid "Move up"
 msgstr "Переместить вверх"
 
+#, fuzzy
+#| msgid "Selection"
+msgid "Multi-selection"
+msgstr "Выбор"
+
 msgid "Multiple values"
 msgstr "Несколько значений"
 
@@ -1129,10 +1131,8 @@ msgstr "Navidrome"
 msgid "Navigate page items"
 msgstr "Перемещаться по элементам страницы"
 
-#, fuzzy
-#| msgid "Type to search"
 msgid "Navigate to Search"
-msgstr "Введите текст для поиска"
+msgstr "Перейти к поиску"
 
 msgid "Navigation"
 msgstr "Навигация"
@@ -1184,15 +1184,11 @@ msgstr "Пока нет альбомов этого исполнителя"
 msgid "No cached server path yet"
 msgstr "Пока нет кэшированных путей к серверу"
 
-#, fuzzy
-#| msgid "No favorites yet"
 msgid "No favorite albums yet"
-msgstr "Пока нет избранных"
+msgstr "Пока нет избранных альбомов"
 
-#, fuzzy
-#| msgid "No favorites yet"
 msgid "No favorite artists yet"
-msgstr "Пока нет избранных"
+msgstr "Пока нет избранных артистов"
 
 msgid "No favorites yet"
 msgstr "Пока нет избранных"
@@ -1525,6 +1521,11 @@ msgstr "Закрыть Rufin"
 msgid "Quit"
 msgstr "Выход"
 
+#, fuzzy
+#| msgid "Selection"
+msgid "Range selection"
+msgstr "Выбор"
+
 msgid "Rating"
 msgstr "Оценка"
 
@@ -1777,6 +1778,11 @@ msgstr "Выбрать папку с музыкой"
 msgid "Select Source"
 msgstr "Выбрать Источник"
 
+#, fuzzy
+#| msgid "Select All"
+msgid "Select all"
+msgstr "Выбрать всё"
+
 msgid "Selection"
 msgstr "Выбор"
 
@@ -1958,10 +1964,10 @@ msgid "Support"
 msgstr "Поддержка"
 
 msgid "Switch Search/Favorites tabs"
-msgstr ""
+msgstr "Переключить вкладки «Поиск» и «Избранное»"
 
 msgid "Switch between layouts"
-msgstr ""
+msgstr "Переключить между макетами"
 
 msgid "Switching library..."
 msgstr "Переключение библиотеки…"
@@ -2260,6 +2266,9 @@ msgid_plural "{count} years ago"
 msgstr[0] "{count} год назад"
 msgstr[1] "{count} года назад"
 msgstr[2] "{count} лет назад"
+
+#~ msgid "Go to Artist"
+#~ msgstr "Перейти к исполнителю"
 
 #~ msgid "Requires OpenSubsonic songLyrics v2"
 #~ msgstr "Требуется OpenSubsonic songLyrics V2"
