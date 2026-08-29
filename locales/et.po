@@ -119,6 +119,12 @@ msgstr ""
 "sealhulgas ka API-de omad. Rakenduse vahemälu see ei mõjuta."
 
 msgid ""
+"This will overwrite your lyrics file with what Rufin fetched, it may be a "
+"better experience to use a dedicated program or plugin to fetch lyrics "
+"instead."
+msgstr ""
+
+msgid ""
 "Track evens out every song, while Album preserves the intended differences "
 "within each album"
 msgstr ""
@@ -444,6 +450,9 @@ msgstr "Kommentaar"
 msgid "Compact"
 msgstr "Kompaktne"
 
+msgid "Confirm"
+msgstr ""
+
 msgid "Connect"
 msgstr "Ühenda"
 
@@ -640,6 +649,11 @@ msgstr "Muuda metateavet"
 
 msgid "Edit"
 msgstr "Muuda"
+
+#, fuzzy
+#| msgid "Genre tracks"
+msgid "Embed in track"
+msgstr "Žanri lood"
 
 msgid "Enable EBU R128 Analysis?"
 msgstr "Kas lülitad EBU R128 analüüsi sisse?"
@@ -1003,6 +1017,11 @@ msgstr "Laulusõnade nihe (msek)"
 
 msgid "Lyrics settings"
 msgstr "Laulusõnade seadistused"
+
+#, fuzzy
+#| msgid "Lyrics loaded"
+msgid "Lyrics storage"
+msgstr "Laulusõnad on laaditud"
 
 msgid "Lyrics"
 msgstr "Laulusõnad"
@@ -1680,6 +1699,16 @@ msgstr "Salvesta vastendus"
 msgid "Save Server Settings"
 msgstr "Salvesta serveri seadistused"
 
+#, fuzzy
+#| msgid "Saves lyrics to your source"
+msgid "Save action saves the lyrics directly to your source"
+msgstr "Salvestab laulusõnad sinu andmeallikasse"
+
+#, fuzzy
+#| msgid "Searching will start automatically"
+msgid "Save lyrics automatically"
+msgstr "Otsing algab automaatselt"
+
 msgid "Save to rescan"
 msgstr "Salvestatud uuesti skaneerimiseks"
 
@@ -2197,6 +2226,9 @@ msgstr "kbps"
 
 msgid "range"
 msgstr "vahemik on"
+
+msgid "separate .lrc file"
+msgstr ""
 
 msgid "to"
 msgstr "kuni"

@@ -114,6 +114,12 @@ msgstr ""
 "caché de aplicación no se tocará."
 
 msgid ""
+"This will overwrite your lyrics file with what Rufin fetched, it may be a "
+"better experience to use a dedicated program or plugin to fetch lyrics "
+"instead."
+msgstr ""
+
+msgid ""
 "Track evens out every song, while Album preserves the intended differences "
 "within each album"
 msgstr ""
@@ -435,6 +441,9 @@ msgstr ""
 msgid "Compact"
 msgstr ""
 
+msgid "Confirm"
+msgstr ""
+
 msgid "Connect"
 msgstr ""
 
@@ -632,6 +641,9 @@ msgid "Edit metadata"
 msgstr ""
 
 msgid "Edit"
+msgstr ""
+
+msgid "Embed in track"
 msgstr ""
 
 msgid "Enable EBU R128 Analysis?"
@@ -991,6 +1003,9 @@ msgid "Lyrics offset (ms)"
 msgstr ""
 
 msgid "Lyrics settings"
+msgstr ""
+
+msgid "Lyrics storage"
 msgstr ""
 
 msgid "Lyrics"
@@ -1665,6 +1680,12 @@ msgstr ""
 msgid "Save Server Settings"
 msgstr ""
 
+msgid "Save action saves the lyrics directly to your source"
+msgstr ""
+
+msgid "Save lyrics automatically"
+msgstr ""
+
 msgid "Save to rescan"
 msgstr ""
 
@@ -2178,6 +2199,9 @@ msgid "kbps"
 msgstr ""
 
 msgid "range"
+msgstr ""
+
+msgid "separate .lrc file"
 msgstr ""
 
 msgid "to"

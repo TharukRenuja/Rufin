@@ -123,6 +123,12 @@ msgstr ""
 "atslēgas. Jūsu lietotnes kešatmiņa netiks skarta."
 
 msgid ""
+"This will overwrite your lyrics file with what Rufin fetched, it may be a "
+"better experience to use a dedicated program or plugin to fetch lyrics "
+"instead."
+msgstr ""
+
+msgid ""
 "Track evens out every song, while Album preserves the intended differences "
 "within each album"
 msgstr ""
@@ -450,6 +456,9 @@ msgstr "Komentārs"
 msgid "Compact"
 msgstr "Kompakts"
 
+msgid "Confirm"
+msgstr ""
+
 msgid "Connect"
 msgstr "Savienot"
 
@@ -644,6 +653,11 @@ msgstr "Rediģēt metadatus"
 
 msgid "Edit"
 msgstr "Rediģēt"
+
+#, fuzzy
+#| msgid "Genre tracks"
+msgid "Embed in track"
+msgstr "Žanra dziesmas"
 
 msgid "Enable EBU R128 Analysis?"
 msgstr "Ieslēgt EBU R128 analīzi?"
@@ -1007,6 +1021,11 @@ msgstr "Teksta nobīde (ms)"
 
 msgid "Lyrics settings"
 msgstr "Tekstu iestatījumi"
+
+#, fuzzy
+#| msgid "Lyrics loaded"
+msgid "Lyrics storage"
+msgstr "Teksti ir ielādēti"
 
 msgid "Lyrics"
 msgstr "Teksti"
@@ -1684,6 +1703,16 @@ msgstr "Saglabāt kartēšanu"
 msgid "Save Server Settings"
 msgstr "Saglabāt servera iestatījumus"
 
+#, fuzzy
+#| msgid "Saves lyrics to your source"
+msgid "Save action saves the lyrics directly to your source"
+msgstr "Saglabāt tekstus avotā"
+
+#, fuzzy
+#| msgid "Searching will start automatically"
+msgid "Save lyrics automatically"
+msgstr "Meklēšana tiks automātiski uzsākta"
+
 msgid "Save to rescan"
 msgstr "Saglabāt, lai atkārtoti skenētu"
 
@@ -2198,6 +2227,9 @@ msgstr "kbit/s"
 
 msgid "range"
 msgstr "diapazons"
+
+msgid "separate .lrc file"
+msgstr ""
 
 msgid "to"
 msgstr "uz"

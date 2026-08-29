@@ -125,6 +125,12 @@ msgstr ""
 "ключи API. Кэш приложения при этом не будет затронут."
 
 msgid ""
+"This will overwrite your lyrics file with what Rufin fetched, it may be a "
+"better experience to use a dedicated program or plugin to fetch lyrics "
+"instead."
+msgstr ""
+
+msgid ""
 "Track evens out every song, while Album preserves the intended differences "
 "within each album"
 msgstr ""
@@ -455,6 +461,9 @@ msgstr "Комментарий"
 msgid "Compact"
 msgstr "Компактный"
 
+msgid "Confirm"
+msgstr ""
+
 msgid "Connect"
 msgstr "Подключить"
 
@@ -649,6 +658,11 @@ msgstr "Редактировать метаданные"
 
 msgid "Edit"
 msgstr "Редактировать"
+
+#, fuzzy
+#| msgid "Genre tracks"
+msgid "Embed in track"
+msgstr "Треки по жанрам"
 
 msgid "Enable EBU R128 Analysis?"
 msgstr "Включить анализ EBU R128?"
@@ -1014,6 +1028,11 @@ msgstr "Смещение текста (мс)"
 
 msgid "Lyrics settings"
 msgstr "Настройки текстов"
+
+#, fuzzy
+#| msgid "Lyrics loaded"
+msgid "Lyrics storage"
+msgstr "Текст песни загружен"
 
 msgid "Lyrics"
 msgstr "Текст песни"
@@ -1693,6 +1712,16 @@ msgstr "Сохранить Сопоставления"
 msgid "Save Server Settings"
 msgstr "Сохранить Настройки Сервера"
 
+#, fuzzy
+#| msgid "Saves lyrics to your source"
+msgid "Save action saves the lyrics directly to your source"
+msgstr "Сохраняет текст песни в источнике"
+
+#, fuzzy
+#| msgid "Searching will start automatically"
+msgid "Save lyrics automatically"
+msgstr "Поиск начнётся автоматически"
+
 msgid "Save to rescan"
 msgstr "Сохранить для повторного сканирования"
 
@@ -2212,6 +2241,9 @@ msgstr "кбит/с"
 
 msgid "range"
 msgstr "диапазон"
+
+msgid "separate .lrc file"
+msgstr ""
 
 msgid "to"
 msgstr "до"
