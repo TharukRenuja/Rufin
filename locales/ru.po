@@ -7,7 +7,7 @@ msgstr ""
 "Project-Id-Version: Rufin 0.6.0\n"
 "Report-Msgid-Bugs-To: https://github.com/screwys/Rufin/issues\n"
 "POT-Creation-Date: YEAR-MO-DA HO:MI+ZONE\n"
-"PO-Revision-Date: 2026-08-29 00:23+0000\n"
+"PO-Revision-Date: 2026-08-29 11:10+0000\n"
 "Last-Translator: Александр Стельмах <aguhadug@gmail.com>\n"
 "Language-Team: Russian <https://hosted.weblate.org/projects/rufin/app/ru/>\n"
 "Language: ru\n"
@@ -1622,6 +1622,11 @@ msgstr "Удалить"
 msgid "Removed from favorites"
 msgstr "Удалено из избранного"
 
+#, fuzzy
+#| msgid "Remove from Pins"
+msgid "Removed from"
+msgstr "Удалить из закрепленных"
+
 msgid "Rename Playlist"
 msgstr "Переименовать плейлист"
 
@@ -1781,8 +1786,6 @@ msgstr "Выбрать папку с музыкой"
 msgid "Select Source"
 msgstr "Выбрать Источник"
 
-#, fuzzy
-#| msgid "Select All"
 msgid "Select all"
 msgstr "Выбрать всё"
 

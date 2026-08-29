@@ -1605,6 +1605,11 @@ msgstr "Eemalda"
 msgid "Removed from favorites"
 msgstr "Eemaldatud lemmikute seast"
 
+#, fuzzy
+#| msgid "Remove from Pins"
+msgid "Removed from"
+msgstr "Eemalda esiletõstmiste seast"
+
 msgid "Rename Playlist"
 msgstr "Muuda esitusloendi nime"
 

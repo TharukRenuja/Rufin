@@ -7,7 +7,7 @@ msgstr ""
 "Project-Id-Version: Rufin 0.6.0\n"
 "Report-Msgid-Bugs-To: https://github.com/screwys/Rufin/issues\n"
 "POT-Creation-Date: YEAR-MO-DA HO:MI+ZONE\n"
-"PO-Revision-Date: 2026-08-29 00:23+0000\n"
+"PO-Revision-Date: 2026-08-29 11:10+0000\n"
 "Last-Translator: Александр Стельмах <aguhadug@gmail.com>\n"
 "Language-Team: Latvian <https://hosted.weblate.org/projects/rufin/app/lv/>\n"
 "Language: lv\n"
@@ -1613,6 +1613,11 @@ msgstr "Noņemt"
 msgid "Removed from favorites"
 msgstr "Noņemts no izlases"
 
+#, fuzzy
+#| msgid "Remove from Pins"
+msgid "Removed from"
+msgstr "Noņemt no izlases"
+
 msgid "Rename Playlist"
 msgstr "Pārdēvēt atskaņošanas sarakstu"
 
@@ -1772,8 +1777,6 @@ msgstr "Izvēlēties mūzikas mapi"
 msgid "Select Source"
 msgstr "Izvēlēties avotu"
 
-#, fuzzy
-#| msgid "Select All"
 msgid "Select all"
 msgstr "Atlasīt visu"
 
