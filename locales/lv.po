@@ -987,6 +987,9 @@ msgstr "Atrast mapi"
 msgid "Lock metadata"
 msgstr "Bloķēt metadatus"
 
+msgid "Logs are copied"
+msgstr ""
+
 msgid "Loudness normalization"
 msgstr "Skaļuma normalizācija"
 
