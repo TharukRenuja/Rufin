@@ -272,6 +272,11 @@ msgstr "Erscheint auf"
 msgid "Application name"
 msgstr "Anwendungsname"
 
+#, fuzzy
+#| msgid "Template"
+msgid "Apply Template"
+msgstr "Vorlage"
+
 msgid "Artist / Album"
 msgstr "Künstler / Album"
 
@@ -557,6 +562,11 @@ msgstr "Diagnoseprotokoll gespeichert"
 
 msgid "Diagnostic log"
 msgstr "Diagnoseprotokoll"
+
+#, fuzzy
+#| msgid "DirectSound"
+msgid "Direction"
+msgstr "DirectSound"
 
 msgid "Disable private mode"
 msgstr "Privaten Modus deaktivieren"
@@ -2078,9 +2088,6 @@ msgstr "Jellyfin Instant-Mix für Empfehlungen verwenden"
 msgid "Use Rufin data folder"
 msgstr "Rufin-Datenordner verwenden"
 
-msgid "Use Template"
-msgstr "Vorlage verwenden"
-
 msgid "Use a number above zero"
 msgstr "Verwende eine Zahl größer als null"
 
@@ -2250,6 +2257,9 @@ msgid_plural "{count} years ago"
 msgstr[0] "vor {count} Jahr"
 msgstr[1] "vor {count} Jahren"
 
+#~ msgid "Use Template"
+#~ msgstr "Vorlage verwenden"
+
 #~ msgid "Go to Artist"
 #~ msgstr "Zum Künstler springen"
 
@@ -2273,9 +2283,6 @@ msgstr[1] "vor {count} Jahren"
 
 #~ msgid "ALSA"
 #~ msgstr "ALSA"
-
-#~ msgid "DirectSound"
-#~ msgstr "DirectSound"
 
 #~ msgid "Exit to tray"
 #~ msgstr "In den Infobereich minimieren"

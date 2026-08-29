@@ -274,6 +274,11 @@ msgstr "Parādās ierakstos"
 msgid "Application name"
 msgstr "Lietotnes nosaukums"
 
+#, fuzzy
+#| msgid "Template"
+msgid "Apply Template"
+msgstr "Veidne"
+
 msgid "Artist / Album"
 msgstr "Izpildītājs / Albums"
 
@@ -560,6 +565,11 @@ msgstr "Diagnostikas žurnāls saglabāts"
 
 msgid "Diagnostic log"
 msgstr "Diagnostikas žurnāls"
+
+#, fuzzy
+#| msgid "DirectSound"
+msgid "Direction"
+msgstr "DirectSound"
 
 msgid "Disable private mode"
 msgstr "Atslēgt privāto režīmu"
@@ -2074,9 +2084,6 @@ msgstr "Izmantot Jellyfin Instant Mix ieteikumiem"
 msgid "Use Rufin data folder"
 msgstr "Izmantot Rufin datu mapi"
 
-msgid "Use Template"
-msgstr "Izmantot veidni"
-
 msgid "Use a number above zero"
 msgstr "Izmantojiet skaitli, kas ir lielāka par nulli"
 
@@ -2253,6 +2260,9 @@ msgstr[0] "pirms {count} gadiem"
 msgstr[1] "pirms {count} gada"
 msgstr[2] "pirms {count} gadiem"
 
+#~ msgid "Use Template"
+#~ msgstr "Izmantot veidni"
+
 #~ msgid "Go to Artist"
 #~ msgstr "Pāriet uz Izpildītāju"
 
@@ -2276,9 +2286,6 @@ msgstr[2] "pirms {count} gadiem"
 
 #~ msgid "ALSA"
 #~ msgstr "ALSA"
-
-#~ msgid "DirectSound"
-#~ msgstr "DirectSound"
 
 #~ msgid "Exit to tray"
 #~ msgstr "Iziet uz sistēmas joslu"

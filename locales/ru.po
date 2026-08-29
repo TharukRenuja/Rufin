@@ -279,6 +279,11 @@ msgstr "Появляется в"
 msgid "Application name"
 msgstr "Название приложения"
 
+#, fuzzy
+#| msgid "Template"
+msgid "Apply Template"
+msgstr "Шаблон"
+
 msgid "Artist / Album"
 msgstr "Исполнитель / Альбом"
 
@@ -565,6 +570,11 @@ msgstr "Журнал диагностики сохранен"
 
 msgid "Diagnostic log"
 msgstr "Журнал диагностики"
+
+#, fuzzy
+#| msgid "DirectSound"
+msgid "Direction"
+msgstr "DirectSound"
 
 msgid "Disable private mode"
 msgstr "Отключить приватный режим"
@@ -2086,9 +2096,6 @@ msgstr "Использовать Мгновенный Микс Jellyfin для �
 msgid "Use Rufin data folder"
 msgstr "Использовать папку данных Rufin"
 
-msgid "Use Template"
-msgstr "Использовать шаблон"
-
 msgid "Use a number above zero"
 msgstr "Используйте число больше нуля"
 
@@ -2267,6 +2274,9 @@ msgstr[0] "{count} год назад"
 msgstr[1] "{count} года назад"
 msgstr[2] "{count} лет назад"
 
+#~ msgid "Use Template"
+#~ msgstr "Использовать шаблон"
+
 #~ msgid "Go to Artist"
 #~ msgstr "Перейти к исполнителю"
 
@@ -2293,9 +2303,6 @@ msgstr[2] "{count} лет назад"
 
 #~ msgid "AirPlay and Sound Settings..."
 #~ msgstr "Настройки AirPlay и звука..."
-
-#~ msgid "DirectSound"
-#~ msgstr "DirectSound"
 
 #~ msgid "Exit to tray"
 #~ msgstr "Свернуть в трей"
