@@ -1,5 +1,6 @@
-<h1>
-  Rufin
+# Rufin
+
+<p>
   <a href="Cargo.toml"><img alt="Rust 1.95+" src="https://img.shields.io/badge/rust-1.95%2B-f74c00?logo=rust"></a>
   <a href="LICENSE"><img alt="License: GPL-3.0+" src="https://img.shields.io/badge/license-GPL--3.0%2B-blue.svg"></a>
   <a href="https://gitlab.gnome.org/GNOME/libadwaita/"><img alt="GTK 4 libadwaita" src="https://img.shields.io/badge/GTK%204-libadwaita-3584E4?logo=gnome&amp;logoColor=white&amp;labelColor=2E3436"></a>
@@ -8,15 +9,22 @@
   <a href="https://hosted.weblate.org/projects/rufin/"><img alt="Translate Rufin on Weblate" src="https://img.shields.io/badge/translate-Weblate-2ECCAA?logo=weblate&amp;logoColor=white"></a>
 </h1>
 
+This is a fork of **[screwys/Rufin](https://github.com/screwys/Rufin)** with additional features:
+
+- **Smart artist splitting**: automatically splits `feat.`, `ft.`, `vs.`, and comma-separated artist names into individually clickable credits
+- **Optimized release builds**: stripped symbols, LTO and size-optimized binary (~ nearly 60% or more smaller binary size)
+
+---
+
 <img align="left" alt="Rufin" src="data/icons/hicolor/512x512/apps/io.github.screwys.Rufin.png" width="96"> Rufin is a powerful, fast and easy to use GTK4/libadwaita music player written in Rust, available on [multiple platforms](#installation). It can play music from your Jellyfin, Navidrome/OpenSubsonic flavor servers and local folders; can download tracks from these servers and let you play from downloaded songs while still keeping you in the same remote session. It also has broad set of features and optimizations around these features for the ideal user experience.
 
 <br clear="left">
 
 ![Rufin](data/screenshots/Rufin_full.png)
 
-# Features
+## Features
 
-## 🎵 Playback
+### 🎵 Playback
 
 - True gapless playback and configurable equal-power crossfade mode 
 - ReplayGain/EBU R128 analysis and true-peak measurement
@@ -31,14 +39,14 @@
 - Configurable playback speed
 
 
-## 📚 Library
+### 📚 Library
 
 - First-class Jellyfin, Navidrome/OpenSubsonic and local music library support
 - Drag songs from your queue or lists to playlists, or select multiple of them with your keyboard batch operations
 - Combine multiple local folders in a single listening session
 - Download tracks manually or through automatic rules, then keep using the same remote library while offline
 - Path matching between music servers and local folders, allowing local playback while keeping server activity and history
-- Metadata editing for supported servers and local formats; bulk editing and `Identify` available with auto-fill
+- Metadata editing for supported servers and local formats, with bulk editing and `Identify` available with auto-fill
 - Automatic metadata, artwork and lyrics caching
 - Extensive lyrics settings
 - Easy rating support, with an option to enable visual-only partial stars for OpenSubsonic
@@ -46,7 +54,7 @@
 - EBU R128 tag writing option for local folders
 - Extensive lyrics organization settings; you can automatically save fetched lyrics to your source as embeds or separate .lrc files
 
-## 🌍️ Discovery
+### 🌍️ Discovery
 
 - Server-provided artist, track, album, playlist and genre radios, including recommendations from server plugins
 - App owned smart playlists with custom sorting and limits; can use metadata, play/skip history or pre-defined dynamic lists
@@ -55,7 +63,7 @@
 - Synchronized lyrics with built-in search and adjustable offset
 - Furigana and Romaji lyrics overlays, translation preference and karaoke mode support
 
-## 🔌 Integrations
+### 🔌 Integrations
 
 - Last.fm, Libre.fm and ListenBrainz scrobbling, with offline storage and automatic retries 
 - Discord Rich Presence
@@ -63,7 +71,7 @@
 - Secure storage for server credentials and API secrets by default
 - Casting support for UPnP and Chromecast
 
-## 🖥️ Interface
+### 🖥️ Interface
 
 - Fast GTK 4/libadwaita interface with light/dark themes and accent customization
 - Fully usable across different window sizes, including a separate compact layout 
@@ -76,6 +84,7 @@
 - Can run in the background or set to launch minimized
 - System tray integration
 
+
 # Screenshots
 
 | | | | |
@@ -87,16 +96,16 @@
 | ![Download settings](data/screenshots/download_settings.png) | ![Playback settings](data/screenshots/playback_settings.png) | ![Keyboard shortcuts](data/screenshots/keyboard_shortcuts.png) | ![Fullscreen player](data/screenshots/visualizer.png) |
 | **Download settings** | **Playback settings** | **Keyboard shortcuts** | **Fullscreen player** |
 
-# Installation
+## Installation
 
-## Flatpak
+### Flatpak
 <p>
   <a href="https://flathub.org/apps/io.github.screwys.Rufin">
     <img width="240" alt="Get it on Flathub" src="https://flathub.org/api/badge?svg&locale=en">
   </a>
 </p>
 
-## Fedora
+### Fedora
 
 Rufin is available for Fedora 44.
 
@@ -105,7 +114,7 @@ sudo dnf copr enable screwyy/rufin
 sudo dnf install rufin
 ```
 
-## AUR
+### AUR
 
 - `rufin-bin` installs the release binary. `rufin-git` builds the current source.
 
@@ -114,7 +123,7 @@ yay -S rufin-bin
 yay -S rufin-git
 ```
 
-## Nix
+### Nix
 
 Rufin is available in nixpkgs repository. To run Rufin without installing:
 
@@ -136,7 +145,7 @@ nix run github:screwys/Rufin/vX.Y.Z
 You might want to use github repo for profile as well, since it takes more than a week for an update to get merged into nixpkgs repository.
 
 
-## Windows
+### Windows
 
 Download the .exe from [GitHub Releases](https://github.com/screwys/Rufin/releases/latest).
 
@@ -150,7 +159,7 @@ scoop install screwys/rufin
 Both have opt-in **Automatic updates** in General preferences to have Rufin install an available Windows
 update when the app starts. Alternatively, you can click `Update` button in Version History on the latest release.
 
-## macOS
+### macOS
 
 Homebrew Cask is the primary macOS installation:
 
@@ -165,7 +174,7 @@ Rufin install an available update when the app starts or manually click `Update`
 You can also download `.dmg` files directly from
 [GitHub Releases](https://github.com/screwys/Rufin/releases/latest), but then you have to update manually.
 
-## Building locally
+### Building locally
 
 Start by cloning the repository. You can build Rufin natively or use our Linux development container if you want to keep dependencies outside of your system and have Docker or Podman available.
 
@@ -174,7 +183,7 @@ git clone https://github.com/screwys/Rufin.git
 cd Rufin
 ```
 
-### Development container
+#### Development container
 
 ```bash
 just container setup
@@ -183,7 +192,7 @@ just build
 
 This makes just commands go through the container development. If you want to build natively instead after running this one, use `just container disable`.
 
-### Native build
+#### Native build
 
 Rufin requires Rust 1.95 or newer, GTK 4.20 or newer, libadwaita 1.9 or
 newer, and GStreamer 1.26 or newer.
@@ -251,7 +260,7 @@ On Windows, `just build` creates the isolated versioned
 Testing, Nix, and container controls are documented in
 [CONTRIBUTING.md](CONTRIBUTING.md#development-environment).
 
-# Troubleshooting
+## Troubleshooting
 
 > [!WARNING]
 > If you are using native Discord with Flatpak Rufin, you should add the `xdg-run/discord-ipc-0` filesystem override via Flatseal, or from the terminal:
@@ -293,7 +302,7 @@ cargo run -p rufin -- --verify-media "media_path.format"
 ```
 If should exit silently if the media can be played.
 
-## Uninstallation
+### Uninstallation
 
 You can remove Rufin with your package manager, use the uninstaller included with the Windows
 `.exe` (which can also delete the cache), or delete `Rufin.app` from Applications if you installed the macOS `.dmg`.
@@ -305,17 +314,17 @@ To delete Rufin's cache as well, delete its cache folder based on your operating
 - macOS: `~/Library/Caches/io.github.screwys.Rufin`
 - Windows: `%LOCALAPPDATA%\screwys\Rufin\cache`
 
-# Contributing
+## Contributing
 
 To contribute code, please see [CONTRIBUTING.md](CONTRIBUTING.md). 
 
-## Translations
+### Translations
 
 You can also contribute by translating the app on [Weblate](https://hosted.weblate.org/projects/rufin/app/)
 
 [![Translation status](https://hosted.weblate.org/widgets/rufin/-/multi-auto.svg)](https://hosted.weblate.org/engage/rufin/?utm_source=widget)
 
-# Credits
+## Credits
 
 Built with [GTK 4](https://www.gtk.org/), [libadwaita](https://gitlab.gnome.org/GNOME/libadwaita/), [gtk-rs](https://gtk-rs.org/) and [GStreamer](https://gstreamer.freedesktop.org/)
 
@@ -325,14 +334,14 @@ Player backend design and Smart Playlists are inspired from [Strawberry](https:/
 
 Icon is designed by [Commenter25](https://commenter.cc) and it is licensed under CC-BY-SA-3.0.
 
-## Translation credits
+### Translation credits
 
 - Estonian translation by Priit Jõerüüt
 - Russian and Latvian translation by [aguhadug](https://github.com/aguhadug)
 - German translation by [sevachka](https://github.com/sevachka)
 - Chezch translation by [Jakub Cabal](https://github.com/jakubcabal)
 
-# License
+## License
 
 [LICENSE](LICENSE)
 

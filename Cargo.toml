@@ -120,6 +120,13 @@ string_slice = "deny"
 [profile.dev]
 debug = "line-tables-only"
 
+[profile.release]
+opt-level = "s"
+lto = "fat"
+codegen-units = 1
+strip = "symbols"
+panic = "abort"
+
 [profile.test]
 debug = "line-tables-only"
 
