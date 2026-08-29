@@ -92,6 +92,12 @@ msgid ""
 msgstr "這會將您登出並清除所有機密資訊包含 API 金鑰。應用程式快取則不受影響。"
 
 msgid ""
+"This will overwrite your lyrics file with what Rufin fetched, it may be a "
+"better experience to use a dedicated program or plugin to fetch lyrics "
+"instead."
+msgstr ""
+
+msgid ""
 "Track evens out every song, while Album preserves the intended differences "
 "within each album"
 msgstr ""
@@ -364,6 +370,9 @@ msgstr "清除此曲目已抓取的歌詞"
 msgid "Clear queue"
 msgstr "清除播放佇列"
 
+msgid "Clearing queue also clears the current song"
+msgstr ""
+
 msgid "Close Window"
 msgstr "關閉視窗"
 
@@ -380,6 +389,11 @@ msgid "Club"
 msgstr ""
 
 msgid "Collapse sidebar"
+msgstr "折疊側邊欄"
+
+#, fuzzy
+#| msgid "Collapse sidebar"
+msgid "Collapse/expand sidebar"
 msgstr "折疊側邊欄"
 
 msgid "Collection"
@@ -405,6 +419,9 @@ msgstr ""
 
 msgid "Compact"
 msgstr "緊湊"
+
+msgid "Confirm"
+msgstr ""
 
 msgid "Connect"
 msgstr "連接"
@@ -610,6 +627,11 @@ msgstr "編輯元資料"
 
 msgid "Edit"
 msgstr "編輯"
+
+#, fuzzy
+#| msgid "Genre tracks"
+msgid "Embed in track"
+msgstr "曲風曲目"
 
 msgid "Enable EBU R128 Analysis?"
 msgstr ""
@@ -969,6 +991,11 @@ msgstr "歌詞延遲 (ms)"
 
 msgid "Lyrics settings"
 msgstr "歌詞設定"
+
+#, fuzzy
+#| msgid "Lyrics loaded"
+msgid "Lyrics storage"
+msgstr "歌詞已載入"
 
 msgid "Lyrics"
 msgstr "歌詞"
@@ -1660,6 +1687,12 @@ msgstr ""
 msgid "Save Server Settings"
 msgstr "儲存伺服器設定"
 
+msgid "Save action saves the lyrics directly to your source"
+msgstr ""
+
+msgid "Save lyrics automatically"
+msgstr ""
+
 msgid "Save to rescan"
 msgstr ""
 
@@ -1694,6 +1727,11 @@ msgstr "搜尋歌詞"
 #| msgid "Search preferences"
 msgid "Search current folder"
 msgstr "搜尋偏好設定"
+
+#, fuzzy
+#| msgid "Search Again"
+msgid "Search in page"
+msgstr "重新搜尋"
 
 msgid "Search is unavailable"
 msgstr ""
@@ -2177,6 +2215,9 @@ msgid "kbps"
 msgstr "kbps"
 
 msgid "range"
+msgstr ""
+
+msgid "separate .lrc file"
 msgstr ""
 
 msgid "to"

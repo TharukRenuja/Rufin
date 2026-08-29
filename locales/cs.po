@@ -118,6 +118,12 @@ msgstr ""
 "vaší aplikace zůstane nedotčena."
 
 msgid ""
+"This will overwrite your lyrics file with what Rufin fetched, it may be a "
+"better experience to use a dedicated program or plugin to fetch lyrics "
+"instead."
+msgstr ""
+
+msgid ""
 "Track evens out every song, while Album preserves the intended differences "
 "within each album"
 msgstr ""
@@ -409,6 +415,9 @@ msgstr "Vymazat načtený text pro tuto skladbu"
 msgid "Clear queue"
 msgstr "Vymazat frontu"
 
+msgid "Clearing queue also clears the current song"
+msgstr ""
+
 msgid "Close Window"
 msgstr "Zavřít okno"
 
@@ -425,6 +434,11 @@ msgid "Club"
 msgstr "Klubová hudba"
 
 msgid "Collapse sidebar"
+msgstr "Sbalit postranní panel"
+
+#, fuzzy
+#| msgid "Collapse sidebar"
+msgid "Collapse/expand sidebar"
 msgstr "Sbalit postranní panel"
 
 msgid "Collection"
@@ -450,6 +464,9 @@ msgstr "Komentář"
 
 msgid "Compact"
 msgstr "Kompaktní"
+
+msgid "Confirm"
+msgstr ""
 
 msgid "Connect"
 msgstr "Připojit"
@@ -655,6 +672,11 @@ msgstr "Upravit metadata"
 
 msgid "Edit"
 msgstr "Upravit"
+
+#, fuzzy
+#| msgid "Genre tracks"
+msgid "Embed in track"
+msgstr "Skladby žánru"
 
 msgid "Enable EBU R128 Analysis?"
 msgstr ""
@@ -1020,6 +1042,11 @@ msgstr "Posun textu skladby (ms)"
 
 msgid "Lyrics settings"
 msgstr "Nastavení textu skladeb"
+
+#, fuzzy
+#| msgid "Lyrics loaded"
+msgid "Lyrics storage"
+msgstr "Texty skladeb načteny"
 
 msgid "Lyrics"
 msgstr "Text skladby"
@@ -1718,6 +1745,14 @@ msgstr "Uložit mapování"
 msgid "Save Server Settings"
 msgstr "Uložit nastavení serveru"
 
+msgid "Save action saves the lyrics directly to your source"
+msgstr ""
+
+#, fuzzy
+#| msgid "Searching will start automatically"
+msgid "Save lyrics automatically"
+msgstr "Vyhledávání se spustí automaticky"
+
 msgid "Save to rescan"
 msgstr "Uložit pro opětovné naskenování"
 
@@ -1752,6 +1787,11 @@ msgstr "Hledat Texty"
 #| msgid "Search preferences"
 msgid "Search current folder"
 msgstr "Možnosti vyhledávání"
+
+#, fuzzy
+#| msgid "Search Again"
+msgid "Search in page"
+msgstr "Hledat znovu"
 
 #, fuzzy
 #| msgid "This isn't available"
@@ -2244,6 +2284,9 @@ msgstr "kbps"
 
 msgid "range"
 msgstr "rozsah"
+
+msgid "separate .lrc file"
+msgstr ""
 
 msgid "to"
 msgstr "až"
