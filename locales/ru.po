@@ -7,7 +7,7 @@ msgstr ""
 "Project-Id-Version: Rufin 0.6.0\n"
 "Report-Msgid-Bugs-To: https://github.com/screwys/Rufin/issues\n"
 "POT-Creation-Date: YEAR-MO-DA HO:MI+ZONE\n"
-"PO-Revision-Date: 2026-08-29 14:45+0000\n"
+"PO-Revision-Date: 2026-08-29 20:00+0000\n"
 "Last-Translator: Александр Стельмах <aguhadug@gmail.com>\n"
 "Language-Team: Russian <https://hosted.weblate.org/projects/rufin/app/ru/>\n"
 "Language: ru\n"
@@ -279,10 +279,8 @@ msgstr "Появляется в"
 msgid "Application name"
 msgstr "Название приложения"
 
-#, fuzzy
-#| msgid "Template"
 msgid "Apply Template"
-msgstr "Шаблон"
+msgstr "Применить шаблон"
 
 msgid "Artist / Album"
 msgstr "Исполнитель / Альбом"
@@ -571,10 +569,8 @@ msgstr "Журнал диагностики сохранен"
 msgid "Diagnostic log"
 msgstr "Журнал диагностики"
 
-#, fuzzy
-#| msgid "DirectSound"
 msgid "Direction"
-msgstr "DirectSound"
+msgstr "Направление"
 
 msgid "Disable private mode"
 msgstr "Отключить приватный режим"
