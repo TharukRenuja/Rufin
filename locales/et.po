@@ -7,7 +7,7 @@ msgstr ""
 "Project-Id-Version: Rufin 0.3.13\n"
 "Report-Msgid-Bugs-To: https://github.com/screwys/Rufin/issues\n"
 "POT-Creation-Date: YEAR-MO-DA HO:MI+ZONE\n"
-"PO-Revision-Date: 2026-08-29 00:23+0000\n"
+"PO-Revision-Date: 2026-08-29 14:45+0000\n"
 "Last-Translator: Priit Jõerüüt <jrthwlate@users.noreply.hosted.weblate.org>\n"
 "Language-Team: Estonian <https://hosted.weblate.org/projects/rufin/app/et/>\n"
 "Language: et\n"
@@ -980,7 +980,7 @@ msgid "Lock metadata"
 msgstr "Lukusta metateave"
 
 msgid "Logs are copied"
-msgstr ""
+msgstr "Logid on kopeeritud"
 
 msgid "Loudness normalization"
 msgstr "Helivaljuse normaliseerimine"
@@ -1063,10 +1063,8 @@ msgstr "Liiguta teenusepakkuja ülespoole"
 msgid "Move up"
 msgstr "Liiguta ülespoole"
 
-#, fuzzy
-#| msgid "Selection"
 msgid "Multi-selection"
-msgstr "Valik"
+msgstr "Mitmikvalik"
 
 msgid "Multiple values"
 msgstr "Mitu väärtust"
@@ -1507,10 +1505,8 @@ msgstr "Välju Rufinist"
 msgid "Quit"
 msgstr "Välju"
 
-#, fuzzy
-#| msgid "Selection"
 msgid "Range selection"
-msgstr "Valik"
+msgstr "Vahemiku valik"
 
 msgid "Rating"
 msgstr "Hinnang"
@@ -1605,10 +1601,8 @@ msgstr "Eemalda"
 msgid "Removed from favorites"
 msgstr "Eemaldatud lemmikute seast"
 
-#, fuzzy
-#| msgid "Remove from Pins"
 msgid "Removed from"
-msgstr "Eemalda esiletõstmiste seast"
+msgstr "Eemaldatud asukohast"
 
 msgid "Rename Playlist"
 msgstr "Muuda esitusloendi nime"
@@ -1769,8 +1763,6 @@ msgstr "Vali muusikakaust"
 msgid "Select Source"
 msgstr "Vali allikas"
 
-#, fuzzy
-#| msgid "Select All"
 msgid "Select all"
 msgstr "Vali kõik"
 
