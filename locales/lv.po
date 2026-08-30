@@ -7,7 +7,7 @@ msgstr ""
 "Project-Id-Version: Rufin 0.6.0\n"
 "Report-Msgid-Bugs-To: https://github.com/screwys/Rufin/issues\n"
 "POT-Creation-Date: YEAR-MO-DA HO:MI+ZONE\n"
-"PO-Revision-Date: 2026-08-29 20:00+0000\n"
+"PO-Revision-Date: 2026-08-31 00:51+0000\n"
 "Last-Translator: Александр Стельмах <aguhadug@gmail.com>\n"
 "Language-Team: Latvian <https://hosted.weblate.org/projects/rufin/app/lv/>\n"
 "Language: lv\n"
@@ -127,6 +127,9 @@ msgid ""
 "better experience to use a dedicated program or plugin to fetch lyrics "
 "instead."
 msgstr ""
+"Šis pārrakstīs jūsu tekstu failu ar datiem, ko Rufin ir lejupielādējis. "
+"Iespējams, labāk izmantot atsevišķu programmu vai papildinājumu tekstu "
+"lejupielādei."
 
 msgid ""
 "Track evens out every song, while Album preserves the intended differences "
@@ -415,7 +418,7 @@ msgid "Clear queue"
 msgstr "Notīrīt rindu"
 
 msgid "Clearing queue also clears the current song"
-msgstr ""
+msgstr "Rindas notīrīšana arī notīra pašreizējo dziesmu"
 
 msgid "Close Window"
 msgstr "Aizvērt logu"
@@ -435,10 +438,8 @@ msgstr "Klubs"
 msgid "Collapse sidebar"
 msgstr "Sakļaut sānu paneli"
 
-#, fuzzy
-#| msgid "Collapse sidebar"
 msgid "Collapse/expand sidebar"
-msgstr "Sakļaut sānu paneli"
+msgstr "Sakļaut/izvērst sānu paneli"
 
 msgid "Collection"
 msgstr "Kolekcija"
@@ -465,7 +466,7 @@ msgid "Compact"
 msgstr "Kompakts"
 
 msgid "Confirm"
-msgstr ""
+msgstr "Apstiprināt"
 
 msgid "Connect"
 msgstr "Savienot"
@@ -662,10 +663,8 @@ msgstr "Rediģēt metadatus"
 msgid "Edit"
 msgstr "Rediģēt"
 
-#, fuzzy
-#| msgid "Genre tracks"
 msgid "Embed in track"
-msgstr "Žanra dziesmas"
+msgstr "Iekļaut dziesmā"
 
 msgid "Enable EBU R128 Analysis?"
 msgstr "Ieslēgt EBU R128 analīzi?"
@@ -1030,10 +1029,8 @@ msgstr "Teksta nobīde (ms)"
 msgid "Lyrics settings"
 msgstr "Tekstu iestatījumi"
 
-#, fuzzy
-#| msgid "Lyrics loaded"
 msgid "Lyrics storage"
-msgstr "Teksti ir ielādēti"
+msgstr "Tekstu krātuve"
 
 msgid "Lyrics"
 msgstr "Teksti"
@@ -1711,15 +1708,11 @@ msgstr "Saglabāt kartēšanu"
 msgid "Save Server Settings"
 msgstr "Saglabāt servera iestatījumus"
 
-#, fuzzy
-#| msgid "Saves lyrics to your source"
 msgid "Save action saves the lyrics directly to your source"
-msgstr "Saglabāt tekstus avotā"
+msgstr "Saglabāšanas darbība saglabā tekstus tieši jūsu avotā"
 
-#, fuzzy
-#| msgid "Searching will start automatically"
 msgid "Save lyrics automatically"
-msgstr "Meklēšana tiks automātiski uzsākta"
+msgstr "Saglabāt tekstus automātiski"
 
 msgid "Save to rescan"
 msgstr "Saglabāt, lai atkārtoti skenētu"
@@ -1754,10 +1747,8 @@ msgstr "Meklēt tekstus"
 msgid "Search current folder"
 msgstr "Meklēt pašreizējā mapē"
 
-#, fuzzy
-#| msgid "Search Again"
 msgid "Search in page"
-msgstr "Meklēt vēlreiz"
+msgstr "Meklēt lapā"
 
 msgid "Search is unavailable"
 msgstr "Meklēšana nav pieejama"
@@ -2242,7 +2233,7 @@ msgid "range"
 msgstr "diapazons"
 
 msgid "separate .lrc file"
-msgstr ""
+msgstr "atsevišķs .lrc fails"
 
 msgid "to"
 msgstr "uz"
