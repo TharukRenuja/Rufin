@@ -7,7 +7,7 @@ msgstr ""
 "Project-Id-Version: Rufin\n"
 "Report-Msgid-Bugs-To: https://github.com/screwys/Rufin/issues\n"
 "POT-Creation-Date: YEAR-MO-DA HO:MI+ZONE\n"
-"PO-Revision-Date: 2026-08-29 11:10+0000\n"
+"PO-Revision-Date: 2026-08-31 00:51+0000\n"
 "Last-Translator: Sebastian <sevachka@users.noreply.hosted.weblate.org>\n"
 "Language-Team: German <https://hosted.weblate.org/projects/rufin/app/de/>\n"
 "Language: de\n"
@@ -126,6 +126,9 @@ msgid ""
 "better experience to use a dedicated program or plugin to fetch lyrics "
 "instead."
 msgstr ""
+"Dadurch wird deine Liedtextdatei mit den von Rufin abgerufenen Liedtexten "
+"überschrieben. Es kann sinnvoller sein, stattdessen ein spezielles Programm "
+"oder Plugin zum Abrufen von Liedtexten zu verwenden."
 
 msgid ""
 "Track evens out every song, while Album preserves the intended differences "
@@ -278,10 +281,8 @@ msgstr "Erscheint auf"
 msgid "Application name"
 msgstr "Anwendungsname"
 
-#, fuzzy
-#| msgid "Template"
 msgid "Apply Template"
-msgstr "Vorlage"
+msgstr "Vorlage anwenden"
 
 msgid "Artist / Album"
 msgstr "Künstler / Album"
@@ -414,7 +415,7 @@ msgid "Clear queue"
 msgstr "Warteschlange leeren"
 
 msgid "Clearing queue also clears the current song"
-msgstr ""
+msgstr "Beim Leeren der Warteschlange wird auch der aktuelle Titel entfernt"
 
 msgid "Close Window"
 msgstr "Fenster schließen"
@@ -434,10 +435,8 @@ msgstr "Klub"
 msgid "Collapse sidebar"
 msgstr "Seitenleiste einklappen"
 
-#, fuzzy
-#| msgid "Collapse sidebar"
 msgid "Collapse/expand sidebar"
-msgstr "Seitenleiste einklappen"
+msgstr "Seitenleiste ein-/ausklappen"
 
 msgid "Collection"
 msgstr "Sammlung"
@@ -464,7 +463,7 @@ msgid "Compact"
 msgstr "Kompakt"
 
 msgid "Confirm"
-msgstr ""
+msgstr "Bestätigen"
 
 msgid "Connect"
 msgstr "Verbinden"
@@ -580,10 +579,8 @@ msgstr "Diagnoseprotokoll gespeichert"
 msgid "Diagnostic log"
 msgstr "Diagnoseprotokoll"
 
-#, fuzzy
-#| msgid "DirectSound"
 msgid "Direction"
-msgstr "DirectSound"
+msgstr "Richtung"
 
 msgid "Disable private mode"
 msgstr "Privaten Modus deaktivieren"
@@ -663,10 +660,8 @@ msgstr "Metadaten bearbeiten"
 msgid "Edit"
 msgstr "Bearbeiten"
 
-#, fuzzy
-#| msgid "Genre tracks"
 msgid "Embed in track"
-msgstr "Genre-Titel"
+msgstr "In Titel einbetten"
 
 msgid "Enable EBU R128 Analysis?"
 msgstr "EBU-R128-Analyse aktivieren?"
@@ -1033,10 +1028,8 @@ msgstr "Liedtext-Zeitversatz (ms)"
 msgid "Lyrics settings"
 msgstr "Liedtexteinstellungen"
 
-#, fuzzy
-#| msgid "Lyrics loaded"
 msgid "Lyrics storage"
-msgstr "Liedtexte geladen"
+msgstr "Liedtext-Speicher"
 
 msgid "Lyrics"
 msgstr "Songtexte"
@@ -1648,10 +1641,8 @@ msgstr "Entfernen"
 msgid "Removed from favorites"
 msgstr "Aus Favoriten entfernt"
 
-#, fuzzy
-#| msgid "Remove from Pins"
 msgid "Removed from"
-msgstr "Aus den angehefteten Elementen entfernen"
+msgstr "Entfernt aus"
 
 msgid "Rename Playlist"
 msgstr "Playlist umbenennen"
@@ -1719,15 +1710,11 @@ msgstr "Zuordnung speichern"
 msgid "Save Server Settings"
 msgstr "Servereinstellungen speichern"
 
-#, fuzzy
-#| msgid "Saves lyrics to your source"
 msgid "Save action saves the lyrics directly to your source"
-msgstr "Speichert Liedtexte in deiner Quelle"
+msgstr "Die Speicheraktion speichert die Liedtexte direkt in deiner Quelle"
 
-#, fuzzy
-#| msgid "Searching will start automatically"
 msgid "Save lyrics automatically"
-msgstr "Die Suche startet automatisch"
+msgstr "Liedtexte automatisch speichern"
 
 msgid "Save to rescan"
 msgstr "Zum erneuten Scannen speichern"
@@ -1762,10 +1749,8 @@ msgstr "Songtext-Suche"
 msgid "Search current folder"
 msgstr "Aktuellen Ordner durchsuchen"
 
-#, fuzzy
-#| msgid "Search Again"
 msgid "Search in page"
-msgstr "Erneut suchen"
+msgstr "Auf der Seite suchen"
 
 msgid "Search is unavailable"
 msgstr "Suche ist nicht verfügbar"
@@ -2251,7 +2236,7 @@ msgid "range"
 msgstr "Bereich"
 
 msgid "separate .lrc file"
-msgstr ""
+msgstr "Separate .lrc-Datei"
 
 msgid "to"
 msgstr "bis"
