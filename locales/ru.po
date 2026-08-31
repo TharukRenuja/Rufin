@@ -7,7 +7,7 @@ msgstr ""
 "Project-Id-Version: Rufin 0.6.0\n"
 "Report-Msgid-Bugs-To: https://github.com/screwys/Rufin/issues\n"
 "POT-Creation-Date: YEAR-MO-DA HO:MI+ZONE\n"
-"PO-Revision-Date: 2026-08-29 20:00+0000\n"
+"PO-Revision-Date: 2026-08-31 00:51+0000\n"
 "Last-Translator: Александр Стельмах <aguhadug@gmail.com>\n"
 "Language-Team: Russian <https://hosted.weblate.org/projects/rufin/app/ru/>\n"
 "Language: ru\n"
@@ -129,6 +129,9 @@ msgid ""
 "better experience to use a dedicated program or plugin to fetch lyrics "
 "instead."
 msgstr ""
+"Это перезапишет ваш файл с текстом песни данными, полученными из Rufin, "
+"возможно, будет лучше использовать специальную программу или плагин для "
+"загрузки текстов песен."
 
 msgid ""
 "Track evens out every song, while Album preserves the intended differences "
@@ -420,7 +423,7 @@ msgid "Clear queue"
 msgstr "Очистить очередь"
 
 msgid "Clearing queue also clears the current song"
-msgstr ""
+msgstr "Очистка очереди также очищает текущую песню"
 
 msgid "Close Window"
 msgstr "Закрыть окно"
@@ -440,10 +443,8 @@ msgstr "Клубная"
 msgid "Collapse sidebar"
 msgstr "Свернуть боковую панель"
 
-#, fuzzy
-#| msgid "Collapse sidebar"
 msgid "Collapse/expand sidebar"
-msgstr "Свернуть боковую панель"
+msgstr "Свернуть/развернуть боковую панель"
 
 msgid "Collection"
 msgstr "Коллекция"
@@ -470,7 +471,7 @@ msgid "Compact"
 msgstr "Компактный"
 
 msgid "Confirm"
-msgstr ""
+msgstr "Подтвердить"
 
 msgid "Connect"
 msgstr "Подключить"
@@ -667,10 +668,8 @@ msgstr "Редактировать метаданные"
 msgid "Edit"
 msgstr "Редактировать"
 
-#, fuzzy
-#| msgid "Genre tracks"
 msgid "Embed in track"
-msgstr "Треки по жанрам"
+msgstr "Встроить в трек"
 
 msgid "Enable EBU R128 Analysis?"
 msgstr "Включить анализ EBU R128?"
@@ -1037,10 +1036,8 @@ msgstr "Смещение текста (мс)"
 msgid "Lyrics settings"
 msgstr "Настройки текстов"
 
-#, fuzzy
-#| msgid "Lyrics loaded"
 msgid "Lyrics storage"
-msgstr "Текст песни загружен"
+msgstr "Хранилище текстов песен"
 
 msgid "Lyrics"
 msgstr "Текст песни"
@@ -1720,15 +1717,12 @@ msgstr "Сохранить Сопоставления"
 msgid "Save Server Settings"
 msgstr "Сохранить Настройки Сервера"
 
-#, fuzzy
-#| msgid "Saves lyrics to your source"
 msgid "Save action saves the lyrics directly to your source"
-msgstr "Сохраняет текст песни в источнике"
+msgstr ""
+"Действие «Сохранить» сохраняет текст песни непосредственно в исходный файл"
 
-#, fuzzy
-#| msgid "Searching will start automatically"
 msgid "Save lyrics automatically"
-msgstr "Поиск начнётся автоматически"
+msgstr "Автоматически сохранять текст песни"
 
 msgid "Save to rescan"
 msgstr "Сохранить для повторного сканирования"
@@ -1763,10 +1757,8 @@ msgstr "Поиск текстов песен"
 msgid "Search current folder"
 msgstr "Поиск в текущей папке"
 
-#, fuzzy
-#| msgid "Search Again"
 msgid "Search in page"
-msgstr "Повторить поиск"
+msgstr "Поиск по странице"
 
 msgid "Search is unavailable"
 msgstr "Поиск недоступен"
@@ -2256,7 +2248,7 @@ msgid "range"
 msgstr "диапазон"
 
 msgid "separate .lrc file"
-msgstr ""
+msgstr "отдельный файл .lrc"
 
 msgid "to"
 msgstr "до"
