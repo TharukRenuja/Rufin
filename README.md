@@ -85,7 +85,7 @@ This is a fork of **[screwys/Rufin](https://github.com/screwys/Rufin)** with add
 - System tray integration
 
 
-# Screenshots
+## Screenshots
 
 | | | | |
 |:---:|:---:|:---:|:---:|
